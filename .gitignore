@@ -1,0 +1,48 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*.token
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# C/C++ build outputs
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.a
+*.lib
+*.exe
+
+# Logs and runtime data
+*.log
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor and local workspace metadata
+.vscode/
+.idea/
+.codex/
+.DS_Store
+Thumbs.db

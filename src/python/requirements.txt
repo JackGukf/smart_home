@@ -1,0 +1,6 @@
+# Add Python dependencies here as integrations are chosen.
+# Common future candidates:
+# python-kasa
+# tinytuya
+# paho-mqtt
+# PyYAML

@@ -1,0 +1,24 @@
+# Copy this file to devices.local.yaml and fill in real device details.
+# Do not commit files containing passwords, tokens, or private IP mappings.
+
+tplink:
+  switches:
+    - name: living_room_switch
+      host: 192.168.1.10
+      model: unknown
+
+  cameras:
+    - name: front_door_camera
+      host: 192.168.1.20
+      model: unknown
+
+tuya:
+  sensors:
+    - name: hallway_motion_sensor
+      device_id: replace_me
+      local_key: replace_me
+      host: 192.168.1.30
+
+mqtt:
+  broker_host: 127.0.0.1
+  broker_port: 1883
