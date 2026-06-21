@@ -1,0 +1,61 @@
+{
+  "count": 7,
+  "switches": [
+    {
+      "alias": "Kitchen light switch",
+      "device_type": "DeviceType.Dimmer",
+      "host": "192.168.0.110",
+      "is_on": false,
+      "model": "HS220",
+      "name": "Kitchen light switch"
+    },
+    {
+      "alias": "Master bedroom light",
+      "device_type": "DeviceType.WallSwitch",
+      "host": "192.168.0.143",
+      "is_on": true,
+      "model": "HS200",
+      "name": "Master bedroom light"
+    },
+    {
+      "alias": null,
+      "device_type": "DeviceType.Plug",
+      "host": "192.168.0.161",
+      "is_on": null,
+      "model": "HS103",
+      "name": "192.168.0.161"
+    },
+    {
+      "alias": null,
+      "device_type": "DeviceType.Plug",
+      "host": "192.168.0.165",
+      "is_on": null,
+      "model": "HS103",
+      "name": "192.168.0.165"
+    },
+    {
+      "alias": "Office switch",
+      "device_type": "DeviceType.Plug",
+      "host": "192.168.0.51",
+      "is_on": true,
+      "model": "HS103",
+      "name": "Office switch"
+    },
+    {
+      "alias": "Family room switch",
+      "device_type": "DeviceType.Dimmer",
+      "host": "192.168.0.61",
+      "is_on": false,
+      "model": "HS220",
+      "name": "Family room switch"
+    },
+    {
+      "alias": "Living room switch 2",
+      "device_type": "DeviceType.WallSwitch",
+      "host": "192.168.0.73",
+      "is_on": false,
+      "model": "HS200",
+      "name": "Living room switch 2"
+    }
+  ]
+}

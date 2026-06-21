@@ -38,3 +38,15 @@ Recommended editor path:
 ```bash
 code ~/workspace/smart-home-rpi4
 ```
+
+## Docker-Based Development
+
+Docker is the preferred environment for compiling and debugging this project:
+
+```bash
+cd ~/workspace/smart-home-rpi4
+docker compose build dev
+docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4
+```
+
+For the full IDE workflow, see `docs/docker-development.md`.

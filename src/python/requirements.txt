@@ -3,4 +3,12 @@
 # python-kasa
 # tinytuya
 # paho-mqtt
-# PyYAML
+PyYAML
+pytest
+pytest-asyncio
+python-kasa
+tinytuya
+fastapi
+uvicorn
+httpx2
+tzdata

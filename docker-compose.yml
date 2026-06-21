@@ -1,0 +1,13 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: smart-home-rpi4-dev:latest
+    container_name: smart-home-rpi4-dev
+    working_dir: /workspace/smart-home-rpi4
+    volumes:
+      - .:/workspace/smart-home-rpi4
+    tty: true
+    stdin_open: true
+    command: /bin/bash

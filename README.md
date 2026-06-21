@@ -54,6 +54,73 @@ Runtime services
 
 5. Copy `configs/devices.example.yaml` to a local ignored config file when you are ready to add real devices.
 
+## Development Environment
+
+The recommended development setup is Docker running in WSL, opened with Visual Studio Code Dev Containers.
+
+Quick check:
+
+```bash
+cd ~/workspace/smart-home-rpi4
+docker compose build dev
+docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4
+```
+
+See `docs/docker-development.md` for IDE, build, and debug setup.
+
+Run tests:
+
+```bash
+docker compose run --rm dev python3 -m pytest
+docker compose run --rm dev sh -lc "cmake --preset docker-debug && cmake --build --preset docker-debug && ctest --test-dir build/docker-debug --output-on-failure"
+```
+
+## Raspberry Pi Deployment
+
+For Raspberry Pi OS 64-bit, build and deploy from WSL:
+
+```bash
+cd ~/workspace/smart-home-rpi4
+./scripts/build-rpi4.sh
+./scripts/deploy-to-pi.sh
+```
+
+See `docs/rpi4-cross-compile-deploy.md`.
+
+Connect to the configured Raspberry Pi:
+
+```bash
+./scripts/connect-pi.sh
+./scripts/connect-pi.sh --check
+```
+
+## TP-Link/Kasa Switch Control
+
+Use the Python CLI to control a configured TP-Link/Kasa light switch:
+
+```bash
+python3 -m src.python.tplink_switch --host 192.168.1.10 status
+python3 -m src.python.tplink_switch --host 192.168.1.10 on
+python3 -m src.python.tplink_switch --host 192.168.1.10 off
+python3 -m src.python.tplink_switch --host 192.168.1.10 toggle
+```
+
+See `src/python/README.md`.
+
+## Web Dashboard
+
+Run the local smart home dashboard:
+
+```bash
+python3 -m uvicorn src.python.web_app:app --host 0.0.0.0 --port 8000
+```
+
+On the Raspberry Pi touch screen, open:
+
+```text
+http://localhost:8000
+```
+
 ## Security Notes
 
 - Do not commit passwords, tokens, camera credentials, or home Wi-Fi details.

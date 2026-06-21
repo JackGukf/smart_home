@@ -1,0 +1,30 @@
+{
+  "mcpServers": {
+    "wsl-shell": {
+      "command": "wsl.exe",
+      "args": [
+        "-d", "Ubuntu-22.04",
+        "python3",
+        "/home/jackgu/workspace/smart-home-rpi4/scripts/wsl_mcp_server.py"
+      ]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(wsl -d Ubuntu-22.04*)",
+      "Bash(wsl.exe*)",
+      "Bash(python3 -m pytest*)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(docker compose build*)",
+      "Bash(docker compose run --rm dev*)",
+      "Bash(cmake --preset*)",
+      "Bash(cmake --build*)",
+      "Bash(ctest*)"
+    ],
+    "deny": []
+  }
+}

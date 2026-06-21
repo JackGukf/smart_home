@@ -1,6 +1,8 @@
 #include <iostream>
 
+#include "controller.hpp"
+
 int main() {
-    std::cout << "Smart Home Raspberry Pi 4 controller starting..." << std::endl;
+    std::cout << startup_message() << std::endl;
     return 0;
 }

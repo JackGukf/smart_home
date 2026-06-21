@@ -1,0 +1,27 @@
+{
+  "name": "Smart Home Raspberry Pi 4",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspace/smart-home-rpi4",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "ms-python.python",
+        "ms-python.debugpy",
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "cmake.configurePreset": "docker-debug",
+        "cmake.buildPreset": "docker-debug",
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+  "postCreateCommand": "cmake --preset docker-debug && python3 -m pip install -r src/python/requirements.txt",
+  "remoteUser": "developer"
+}

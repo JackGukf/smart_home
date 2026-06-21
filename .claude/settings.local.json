@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"\\\\\\\\wsl.localhost\\\\ubuntu-22.04\\\\home\\\\jackgu\\\\workspace\\\\smart-home-rpi4\\\\.claude\")",
+      "Bash(mkdir -p /home/jackgu/workspace/smart-home-rpi4/.claude)",
+      "Bash(wsl -d Ubuntu-22.04 -- mkdir -p /home/jackgu/workspace/smart-home-rpi4/.claude)",
+      "mcp__wsl-shell__run_command",
+      "mcp__wsl-shell__read_file"
+    ]
+  }
+}

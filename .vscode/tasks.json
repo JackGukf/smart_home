@@ -1,0 +1,52 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Docker: build dev image",
+      "type": "shell",
+      "command": "docker compose build dev",
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: run dev check",
+      "type": "shell",
+      "command": "docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4",
+      "problemMatcher": []
+    },
+    {
+      "label": "CMake: configure docker-debug",
+      "type": "shell",
+      "command": "cmake --preset docker-debug",
+      "problemMatcher": []
+    },
+    {
+      "label": "CMake: build docker-debug",
+      "type": "shell",
+      "command": "cmake --build --preset docker-debug",
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    {
+      "label": "Python: run controller",
+      "type": "shell",
+      "command": "python3 src/python/controller.py",
+      "problemMatcher": []
+    },
+    {
+      "label": "Python: pytest",
+      "type": "shell",
+      "command": "python3 -m pytest",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "CMake: test docker-debug",
+      "type": "shell",
+      "command": "ctest --test-dir build/docker-debug --output-on-failure",
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

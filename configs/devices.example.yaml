@@ -5,19 +5,119 @@ tplink:
   switches:
     - name: living_room_switch
       host: 192.168.1.10
-      model: unknown
+      model: HS200
+      # For newer Kasa/Tapo devices, prefer TPLINK_USERNAME and TPLINK_PASSWORD
+      # environment variables instead of putting credentials in this file.
 
   cameras:
-    - name: front_door_camera
-      host: 192.168.1.20
-      model: unknown
+    - name: family_room_camera
+      host: 192.168.0.24
+      model: Tapo C200
+      room: Family Room
+      stream_name: family_room_camera
+      go2rtc_url: http://192.168.0.176:1984
+      # Browser-viewable camera sources:
+      # - snapshot_url for an HTTP/JPEG snapshot endpoint
+      # - stream_url for a browser-playable HTTP/HLS/MJPEG stream
+      # - view_url for a camera web page or proxy URL
+      # snapshot_url: http://192.168.0.24/snapshot.jpg
+      # Raw RTSP cannot play directly in a browser. The Pi web app proxies this to MJPEG with ffmpeg.
+      username_env: TAPO_CAMERA_USERNAME
+      password_env: TAPO_CAMERA_PASSWORD
+      # /stream2 is the lower-bandwidth Tapo substream and is smoother for dashboard viewing.
+      stream_path: /stream2
+      mjpeg_fps: 10
+      mjpeg_width: 640
+      mjpeg_quality: 7
+
+media_gateway:
+  go2rtc_url: http://192.168.0.176:1984
+
+cameras:
+  - name: wyze_camera
+    provider: wyze
+    host: 192.168.0.95
+    model: Wyze RTSP
+    room: Garage
+    stream_name: wyze_camera
+    go2rtc_url: http://192.168.0.176:1984
+    username_env: WYZE_RTSP_USERNAME
+    password_env: WYZE_RTSP_PASSWORD
+    rtsp_scheme: rtsps
+    rtsp_port: 322
+    stream_path: /stream0
+    go2rtc_source: ffmpeg
+  - name: chortau_camera_1
+    provider: chortau
+    host: 192.168.0.57
+    model: Hipcam RealServer
+    room: Home
+    stream_name: chortau_camera_1
+    go2rtc_url: http://192.168.0.176:1984
+    username_env: CHORTAU_CAMERA_USERNAME
+    password_env: CHORTAU_CAMERA_PASSWORD
+    rtsp_port: 554
+    stream_path: /11
+  - name: chortau_camera_2
+    provider: chortau
+    host: 192.168.0.191
+    model: Hipcam RealServer
+    room: Home
+    stream_name: chortau_camera_2
+    stream_url: rtsp://192.168.0.191:554/11
+    go2rtc_enabled: false
+    mjpeg_fps: 8
+    mjpeg_width: 640
+    mjpeg_quality: 7
+
+weather:
+  name: Home
+  latitude: 49.2827
+  longitude: -123.1207
+  timezone: America/Vancouver
+  temperature_unit: celsius
+
+ecobee:
+  temperature_unit: celsius
+  thermostats:
+    - name: Main thermostat
+      # thermostat_id is optional if your Ecobee account has only one thermostat.
+      thermostat_id: replace_me
+      room: Hallway
+
+home_assistant:
+  base_url: http://127.0.0.1:8123
+  token_env: HOME_ASSISTANT_TOKEN
+  include_domains:
+    - climate
+    - light
+    - switch
+    - sensor
+    - binary_sensor
+    - cover
+    - fan
+    - lock
 
 tuya:
-  sensors:
+  devices:
     - name: hallway_motion_sensor
       device_id: replace_me
-      local_key: replace_me
       host: 192.168.1.30
+      local_key_env: TUYA_HALLWAY_MOTION_LOCAL_KEY
+      category: tuya_sensor
+      room: Hallway
+      model: Motion Sensor
+      dps:
+        motion: "1"
+        battery: "4"
+    - name: porch_outlet
+      device_id: replace_me
+      host: 192.168.1.31
+      local_key_env: TUYA_PORCH_OUTLET_LOCAL_KEY
+      category: tuya_switch
+      room: Porch
+      model: Smart Plug
+      power_dp: "1"
 
 mqtt:
   broker_host: 127.0.0.1

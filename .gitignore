@@ -7,6 +7,9 @@
 *.crt
 *.token
 secrets/
+configs/devices.local.yaml
+go2rtc/go2rtc.yaml
+bin/go2rtc*
 
 # Python
 __pycache__/
@@ -41,7 +44,11 @@ logs/
 *.sqlite3
 
 # Editor and local workspace metadata
-.vscode/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json
 .idea/
 .codex/
 .DS_Store

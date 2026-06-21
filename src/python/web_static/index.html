@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HomeOS · Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="/static/styles.css?v=20260622-doorbell-view">
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="logo">
+    <div class="logo-icon"><i class="ti ti-home-2"></i></div>
+    <div>
+      <div class="logo-text">HomeOS</div>
+      <div class="logo-sub">Raspberry Pi 4 · Local Network</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="weather-pill" id="weatherPill">
+      <i class="ti ti-cloud"></i>
+      <span id="weatherTemp">–°C</span>
+    </div>
+    <div class="time-block">
+      <div class="time" id="clock">--:--:--</div>
+      <div class="date" id="dateDisplay">Loading…</div>
+    </div>
+    <div id="palettePicker" class="palette-picker"></div>
+    <div class="status-dot" id="statusDot" title="Connecting…"></div>
+  </div>
+</header>
+
+<!-- ── MAIN GRID ── -->
+<main>
+
+  <!-- ── SIDEBAR ── -->
+  <aside>
+    <div class="sidebar-section">Views</div>
+    <ul class="room-list">
+      <li class="room-item active" data-view="lights">
+        <span class="room-icon"><i class="ti ti-bulb"></i></span>
+        Lights
+        <span class="room-badge" id="lightCount">–</span>
+      </li>
+      <li class="room-item" data-view="plugs">
+        <span class="room-icon"><i class="ti ti-plug"></i></span>
+        Plugs
+        <span class="room-badge" id="plugCount">–</span>
+      </li>
+      <li class="room-item" data-view="tuya">
+        <span class="room-icon"><i class="ti ti-radar-2"></i></span>
+        Sensors
+        <span class="room-badge" id="tuyaCount">–</span>
+      </li>
+      <li class="room-item" data-view="climate">
+        <span class="room-icon"><i class="ti ti-temperature"></i></span>
+        Climate
+        <span class="room-badge" id="thermostatCount">–</span>
+      </li>
+      <li class="room-item" data-view="homeassistant">
+        <span class="room-icon"><i class="ti ti-smart-home"></i></span>
+        Home Asst
+        <span class="room-badge" id="haCount">–</span>
+      </li>
+      <li class="room-item" data-view="cameras">
+        <span class="room-icon"><i class="ti ti-video"></i></span>
+        Cameras
+        <span class="room-badge" id="cameraTabCount">–</span>
+      </li>
+      <li class="room-item" data-view="alarm">
+        <span class="room-icon"><i class="ti ti-shield-lock"></i></span>
+        Alarm
+        <span class="room-badge" id="alarmBadge">–</span>
+      </li>
+    </ul>
+
+    <div class="sidebar-section">System</div>
+    <ul class="room-list">
+      <li class="room-item" id="refreshButton">
+        <span class="room-icon"><i class="ti ti-refresh"></i></span>
+        Refresh
+      </li>
+    </ul>
+
+    <div class="sidebar-footer">
+      <span id="apiStatus">Connecting…</span>
+    </div>
+  </aside>
+
+  <!-- ── CONTENT ── -->
+  <div class="content">
+
+    <!-- NOTIFICATION BANNERS -->
+    <div id="notifArea" class="notif-area" aria-live="polite"></div>
+
+    <!-- STAT ROW -->
+    <div class="stat-row">
+      <div class="stat-card">
+        <div class="stat-icon"><i class="ti ti-thermometer"></i></div>
+        <div class="stat-label">Indoor Temp</div>
+        <div class="stat-value mono" id="indoorTemp">–</div>
+        <div class="stat-trend">Thermostat</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="ti ti-cloud-sun"></i></div>
+        <div class="stat-label">Outdoor</div>
+        <div class="stat-value mono" id="outdoorTemp">–</div>
+        <div class="stat-trend" id="statCondition">Weather</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="ti ti-toggle-right"></i></div>
+        <div class="stat-label">Devices On</div>
+        <div class="stat-value mono"><span id="onCount">–</span><span class="stat-unit">/<span id="deviceCount">–</span></span></div>
+        <div class="stat-trend">TP-Link switches</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><i class="ti ti-camera"></i></div>
+        <div class="stat-label">Cameras</div>
+        <div class="stat-value mono" id="cameraCount">–</div>
+        <div class="stat-trend">Live feeds</div>
+      </div>
+    </div>
+
+    <!-- ── LIGHTS VIEW ── -->
+    <div class="view-panel active" data-view-panel="lights">
+      <div class="section-header">
+        <span class="section-title">Light Switches</span>
+        <span class="section-meta">TP-Link · local control</span>
+      </div>
+      <div class="device-grid" id="lightGrid">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── PLUGS VIEW ── -->
+    <div class="view-panel" data-view-panel="plugs">
+      <div class="section-header">
+        <span class="section-title">Smart Plugs</span>
+        <span class="section-meta">TP-Link · local control</span>
+      </div>
+      <div id="plugActions" class="quick-action-row"></div>
+      <div class="device-grid" id="plugGrid">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── TUYA / SENSORS VIEW ── -->
+    <div class="view-panel" data-view-panel="tuya">
+      <div class="section-header">
+        <span class="section-title">Sensors</span>
+        <span class="section-meta">Tuya / Home Assistant</span>
+      </div>
+      <div class="device-grid" id="tuyaGrid">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── CLIMATE VIEW ── -->
+    <div class="view-panel" data-view-panel="climate">
+      <div class="section-header">
+        <span class="section-title">Climate</span>
+        <span class="section-meta">Ecobee thermostats</span>
+      </div>
+      <div class="device-grid thermostat-grid" id="thermostatGrid">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── HOME ASSISTANT VIEW ── -->
+    <div class="view-panel" data-view-panel="homeassistant">
+      <div class="section-header ha-panel-header">
+        <span class="section-title">Home Assistant</span>
+        <div class="ha-panel-actions">
+          <a class="command" id="homeAssistantOpen" href="#" target="_blank" rel="noreferrer">
+            <i class="ti ti-external-link"></i> Open HA
+          </a>
+          <button class="command" id="homeAssistantBack" type="button">
+            <i class="ti ti-arrow-left"></i> Back
+          </button>
+        </div>
+      </div>
+      <div class="home-assistant-embed">
+        <iframe id="homeAssistantFrame" title="Home Assistant" allow="autoplay; fullscreen; microphone" src="about:blank"></iframe>
+      </div>
+    </div>
+
+    <!-- ── CAMERAS VIEW ── -->
+    <div class="view-panel" data-view-panel="cameras">
+      <div class="section-header">
+        <span class="section-title">Cameras</span>
+        <span class="section-meta">Live feeds</span>
+      </div>
+      <div class="camera-grid" id="cameraGrid">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── ALARM VIEW ── -->
+    <div class="view-panel" data-view-panel="alarm">
+      <div class="section-header">
+        <span class="section-title">Alarm System</span>
+        <span class="section-meta">Local control</span>
+      </div>
+      <div id="alarmPanel">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── BOTTOM ROW ── -->
+    <div class="bottom-row">
+      <div class="panel">
+        <div class="panel-title"><i class="ti ti-list-details"></i> Recent Activity</div>
+        <div class="activity-list" id="activityLog">
+          <div class="activity-item">
+            <div class="activity-dot"></div>
+            <div class="activity-text">Dashboard started</div>
+            <div class="activity-time">just now</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title"><i class="ti ti-cloud"></i> Weather</div>
+        <div class="weather-grid" id="weatherGrid">
+          <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading weather…</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</main>
+
+<script src="/static/app.js?v=20260622-doorbell-view"></script>
+</body>
+</html>

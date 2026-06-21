@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "wsl-shell": {
+      "command": "wsl.exe",
+      "args": [
+        "-d", "Ubuntu-22.04",
+        "python3",
+        "/home/jackgu/workspace/smart-home-rpi4/scripts/wsl_mcp_server.py"
+      ]
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "skill_name": "smart-home-rpi4",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "How do I deploy the latest code to my Raspberry Pi? I've just finished fixing a bug in the tplink_switch module and want to get it onto the Pi.",
+      "expected_output": "Clear step-by-step instructions covering: run tests first, then use deploy-to-pi.sh, and verify with connect-pi.sh --check. Should include the correct WSL paths and any relevant flags.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "prompt": "I want to add a Tuya temperature sensor to the project. Where should I put the code and how should I structure it?",
+      "expected_output": "Guidance following project conventions: create src/python/tuya.py with an isolated interface class, add to configs/devices.example.yaml, write tests in tests/python/test_tuya.py, wire into controller.py. Should mention TUYA_ACCESS_ID env var and local-network preference.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "My kitchen switch isn't responding. How do I debug it?",
+      "expected_output": "Step-by-step debug process: run discover_tplink_switches.py to check LAN visibility, then test direct control with tplink_switch --host <IP> status. Should include correct command syntax and mention checking TPLINK_USERNAME/PASSWORD for newer devices.",
+      "files": []
+    }
+  ]
+}

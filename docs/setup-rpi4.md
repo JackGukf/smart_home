@@ -5,7 +5,8 @@
 ```bash
 sudo apt update
 sudo apt upgrade
-sudo apt install build-essential cmake git python3 python3-venv python3-pip
+sudo apt install build-essential cmake git openssh-server python3 python3-venv python3-pip rsync
+sudo systemctl enable --now ssh
 ```
 
 ## Optional Packages
@@ -22,4 +23,6 @@ sudo apt install mosquitto mosquitto-clients
 
 ## Deployment Idea
 
-Use `scripts/deploy-to-pi.ps1` from Windows or a Git pull from the Raspberry Pi once the project is in a repository.
+Use `scripts/deploy-to-pi.sh` from WSL to cross-compile in Docker and deploy over SSH.
+
+See `docs/rpi4-cross-compile-deploy.md`.

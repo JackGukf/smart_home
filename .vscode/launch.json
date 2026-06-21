@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug C++ controller",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/docker-debug/src/cpp/smart_home_controller",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "preLaunchTask": "CMake: build docker-debug"
+    },
+    {
+      "name": "Debug Python controller",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/python/controller.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

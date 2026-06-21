@@ -1,0 +1,74 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 22,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "docker-debug",
+      "displayName": "Docker Debug",
+      "description": "Debug build for the Docker/WSL development container.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/docker-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "wsl-debug",
+      "displayName": "WSL Debug",
+      "description": "Debug build directly in WSL without Docker.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/wsl-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "wsl-release",
+      "displayName": "WSL Release",
+      "description": "Release build directly in WSL without Docker.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/wsl-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "docker-rpi4-release",
+      "displayName": "Docker Raspberry Pi 4 Release",
+      "description": "ARM64 release build for Raspberry Pi OS 64-bit.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/rpi4-release",
+      "cacheVariables": {
+        "BUILD_TESTING": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/rpi4-aarch64.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "docker-debug",
+      "configurePreset": "docker-debug"
+    },
+    {
+      "name": "wsl-debug",
+      "configurePreset": "wsl-debug"
+    },
+    {
+      "name": "wsl-release",
+      "configurePreset": "wsl-release"
+    },
+    {
+      "name": "docker-rpi4-release",
+      "configurePreset": "docker-rpi4-release"
+    }
+  ]
+}
