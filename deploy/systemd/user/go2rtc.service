@@ -1,0 +1,14 @@
+[Unit]
+Description=go2rtc Camera Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smarthome/smart-home-rpi4
+ExecStart=/home/smarthome/smart-home-rpi4/scripts/run-go2rtc.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -5,6 +5,7 @@ import os
 import shutil
 import socket
 import subprocess
+import threading
 import asyncio
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DISCOVERY_PATH = PROJECT_ROOT / "tplink_switches.json"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "devices.local.yaml"
 STATIC_DIR = PROJECT_ROOT / "src" / "python" / "web_static"
+AMBIENT_LIGHT_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class CameraDefinition:
     mjpeg_quality: int
     stream_name: str
     go2rtc_url: str | None
+    battery_powered: bool
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,16 @@ class TuyaDefinition:
     power_dp: str | None
     cloud_power_code: str | None
     dps: dict[str, str]
+
+
+@dataclass(frozen=True)
+class AmbientLightDefinition:
+    name: str
+    provider: str
+    model: str | None
+    room: str | None
+    address: str | None
+    alexa_name: str | None
 
 
 @dataclass(frozen=True)
@@ -174,6 +187,27 @@ def create_app(
             supplements = _tuya_direct_sensor_supplements(direct_devices)
             return {"devices": home_assistant_devices + supplements, "source": "home_assistant"}
         return {"devices": direct_devices, "source": "direct"}
+
+    @app.get("/api/ambient-lights")
+    async def ambient_lights() -> dict[str, Any]:
+        return {"lights": _ambient_light_cards(app.state.config_path)}
+
+    @app.get("/api/ambient-lights/govee-ble/discover")
+    async def ambient_govee_ble_discover() -> dict[str, Any]:
+        return await asyncio.to_thread(_govee_ble_discovery_payload)
+
+    @app.post("/api/ambient-lights/{light_id}/commands/{command}")
+    async def ambient_light_command(light_id: str, command: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        light = _find_ambient_light(_load_ambient_lights(app.state.config_path), light_id)
+        if command not in {"on", "off", "toggle", "brightness", "color"}:
+            raise HTTPException(status_code=400, detail=f"Unsupported command: {command}")
+        if light.provider == "alexa":
+            raise HTTPException(status_code=501, detail="Lepro via Alexa needs an Alexa routine or bridge before dashboard commands can be sent.")
+        if light.provider != "govee_ble":
+            raise HTTPException(status_code=400, detail=f"Unsupported ambient provider: {light.provider}")
+        if not light.address:
+            raise HTTPException(status_code=400, detail="Govee BLE light needs a Bluetooth address from Pi discovery before it can be controlled.")
+        return await asyncio.to_thread(_govee_ble_command_payload, light, command, body or {})
 
     @app.get("/api/weather")
     async def weather() -> dict[str, Any]:
@@ -378,6 +412,7 @@ def _home_assistant_camera_cards(path: Path) -> list[dict[str, Any]]:
                 "webrtc_url": None,
                 "hls_url": None,
                 "battery": _home_assistant_camera_battery(name, states),
+                "battery_powered": is_doorbell or _home_assistant_camera_battery(name, states) is not None,
                 "signal": 2,
                 "events": _home_assistant_camera_events(name, states),
             }
@@ -400,10 +435,18 @@ def _home_assistant_camera_battery(name: str, states: list[dict[str, Any]]) -> i
             continue
         if camera_name and camera_name in friendly:
             try:
-                return int(float(entity.get("state")))
+                return _normalize_battery_percent(float(entity.get("state")), entity_id, friendly)
             except (TypeError, ValueError):
                 return None
     return None
+
+
+def _normalize_battery_percent(value: float, entity_id: str, friendly_name: str) -> int:
+    normalized = max(0, min(100, value))
+    text = f"{entity_id} {friendly_name}".lower()
+    if normalized <= 10 and ("tuya" in text or "doorbell" in text or "men_ling" in text or "门铃" in text):
+        normalized *= 10
+    return int(round(max(0, min(100, normalized))))
 
 
 def _home_assistant_camera_events(name: str, states: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -491,6 +534,7 @@ def _load_cameras(path: Path) -> list[CameraDefinition]:
                 mjpeg_quality=int(item.get("mjpeg_quality", 7)),
                 stream_name=str(item.get("stream_name") or _stream_name(item["name"])),
                 go2rtc_url=go2rtc_url,
+                battery_powered=bool(item.get("battery_powered", False)),
             )
         )
     return cameras
@@ -719,6 +763,328 @@ async def _tuya_card_async(device: TuyaDefinition, cloud_semaphore: asyncio.Sema
         except Exception:
             status_payload = None
     return _tuya_card(device, status_payload, source)
+
+
+def _load_ambient_lights(path: Path) -> list[AmbientLightDefinition]:
+    if not path.exists():
+        return []
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    devices = []
+    for item in payload.get("ambient_lights", {}).get("devices", []):
+        if item.get("enabled") is False:
+            continue
+        name = str(item.get("name") or item.get("id") or item.get("model") or "Ambient light")
+        provider = str(item.get("provider") or "manual").lower()
+        devices.append(
+            AmbientLightDefinition(
+                name=name,
+                provider=provider,
+                model=str(item.get("model")) if item.get("model") else None,
+                room=item.get("room"),
+                address=str(item.get("address") or item.get("mac") or "") or None,
+                alexa_name=str(item.get("alexa_name") or item.get("alexa_device") or "") or None,
+            )
+        )
+    return devices
+
+
+def _ambient_light_id(light: AmbientLightDefinition) -> str:
+    return quote(light.name, safe="")
+
+
+def _is_real_ble_address(address: str | None) -> bool:
+    if not address:
+        return False
+    value = address.strip().lower()
+    return value not in {"replace_me", "todo", "none", "null", "unknown"}
+
+
+def _ambient_light_card(light: AmbientLightDefinition) -> dict[str, Any]:
+    runtime_state = AMBIENT_LIGHT_RUNTIME_STATE.get(light.address or light.name, {})
+    if light.provider == "govee_ble":
+        has_address = _is_real_ble_address(light.address)
+        status = "configured" if has_address else "needs_ble_address"
+        note = "BLE address configured" if has_address else "Run Govee BLE discovery on the Raspberry Pi and add the address."
+        controllable = has_address
+    elif light.provider == "alexa":
+        status = "needs_alexa_bridge"
+        note = "Lepro is reachable from Alexa, but dashboard control needs an Alexa routine/bridge path."
+        controllable = False
+    else:
+        status = "unsupported"
+        note = "Unsupported ambient light provider."
+        controllable = False
+    return {
+        "id": light.name,
+        "name": light.name,
+        "provider": light.provider,
+        "model": light.model,
+        "room": light.room,
+        "address": light.address,
+        "alexa_name": light.alexa_name,
+        "status": status,
+        "note": note,
+        "controllable": controllable,
+        "is_on": runtime_state.get("is_on"),
+        "brightness": runtime_state.get("brightness"),
+        "color": runtime_state.get("color"),
+        "capabilities": {
+            "power": light.provider == "govee_ble" and controllable,
+            "brightness": light.provider == "govee_ble" and controllable,
+            "color": light.provider == "govee_ble" and controllable,
+        },
+    }
+
+
+def _ambient_light_cards(path: Path) -> list[dict[str, Any]]:
+    return [_ambient_light_card(light) for light in _load_ambient_lights(path)]
+
+
+def _find_ambient_light(lights: list[AmbientLightDefinition], light_id: str) -> AmbientLightDefinition:
+    decoded = light_id
+    for light in lights:
+        if light.name == decoded or _ambient_light_id(light) == decoded:
+            return light
+    raise HTTPException(status_code=404, detail=f"Ambient light not found: {light_id}")
+
+
+def _govee_ble_discovery_payload() -> dict[str, Any]:
+    try:
+        from bleak import BleakScanner  # type: ignore
+    except Exception as exc:
+        return {
+            "status": "bleak_missing",
+            "message": "Install bleak on the Raspberry Pi to scan Govee Bluetooth devices.",
+            "error": str(exc),
+            "devices": [],
+        }
+
+    async def _scan() -> list[dict[str, Any]]:
+        found = await BleakScanner.discover(timeout=8.0)
+        devices = []
+        for item in found:
+            name = item.name or ""
+            text = f"{name} {item.address}".lower()
+            if "govee" not in text and "h613a" not in text and "h6054" not in text:
+                continue
+            devices.append({"name": name, "address": item.address, "rssi": getattr(item, "rssi", None)})
+        return devices
+
+    return {"status": "ok", "devices": asyncio.run(_scan())}
+
+
+GOVEE_BLE_WRITE_UUIDS = (
+    "00010203-0405-0607-0809-0a0b0c0d2b11",
+    "02f00000-0000-0000-0000-00000000ff01",
+)
+
+
+def _govee_ble_command_bytes(command: str, body: dict[str, Any] | None = None) -> bytes:
+    body = body or {}
+    if command == "on":
+        payload = [0x33, 0x01, 0x01]
+    elif command == "off":
+        payload = [0x33, 0x01, 0x00]
+    elif command == "brightness":
+        value = _bounded_byte(body.get("brightness", body.get("value", 100)), minimum=1, maximum=100)
+        payload = [0x33, 0x04, value]
+    elif command == "color":
+        red = _bounded_byte(body.get("red", body.get("r", 255)))
+        green = _bounded_byte(body.get("green", body.get("g", 255)))
+        blue = _bounded_byte(body.get("blue", body.get("b", 255)))
+        payload = [0x33, 0x05, 0x02, red, green, blue]
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported Govee BLE command: {command}")
+
+    if len(payload) > 19:
+        raise HTTPException(status_code=500, detail="Govee BLE command payload is too long")
+    packet = payload + [0x00] * (19 - len(payload))
+    checksum = 0
+    for value in packet:
+        checksum ^= value
+    packet.append(checksum)
+    return bytes(packet)
+
+
+def _bounded_byte(value: Any, minimum: int = 0, maximum: int = 255) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Expected numeric value, got {value!r}") from exc
+    return max(minimum, min(maximum, number))
+
+
+async def _govee_ble_write_packet(
+    client: Any,
+    characteristic: str,
+    packet: bytes,
+    response: bool,
+) -> int:
+    write_count = 2 if not response and packet[:2] == bytes((0x33, 0x01)) else 1
+    for write_index in range(write_count):
+        await client.write_gatt_char(characteristic, packet, response=response)
+        if write_index + 1 < write_count:
+            await asyncio.sleep(0.12)
+    return write_count
+
+class _GoveeBleManager:
+    def __init__(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        self._clients: dict[str, Any] = {}
+        self._thread = threading.Thread(target=self._run_loop, name="govee-ble", daemon=True)
+        self._thread.start()
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    def write(self, light: AmbientLightDefinition, packet: bytes) -> dict[str, Any]:
+        future = asyncio.run_coroutine_threadsafe(self._write_with_retry(light, packet), self._loop)
+        return future.result(timeout=90)
+
+    async def _write_with_retry(self, light: AmbientLightDefinition, packet: bytes) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                return await self._write_once(light, packet)
+            except Exception as exc:
+                last_error = exc
+                await self._drop_client(light.address)
+                if attempt < 2 and light.address:
+                    await asyncio.to_thread(_govee_ble_forget_cached_device, light.address)
+        assert last_error is not None
+        raise last_error
+
+    async def _write_once(self, light: AmbientLightDefinition, packet: bytes) -> dict[str, Any]:
+        from bleak import BleakClient, BleakScanner  # type: ignore
+
+        assert light.address is not None
+        client = self._clients.get(light.address)
+        reused_connection = client is not None and client.is_connected
+        if not reused_connection:
+            for other_address in list(self._clients):
+                if other_address != light.address:
+                    await self._drop_client(other_address)
+            await asyncio.to_thread(_govee_ble_forget_cached_device, light.address)
+            initial_delay = 5 if (light.model or "").upper() == "H613A" else 1
+            await asyncio.sleep(initial_delay)
+            device = await BleakScanner.find_device_by_address(light.address, timeout=8.0)
+            target = device or light.address
+            client = BleakClient(
+                target,
+                timeout=12.0,
+                disconnected_callback=lambda _client: self._clients.pop(light.address or "", None),
+            )
+            await client.connect()
+            self._clients[light.address] = client
+
+        characteristic, response = _govee_ble_write_target(client)
+        write_count = await _govee_ble_write_packet(client, characteristic, packet, response)
+        return {
+            "status": "ok",
+            "name": light.name,
+            "address": light.address,
+            "characteristic": characteristic,
+            "response": response,
+            "write_count": write_count,
+            "reused_connection": reused_connection,
+        }
+
+    async def _drop_client(self, address: str | None) -> None:
+        if not address:
+            return
+        client = self._clients.pop(address, None)
+        if client is not None and client.is_connected:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+
+_GOVEE_BLE_MANAGER: _GoveeBleManager | None = None
+_GOVEE_BLE_MANAGER_LOCK = threading.Lock()
+
+
+def _get_govee_ble_manager() -> _GoveeBleManager:
+    global _GOVEE_BLE_MANAGER
+    with _GOVEE_BLE_MANAGER_LOCK:
+        if _GOVEE_BLE_MANAGER is None:
+            _GOVEE_BLE_MANAGER = _GoveeBleManager()
+        return _GOVEE_BLE_MANAGER
+
+
+def _govee_ble_command_payload(light: AmbientLightDefinition, command: str, body: dict[str, Any]) -> dict[str, Any]:
+    if not _is_real_ble_address(light.address):
+        raise HTTPException(status_code=400, detail="Run Govee BLE discovery and configure the light address first.")
+    if command == "toggle":
+        raise HTTPException(status_code=400, detail="Govee BLE toggle needs device state support; use on or off.")
+    try:
+        import bleak  # noqa: F401  # type: ignore
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Install bleak on the Raspberry Pi for Govee BLE control: {exc}") from exc
+
+    packet = _govee_ble_command_bytes(command, body)
+    try:
+        result = _get_govee_ble_manager().write(light, packet)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Govee BLE command failed for {light.name}: {type(exc).__name__}: {exc!r}",
+        ) from exc
+
+    _remember_ambient_light_command(light, command, body)
+    result["command"] = command
+    result["light"] = _ambient_light_card(light)
+    return result
+
+
+def _remember_ambient_light_command(light: AmbientLightDefinition, command: str, body: dict[str, Any]) -> None:
+    key = light.address or light.name
+    state = AMBIENT_LIGHT_RUNTIME_STATE.setdefault(key, {})
+    if command == "on":
+        state["is_on"] = True
+    elif command == "off":
+        state["is_on"] = False
+    elif command == "brightness":
+        state["brightness"] = _bounded_byte(body.get("brightness", body.get("value", 100)), minimum=1, maximum=100)
+    elif command == "color":
+        state["color"] = {
+            "red": _bounded_byte(body.get("red", body.get("r", 255))),
+            "green": _bounded_byte(body.get("green", body.get("g", 255))),
+            "blue": _bounded_byte(body.get("blue", body.get("b", 255))),
+        }
+
+def _govee_ble_forget_cached_device(address: str) -> None:
+    try:
+        subprocess.run(["bluetoothctl", "remove", address], check=False, capture_output=True, text=True, timeout=6)
+    except Exception:
+        pass
+
+
+def _govee_ble_write_target(client: Any) -> tuple[str, bool]:
+    services = getattr(client, "services", None)
+    if services is None:
+        raise HTTPException(status_code=503, detail="Govee BLE services were not available after connect")
+
+    writable = []
+    for service in services:
+        for characteristic in service.characteristics:
+            props = set(characteristic.properties)
+            if "write" in props or "write-without-response" in props:
+                writable.append((str(characteristic.uuid).lower(), props))
+
+    for uuid in GOVEE_BLE_WRITE_UUIDS:
+        for candidate, props in writable:
+            if candidate == uuid:
+                return candidate, "write-without-response" not in props
+
+    for candidate, props in writable:
+        if not candidate.startswith("00002a"):
+            return candidate, "write-without-response" not in props
+
+    raise HTTPException(status_code=503, detail="No writable Govee BLE characteristic found")
 
 
 def _load_tuya_devices(path: Path) -> list[TuyaDefinition]:
@@ -1616,7 +1982,7 @@ def _camera_card(camera: CameraDefinition, check_ports: bool = True) -> dict[str
             status = "offline"
             status_detail = f"RTSP port {rtsp_port} is not reachable from the Raspberry Pi."
 
-    return {
+    card = {
         "id": camera.host,
         "name": camera.name,
         "host": camera.host,
@@ -1634,6 +2000,10 @@ def _camera_card(camera: CameraDefinition, check_ports: bool = True) -> dict[str
         "webrtc_url": _go2rtc_player_url(camera, "webrtc"),
         "hls_url": _go2rtc_player_url(camera, "hls"),
     }
+    if camera.battery_powered:
+        card["battery_powered"] = True
+        card["battery"] = None
+    return card
 
 
 def _browser_view_url(camera: CameraDefinition) -> str | None:

@@ -40,6 +40,9 @@ const THEMES = {
 
 let currentThemeId = "slate";
 
+const BRAND_TITLE_KEY = "dashboard_brand_title";
+const DEFAULT_BRAND_TITLE = "HomeOS";
+
 function applyTheme(id) {
   const t = THEMES[id] || THEMES.slate;
   currentThemeId = id;
@@ -87,8 +90,16 @@ function renderPalettePicker() {
 /* ── DOM refs ── */
 const apiStatus         = document.querySelector("#apiStatus");
 const statusDot         = document.querySelector("#statusDot");
-const weatherPill       = document.querySelector("#weatherPill");
+const logoText          = document.querySelector("#logoText");
+const headerWeather     = document.querySelector("#headerWeather");
+const weatherIcon       = document.querySelector("#weatherIcon");
 const weatherTemp       = document.querySelector("#weatherTemp");
+const weatherCondition  = document.querySelector("#weatherCondition");
+const weatherFeels      = document.querySelector("#weatherFeels");
+const weatherHumidity   = document.querySelector("#weatherHumidity");
+const weatherWind       = document.querySelector("#weatherWind");
+const weatherPressure   = document.querySelector("#weatherPressure");
+const weatherUv         = document.querySelector("#weatherUv");
 const deviceCount       = document.querySelector("#deviceCount");
 const onCount           = document.querySelector("#onCount");
 const cameraCount       = document.querySelector("#cameraCount");
@@ -96,7 +107,10 @@ const indoorTemp        = document.querySelector("#indoorTemp");
 const outdoorTemp       = document.querySelector("#outdoorTemp");
 const refreshButton     = document.querySelector("#refreshButton");
 const lightGrid         = document.querySelector("#lightGrid");
+const lightScenes       = document.querySelector("#lightScenes");
+const lightDragLock     = document.querySelector("#lightDragLock");
 const plugGrid          = document.querySelector("#plugGrid");
+const ambientGrid       = document.querySelector("#ambientGrid");
 const tuyaGrid          = document.querySelector("#tuyaGrid");
 const thermostatGrid    = document.querySelector("#thermostatGrid");
 const homeAssistantFrame = document.querySelector("#homeAssistantFrame");
@@ -105,6 +119,7 @@ const homeAssistantBack = document.querySelector("#homeAssistantBack");
 const cameraGrid        = document.querySelector("#cameraGrid");
 const lightCount        = document.querySelector("#lightCount");
 const plugCount         = document.querySelector("#plugCount");
+const ambientCount      = document.querySelector("#ambientCount");
 const tuyaCount         = document.querySelector("#tuyaCount");
 const thermostatCount   = document.querySelector("#thermostatCount");
 const haCount           = document.querySelector("#haCount");
@@ -115,6 +130,42 @@ const activityLog       = document.querySelector("#activityLog");
 const railButtons = Array.from(document.querySelectorAll(".room-item[data-view]"));
 const viewPanels  = Array.from(document.querySelectorAll(".view-panel[data-view-panel]"));
 
+function restoreBrandTitle() {
+  if (!logoText) return;
+  try {
+    const savedTitle = localStorage.getItem(BRAND_TITLE_KEY);
+    logoText.textContent = savedTitle && savedTitle.trim() ? savedTitle.trim() : DEFAULT_BRAND_TITLE;
+  } catch {
+    logoText.textContent = DEFAULT_BRAND_TITLE;
+  }
+}
+
+function saveBrandTitle() {
+  if (!logoText) return;
+  const nextTitle = logoText.textContent.trim() || DEFAULT_BRAND_TITLE;
+  logoText.textContent = nextTitle;
+  try { localStorage.setItem(BRAND_TITLE_KEY, nextTitle); } catch {}
+}
+
+if (logoText) {
+  restoreBrandTitle();
+  logoText.addEventListener("blur", saveBrandTitle);
+  logoText.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      logoText.blur();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      restoreBrandTitle();
+      logoText.blur();
+    }
+  });
+}
+
+const CAMERA_ORDER_KEY = "camera_order_v1";
+const DEVICE_ORDER_KEYS = { light_switch: "light_order_v1", smart_plug: "plug_order_v1" };
+const LIGHT_DRAG_UNLOCK_KEY = "light_drag_unlocked_v1";
 const activeCameraIds   = new Set();
 let latestCameras       = [];
 let latestTuyaDevices   = [];
@@ -122,6 +173,9 @@ let latestAlarmData     = null;
 let doorbellEventsReady = false;
 const latestCameraById  = new Map();
 const lastDoorbellEventById = new Map();
+let manualLightCommandRevision = 0;
+let activeLightSceneCount = 0;
+const manualLightOverrides = new Map();
 
 /* ── Live clock ── */
 function tick() {
@@ -256,6 +310,14 @@ function buildDial(level, on, locked = false) {
     </div>`;
 }
 
+function buildDimControlDial(brightness, isOn, dimmable) {
+  return [
+    dimmable ? '<button class="dim-step dim-plus" data-dim-step="10" type="button" aria-label="Increase brightness">+</button>' : "",
+    buildDial(brightness, isOn, !dimmable),
+    dimmable ? '<button class="dim-step dim-minus" data-dim-step="-10" type="button" aria-label="Decrease brightness">-</button>' : "",
+  ].join("");
+}
+
 /* ── Live dial update (brightness drag) ── */
 function updateDialLines(wrap, brightness, isOn) {
   const lines = wrap.querySelectorAll("line");
@@ -329,6 +391,21 @@ function attachDimDrag(card) {
   wrap.addEventListener("pointercancel", () => { dragging = false; pendingLevel = null; });
 }
 
+async function stepLightBrightness(card, delta) {
+  if (!card || card.dataset.dimmable !== "true" || card.dataset.dimLocked === "true") return;
+  const current = parseInt(card.dataset.brightness || "50", 10);
+  const next = Math.max(1, Math.min(100, current + delta));
+  const wrap = card.querySelector(".dial-wrap");
+  card.dataset.brightness = String(next);
+  updateDeviceCardSwitchState(card, true);
+  if (wrap) updateDialLines(wrap, next, true);
+  try {
+    await sendBrightness(card.dataset.host, next);
+  } catch (err) {
+    console.error("Brightness step failed:", err);
+  }
+}
+
 /* ── Lock state (persisted in localStorage) ── */
 function isDimLocked(host) {
   return localStorage.getItem(`dim-lock-${host}`) === "true";
@@ -338,12 +415,13 @@ function persistDimLock(host, locked) {
 }
 
 async function sendBrightness(host, level) {
-  const resp = await fetch(`/api/devices/${encodeURIComponent(host)}/brightness`, {
+  recordManualLightOverride(host, { type: "brightness", level });
+  const resp = await fetch("/api/devices/" + encodeURIComponent(host) + "/brightness", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ level }),
   });
-  if (!resp.ok) throw new Error(`Brightness set failed: ${resp.status}`);
+  if (resp.ok === false) throw new Error("Brightness set failed: " + resp.status);
   return resp.json();
 }
 
@@ -596,11 +674,146 @@ function renderDevices(devices, cameras) {
   plugCount.textContent      = String(plugDevices.length);
   cameraTabCount.textContent = String(cameras.length);
 
-  renderDeviceGroup(lightGrid, lightDevices, "No TP-Link light switches found. Run discovery on the Raspberry Pi first.");
+  renderLightScenes(lightDevices);
+  renderLightDragLock();
+  renderDeviceGroup(lightGrid, applyDeviceOrder(lightDevices, "light_switch"), "No TP-Link light switches found. Run discovery on the Raspberry Pi first.");
   renderPlugSection(plugDevices);
 }
 
+function isLightDragUnlocked() {
+  try { return localStorage.getItem(LIGHT_DRAG_UNLOCK_KEY) === "true"; } catch { return false; }
+}
+
+function setLightDragUnlocked(unlocked) {
+  try { localStorage.setItem(LIGHT_DRAG_UNLOCK_KEY, String(unlocked)); } catch {}
+}
+
+function renderLightDragLock() {
+  if (!lightDragLock) return;
+  const unlocked = isLightDragUnlocked();
+  lightDragLock.classList.toggle("locked", !unlocked);
+  lightDragLock.classList.toggle("unlocked", unlocked);
+  lightDragLock.setAttribute("aria-pressed", String(unlocked));
+  lightDragLock.title = unlocked ? "Lock light switch arrangement" : "Unlock light switch arrangement";
+  lightDragLock.innerHTML = unlocked
+    ? '<i class="ti ti-lock-open" aria-hidden="true"></i>'
+    : '<i class="ti ti-lock" aria-hidden="true"></i>';
+}
+
+function applyLightDragLockState() {
+  const unlocked = isLightDragUnlocked();
+  document.querySelectorAll('#lightGrid .device-card[data-category="light_switch"]').forEach((card) => {
+    card.draggable = unlocked;
+    card.dataset.dragLocked = unlocked ? "false" : "true";
+  });
+  renderLightDragLock();
+}
+
+function savedDeviceOrder(category) {
+  const key = DEVICE_ORDER_KEYS[category];
+  if (!key) return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function applyDeviceOrder(devices, category) {
+  const order = savedDeviceOrder(category);
+  if (order.length === 0) return devices;
+  const indexByHost = new Map(order.map((host, index) => [host, index]));
+  return [...devices].sort((a, b) => {
+    const aIndex = indexByHost.has(String(a.host)) ? indexByHost.get(String(a.host)) : Number.MAX_SAFE_INTEGER;
+    const bIndex = indexByHost.has(String(b.host)) ? indexByHost.get(String(b.host)) : Number.MAX_SAFE_INTEGER;
+    return aIndex - bIndex;
+  });
+}
+
+function saveDeviceOrderFromDom(grid, category) {
+  const key = DEVICE_ORDER_KEYS[category];
+  if (!grid || !key) return;
+  const order = Array.from(grid.querySelectorAll(".device-card[data-host]"))
+    .map((card) => card.dataset.host)
+    .filter(Boolean);
+  try { localStorage.setItem(key, JSON.stringify(order)); } catch {}
+}
+
+function deviceDragHandle(host) {
+  return `<button class="device-drag-handle" data-device-drag="${escapeHtml(host)}" type="button" title="Drag to reorder" aria-label="Drag to reorder device"><i class="ti ti-grip-vertical" aria-hidden="true"></i></button>`;
+}
+function renderLightScenes(lightDevices) {
+  if (!lightScenes) return;
+  const disabled = lightDevices.length === 0 ? " disabled" : "";
+  lightScenes.innerHTML = [
+    '<button class="scene-button all-on" data-light-scene="on" type="button"' + disabled + '>',
+    '<span class="scene-icon"><i class="ti ti-sun-filled" aria-hidden="true"></i></span>',
+    '<span class="scene-copy"><strong>All Lights On</strong><small>Wake every room</small></span>',
+    '<span class="scene-spark" aria-hidden="true"></span>',
+    '</button>',
+    '<button class="scene-button all-off" data-light-scene="off" type="button"' + disabled + '>',
+    '<span class="scene-icon"><i class="ti ti-moon-filled" aria-hidden="true"></i></span>',
+    '<span class="scene-copy"><strong>All Lights Off</strong><small>Settle the house</small></span>',
+    '<span class="scene-spark" aria-hidden="true"></span>',
+    '</button>'
+  ].join("");
+}
+async function loadAmbientLights() {
+  const payload = await requestJson("/api/ambient-lights");
+  renderAmbientLights(payload);
+  return payload;
+}
+
+function renderAmbientLights(payload) {
+  const lights = payload?.lights || [];
+  if (ambientCount) ambientCount.textContent = String(lights.length);
+  if (!ambientGrid) return;
+  if (lights.length === 0) {
+    ambientGrid.innerHTML = '<div class="empty">No ambient lights configured yet. Add Govee/Lepro entries to configs/devices.local.yaml.</div>';
+    return;
+  }
+  ambientGrid.innerHTML = lights.map(ambientLightCard).join("");
+}
+
+function ambientLightCard(light) {
+  const providerLabel = light.provider === "govee_ble" ? "Govee Bluetooth" : light.provider === "alexa" ? "Alexa bridge" : light.provider;
+  const statusClass = light.controllable ? "online" : "setup";
+  const powerLabel = light.is_on === true ? "On" : light.is_on === false ? "Off" : "Unknown";
+  const onActive = light.is_on === true ? " active" : "";
+  const offActive = light.is_on === false ? " active" : "";
+  const powerButtons = light.controllable
+    ? '<div class="ambient-actions"><button class="command primary' + onActive + '" data-ambient-command="on" data-ambient-id="' + escapeHtml(light.id) + '">On</button><button class="command' + offActive + '" data-ambient-command="off" data-ambient-id="' + escapeHtml(light.id) + '">Off</button></div>'
+    : '<div class="ambient-actions"><button class="command" disabled>Setup needed</button></div>';
+  const brightnessControl = light.controllable && light.capabilities?.brightness
+    ? '<div class="ambient-control-row"><i class="ti ti-sun"></i><input type="range" min="1" max="100" value="80" data-ambient-brightness data-ambient-id="' + escapeHtml(light.id) + '"><span>80%</span></div>'
+    : '';
+  const colorControl = light.controllable && light.capabilities?.color
+    ? '<div class="ambient-swatches"><button style="--swatch:#ff8040" data-ambient-color data-red="255" data-green="128" data-blue="64" data-ambient-id="' + escapeHtml(light.id) + '" title="Warm"></button><button style="--swatch:#ffffff" data-ambient-color data-red="255" data-green="255" data-blue="255" data-ambient-id="' + escapeHtml(light.id) + '" title="White"></button><button style="--swatch:#4da3ff" data-ambient-color data-red="77" data-green="163" data-blue="255" data-ambient-id="' + escapeHtml(light.id) + '" title="Cool"></button><button style="--swatch:#b15cff" data-ambient-color data-red="177" data-green="92" data-blue="255" data-ambient-id="' + escapeHtml(light.id) + '" title="Purple"></button></div>'
+    : '';
+  const discover = light.provider === "govee_ble" && !light.address
+    ? '<button class="command" data-ambient-discover="govee_ble"><i class="ti ti-bluetooth"></i> Discover</button>'
+    : "";
+  return [
+    '<article class="ambient-card ' + statusClass + '">',
+    '<div class="ambient-glow"></div>',
+    '<div class="ambient-top">',
+    '<div class="ambient-icon"><i class="ti ti-lamp-2"></i></div>',
+    '<div><h3>' + escapeHtml(light.name) + '</h3><p>' + escapeHtml(light.room || light.model || "Ambient") + '</p></div>',
+    '</div>',
+    '<div class="ambient-meta"><span>' + escapeHtml(providerLabel) + '</span><span>' + escapeHtml(light.model || "") + '</span></div>',
+    '<div class="ambient-status ' + statusClass + '">' + escapeHtml(light.controllable ? powerLabel : (light.status || "unknown")) + '</div>',
+    '<p class="ambient-note">' + escapeHtml(light.note || "") + '</p>',
+    powerButtons,
+    brightnessControl,
+    colorControl,
+    discover,
+    '</article>'
+  ].join("");
+}
+
 function renderPlugSection(devices) {
+  devices = applyDeviceOrder(devices, "smart_plug");
   const plugActionsEl = document.querySelector("#plugActions");
   if (plugActionsEl) {
     plugActionsEl.innerHTML = `
@@ -628,6 +841,7 @@ function renderPlugSection(devices) {
 
     return `
       <div class="device-card new-style ${isOn ? "on" : ""}"
+           draggable="true"
            data-host="${device.host}"
            data-category="${escapeHtml(device.category || "")}">
         <div class="device-top">
@@ -635,14 +849,17 @@ function renderPlugSection(devices) {
             <h3 class="device-name">${escapeHtml(device.name)}</h3>
             <p class="device-status">${escapeHtml(device.room || "")}</p>
           </div>
-          <button class="rocker ${isOn ? "on" : ""}"
-            data-command="${nextCmd}"
-            data-host="${device.host}"
-            type="button"
-            aria-pressed="${isOn}"
-            aria-label="${isOn ? "Turn off" : "Turn on"} ${escapeHtml(device.name)}">
-            <div class="rocker-pad"></div>
-          </button>
+          <div class="device-top-right">
+            ${deviceDragHandle(device.host)}
+            <button class="rocker ${isOn ? "on" : ""}"
+              data-command="${nextCmd}"
+              data-host="${device.host}"
+              type="button"
+              aria-pressed="${isOn}"
+              aria-label="${isOn ? "Turn off" : "Turn on"} ${escapeHtml(device.name)}">
+              <div class="rocker-pad"></div>
+            </button>
+          </div>
         </div>
         <div class="dial-center">
           ${buildPowerGauge(isOn, watts, maxWatts)}
@@ -657,7 +874,6 @@ function renderPlugSection(devices) {
       </div>`;
   }).join("");
 }
-
 function renderDeviceGroup(targetGrid, devices, emptyText) {
   if (devices.length === 0) {
     targetGrid.innerHTML = `<div class="empty">${emptyText}</div>`;
@@ -676,6 +892,8 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
 
     return `
       <div class="device-card new-style ${isOn ? "on" : ""}"
+           draggable="false"
+           data-drag-locked="true"
            data-host="${device.host}"
            data-category="${escapeHtml(device.category || "")}"
            data-dimmable="${dimmable}"
@@ -687,6 +905,7 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
             <p class="device-status">${escapeHtml(device.room || "")}</p>
           </div>
           <div class="device-top-right">
+            ${deviceDragHandle(device.host)}
             ${dimmable ? `
               <button class="dim-lock-btn ${dimLocked ? "locked" : ""}"
                 data-dim-lock="${escapeHtml(device.host)}"
@@ -704,8 +923,8 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
             </button>
           </div>
         </div>
-        <div class="dial-center">
-          ${buildDial(brightness, isOn, !dimmable)}
+        <div class="dial-center dim-control-row">
+          ${buildDimControlDial(brightness, isOn, dimmable)}
         </div>
         <div class="device-footer">
           <span>${plug ? "TODAY" : (dimmable ? "DIM" : "FIXED")}</span>
@@ -719,6 +938,7 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
 
   // Attach brightness drag to all dimmable cards
   targetGrid.querySelectorAll(".device-card[data-dimmable='true']").forEach(attachDimDrag);
+  applyLightDragLockState();
 }
 
 /* ── Capability count for N-IN-1 badge ── */
@@ -1405,7 +1625,7 @@ function homeAssistantUrl() {
 }
 
 /* ── Weather ── */
-function weatherPillIcon(code) {
+function weatherHeaderIcon(code) {
   const num = Number(code);
   if ([0, 1].includes(num)) return "ti-sun";
   if ([2, 3, 45, 48].includes(num)) return "ti-cloud";
@@ -1413,66 +1633,47 @@ function weatherPillIcon(code) {
   return "ti-cloud";
 }
 
+function setHeaderWeatherUnavailable(message) {
+  if (headerWeather) headerWeather.title = message || "Weather is not configured yet.";
+  if (weatherIcon) weatherIcon.className = "ti ti-cloud";
+  if (weatherTemp) weatherTemp.textContent = "--°C";
+  if (weatherCondition) weatherCondition.textContent = "Weather unavailable";
+  if (weatherFeels) weatherFeels.textContent = "--°C";
+  if (weatherHumidity) weatherHumidity.textContent = "--%";
+  if (weatherWind) weatherWind.textContent = "--";
+  if (weatherPressure) weatherPressure.textContent = "--";
+  if (weatherUv) weatherUv.textContent = "--";
+  if (outdoorTemp) outdoorTemp.textContent = "--";
+}
+
 function renderWeather(weather) {
   if (!weather || weather.status !== "ok") {
-    if (weatherTemp) weatherTemp.textContent = "--°C";
-    if (weatherPill) weatherPill.innerHTML = '<i class="ti ti-cloud" aria-hidden="true"></i><span id="weatherTemp">--°C</span>';
-    if (outdoorTemp) outdoorTemp.textContent = "--";
-    weatherGrid.innerHTML = `<div class="empty">${weather?.message || "Weather is not configured yet."}</div>`;
+    setHeaderWeatherUnavailable(weather?.message);
     return;
   }
 
-  const tempDisplay = `${roundMetric(weather.temperature)}${unitSymbol(weather.temperature_unit)}`;
+  const tempUnit = unitSymbol(weather.temperature_unit);
+  const tempDisplay = String(roundMetric(weather.temperature)) + tempUnit;
+  const feelsDisplay = String(roundMetric(weather.feels_like)) + tempUnit;
+  const humidityDisplay = String(roundMetric(weather.humidity)) + "%";
+  const windDisplay = (String(roundMetric(weather.wind_speed)) + " " + (weather.wind_unit || "")).trim();
+  const pressureDisplay = String(roundMetric(weather.pressure)) + (weather.pressure_unit || "");
+  const uvDisplay = String(roundMetric(weather.uv_index));
+  const icon = weatherHeaderIcon(weather.weather_code);
+
+  if (headerWeather) headerWeather.title = (weather.condition || "Outdoor") + " · feels like " + feelsDisplay;
+  if (weatherIcon) weatherIcon.className = "ti " + icon;
   if (weatherTemp) weatherTemp.textContent = tempDisplay;
+  if (weatherCondition) weatherCondition.textContent = weather.condition || "Outdoor";
+  if (weatherFeels) weatherFeels.textContent = feelsDisplay;
+  if (weatherHumidity) weatherHumidity.textContent = humidityDisplay;
+  if (weatherWind) weatherWind.textContent = windDisplay;
+  if (weatherPressure) weatherPressure.textContent = pressureDisplay;
+  if (weatherUv) weatherUv.textContent = uvDisplay;
   if (outdoorTemp) outdoorTemp.textContent = tempDisplay;
+
   const conditionEl = document.querySelector("#statCondition");
   if (conditionEl) conditionEl.textContent = weather.condition || "Outdoor";
-
-  if (weatherPill) {
-    const icon = weatherPillIcon(weather.weather_code);
-    weatherPill.innerHTML = `<i class="ti ${icon}" aria-hidden="true"></i><span id="weatherTemp">${tempDisplay}</span>`;
-  }
-
-  weatherGrid.innerHTML = `
-    <article class="weather-card">
-      <div class="weather-main">
-        <div>
-          <h3>${roundMetric(weather.temperature)}${unitSymbol(weather.temperature_unit)}</h3>
-          <p>Feels like: <strong>${roundMetric(weather.feels_like)}${unitSymbol(weather.temperature_unit)}</strong></p>
-        </div>
-        <div class="weather-sun-times">
-          <span>↑ Sunrise <strong>${formatWeatherTime(weather.sunrise)}</strong></span>
-          <span>↓ Sunset <strong>${formatWeatherTime(weather.sunset)}</strong></span>
-        </div>
-      </div>
-      <div class="weather-visual">
-        <div class="${weatherIconClass(weather.weather_code)}"></div>
-        <strong>${escapeHtml(weather.condition)}</strong>
-      </div>
-      <div class="weather-details">
-        <div>
-          <span class="weather-mini-icon">≋</span>
-          <strong>${roundMetric(weather.humidity)}%</strong>
-          <small>Humidity</small>
-        </div>
-        <div>
-          <span class="weather-mini-icon">≋</span>
-          <strong>${roundMetric(weather.wind_speed)} ${escapeHtml(weather.wind_unit)}</strong>
-          <small>Wind</small>
-        </div>
-        <div>
-          <span class="weather-mini-icon">◎</span>
-          <strong>${roundMetric(weather.pressure)}${escapeHtml(weather.pressure_unit || "")}</strong>
-          <small>Pressure</small>
-        </div>
-        <div>
-          <span class="weather-mini-icon">⬡</span>
-          <strong>${roundMetric(weather.uv_index)}</strong>
-          <small>UV</small>
-        </div>
-      </div>
-    </article>
-  `;
 }
 
 function formatWeatherTime(value) {
@@ -1728,7 +1929,7 @@ function stopLiveTimer(cameraId) {
 /* ── Camera rendering ── */
 function renderCameras(cameras, tuyaDevices = []) {
   const tuyaCameras = tuyaDevices.filter(isTuyaCamera).map(tuyaCameraCard);
-  const allCameras  = [...cameras, ...tuyaCameras];
+  const allCameras  = applyCameraOrder([...cameras, ...tuyaCameras]);
   latestCameraById.clear();
   allCameras.forEach((camera) => latestCameraById.set(cameraIdFor(camera), camera));
   cameraCount.textContent    = String(allCameras.length);
@@ -1751,7 +1952,7 @@ function renderCameras(cameras, tuyaDevices = []) {
       if (!card) return;
       if (!activeCameraIds.has(cameraId)) {
         const frame = card.querySelector(".camera-frame");
-        if (frame) frame.innerHTML = cameraMedia(camera);
+        if (frame) frame.innerHTML = cameraMedia(camera) + cameraBatteryBadge(camera);
       }
       const action = card.querySelector(".camera-action");
       if (action) action.innerHTML = cameraAction(camera);
@@ -1761,11 +1962,43 @@ function renderCameras(cameras, tuyaDevices = []) {
   }
 }
 
+function savedCameraOrder() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CAMERA_ORDER_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function applyCameraOrder(cameras) {
+  const order = savedCameraOrder();
+  if (order.length === 0) return cameras;
+  const indexById = new Map(order.map((id, index) => [id, index]));
+  return [...cameras].sort((a, b) => {
+    const aIndex = indexById.has(cameraIdFor(a)) ? indexById.get(cameraIdFor(a)) : Number.MAX_SAFE_INTEGER;
+    const bIndex = indexById.has(cameraIdFor(b)) ? indexById.get(cameraIdFor(b)) : Number.MAX_SAFE_INTEGER;
+    return aIndex - bIndex;
+  });
+}
+
+function saveCameraOrderFromDom() {
+  if (!cameraGrid) return;
+  const order = Array.from(cameraGrid.querySelectorAll(".camera-card[data-camera-id]"))
+    .map((card) => card.dataset.cameraId)
+    .filter(Boolean);
+  try { localStorage.setItem(CAMERA_ORDER_KEY, JSON.stringify(order)); } catch {}
+}
+
+function cameraDragHandle(cameraId) {
+  return `<button class="camera-drag-handle" data-camera-drag="${escapeHtml(cameraId)}" type="button" title="Drag to reorder" aria-label="Drag to reorder camera"><i class="ti ti-grip-vertical" aria-hidden="true"></i></button>`;
+}
+
 function cameraCardHtml(camera) {
   const cameraId = cameraIdFor(camera);
   return `
-    <article class="camera-card" data-camera-id="${escapeHtml(cameraId)}">
-      <div class="camera-frame">${cameraMedia(camera)}</div>
+    <article class="camera-card" data-camera-id="${escapeHtml(cameraId)}" draggable="true">
+      <div class="camera-frame">${cameraMedia(camera)}${cameraBatteryBadge(camera)}</div>
       <div class="camera-info">
         <div class="camera-copy">
           ${cameraTitle(camera)}
@@ -1784,6 +2017,7 @@ function cameraTitle(camera) {
   return `
     <div class="camera-title-row">
       <h3>${escapeHtml(camera.name)}</h3>
+      ${cameraDragHandle(cameraId)}
       <button class="camera-edit-button" data-camera-edit="${escapeHtml(cameraId)}" type="button" title="Edit camera name">Edit</button>
     </div>
   `;
@@ -1802,6 +2036,15 @@ function cameraTitleEditor(camera) {
   `;
 }
 
+function cameraBatteryBadge(camera) {
+  const hasBatteryValue = camera.battery !== null && camera.battery !== undefined && camera.battery !== "";
+  if (!hasBatteryValue && !camera.battery_powered) return "";
+  const battery = hasBatteryValue ? Math.max(0, Math.min(100, Number(camera.battery))) : null;
+  const low = battery !== null && battery < 20;
+  const label = battery === null || Number.isNaN(battery) ? "Battery" : `${Math.round(battery)}%`;
+  const icon = low ? "ti-battery-1" : battery === null ? "ti-battery" : battery < 50 ? "ti-battery-2" : "ti-battery-4";
+  return `<div class="camera-battery-badge ${low ? "low" : ""}" title="Battery powered camera"><i class="ti ${icon}" aria-hidden="true"></i><span>${label}</span></div>`;
+}
 function cameraIdFor(camera) {
   return camera.id || camera.host || camera.name;
 }
@@ -1816,8 +2059,9 @@ function cameraMedia(camera) {
     if (liveType === "webrtc") {
       return `<iframe class="camera-media camera-player" src="${liveUrl}" title="${camera.name} live WebRTC view" allow="autoplay; fullscreen; microphone"></iframe>`;
     }
-    if (liveType === "snapshot" || liveType === "mjpeg") {
-      return `<img class="camera-media" src="${liveUrl}" alt="${camera.name} live view" />`;
+    if (liveType === "snapshot" || liveType === "mjpeg" || liveType === "doorbell") {
+      const separator = liveUrl.includes("?") ? "&" : "?";
+      return `<img class="camera-media" src="${liveUrl}${separator}ts=${Date.now()}" alt="${escapeHtml(camera.name)} live view" />`;
     }
     return `<video class="camera-media" src="${liveUrl}" controls muted playsinline></video>`;
   }
@@ -2179,11 +2423,11 @@ async function loadDevices() {
 }
 
 /* ── Send commands ── */
-async function sendCommand(host, command) {
+async function sendCommand(host, command, options = {}) {
   apiStatus.textContent = "Sending";
-  await requestJson(`/api/devices/${host}/commands/${command}`, { method: "POST" });
-  logActivity(`Switch ${host.split(".").pop()} turned ${command}`);
-  await loadDevices();
+  await requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
+  logActivity("Switch " + host.split(".").pop() + " turned " + command);
+  if (options.skipRefresh !== true) await loadDevices();
 }
 
 async function sendTuyaCommand(deviceId, command) {
@@ -2246,10 +2490,10 @@ function updateCardDial(card, isNowOn) {
   if (dialCenter) {
     const isPlug   = card.dataset.category === "smart_plug";
     const locked   = card.dataset.dimmable === "false";
-    const brightness = parseInt(card.dataset.brightness, 10) || (isNowOn ? 100 : 10);
+    const brightness = locked ? 100 : (parseInt(card.dataset.brightness, 10) || (isNowOn ? 100 : 10));
     dialCenter.innerHTML = isPlug
       ? buildPowerGauge(isNowOn, 0, 1500)
-      : buildDial(brightness, isNowOn, locked);
+      : buildDimControlDial(brightness, isNowOn, !locked);
     if (!isPlug && !locked) attachDimDrag(card);
   }
   // Update the ON/OFF label (middle span[1] for lights, last span for plugs)
@@ -2265,6 +2509,66 @@ function updateCardDial(card, isNowOn) {
   }
 }
 
+function recordManualLightOverride(host, override) {
+  if (host === undefined || host === null || String(host) === "") return null;
+  manualLightCommandRevision += 1;
+  const entry = { ...override, host: String(host), revision: manualLightCommandRevision };
+  manualLightOverrides.set(String(host), entry);
+  return entry;
+}
+
+function markManualLightCommand(card, command) {
+  if (card?.dataset?.category === "light_switch") {
+    recordManualLightOverride(card.dataset.host, { type: "command", command });
+  }
+}
+
+function manualOverridesSince(sceneHosts, sceneStartRevision) {
+  return Array.from(manualLightOverrides.values()).filter((override) =>
+    sceneHosts.has(override.host) && override.revision > sceneStartRevision
+  );
+}
+
+async function reapplyManualLightOverrides(sceneHosts, sceneStartRevision) {
+  const overrides = manualOverridesSince(sceneHosts, sceneStartRevision);
+  if (overrides.length === 0) return false;
+  await Promise.allSettled(overrides.map((override) => {
+    if (override.type === "brightness") {
+      return requestJson("/api/devices/" + encodeURIComponent(override.host) + "/brightness", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ level: override.level }),
+      });
+    }
+    return requestJson("/api/devices/" + override.host + "/commands/" + override.command, { method: "POST" });
+  }));
+  logActivity("Light scene: manual override restored");
+  return true;
+}
+
+function updateDeviceCardSwitchState(card, isNowOn) {
+  if (!card) return;
+  const button = card.querySelector("button[data-command]");
+  card.classList.toggle("on", isNowOn);
+  if (button) {
+    button.classList.toggle("on", isNowOn);
+    button.dataset.command = isNowOn ? "off" : "on";
+    button.setAttribute("aria-pressed", String(isNowOn));
+  }
+  const statusEl = card.querySelector(".device-status");
+  if (statusEl && !card.classList.contains("new-style")) {
+    const parts = statusEl.textContent.split(" · ");
+    const room  = parts.slice(1).join(" · ");
+    statusEl.textContent = (isNowOn ? "On" : "Off") + (room ? " · " + room : "");
+  }
+  updateCardDial(card, isNowOn);
+}
+
+function applyLightSceneOptimistic(lightCards, command) {
+  const isNowOn = command === "on";
+  lightCards.forEach((card) => updateDeviceCardSwitchState(card, isNowOn));
+}
+
 /* ── Event delegation ── */
 
 /* Optimistic toggle — update UI immediately, revert on API error */
@@ -2276,33 +2580,12 @@ document.addEventListener("click", (event) => {
   const card    = button.closest(".device-card");
   const isNowOn = command === "on";
 
-  if (card) {
-    card.classList.toggle("on", isNowOn);
-    button.classList.toggle("on", isNowOn);
-    button.dataset.command = isNowOn ? "off" : "on";
-    const statusEl = card.querySelector(".device-status");
-    if (statusEl && !card.classList.contains("new-style")) {
-      const parts = statusEl.textContent.split(" · ");
-      const room  = parts.slice(1).join(" · ");
-      statusEl.textContent = `${isNowOn ? "On" : "Off"}${room ? " · " + room : ""}`;
-    }
-    updateCardDial(card, isNowOn);
-  }
+  markManualLightCommand(card, command);
+  updateDeviceCardSwitchState(card, isNowOn);
 
-  sendCommand(host, command).catch((error) => {
+  sendCommand(host, command, { skipRefresh: activeLightSceneCount > 0 && card?.dataset?.category === "light_switch" }).catch((error) => {
     /* Revert optimistic update on failure */
-    if (card) {
-      card.classList.toggle("on", !isNowOn);
-      button.classList.toggle("on", !isNowOn);
-      button.dataset.command = command;
-      const statusEl = card.querySelector(".device-status");
-      if (statusEl && !card.classList.contains("new-style")) {
-        const parts = statusEl.textContent.split(" · ");
-        const room  = parts.slice(1).join(" · ");
-        statusEl.textContent = `${!isNowOn ? "On" : "Off"}${room ? " · " + room : ""}`;
-      }
-      updateCardDial(card, !isNowOn);
-    }
+    updateDeviceCardSwitchState(card, !isNowOn);
     apiStatus.textContent = "Error";
     logActivity("Error toggling device", "error");
     console.error(error);
@@ -2376,6 +2659,18 @@ document.addEventListener("click", (event) => {
   refreshThermoDial(id);
 });
 
+/* ── Dim +/- buttons ── */
+document.addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-dim-step]");
+  if (!btn) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const card = btn.closest(".device-card");
+  const delta = Number(btn.dataset.dimStep);
+  if (!Number.isFinite(delta)) return;
+  stepLightBrightness(card, delta);
+});
+
 /* ── Dim lock toggle ── */
 document.addEventListener("click", (event) => {
   const btn = event.target.closest("button[data-dim-lock]");
@@ -2408,7 +2703,7 @@ document.addEventListener("click", (event) => {
     activeCameraIds.add(cameraId);
   }
   const card = button.closest(".camera-card");
-  card.querySelector(".camera-frame").innerHTML  = cameraMedia(camera);
+  card.querySelector(".camera-frame").innerHTML  = cameraMedia(camera) + cameraBatteryBadge(camera);
   card.querySelector(".camera-action").innerHTML = cameraAction(camera);
 });
 
@@ -2454,6 +2749,82 @@ document.addEventListener("submit", (event) => {
     });
 });
 
+
+
+/* ── Light and plug drag ordering ── */
+document.addEventListener("dragstart", (event) => {
+  const card = event.target.closest(".device-card[data-host]");
+  if (!card) return;
+  if (card.dataset.category === "light_switch" && !isLightDragUnlocked()) {
+    event.preventDefault();
+    return;
+  }
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", card.dataset.host || "");
+  card.classList.add("dragging");
+});
+
+document.addEventListener("dragend", (event) => {
+  const card = event.target.closest(".device-card[data-host]");
+  if (!card) return;
+  const grid = card.closest("#lightGrid, #plugGrid");
+  card.classList.remove("dragging");
+  const category = grid?.id === "plugGrid" ? "smart_plug" : grid?.id === "lightGrid" ? "light_switch" : null;
+  if (grid && category) saveDeviceOrderFromDom(grid, category); // dragend persistence
+});
+
+document.addEventListener("dragover", (event) => {
+  const target = event.target.closest(".device-card[data-host]");
+  const grid = target?.closest("#lightGrid, #plugGrid");
+  const dragging = grid?.querySelector(".device-card.dragging");
+  if (!target || !grid || !dragging || target === dragging) return;
+  event.preventDefault();
+  const rect = target.getBoundingClientRect();
+  const insertAfter = event.clientY > rect.top + rect.height / 2;
+  grid.insertBefore(dragging, insertAfter ? target.nextSibling : target);
+});
+
+document.addEventListener("drop", (event) => {
+  const target = event.target.closest(".device-card[data-host]");
+  const grid = target?.closest("#lightGrid, #plugGrid");
+  if (!target || !grid) return;
+  event.preventDefault();
+  saveDeviceOrderFromDom(grid, grid.id === "plugGrid" ? "smart_plug" : "light_switch");
+  logActivity(grid.id === "plugGrid" ? "Plug order saved" : "Light order saved");
+});
+/* ── Camera drag ordering ── */
+document.addEventListener("dragstart", (event) => {
+  const card = event.target.closest(".camera-card[data-camera-id]");
+  if (!card) return;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", card.dataset.cameraId || "");
+  card.classList.add("dragging");
+});
+
+document.addEventListener("dragend", (event) => {
+  const card = event.target.closest(".camera-card[data-camera-id]");
+  if (!card) return;
+  card.classList.remove("dragging");
+  saveCameraOrderFromDom(); // dragend persistence
+});
+
+document.addEventListener("dragover", (event) => {
+  const target = event.target.closest(".camera-card[data-camera-id]");
+  const dragging = cameraGrid?.querySelector(".camera-card.dragging");
+  if (!target || !dragging || target === dragging) return;
+  event.preventDefault();
+  const rect = target.getBoundingClientRect();
+  const insertAfter = event.clientY > rect.top + rect.height / 2;
+  cameraGrid.insertBefore(dragging, insertAfter ? target.nextSibling : target);
+});
+
+document.addEventListener("drop", (event) => {
+  const target = event.target.closest(".camera-card[data-camera-id]");
+  if (!target) return;
+  event.preventDefault();
+  saveCameraOrderFromDom();
+  logActivity("Camera order saved");
+});
 /* Palette picker */
 document.addEventListener("click", (event) => {
   const btn = event.target.closest("button[data-theme-id]");
@@ -2469,6 +2840,14 @@ railButtons.forEach((btn) => {
   btn.addEventListener("click", () => activateView(btn.dataset.view));
 });
 
+/* Light drag lock */
+if (lightDragLock) {
+  lightDragLock.addEventListener("click", () => {
+    setLightDragUnlocked(!isLightDragUnlocked());
+    applyLightDragLockState();
+  });
+}
+
 /* Refresh button */
 refreshButton.addEventListener("click", () => {
   loadDevices().catch((error) => {
@@ -2482,6 +2861,80 @@ refreshButton.addEventListener("click", () => {
 if (homeAssistantBack) {
   homeAssistantBack.addEventListener("click", () => activateView("lights"));
 }
+
+/* ── Light scenes ── */
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-light-scene]");
+  if (!btn) return;
+  const command = btn.dataset.lightScene;
+  const lightCards = Array.from(document.querySelectorAll('.device-card[data-category="light_switch"]'));
+  if (lightCards.length === 0) return;
+  const sceneStartRevision = manualLightCommandRevision;
+  const sceneHosts = new Set(lightCards.map((card) => String(card.dataset.host || "")).filter((host) => host !== ""));
+  btn.disabled = true;
+  activeLightSceneCount += 1;
+  apiStatus.textContent = "Running scene";
+  applyLightSceneOptimistic(lightCards, command);
+  try {
+    await Promise.allSettled(
+      lightCards.map((card) => {
+        const host = card.dataset.host;
+        if (host === undefined || host === null || String(host) === "") return Promise.resolve();
+        return requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
+      })
+    );
+    logActivity(command === "on" ? "Light scene: all on" : "Light scene: all off");
+    await reapplyManualLightOverrides(sceneHosts, sceneStartRevision);
+    await loadDevices().catch(console.error);
+  } finally {
+    activeLightSceneCount = Math.max(0, activeLightSceneCount - 1);
+    btn.disabled = false;
+  }
+});
+
+/* ── Ambient light actions ── */
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-ambient-command]");
+  if (!btn) return;
+  const lightId = btn.dataset.ambientId;
+  const command = btn.dataset.ambientCommand;
+  const card = btn.closest(".ambient-card");
+  const buttons = card ? [...card.querySelectorAll("button[data-ambient-command]")] : [btn];
+  const status = card?.querySelector(".ambient-status");
+  buttons.forEach((item) => { item.disabled = true; item.classList.remove("active"); });
+  btn.classList.add("active");
+  if (status) status.textContent = command === "on" ? "Turning on..." : "Turning off...";
+  apiStatus.textContent = "Sending";
+  try {
+    await requestJson("/api/ambient-lights/" + encodeURIComponent(lightId) + "/commands/" + command, { method: "POST" });
+    await loadAmbientLights();
+    apiStatus.textContent = "Online";
+    logActivity("Ambient light turned " + command);
+  } catch (error) {
+    buttons.forEach((item) => { item.disabled = false; });
+    if (status) status.textContent = "Command failed";
+    apiStatus.textContent = "Error";
+    logActivity("Ambient command unavailable", "warn");
+    console.error(error);
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-ambient-discover]");
+  if (!btn) return;
+  apiStatus.textContent = "Scanning BLE";
+  requestJson("/api/ambient-lights/govee-ble/discover")
+    .then((payload) => {
+      const count = (payload.devices || []).length;
+      logActivity(count ? "Govee BLE devices found: " + count : "No Govee BLE devices found", count ? "normal" : "warn");
+      apiStatus.textContent = "Online";
+    })
+    .catch((error) => {
+      apiStatus.textContent = "Error";
+      logActivity("Govee BLE discovery unavailable", "error");
+      console.error(error);
+    });
+});
 
 /* ── All On / All Off (Plugs) ── */
 document.addEventListener("click", async (event) => {

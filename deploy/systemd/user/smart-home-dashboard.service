@@ -1,0 +1,16 @@
+[Unit]
+Description=Smart Home Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smarthome/smart-home-rpi4
+Environment=HOST=0.0.0.0
+Environment=PORT=8000
+ExecStart=/home/smarthome/smart-home-rpi4/scripts/run-dashboard.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

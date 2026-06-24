@@ -126,3 +126,32 @@ http://localhost:8000
 - Do not commit passwords, tokens, camera credentials, or home Wi-Fi details.
 - Keep camera access restricted to trusted local network devices.
 - Use a separate IoT VLAN or guest network if your router supports it.
+
+
+### Ambient light configuration
+
+Govee Bluetooth strips need a BLE address discovered from the Raspberry Pi:
+
+    python scripts/discover-govee-ble.py
+
+Then add entries like this to configs/devices.local.yaml:
+
+    ambient_lights:
+      devices:
+        - name: Govee H613A Strip
+          provider: govee_ble
+          model: H613A
+          room: Living Room
+          address: AA:BB:CC:DD:EE:FF
+        - name: Govee H6054 Light
+          provider: govee_ble
+          model: H6054
+          room: Bedroom
+          address: AA:BB:CC:DD:EE:00
+        - name: Lepro S1 AI LED
+          provider: alexa
+          model: Lepro S1 AI LED
+          room: Studio
+          alexa_name: Lepro S1 AI LED
+
+Lepro S1 AI LED is shown in the Ambient view as Alexa-bridge required until an Alexa routine or bridge command path is configured.

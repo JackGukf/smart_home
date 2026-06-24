@@ -119,6 +119,26 @@ tuya:
       model: Smart Plug
       power_dp: "1"
 
+ambient_lights:
+  devices:
+    - name: Govee H613A Strip
+      provider: govee_ble
+      model: H613A
+      room: Living Room
+      # Run scripts/discover-govee-ble.py on the Raspberry Pi and paste the BLE address here.
+      address: replace_me
+    - name: Govee H6054 Light
+      provider: govee_ble
+      model: H6054
+      room: Bedroom
+      address: replace_me
+    - name: Lepro S1 AI LED
+      provider: alexa
+      model: Lepro S1 AI LED
+      room: Studio
+      alexa_name: Lepro S1 AI LED
+
+
 mqtt:
   broker_host: 127.0.0.1
   broker_port: 1883

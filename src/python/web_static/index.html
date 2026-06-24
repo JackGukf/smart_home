@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=20260622-doorbell-view">
+  <link rel="stylesheet" href="/static/styles.css?v=20260623-hide-ambient">
 </head>
 <body>
 
@@ -16,20 +16,31 @@
   <div class="logo">
     <div class="logo-icon"><i class="ti ti-home-2"></i></div>
     <div>
-      <div class="logo-text">HomeOS</div>
+      <div class="logo-text" id="logoText" contenteditable="true" spellcheck="false" title="Click to edit dashboard title">HomeOS</div>
       <div class="logo-sub">Raspberry Pi 4 · Local Network</div>
     </div>
   </div>
   <div class="header-right">
-    <div class="weather-pill" id="weatherPill">
-      <i class="ti ti-cloud"></i>
-      <span id="weatherTemp">–°C</span>
+    <div class="header-weather" id="headerWeather">
+      <div class="header-weather-main">
+        <i class="ti ti-cloud" id="weatherIcon" aria-hidden="true"></i>
+        <div>
+          <span id="weatherTemp">--°C</span>
+          <small id="weatherCondition">Weather</small>
+        </div>
+      </div>
+      <div class="header-weather-metrics">
+        <span title="Feels like"><i class="ti ti-temperature"></i><strong id="weatherFeels">--°C</strong></span>
+        <span title="Humidity"><i class="ti ti-droplet"></i><strong id="weatherHumidity">--%</strong></span>
+        <span title="Wind"><i class="ti ti-wind"></i><strong id="weatherWind">--</strong></span>
+        <span title="Pressure"><i class="ti ti-gauge"></i><strong id="weatherPressure">--</strong></span>
+        <span title="UV index"><i class="ti ti-sun-high"></i><strong id="weatherUv">--</strong></span>
+      </div>
     </div>
     <div class="time-block">
       <div class="time" id="clock">--:--:--</div>
       <div class="date" id="dateDisplay">Loading…</div>
     </div>
-    <div id="palettePicker" class="palette-picker"></div>
     <div class="status-dot" id="statusDot" title="Connecting…"></div>
   </div>
 </header>
@@ -51,6 +62,7 @@
         Plugs
         <span class="room-badge" id="plugCount">–</span>
       </li>
+
       <li class="room-item" data-view="tuya">
         <span class="room-icon"><i class="ti ti-radar-2"></i></span>
         Sensors
@@ -76,10 +88,18 @@
         Alarm
         <span class="room-badge" id="alarmBadge">–</span>
       </li>
+      <li class="room-item" data-view="status">
+        <span class="room-icon"><i class="ti ti-dashboard"></i></span>
+        Status
+      </li>
     </ul>
 
     <div class="sidebar-section">System</div>
     <ul class="room-list">
+      <li class="room-item" data-view="theme">
+        <span class="room-icon"><i class="ti ti-palette"></i></span>
+        Theme
+      </li>
       <li class="room-item" id="refreshButton">
         <span class="room-icon"><i class="ti ti-refresh"></i></span>
         Refresh
@@ -97,8 +117,15 @@
     <!-- NOTIFICATION BANNERS -->
     <div id="notifArea" class="notif-area" aria-live="polite"></div>
 
-    <!-- STAT ROW -->
-    <div class="stat-row">
+    <!-- ── STATUS VIEW ── -->
+    <div class="view-panel" data-view-panel="status">
+      <div class="section-header">
+        <span class="section-title">Status</span>
+        <span class="section-meta">Home overview</span>
+      </div>
+
+      <!-- STAT ROW -->
+      <div class="stat-row">
       <div class="stat-card">
         <div class="stat-icon"><i class="ti ti-thermometer"></i></div>
         <div class="stat-label">Indoor Temp</div>
@@ -123,18 +150,26 @@
         <div class="stat-value mono" id="cameraCount">–</div>
         <div class="stat-trend">Live feeds</div>
       </div>
+      </div>
     </div>
 
     <!-- ── LIGHTS VIEW ── -->
     <div class="view-panel active" data-view-panel="lights">
       <div class="section-header">
         <span class="section-title">Light Switches</span>
-        <span class="section-meta">TP-Link · local control</span>
+        <div class="section-actions">
+          <span class="section-meta">TP-Link · local control</span>
+          <button class="light-drag-lock locked" id="lightDragLock" type="button" aria-pressed="false" title="Unlock light switch arrangement">
+            <i class="ti ti-lock" aria-hidden="true"></i>
+          </button>
+        </div>
       </div>
+      <div class="light-scene-row" id="lightScenes"></div>
       <div class="device-grid" id="lightGrid">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
       </div>
     </div>
+
 
     <!-- ── PLUGS VIEW ── -->
     <div class="view-panel" data-view-panel="plugs">
@@ -210,6 +245,17 @@
       </div>
     </div>
 
+    <!-- ── THEME VIEW ── -->
+    <div class="view-panel" data-view-panel="theme">
+      <div class="section-header">
+        <span class="section-title">Theme</span>
+        <span class="section-meta">Dashboard appearance</span>
+      </div>
+      <div class="theme-panel">
+        <div id="palettePicker" class="palette-picker theme-palette"></div>
+      </div>
+    </div>
+
     <!-- ── BOTTOM ROW ── -->
     <div class="bottom-row">
       <div class="panel">
@@ -222,18 +268,11 @@
           </div>
         </div>
       </div>
-
-      <div class="panel">
-        <div class="panel-title"><i class="ti ti-cloud"></i> Weather</div>
-        <div class="weather-grid" id="weatherGrid">
-          <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading weather…</div>
-        </div>
-      </div>
     </div>
 
   </div><!-- /content -->
 </main>
 
-<script src="/static/app.js?v=20260622-doorbell-view"></script>
+<script src="/static/app.js?v=20260623-hide-ambient"></script>
 </body>
 </html>

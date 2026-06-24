@@ -12,3 +12,4 @@ fastapi
 uvicorn
 httpx2
 tzdata
+bleak

@@ -2,8 +2,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from src.python import web_app as web_app_module
 from src.python.tplink_switch import SwitchState
-from src.python.web_app import TuyaDefinition, _rtsp_url_from_config, _tuya_card, _tuya_direct_sensor_supplements, create_app
+from src.python.web_app import TuyaDefinition, _govee_ble_command_bytes, _rtsp_url_from_config, _tuya_card, _tuya_direct_sensor_supplements, create_app
 
 
 class FakeController:
@@ -1185,3 +1186,165 @@ def test_direct_tuya_sensor_supplements_keep_combined_sensor_values() -> None:
     supplements = _tuya_direct_sensor_supplements(cards)
 
     assert supplements == [cards[0]]
+
+
+def _write_ambient_config(path: Path) -> None:
+    path.write_text(
+        """
+ambient_lights:
+  devices:
+    - name: Govee strip H613A
+      provider: govee_ble
+      model: H613A
+      room: Living Room
+      address: AA:BB:CC:DD:EE:FF
+    - name: Govee lamp H6054
+      provider: govee_ble
+      model: H6054
+      room: Bedroom
+    - name: Lepro S1 AI LED
+      provider: alexa
+      model: Lepro S1 AI LED
+      room: Studio
+      alexa_name: Lepro S1 AI LED
+""",
+        encoding="utf-8",
+    )
+
+
+def test_ambient_lights_endpoint_returns_configured_devices(tmp_path: Path) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_config(config)
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+    payload = client.get("/api/ambient-lights").json()
+
+    assert payload["lights"][0]["provider"] == "govee_ble"
+    assert payload["lights"][0]["status"] == "configured"
+    assert payload["lights"][1]["status"] == "needs_ble_address"
+    assert payload["lights"][2]["provider"] == "alexa"
+    assert payload["lights"][2]["status"] == "needs_alexa_bridge"
+
+
+def test_ambient_light_command_rejects_unconfigured_or_unsupported_paths(tmp_path: Path) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_config(config)
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+
+    assert client.post("/api/ambient-lights/Govee%20lamp%20H6054/commands/on").status_code == 400
+    assert client.post("/api/ambient-lights/Lepro%20S1%20AI%20LED/commands/on").status_code == 501
+
+
+def test_govee_ble_command_bytes_include_xor_checksum() -> None:
+    assert _govee_ble_command_bytes("on") == bytes.fromhex("3301010000000000000000000000000000000033")
+    assert _govee_ble_command_bytes("off") == bytes.fromhex("3301000000000000000000000000000000000032")
+    assert _govee_ble_command_bytes("brightness", {"brightness": 50}) == bytes.fromhex("3304320000000000000000000000000000000005")
+    assert _govee_ble_command_bytes("color", {"red": 255, "green": 128, "blue": 64}) == bytes.fromhex("330502ff8040000000000000000000000000000b")
+
+
+class FakeGoveeBleClient:
+    def __init__(self) -> None:
+        self.writes = []
+
+    async def write_gatt_char(self, characteristic, packet, response):
+        self.writes.append((characteristic, packet, response))
+
+
+def test_govee_power_packets_repeat_when_write_has_no_response() -> None:
+    client = FakeGoveeBleClient()
+    packet = _govee_ble_command_bytes("off")
+
+    write_count = web_app_module.asyncio.run(
+        web_app_module._govee_ble_write_packet(client, "power-characteristic", packet, response=False)
+    )
+
+    assert write_count == 2
+    assert client.writes == [
+        ("power-characteristic", packet, False),
+        ("power-characteristic", packet, False),
+    ]
+
+
+def test_govee_non_power_packet_is_not_repeated() -> None:
+    client = FakeGoveeBleClient()
+    packet = _govee_ble_command_bytes("brightness", {"brightness": 50})
+
+    write_count = web_app_module.asyncio.run(
+        web_app_module._govee_ble_write_packet(client, "brightness-characteristic", packet, response=False)
+    )
+
+    assert write_count == 1
+    assert client.writes == [("brightness-characteristic", packet, False)]
+
+def test_govee_manager_retries_two_transient_connection_failures(monkeypatch) -> None:
+    light = web_app_module.AmbientLightDefinition(
+        name="Test Govee",
+        provider="govee_ble",
+        model="H6054",
+        room="Test",
+        address="11:22:33:44:55:66",
+        alexa_name=None,
+    )
+    manager = object.__new__(web_app_module._GoveeBleManager)
+    attempts = []
+
+    async def fake_write_once(_light, _packet):
+        attempts.append("write")
+        if len(attempts) < 3:
+            raise RuntimeError("transient BlueZ failure")
+        return {"status": "ok"}
+
+    async def fake_drop_client(_address):
+        return None
+
+    manager._write_once = fake_write_once
+    manager._drop_client = fake_drop_client
+    monkeypatch.setattr(web_app_module, "_govee_ble_forget_cached_device", lambda _address: None)
+
+    result = web_app_module.asyncio.run(manager._write_with_retry(light, b"packet"))
+
+    assert result == {"status": "ok"}
+    assert len(attempts) == 3
+
+def test_ambient_light_command_sends_govee_ble_command(tmp_path: Path, monkeypatch) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_config(config)
+    sent = []
+
+    def fake_command(light, command, body):
+        sent.append((light.address, command, body))
+        return {"status": "ok", "command": command, "address": light.address}
+
+    monkeypatch.setattr(web_app_module, "_govee_ble_command_payload", fake_command)
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+
+    response = client.post("/api/ambient-lights/Govee%20strip%20H613A/commands/on")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert sent == [("AA:BB:CC:DD:EE:FF", "on", {})]
+
+
+def test_ambient_runtime_state_tracks_power_commands() -> None:
+    light = web_app_module.AmbientLightDefinition(
+        name="Test Govee",
+        provider="govee_ble",
+        model="H6054",
+        room="Test",
+        address="11:22:33:44:55:66",
+        alexa_name=None,
+    )
+    web_app_module.AMBIENT_LIGHT_RUNTIME_STATE.clear()
+
+    web_app_module._remember_ambient_light_command(light, "off", {})
+    assert web_app_module._ambient_light_card(light)["is_on"] is False
+
+    web_app_module._remember_ambient_light_command(light, "on", {})
+    assert web_app_module._ambient_light_card(light)["is_on"] is True
