@@ -13,3 +13,4 @@ uvicorn
 httpx2
 tzdata
 bleak
+itsdangerous

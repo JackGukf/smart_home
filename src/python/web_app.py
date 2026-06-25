@@ -14,12 +14,16 @@ from urllib.parse import urlencode
 from urllib.parse import quote
 from urllib.parse import quote_plus
 from urllib.parse import urlparse
-from urllib.request import Request
+from urllib.request import Request as _URLRequest
 from urllib.request import urlopen
 
+import hashlib
+from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import yaml
 
@@ -130,6 +134,17 @@ def create_app(
     app.state.config_path = config_path
     app.state.controller = controller or KasaLightSwitchController()
     app.state.check_camera_ports = check_camera_ports
+
+    _raw_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else None
+    _raw_cfg = _raw_cfg or {}
+    _auth_cfg = _raw_cfg.get("dashboard_auth")
+    _auth_user: str | None = str(_auth_cfg["username"]) if _auth_cfg else None
+    _auth_pass: str | None = str(_auth_cfg["password"]) if _auth_cfg else None
+    _signer: URLSafeTimedSerializer | None = None
+    _MAX_AGE = 30 * 24 * 3600  # 30 days
+    if _auth_cfg:
+        _secret = hashlib.sha256(f"smart-home-salt-{_auth_pass}".encode()).hexdigest()
+        _signer = URLSafeTimedSerializer(_secret)
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -473,7 +488,7 @@ def _home_assistant_camera_snapshot(path: Path, entity_id: str) -> Response:
 
 def _home_assistant_camera_stream(path: Path, entity_id: str) -> StreamingResponse:
     config, token = _home_assistant_auth(path)
-    request = Request(
+    request = _URLRequest(
         f"{config.base_url}/api/camera_proxy_stream/{entity_id}",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
@@ -492,7 +507,7 @@ def _home_assistant_camera_stream(path: Path, entity_id: str) -> StreamingRespon
 
 
 def _home_assistant_camera_fetch(config: HomeAssistantConfig, token: str, ha_path: str) -> tuple[bytes, str | None]:
-    request = Request(
+    request = _URLRequest(
         f"{config.base_url}{ha_path}",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
@@ -1564,7 +1579,7 @@ def _home_assistant_alarm_command(path: Path, command: str) -> dict[str, Any]:
     )
     return {"status": "ok", "entity_id": panel["entity_id"], "command": command, "result": payload}
 def _home_assistant_get(config: HomeAssistantConfig, token: str, path: str) -> Any:
-    request = Request(
+    request = _URLRequest(
         f"{config.base_url}{path}",
         headers={
             "Authorization": f"Bearer {token}",
@@ -1576,7 +1591,7 @@ def _home_assistant_get(config: HomeAssistantConfig, token: str, path: str) -> A
 
 
 def _home_assistant_post(config: HomeAssistantConfig, token: str, path: str, body: dict[str, Any]) -> Any:
-    request = Request(
+    request = _URLRequest(
         f"{config.base_url}{path}",
         data=json.dumps(body).encode("utf-8"),
         headers={
@@ -1735,7 +1750,103 @@ def _ecobee_card_from_home_assistant(entity: dict[str, Any], states: list[dict[s
         "desired_cool": attributes.get("target_temp_high") or attributes.get("temperature"),
         "humidity": attributes.get("current_humidity"),
         "online": entity.get("state") not in {"unavailable", "unknown", None},
+        "sensors": _ecobee_sensors_from_ha_states(entity_id, states or []),
     }
+
+
+_ROOM_KEYWORDS: list[tuple[str, str]] = [
+    ("living room", "Living Room"),
+    ("master bedroom", "Master Bedroom"),
+    ("family room", "Family Room"),
+    ("dining room", "Dining Room"),
+    ("master", "Master Bedroom"),
+    ("bedroom", "Bedroom"),
+    ("kitchen", "Kitchen"),
+    ("office", "Office"),
+    ("garage", "Garage"),
+    ("dining", "Dining Room"),
+    ("basement", "Basement"),
+    ("attic", "Attic"),
+    ("hallway", "Hallway"),
+    ("bathroom", "Bathroom"),
+    ("nursery", "Nursery"),
+    ("sunroom", "Sunroom"),
+    ("playroom", "Playroom"),
+]
+
+
+def _ecobee_sensors_from_ha_states(climate_entity_id: str, states: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Find per-room temperature/occupancy sensor entities from HA states for an Ecobee thermostat.
+
+    Matches the ecobee built-in sensor by entity_id prefix, and other room sensors
+    by room keywords in their friendly names (works regardless of integration source).
+    """
+    climate_slug = climate_entity_id.split(".", 1)[-1].lower()
+
+    occ_by_room: dict[str, bool] = {}
+    temp_entries: list[dict[str, Any]] = []
+    seen_rooms: set[str] = set()
+
+    for entity in states:
+        entity_id = str(entity.get("entity_id") or "")
+        attrs = entity.get("attributes") or {}
+        domain = _home_assistant_entity_domain(entity_id)
+        slug = entity_id.split(".", 1)[-1].lower()
+        friendly = str(attrs.get("friendly_name") or entity_id)
+
+        if domain == "sensor" and (
+            attrs.get("device_class") == "temperature"
+            or attrs.get("unit_of_measurement") in ("°F", "°C")
+        ):
+            clean = friendly[: -len(" Temperature")].strip() if friendly.lower().endswith(" temperature") else friendly
+            clean_lower = clean.lower()
+
+            # Ecobee built-in: entity slug starts with the climate entity slug
+            if slug.startswith(climate_slug + "_"):
+                room_name = "Living Room"
+            else:
+                room_name = None
+                for keyword, rname in _ROOM_KEYWORDS:
+                    if keyword in clean_lower:
+                        room_name = rname
+                        break
+
+            if room_name is None:
+                continue  # not a room sensor we recognize
+
+            try:
+                temperature: float | None = float(entity.get("state"))
+            except (TypeError, ValueError):
+                temperature = None
+
+            temp_entries.append({"id": slug, "name": room_name, "temperature": temperature,
+                                  "builtin": slug.startswith(climate_slug + "_")})
+
+        if domain == "binary_sensor" and attrs.get("device_class") == "occupancy":
+            clean = friendly[: -len(" Occupancy")].strip() if friendly.lower().endswith(" occupancy") else friendly
+            for keyword, rname in _ROOM_KEYWORDS:
+                if keyword in clean.lower():
+                    occ_by_room[rname] = entity.get("state") == "on"
+                    break
+
+    # Built-in sensor wins if the same room appears from multiple sources
+    temp_entries.sort(key=lambda e: (0 if e["builtin"] else 1))
+
+    sensors = []
+    for entry in temp_entries:
+        room = entry["name"]
+        if room in seen_rooms:
+            continue
+        seen_rooms.add(room)
+        sensors.append({
+            "id": entry["id"],
+            "name": room,
+            "temperature": entry["temperature"],
+            "occupied": occ_by_room.get(room),
+        })
+
+    sensors.sort(key=lambda s: (0 if s["name"] == "Living Room" else 1, s["name"]))
+    return sensors
 
 
 def _home_assistant_ecobee_preset_entity(
@@ -1781,6 +1892,7 @@ def _ecobee_setup_card(config: EcobeeConfig, status: str = "needs_auth") -> dict
         "desired_cool": None,
         "humidity": None,
         "online": False,
+        "sensors": [],
     }
 
 
@@ -1798,10 +1910,11 @@ def _ecobee_api_thermostats() -> list[dict[str, Any]]:
             "includeRuntime": True,
             "includeSettings": True,
             "includeEquipmentStatus": True,
+            "includeRemoteSensors": True,
         }
     }
     query = urlencode({"format": "json", "body": json.dumps(selection)})
-    request = Request(
+    request = _URLRequest(
         f"https://api.ecobee.com/1/thermostat?{query}",
         headers={"Authorization": f"Bearer {access_token}"},
     )
@@ -1822,7 +1935,7 @@ def _ecobee_refresh_access_token() -> str:
             "client_id": client_id,
         }
     ).encode("utf-8")
-    request = Request(
+    request = _URLRequest(
         "https://api.ecobee.com/token",
         data=data,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -1863,7 +1976,33 @@ def _ecobee_card(config: EcobeeConfig, thermostats: list[dict[str, Any]]) -> dic
         "desired_cool": _ecobee_temperature(runtime.get("desiredCool"), config.temperature_unit),
         "humidity": runtime.get("actualHumidity"),
         "online": True,
+        "sensors": _ecobee_sensors_from_api(thermostat, config.temperature_unit),
     }
+
+
+def _ecobee_sensors_from_api(thermostat: dict[str, Any], temperature_unit: str) -> list[dict[str, Any]]:
+    """Extract per-room sensor readings from Ecobee API remoteSensors data."""
+    sensors = []
+    for sensor in thermostat.get("remoteSensors") or []:
+        caps = {c["type"]: c.get("value") for c in (sensor.get("capability") or []) if "type" in c}
+        temp_raw = caps.get("temperature")
+        temperature = None
+        if temp_raw is not None and temp_raw != "unknown":
+            try:
+                temperature = _ecobee_temperature(temp_raw, temperature_unit)
+            except (TypeError, ValueError):
+                pass
+        occupied_raw = caps.get("occupancy")
+        occupied = (occupied_raw == "true") if occupied_raw is not None else None
+        # Built-in thermostat sensor lives in the living room per user config
+        name = "Living Room" if sensor.get("type") == "thermostat" else str(sensor.get("name") or "")
+        sensors.append({
+            "id": str(sensor.get("id") or name),
+            "name": name,
+            "temperature": temperature,
+            "occupied": occupied,
+        })
+    return sensors
 
 
 def _match_ecobee_thermostat(config: EcobeeConfig, thermostats: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1901,8 +2040,8 @@ def _weather_payload(config: WeatherConfig) -> dict[str, Any]:
             "temperature_unit": config.temperature_unit,
             "wind_speed_unit": "mph" if config.temperature_unit == "fahrenheit" else "kmh",
             "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,surface_pressure",
-            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset,uv_index_max",
-            "forecast_days": 1,
+            "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset,uv_index_max",
+            "forecast_days": 7,
         }
     )
     url = f"https://api.open-meteo.com/v1/forecast?{query}"
@@ -1934,6 +2073,23 @@ def _weather_payload(config: WeatherConfig) -> dict[str, Any]:
         "sunrise": _first_value(daily.get("sunrise")),
         "sunset": _first_value(daily.get("sunset")),
         "uv_index": _first_value(daily.get("uv_index_max")),
+        "forecast": [
+            {
+                "date": date,
+                "high": high,
+                "low": low,
+                "weather_code": code,
+                "condition": _weather_condition(code),
+                "precipitation_probability": precip,
+            }
+            for date, high, low, code, precip in zip(
+                daily.get("time", []),
+                daily.get("temperature_2m_max", []),
+                daily.get("temperature_2m_min", []),
+                daily.get("weather_code", []),
+                daily.get("precipitation_probability_max", []),
+            )
+        ],
     }
 
 
