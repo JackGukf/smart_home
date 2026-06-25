@@ -27,6 +27,7 @@ ssh "${PI_TARGET}" "mkdir -p ${REMOTE_PATH}/src/python ${REMOTE_PATH}/src/python
 
 rsync --checksum -av \
     "${PROJECT_ROOT}/src/python/"*.py \
+    "${PROJECT_ROOT}/src/python/requirements.txt" \
     "${PI_TARGET}:${REMOTE_PATH}/src/python/"
 
 rsync --checksum -av \
@@ -44,6 +45,9 @@ rsync --checksum -av \
     "${PROJECT_ROOT}/scripts/install-dashboard-service.sh" \
     "${PROJECT_ROOT}/scripts/discover-govee-ble.py" \
     "${PI_TARGET}:${REMOTE_PATH}/scripts/"
+
+echo "==> Syncing Python dependencies..."
+ssh "${PI_TARGET}" "cd ${REMOTE_PATH} && [ -x .venv/bin/pip ] && .venv/bin/pip install -q -r src/python/requirements.txt || true"
 
 echo "==> Installing and restarting smart-home-dashboard.service..."
 ssh "${PI_TARGET}" "cd ${REMOTE_PATH} && HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) bash scripts/install-dashboard-service.sh >/tmp/smart-home-dashboard-install.log 2>&1"
