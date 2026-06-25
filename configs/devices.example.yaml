@@ -1,6 +1,11 @@
 # Copy this file to devices.local.yaml and fill in real device details.
 # Do not commit files containing passwords, tokens, or private IP mappings.
 
+# Dashboard login credentials. Remove this section to disable authentication.
+dashboard_auth:
+  username: admin
+  password: change_me
+
 tplink:
   switches:
     - name: living_room_switch
