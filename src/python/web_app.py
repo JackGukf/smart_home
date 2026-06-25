@@ -146,6 +146,72 @@ def create_app(
         _secret = hashlib.sha256(f"smart-home-salt-{_auth_pass}".encode()).hexdigest()
         _signer = URLSafeTimedSerializer(_secret)
 
+        # --- Auth middleware --------------------------------------------------
+        _SKIP_PATHS = {"/login", "/logout"}
+
+        class _AuthMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+                path = request.url.path
+                # Always allow login/logout and static assets
+                if path in _SKIP_PATHS or path.startswith("/static/"):
+                    return await call_next(request)
+
+                # Validate session cookie
+                token = request.cookies.get("session")
+                valid = False
+                if token and _signer is not None:
+                    try:
+                        _signer.loads(token, max_age=_MAX_AGE)
+                        valid = True
+                    except (SignatureExpired, BadSignature):
+                        valid = False
+
+                if valid:
+                    return await call_next(request)
+
+                # Unauthenticated: API → 401, HTML → redirect
+                if path.startswith("/api/"):
+                    from fastapi.responses import JSONResponse
+                    return JSONResponse({"error": "unauthorized"}, status_code=401)
+                return RedirectResponse(url="/login", status_code=303)
+
+        app.add_middleware(_AuthMiddleware)
+
+        # --- Login / logout routes --------------------------------------------
+        from fastapi import Form as _Form
+
+        @app.get("/login")
+        async def login_page() -> Response:
+            path = STATIC_DIR / "login.html"
+            if not path.exists():
+                from fastapi.responses import JSONResponse
+                return JSONResponse({"error": "login page not found"}, status_code=404)
+            return FileResponse(path)
+
+        @app.post("/login")
+        async def login_post(
+            username: str = _Form(...),
+            password: str = _Form(...),
+        ) -> RedirectResponse:
+            if username == _auth_user and password == _auth_pass:
+                token = _signer.dumps({"u": username})  # type: ignore[union-attr]
+                response = RedirectResponse(url="/", status_code=303)
+                response.set_cookie(
+                    key="session",
+                    value=token,
+                    httponly=True,
+                    samesite="lax",
+                    max_age=_MAX_AGE,
+                )
+                return response
+            return RedirectResponse(url="/login?error=1", status_code=303)
+
+        @app.post("/logout")
+        async def logout() -> RedirectResponse:
+            response = RedirectResponse(url="/login", status_code=303)
+            response.delete_cookie(key="session")
+            return response
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
