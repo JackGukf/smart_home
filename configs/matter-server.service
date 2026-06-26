@@ -1,0 +1,12 @@
+[Unit]
+Description=Python Matter Server
+After=network.target
+
+[Service]
+ExecStart=/home/smarthome/.local/bin/matter-server --storage-path /var/lib/matter --port 5580
+Restart=on-failure
+RestartSec=5
+User=smarthome
+
+[Install]
+WantedBy=multi-user.target
