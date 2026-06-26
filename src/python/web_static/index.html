@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=20260626-weather-dropdown">
+  <link rel="stylesheet" href="/static/styles.css?v=20260626-logout-theme-preview">
 </head>
 <body>
 
@@ -33,6 +33,11 @@
       <div class="date" id="dateDisplay">Loading…</div>
     </div>
     <div class="status-dot" id="statusDot" title="Connecting…"></div>
+    <form method="post" action="/logout" id="logoutForm">
+      <button type="submit" class="logout-btn" title="Log out">
+        <i class="ti ti-logout"></i>
+      </button>
+    </form>
   </div>
 </header>
 
@@ -252,6 +257,49 @@
       </div>
       <div class="theme-panel">
         <div id="palettePicker" class="palette-picker theme-palette"></div>
+      </div>
+      <div class="theme-preview-label">Preview</div>
+      <div class="theme-preview-grid">
+        <!-- OFF card -->
+        <div class="device-card new-style" data-category="light_switch" data-dimmable="true" data-brightness="70">
+          <div class="device-top">
+            <div>
+              <h3 class="device-name">Living Room</h3>
+              <p class="device-status">Bedroom</p>
+            </div>
+            <div class="device-top-right">
+              <button class="rocker" type="button" aria-label="Example switch off" tabindex="-1">
+                <div class="rocker-pad"></div>
+              </button>
+            </div>
+          </div>
+          <div class="dial-center dim-control-row" id="themeDialOff"></div>
+          <div class="device-footer">
+            <span>DIM</span>
+            <span style="color:var(--t-text-dim2)">OFF</span>
+            <span>BRIGHT</span>
+          </div>
+        </div>
+        <!-- ON card -->
+        <div class="device-card new-style on" data-category="light_switch" data-dimmable="true" data-brightness="70">
+          <div class="device-top">
+            <div>
+              <h3 class="device-name">Kitchen</h3>
+              <p class="device-status">Main floor</p>
+            </div>
+            <div class="device-top-right">
+              <button class="rocker on" type="button" aria-label="Example switch on" tabindex="-1">
+                <div class="rocker-pad"></div>
+              </button>
+            </div>
+          </div>
+          <div class="dial-center dim-control-row" id="themeDialOn"></div>
+          <div class="device-footer">
+            <span>DIM</span>
+            <span style="color:var(--t-accent)">ON</span>
+            <span>BRIGHT</span>
+          </div>
+        </div>
       </div>
     </div>
 

@@ -252,6 +252,25 @@ header {
   animation: pulse-dot 2s infinite;
 }
 
+.logout-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.logout-btn:hover {
+  color: var(--fg);
+  background: var(--surface2);
+  border-color: var(--fg);
+}
+#logoutForm { display: contents; }
+
 /* ── PALETTE PICKER ── */
 .palette-picker { display: flex; align-items: center; gap: 8px; }
 
@@ -1361,6 +1380,28 @@ aside {
 
 .theme-palette { gap: 12px; flex-wrap: wrap; }
 .theme-palette .palette-swatch { width: 34px; height: 34px; }
+
+.theme-preview-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin: 18px 0 10px;
+  max-width: 420px;
+}
+.theme-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-width: 420px;
+}
+.theme-preview-grid .device-card {
+  pointer-events: none;
+  user-select: none;
+}
+.theme-preview-grid .dial-center,
+.theme-preview-grid .device-footer { display: none; }
 
 /* ── BOTTOM ROW ── */
 .bottom-row {
