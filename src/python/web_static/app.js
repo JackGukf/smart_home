@@ -92,6 +92,8 @@ const apiStatus         = document.querySelector("#apiStatus");
 const statusDot         = document.querySelector("#statusDot");
 const logoText          = document.querySelector("#logoText");
 const headerWeather     = document.querySelector("#headerWeather");
+const weatherDropdown   = document.querySelector("#weatherDropdown");
+const weatherBackdrop   = document.querySelector("#weatherBackdrop");
 const weatherIcon       = document.querySelector("#weatherIcon");
 const weatherTemp       = document.querySelector("#weatherTemp");
 const weatherCondition  = document.querySelector("#weatherCondition");
@@ -100,6 +102,9 @@ const weatherHumidity   = document.querySelector("#weatherHumidity");
 const weatherWind       = document.querySelector("#weatherWind");
 const weatherPressure   = document.querySelector("#weatherPressure");
 const weatherUv         = document.querySelector("#weatherUv");
+const weatherHighLow    = document.querySelector("#weatherHighLow");
+const weatherPrecip     = document.querySelector("#weatherPrecip");
+const weatherForecast   = document.querySelector("#weatherForecast");
 const deviceCount       = document.querySelector("#deviceCount");
 const onCount           = document.querySelector("#onCount");
 const cameraCount       = document.querySelector("#cameraCount");
@@ -1349,12 +1354,6 @@ const THERMO_PRESETS = [
   { id: "away",  name: "Away",  caption: "Energy saving",    target: 18, mode: "auto" },
   { id: "sleep", name: "Sleep", caption: "Cooler overnight", target: 19, mode: "cool" },
 ];
-const THERMO_ROOMS = [
-  { id: "living",  name: "Living Room", temp: 21, occupied: true  },
-  { id: "kitchen", name: "Kitchen",     temp: 20, occupied: false },
-  { id: "bedroom", name: "Bedroom",     temp: 19, occupied: true  },
-  { id: "office",  name: "Office",      temp: 22, occupied: true  },
-];
 
 function tempRangeColor(c) {
   if (c < 16) return "#5FC0EA";
@@ -1559,17 +1558,21 @@ function renderThermostats(payload) {
       </button>`;
     }).join("");
 
-    const roomRows = THERMO_ROOMS.map((r) => {
-      const tColor = tempRangeColor(r.temp);
+    const roomRows = (th.sensors || []).map((r) => {
+      const temp = r.temperature != null ? Math.round(Number(r.temperature)) : null;
+      const tColor = temp != null ? tempRangeColor(temp) : "var(--t-text-dim2)";
+      const tempDisplay = temp != null ? `${temp}°` : "--";
+      const isOccupied = r.occupied === true;
+      const occupancyKnown = r.occupied != null;
       return `<div class="thermo-room-row">
         <div class="thermo-room-left">
-          <span class="thermo-occ-dot${r.occupied ? " occupied" : ""}"></span>
+          <span class="thermo-occ-dot${isOccupied ? " occupied" : ""}"></span>
           <div>
-            <p class="thermo-room-name">${r.name}</p>
-            <p class="thermo-room-status">${r.occupied ? "Occupied" : "Empty"}</p>
+            <p class="thermo-room-name">${escapeHtml(r.name)}</p>
+            <p class="thermo-room-status">${occupancyKnown ? (isOccupied ? "Occupied" : "Empty") : ""}</p>
           </div>
         </div>
-        <span class="thermo-room-temp" style="color:${tColor}">${r.temp}°</span>
+        <span class="thermo-room-temp" style="color:${tColor}">${tempDisplay}</span>
       </div>`;
     }).join("");
 
@@ -1654,6 +1657,8 @@ function setHeaderWeatherUnavailable(message) {
   if (weatherWind) weatherWind.textContent = "--";
   if (weatherPressure) weatherPressure.textContent = "--";
   if (weatherUv) weatherUv.textContent = "--";
+  if (weatherHighLow) weatherHighLow.textContent = "-- / --";
+  if (weatherPrecip) weatherPrecip.textContent = "--%";
   if (outdoorTemp) outdoorTemp.textContent = "--";
 }
 
@@ -1671,8 +1676,12 @@ function renderWeather(weather) {
   const pressureDisplay = String(roundMetric(weather.pressure)) + (weather.pressure_unit || "");
   const uvDisplay = String(roundMetric(weather.uv_index));
   const icon = weatherHeaderIcon(weather.weather_code);
+  const highDisplay = weather.high != null ? String(roundMetric(weather.high)) + tempUnit : "--";
+  const lowDisplay  = weather.low  != null ? String(roundMetric(weather.low))  + tempUnit : "--";
+  const precipDisplay = weather.precipitation_probability != null
+    ? String(roundMetric(weather.precipitation_probability)) + "%"
+    : "--%";
 
-  if (headerWeather) headerWeather.title = (weather.condition || "Outdoor") + " · feels like " + feelsDisplay;
   if (weatherIcon) weatherIcon.className = "ti " + icon;
   if (weatherTemp) weatherTemp.textContent = tempDisplay;
   if (weatherCondition) weatherCondition.textContent = weather.condition || "Outdoor";
@@ -1681,11 +1690,92 @@ function renderWeather(weather) {
   if (weatherWind) weatherWind.textContent = windDisplay;
   if (weatherPressure) weatherPressure.textContent = pressureDisplay;
   if (weatherUv) weatherUv.textContent = uvDisplay;
+  if (weatherHighLow) weatherHighLow.textContent = highDisplay + " / " + lowDisplay;
+  if (weatherPrecip) weatherPrecip.textContent = precipDisplay;
   if (outdoorTemp) outdoorTemp.textContent = tempDisplay;
 
   const conditionEl = document.querySelector("#statCondition");
   if (conditionEl) conditionEl.textContent = weather.condition || "Outdoor";
+
+  renderWeatherForecast(weather.forecast || []);
 }
+
+function renderWeatherForecast(forecast) {
+  if (!weatherForecast) return;
+  if (!forecast.length) {
+    weatherForecast.innerHTML = "";
+    return;
+  }
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  weatherForecast.innerHTML = forecast.map((day, i) => {
+    const date = new Date(day.date + "T12:00:00");
+    const dayLabel = i === 0 ? "Today" : DAY_NAMES[date.getDay()];
+    const icon = weatherHeaderIcon(day.weather_code);
+    const precip = day.precipitation_probability != null ? Math.round(day.precipitation_probability) + "%" : "";
+    return `
+      <div class="wdf-row">
+        <span class="wdf-day">${escapeHtml(dayLabel)}</span>
+        <i class="ti ${escapeHtml(icon)} wdf-icon"></i>
+        <span class="wdf-cond">${escapeHtml(day.condition || "")}</span>
+        <span class="wdf-precip">${precip ? '<i class="ti ti-droplet"></i>' + escapeHtml(precip) : ""}</span>
+        <span class="wdf-temps"><strong>${escapeHtml(String(roundMetric(day.high)))}</strong><span class="wdf-low">${escapeHtml(String(roundMetric(day.low)))}</span></span>
+      </div>`;
+  }).join("");
+}
+
+/* ── Weather dropdown toggle ── */
+function openWeatherDropdown() {
+  if (!weatherDropdown) return;
+  // Position desktop dropdown below the button (mobile uses CSS fixed bottom:0)
+  if (headerWeather && window.innerWidth > 480) {
+    const rect = headerWeather.getBoundingClientRect();
+    weatherDropdown.style.top  = (rect.bottom + 8) + "px";
+    weatherDropdown.style.right = (window.innerWidth - rect.right) + "px";
+    weatherDropdown.style.left  = "auto";
+    weatherDropdown.style.bottom = "auto";
+  }
+  weatherDropdown.classList.add("open");
+  weatherDropdown.setAttribute("aria-hidden", "false");
+  if (headerWeather) headerWeather.setAttribute("aria-expanded", "true");
+  if (weatherBackdrop) weatherBackdrop.classList.add("open");
+}
+
+function closeWeatherDropdown() {
+  if (!weatherDropdown) return;
+  weatherDropdown.classList.remove("open");
+  weatherDropdown.setAttribute("aria-hidden", "true");
+  if (headerWeather) headerWeather.setAttribute("aria-expanded", "false");
+  if (weatherBackdrop) weatherBackdrop.classList.remove("open");
+  weatherDropdown.style.top = weatherDropdown.style.right = weatherDropdown.style.left = weatherDropdown.style.bottom = "";
+}
+
+if (headerWeather) {
+  headerWeather.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = weatherDropdown && weatherDropdown.classList.contains("open");
+    if (isOpen) {
+      closeWeatherDropdown();
+    } else {
+      openWeatherDropdown();
+    }
+  });
+}
+
+document.addEventListener("click", (e) => {
+  if (weatherDropdown && weatherDropdown.classList.contains("open")) {
+    if (!weatherDropdown.contains(e.target) && e.target !== headerWeather && !headerWeather?.contains(e.target)) {
+      closeWeatherDropdown();
+    }
+  }
+});
+
+if (weatherBackdrop) {
+  weatherBackdrop.addEventListener("click", closeWeatherDropdown);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeWeatherDropdown();
+});
 
 function formatWeatherTime(value) {
   if (!value) return "--:--";
@@ -3086,6 +3176,12 @@ try {
   applyTheme("slate");
 }
 renderPalettePicker();
+(function renderThemePreviewDials() {
+  const off = document.querySelector("#themeDialOff");
+  const on  = document.querySelector("#themeDialOn");
+  if (off) off.innerHTML = buildDimControlDial(70, false, true);
+  if (on)  on.innerHTML  = buildDimControlDial(70, true,  true);
+})();
 renderAlarmSection();
 
 function _updateMatterServerStatus(online) {
