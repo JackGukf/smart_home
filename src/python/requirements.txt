@@ -15,3 +15,4 @@ tzdata
 bleak
 itsdangerous
 python-multipart
+python-matter-server[client]

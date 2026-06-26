@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 import yaml
 
 from src.python.tplink_switch import KasaLightSwitchController, SwitchDefinition
+from src.python.matter_device import DashboardMatterClient, node_to_device
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +36,15 @@ DEFAULT_DISCOVERY_PATH = PROJECT_ROOT / "tplink_switches.json"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "devices.local.yaml"
 STATIC_DIR = PROJECT_ROOT / "src" / "python" / "web_static"
 AMBIENT_LIGHT_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
+
+_matter_cfg: dict = (yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}).get("matter") or {}
+_matter_server_url: str = _matter_cfg.get("server_url", "ws://localhost:5580/ws")
+_matter_device_meta: dict[int, dict] = {
+    int(d["node_id"]): d
+    for d in (_matter_cfg.get("devices") or [])
+    if "node_id" in d
+}
+_matter_client = DashboardMatterClient(_matter_server_url)
 
 
 @dataclass(frozen=True)
@@ -382,6 +392,74 @@ def create_app(
         switch = _find_switch(_load_switches(app.state.discovery_path), host)
         state = await app.state.controller.set_brightness(switch, level)
         return asdict(state)
+
+    class _MatterCommissionBody(BaseModel):
+        setup_code: str
+        name: str
+        room: str | None = None
+
+    @app.get("/api/matter/devices")
+    async def _matter_devices_list() -> dict:
+        try:
+            nodes = await _matter_client.list_nodes()
+            devices = []
+            for node in nodes:
+                meta = _matter_device_meta.get(node.node_id, {})
+                info = node_to_device(
+                    node,
+                    name=meta.get("name", f"Matter Device {node.node_id}"),
+                    room=meta.get("room"),
+                    category_override=meta.get("category"),
+                )
+                devices.append({
+                    "host": f"matter:{info.node_id}",
+                    "name": info.name,
+                    "room": info.room,
+                    "is_on": info.is_on,
+                    "is_dimmable": info.is_dimmable,
+                    "brightness": info.brightness,
+                    "category": info.category,
+                    "provider": "matter",
+                    "node_id": info.node_id,
+                    "available": info.available,
+                })
+            return {"devices": devices, "matter_online": True}
+        except Exception:
+            return {"devices": [], "matter_online": False}
+
+    @app.post("/api/matter/commission")
+    async def _matter_commission(body: _MatterCommissionBody) -> dict:
+        try:
+            node_id = await asyncio.wait_for(
+                _matter_client.commission(body.setup_code), timeout=35.0
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408, detail="Commission timed out after 30 s")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        _write_matter_device_to_config(node_id, body.name, body.room)
+        _matter_device_meta[node_id] = {"node_id": node_id, "name": body.name, "room": body.room}
+        return {"node_id": node_id, "name": body.name}
+
+    @app.post("/api/matter/devices/{node_id}/commands/{command}")
+    async def _matter_command(
+        node_id: int, command: str, brightness: int | None = None
+    ) -> dict:
+        try:
+            await _matter_client.send_command(node_id, command, brightness=brightness)
+            return {"status": "ok"}
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.delete("/api/matter/devices/{node_id}")
+    async def _matter_decommission(node_id: int) -> dict:
+        try:
+            await _matter_client.remove_node(node_id)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        _matter_device_meta.pop(node_id, None)
+        _remove_matter_device_from_config(node_id)
+        return {"status": "ok"}
 
     return app
 
@@ -2332,6 +2410,31 @@ def _is_supported_tplink_device(item: dict[str, Any]) -> bool:
         or "plug" in device_type
         or model in {"hs103", "hs200", "hs220"}
     )
+
+
+def _write_matter_device_to_config(node_id: int, name: str, room: str | None) -> None:
+    cfg: dict = {}
+    if DEFAULT_CONFIG_PATH.exists():
+        cfg = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text()) or {}
+    matter = cfg.setdefault("matter", {})
+    devices: list[dict] = matter.setdefault("devices", [])
+    devices[:] = [d for d in devices if int(d.get("node_id", -1)) != node_id]
+    entry: dict[str, Any] = {"node_id": node_id, "name": name}
+    if room:
+        entry["room"] = room
+    devices.append(entry)
+    DEFAULT_CONFIG_PATH.write_text(yaml.dump(cfg, default_flow_style=False))
+
+
+def _remove_matter_device_from_config(node_id: int) -> None:
+    if not DEFAULT_CONFIG_PATH.exists():
+        return
+    cfg: dict = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text()) or {}
+    devices: list[dict] = cfg.get("matter", {}).get("devices", [])
+    cfg.setdefault("matter", {})["devices"] = [
+        d for d in devices if int(d.get("node_id", -1)) != node_id
+    ]
+    DEFAULT_CONFIG_PATH.write_text(yaml.dump(cfg, default_flow_style=False))
 
 
 def _device_category(value: str | None) -> str:
