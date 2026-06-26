@@ -134,45 +134,102 @@ header {
 .header-weather {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 7px 12px;
+  gap: 10px;
+  padding: 7px 14px;
   border: 1px solid var(--border-hover);
   border-radius: 12px;
   background: var(--card);
   color: var(--text);
-  min-width: 430px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+  position: relative;
 }
 
-.header-weather-main {
+.header-weather:hover,
+.header-weather[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--card-hover, var(--card));
+}
+
+.header-weather > i { font-size: 20px; color: var(--amber); flex-shrink: 0; }
+
+.header-weather-text { display: grid; gap: 1px; }
+.header-weather-text span { font-family: var(--mono); font-size: 17px; line-height: 1; font-weight: 600; }
+.header-weather-text small { color: var(--muted); font-size: 10px; white-space: nowrap; }
+
+/* ── Weather dropdown panel ── */
+.weather-dropdown {
+  position: fixed;
+  z-index: 300;
+  background: var(--card);
+  border: 1px solid var(--border-hover);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  width: 320px;
+  padding: 16px;
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  pointer-events: none;
+}
+
+.weather-dropdown.open {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 105px;
+  pointer-events: auto;
+  animation: dropdown-in 0.15s ease;
 }
 
-.header-weather-main i { font-size: 20px; color: var(--amber); }
-.header-weather-main div { display: grid; gap: 1px; }
-.header-weather-main span { font-family: var(--mono); font-size: 17px; line-height: 1; font-weight: 600; }
-.header-weather-main small { color: var(--muted); font-size: 10px; white-space: nowrap; }
+@keyframes dropdown-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
-.header-weather-metrics {
+.weather-dropdown-current {
   display: grid;
-  grid-template-columns: repeat(5, minmax(44px, auto));
-  gap: 8px;
-  align-items: center;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
 }
 
-.header-weather-metrics span {
+.wdd-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  font-size: 12px;
   color: var(--muted);
-  font-size: 10px;
   white-space: nowrap;
 }
 
-.header-weather-metrics i { color: var(--accent); font-size: 14px; }
-.header-weather-metrics strong { color: var(--text); font-size: 11px; font-weight: 600; }
+.wdd-row i { font-size: 14px; color: var(--accent); flex-shrink: 0; }
+.wdd-row span { flex: 1; }
+.wdd-row strong { color: var(--text); font-weight: 600; font-size: 12px; }
+
+.weather-dropdown-forecast {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--border-hover);
+  padding-top: 12px;
+}
+
+.wdf-row {
+  display: grid;
+  grid-template-columns: 42px 20px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wdf-day { font-weight: 600; color: var(--text); font-size: 11px; }
+.wdf-icon { font-size: 15px; color: var(--amber); }
+.wdf-cond { color: var(--muted); font-size: 11px; }
+.wdf-precip { display: flex; align-items: center; gap: 2px; font-size: 11px; color: var(--accent); min-width: 36px; justify-content: flex-end; }
+.wdf-precip i { font-size: 11px; }
+.wdf-temps { display: flex; gap: 6px; align-items: baseline; font-family: var(--mono); }
+.wdf-temps strong { color: var(--text); font-size: 12px; font-weight: 600; }
+.wdf-low { color: var(--muted); font-size: 11px; }
 
 @keyframes pulse-dot {
   0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5); }
@@ -192,6 +249,25 @@ header {
   box-shadow: 0 0 8px var(--green);
   animation: pulse-dot 2s infinite;
 }
+
+.logout-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.logout-btn:hover {
+  color: var(--fg);
+  background: var(--surface2);
+  border-color: var(--fg);
+}
+#logoutForm { display: contents; }
 
 /* ── PALETTE PICKER ── */
 .palette-picker { display: flex; align-items: center; gap: 8px; }
@@ -1303,6 +1379,28 @@ aside {
 .theme-palette { gap: 12px; flex-wrap: wrap; }
 .theme-palette .palette-swatch { width: 34px; height: 34px; }
 
+.theme-preview-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin: 18px 0 10px;
+  max-width: 420px;
+}
+.theme-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-width: 420px;
+}
+.theme-preview-grid .device-card {
+  pointer-events: none;
+  user-select: none;
+}
+.theme-preview-grid .dial-center,
+.theme-preview-grid .device-footer { display: none; }
+
 /* ── BOTTOM ROW ── */
 .bottom-row {
   display: grid;
@@ -1901,7 +1999,24 @@ aside {
 .svg-radar-ring.anim-2 { animation: radar-ping 1.6s ease-out 0.4s infinite; }
 .svg-pulse             { animation: motion-pulse 1.4s ease-in-out infinite; }
 
-/* ── RESPONSIVE ── */
+/* ── Weather backdrop (mobile bottom-sheet dim, phones only) ── */
+.weather-backdrop { display: none; }
+
+@media (max-width: 480px) {
+  .weather-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 250;
+    pointer-events: none;
+  }
+  .weather-backdrop.open {
+    display: block;
+    pointer-events: auto;
+  }
+}
+
+/* ── RESPONSIVE: tablet ── */
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; height: auto; }
 
@@ -1913,9 +2028,12 @@ aside {
     overflow-y: hidden;
     border-right: none;
     border-bottom: 1px solid var(--border);
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
+  aside::-webkit-scrollbar { display: none; }
 
-  .sidebar-section { padding: 10px 12px 4px; }
+  .sidebar-section { padding: 10px 12px 4px; white-space: nowrap; }
   .room-list { display: flex; padding: 0 4px; }
 
   .room-item {
@@ -1933,12 +2051,111 @@ aside {
   .device-grid { grid-template-columns: repeat(2, 1fr); }
   .light-scene-row { grid-template-columns: 1fr; }
   .bottom-row { grid-template-columns: 1fr; }
-  .header-weather { min-width: 0; flex-wrap: wrap; }
-  .header-weather-metrics { grid-template-columns: repeat(3, minmax(44px, auto)); }
+  .header-weather { min-width: 0; }
+  .weather-dropdown { width: 280px; }
   .weather-card { grid-template-columns: 1fr; }
   .thermo-mode-grid { grid-template-columns: repeat(2, 1fr); }
   .thermo-presets { flex-wrap: wrap; }
 }
+
+/* ── RESPONSIVE: phone (≤ 480 px) ── */
+@media (max-width: 480px) {
+  /* ── Header ── */
+  header {
+    padding: 10px 12px;
+    min-height: 52px;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .logo-sub { display: none; }
+  .logo-text { font-size: 13px; }
+  .logo-icon { width: 28px; height: 28px; font-size: 14px; border-radius: 8px; }
+
+  .header-right { gap: 6px; }
+
+  .time { font-size: 15px; }
+  .date { display: none; }
+
+  /* Compact weather chip: icon + temp only, hide condition label */
+  .header-weather { padding: 5px 10px; gap: 6px; border-radius: 10px; }
+  .header-weather > i { font-size: 16px; }
+  .header-weather-text span { font-size: 14px; }
+  .header-weather-text small { display: none; }
+
+  /* Weather dropdown → full-width bottom sheet */
+  .weather-dropdown {
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    max-height: 80dvh;
+    overflow-y: auto;
+    border-radius: 18px 18px 0 0;
+    border-bottom: none;
+    padding: 20px 16px 32px;
+  }
+
+  /* Pull handle on bottom sheet */
+  .weather-dropdown::before {
+    content: '';
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border-hover);
+    margin: 0 auto 16px;
+  }
+
+  /* ── Sidebar nav ── */
+  .sidebar-section { display: none; }
+  .room-item { padding: 6px 9px; font-size: 10px; gap: 3px; }
+  .room-icon { width: 24px; height: 24px; font-size: 13px; border-radius: 6px; }
+
+  /* ── Content ── */
+  .content { padding: 12px 10px 72px; gap: 14px; }
+
+  /* ── Grids → single column ── */
+  .stat-row { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .device-grid { grid-template-columns: 1fr; }
+  .camera-grid { grid-template-columns: 1fr; }
+  .ambient-grid { grid-template-columns: 1fr; }
+  .light-scene-row { grid-template-columns: 1fr; gap: 8px; }
+
+  /* ── Device cards ── */
+  .device-card { padding: 14px; }
+  .dial-wrap { width: 96px; height: 96px; }
+  .dial-value { font-size: 18px; }
+  .power-val { font-size: 16px; }
+  .rocker { width: 40px; height: 68px; }
+  .device-card.new-style h3.device-name { font-size: 15px; }
+
+  /* ── Scene buttons ── */
+  .scene-button { min-height: 66px; padding: 12px; }
+  .scene-copy strong { font-size: 13px; }
+  .scene-copy small { display: none; }
+
+  /* ── Stat cards ── */
+  .stat-value { font-size: 20px; }
+  .stat-card { padding: 12px 14px; }
+
+  /* ── Thermostat ── */
+  .thermo-card { padding: 16px; }
+  .thermo-dial-wrap { width: 180px; height: 180px; }
+  .thermo-target-num { font-size: 40px; }
+  .thermo-mode-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* ── Section header ── */
+  .section-header { margin-bottom: 10px; }
+
+  /* ── HA embed ── */
+  .home-assistant-embed { min-height: 400px; height: 60dvh; }
+
+  /* ── Camera info ── */
+  .camera-info { min-height: 100px; }
+}
+
 
 /* ────────────────────────────────────────────────────────────
    POWER GAUGE — Plug cards
@@ -2463,4 +2680,310 @@ aside {
   font-size: 11px;
   text-transform: capitalize;
   margin-top: 2px;
+}
+
+/* ── MATTER INTEGRATION ── */
+
+/* Discovery Panel */
+.discovery-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  background: var(--t-card-bg);
+  border: 1px solid var(--t-card-border);
+  border-radius: 14px;
+}
+
+.discovery-server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--t-surface);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+}
+
+.discovery-server-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--t-text-dim2);
+}
+
+.discovery-server-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--t-text);
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.06);
+  white-space: nowrap;
+}
+
+.discovery-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  background: var(--t-accent);
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+}
+
+.discovery-add-btn:hover {
+  background: var(--t-accent);
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+
+.discovery-add-btn:active {
+  transform: translateY(0);
+  opacity: 0.84;
+}
+
+.discovery-device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Modal Overlay & Card */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal-card {
+  background: var(--t-card-bg);
+  border: 1px solid var(--t-card-border);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  max-width: 480px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px;
+  border-bottom: 1px solid var(--t-card-border);
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--t-text);
+}
+
+.modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: none;
+  color: var(--t-text-dim2);
+  font-size: 18px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.modal-close:hover {
+  color: var(--t-text);
+}
+
+#matterStep1,
+#matterStep2 {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--t-text);
+  letter-spacing: 0.02em;
+}
+
+.modal-input {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--t-card-border);
+  border-radius: 10px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+
+.modal-input:focus {
+  outline: none;
+  border-color: var(--t-accent);
+  box-shadow: 0 0 0 2px rgba(var(--t-accent-rgb),0.1);
+}
+
+.modal-input::placeholder {
+  color: var(--t-text-dim2);
+}
+
+.modal-qr-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 120px;
+  border: 2px dashed rgba(255,255,255,0.1);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.02);
+  color: var(--t-text-dim2);
+  font-size: 12px;
+}
+
+.modal-qr-placeholder i {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.btn-primary,
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.btn-primary {
+  background: var(--t-accent);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  opacity: 0.92;
+}
+
+.btn-primary:active {
+  opacity: 0.84;
+}
+
+.btn-secondary {
+  background: var(--t-surface);
+  border: 1px solid var(--t-card-border);
+  color: var(--t-text);
+}
+
+.btn-secondary:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.btn-secondary:active {
+  background: rgba(255,255,255,0.08);
+}
+
+.modal-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 200px;
+}
+
+.modal-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(255,255,255,0.1);
+  border-top-color: var(--t-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.modal-status-text {
+  font-size: 13px;
+  color: var(--t-text);
+  font-weight: 500;
+}
+
+.modal-error {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: rgba(248,113,113,0.08);
+  border: 1px solid rgba(248,113,113,0.2);
+  border-radius: 10px;
+  color: #ffd7d7;
+  font-size: 12px;
+}
+
+.modal-error[hidden] {
+  display: none;
+}
+
+/* Matter Badge */
+.matter-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(99,102,241,0.18);
+  color: #818cf8;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
