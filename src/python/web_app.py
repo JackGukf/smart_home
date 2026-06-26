@@ -37,7 +37,8 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "devices.local.yaml"
 STATIC_DIR = PROJECT_ROOT / "src" / "python" / "web_static"
 AMBIENT_LIGHT_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
 
-_matter_cfg: dict = (yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}).get("matter") or {}
+_raw_cfg: dict = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
+_matter_cfg: dict = _raw_cfg.get("matter") or {}
 _matter_server_url: str = _matter_cfg.get("server_url", "ws://localhost:5580/ws")
 _matter_device_meta: dict[int, dict] = {
     int(d["node_id"]): d
@@ -45,6 +46,12 @@ _matter_device_meta: dict[int, dict] = {
     if "node_id" in d
 }
 _matter_client = DashboardMatterClient(_matter_server_url)
+
+
+class _MatterCommissionBody(BaseModel):
+    setup_code: str
+    name: str
+    room: str | None = None
 
 
 @dataclass(frozen=True)
@@ -393,11 +400,6 @@ def create_app(
         state = await app.state.controller.set_brightness(switch, level)
         return asdict(state)
 
-    class _MatterCommissionBody(BaseModel):
-        setup_code: str
-        name: str
-        room: str | None = None
-
     @app.get("/api/matter/devices")
     async def _matter_devices_list() -> dict:
         try:
@@ -438,7 +440,10 @@ def create_app(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
         _write_matter_device_to_config(node_id, body.name, body.room)
-        _matter_device_meta[node_id] = {"node_id": node_id, "name": body.name, "room": body.room}
+        meta_entry: dict = {"node_id": node_id, "name": body.name}
+        if body.room:
+            meta_entry["room"] = body.room
+        _matter_device_meta[node_id] = meta_entry
         return {"node_id": node_id, "name": body.name}
 
     @app.post("/api/matter/devices/{node_id}/commands/{command}")
