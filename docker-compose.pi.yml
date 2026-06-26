@@ -25,7 +25,7 @@ services:
     network_mode: host
     restart: unless-stopped
     volumes:
-      - ./configs/go2rtc.yaml:/config/go2rtc.yaml:ro
+      - ./go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
 
 volumes:
   matter-data:

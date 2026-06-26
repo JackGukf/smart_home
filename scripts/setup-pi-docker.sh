@@ -8,6 +8,17 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_ROOT"
 
 echo "==> Checking prerequisites..."
+if ! command -v docker &>/dev/null; then
+  echo "ERROR: docker is not installed."
+  echo "Install it with: curl -fsSL https://get.docker.com | sh"
+  echo "Then add yourself to the docker group: sudo usermod -aG docker \$USER"
+  exit 1
+fi
+if ! docker compose version &>/dev/null; then
+  echo "ERROR: docker compose (v2 plugin) is not available."
+  echo "Upgrade Docker or install the compose plugin."
+  exit 1
+fi
 if [[ ! -f configs/devices.local.yaml ]]; then
   echo "ERROR: configs/devices.local.yaml not found."
   echo "Copy it from your existing Pi:"
