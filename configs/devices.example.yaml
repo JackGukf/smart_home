@@ -147,3 +147,14 @@ ambient_lights:
 mqtt:
   broker_host: 127.0.0.1
   broker_port: 1883
+
+matter:
+  # server_url defaults to ws://localhost:5580/ws
+  # server_url: ws://localhost:5580/ws
+  devices:
+    # Written automatically when you commission a device from the dashboard.
+    # Optional: add category override (light_switch / smart_plug / tuya_sensor).
+    # - node_id: 1
+    #   name: Kitchen Switch
+    #   room: Kitchen
+    #   category: light_switch
