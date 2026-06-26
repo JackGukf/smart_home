@@ -1,0 +1,31 @@
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.pi
+    image: smart-home-dashboard:latest
+    container_name: smart-home-dashboard
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./configs:/app/configs:ro
+    env_file: .env
+
+  matter-server:
+    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    container_name: matter-server
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - matter-data:/data
+
+  go2rtc:
+    image: ghcr.io/alexxit/go2rtc:latest
+    container_name: go2rtc
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./configs/go2rtc.yaml:/config/go2rtc.yaml:ro
+
+volumes:
+  matter-data:
