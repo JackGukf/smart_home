@@ -30,8 +30,9 @@ def test_stat_cards_are_inside_status_view_only() -> None:
 def test_status_view_is_last_view_item() -> None:
     html = INDEX_HTML.read_text(encoding="utf-8")
     views_start = html.index('<div class="sidebar-section">Views</div>')
-    system_start = html.index('<div class="sidebar-section">System</div>')
-    views_markup = html[views_start:system_start]
+    # Discovery is now its own section between Views and System; scan only the Views <ul>
+    discovery_start = html.index('<div class="sidebar-section">Discovery</div>')
+    views_markup = html[views_start:discovery_start]
     view_order = []
 
     for item in views_markup.split('<li class="room-item"'):
