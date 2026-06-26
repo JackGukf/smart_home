@@ -253,6 +253,17 @@
       </div>
     </div>
 
+    <!-- ── THEME VIEW ── -->
+    <div class="view-panel" data-view-panel="theme">
+      <div class="section-header">
+        <span class="section-title">Theme</span>
+        <span class="section-meta">Dashboard appearance</span>
+      </div>
+      <div class="theme-panel">
+        <div id="palettePicker" class="palette-picker theme-palette"></div>
+      </div>
+    </div>
+
     <!-- ── DISCOVERY VIEW ── -->
     <div class="view-panel" data-view-panel="discovery">
       <div class="section-header">
@@ -269,17 +280,6 @@
           Add Matter Device
         </button>
         <div id="matterDeviceList" class="discovery-device-list"></div>
-      </div>
-    </div>
-
-    <!-- ── THEME VIEW ── -->
-    <div class="view-panel" data-view-panel="theme">
-      <div class="section-header">
-        <span class="section-title">Theme</span>
-        <span class="section-meta">Dashboard appearance</span>
-      </div>
-      <div class="theme-panel">
-        <div id="palettePicker" class="palette-picker theme-palette"></div>
       </div>
     </div>
 
@@ -314,24 +314,24 @@
     <div id="matterStep1">
       <label class="modal-label">
         Pairing code
-        <input class="modal-input" id="matterPairingCode" type="text"
+        <input class="modal-input" id="matterSetupCode" type="text"
                placeholder="34970112332" maxlength="11" inputmode="numeric" autocomplete="off">
       </label>
       <label class="modal-label">
         Name
-        <input class="modal-input" id="matterDeviceName" type="text" placeholder="Kitchen Switch">
+        <input class="modal-input" id="matterName" type="text" placeholder="Kitchen Switch">
       </label>
       <label class="modal-label">
         Room
-        <input class="modal-input" id="matterDeviceRoom" type="text" placeholder="Kitchen">
+        <input class="modal-input" id="matterRoom" type="text" placeholder="Kitchen">
       </label>
       <div class="modal-qr-placeholder">
         <i class="ti ti-qrcode"></i>
         <span>QR code scanning coming soon</span>
       </div>
       <div class="modal-actions">
-        <button class="btn-secondary" id="cancelMatterModal" type="button">Cancel</button>
-        <button class="btn-primary" id="submitMatterCommission" type="button">Pair Device</button>
+        <button class="btn-secondary" id="matterCancel" type="button">Cancel</button>
+        <button class="btn-primary" id="matterPair" type="button">Pair Device</button>
       </div>
     </div>
 
@@ -339,11 +339,11 @@
     <div id="matterStep2" hidden>
       <div class="modal-progress">
         <div class="modal-spinner" id="matterSpinner"></div>
-        <span class="modal-status-text" id="matterStatusText">Connecting…</span>
+        <span class="modal-status-text" id="matterCommissionStatus">Connecting…</span>
       </div>
       <div class="modal-error" id="matterError" hidden>
         <span id="matterErrorText"></span>
-        <button class="btn-secondary" id="retryMatterCommission" type="button">Retry</button>
+        <button class="btn-secondary" id="matterRetry" type="button">Retry</button>
       </div>
     </div>
   </div>
