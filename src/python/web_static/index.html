@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=20260625-matter">
+  <link rel="stylesheet" href="/static/styles.css?v=20260626-weather-dropdown">
 </head>
 <body>
 
@@ -21,22 +21,13 @@
     </div>
   </div>
   <div class="header-right">
-    <div class="header-weather" id="headerWeather">
-      <div class="header-weather-main">
-        <i class="ti ti-cloud" id="weatherIcon" aria-hidden="true"></i>
-        <div>
-          <span id="weatherTemp">--°C</span>
-          <small id="weatherCondition">Weather</small>
-        </div>
+    <button class="header-weather" id="headerWeather" type="button" aria-expanded="false" aria-haspopup="true" title="Click for weather details">
+      <i class="ti ti-cloud" id="weatherIcon" aria-hidden="true"></i>
+      <div class="header-weather-text">
+        <span id="weatherTemp">--°C</span>
+        <small id="weatherCondition">Weather</small>
       </div>
-      <div class="header-weather-metrics">
-        <span title="Feels like"><i class="ti ti-temperature"></i><strong id="weatherFeels">--°C</strong></span>
-        <span title="Humidity"><i class="ti ti-droplet"></i><strong id="weatherHumidity">--%</strong></span>
-        <span title="Wind"><i class="ti ti-wind"></i><strong id="weatherWind">--</strong></span>
-        <span title="Pressure"><i class="ti ti-gauge"></i><strong id="weatherPressure">--</strong></span>
-        <span title="UV index"><i class="ti ti-sun-high"></i><strong id="weatherUv">--</strong></span>
-      </div>
-    </div>
+    </button>
     <div class="time-block">
       <div class="time" id="clock">--:--:--</div>
       <div class="date" id="dateDisplay">Loading…</div>
@@ -349,6 +340,33 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=20260623-hide-ambient"></script>
+<div class="weather-backdrop" id="weatherBackdrop"></div>
+<div class="weather-dropdown" id="weatherDropdown" aria-hidden="true">
+  <div class="weather-dropdown-current">
+    <div class="wdd-row">
+      <i class="ti ti-temperature"></i><span>Feels like</span><strong id="weatherFeels">--°C</strong>
+    </div>
+    <div class="wdd-row">
+      <i class="ti ti-droplet"></i><span>Humidity</span><strong id="weatherHumidity">--%</strong>
+    </div>
+    <div class="wdd-row">
+      <i class="ti ti-wind"></i><span>Wind</span><strong id="weatherWind">--</strong>
+    </div>
+    <div class="wdd-row">
+      <i class="ti ti-gauge"></i><span>Pressure</span><strong id="weatherPressure">--</strong>
+    </div>
+    <div class="wdd-row">
+      <i class="ti ti-sun-high"></i><span>UV index</span><strong id="weatherUv">--</strong>
+    </div>
+    <div class="wdd-row">
+      <i class="ti ti-arrow-up"></i><span>High / Low</span><strong id="weatherHighLow">-- / --</strong>
+    </div>
+    <div class="wdd-row">
+      <i class="ti ti-umbrella"></i><span>Precip.</span><strong id="weatherPrecip">--%</strong>
+    </div>
+  </div>
+  <div class="weather-dropdown-forecast" id="weatherForecast"></div>
+</div>
+<script src="/static/app.js?v=20260626-weather-dropdown"></script>
 </body>
 </html>
