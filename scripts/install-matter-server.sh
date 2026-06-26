@@ -4,11 +4,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 echo "==> Installing python-matter-server on the Pi..."
-pip install --user "python-matter-server[server]"
+pip install --user --break-system-packages "python-matter-server[server]"
 
 echo "==> Creating Matter storage directory..."
 sudo mkdir -p /var/lib/matter
 sudo chown smarthome:smarthome /var/lib/matter
+
+echo "==> Creating /data directory required by CHIP SDK..."
+sudo mkdir -p /data
+sudo chown smarthome:smarthome /data
 
 echo "==> Installing systemd service..."
 sudo cp "$REPO_ROOT/configs/matter-server.service" /etc/systemd/system/matter-server.service
