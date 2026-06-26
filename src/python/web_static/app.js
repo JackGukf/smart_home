@@ -416,12 +416,20 @@ function persistDimLock(host, locked) {
 
 async function sendBrightness(host, level) {
   recordManualLightOverride(host, { type: "brightness", level });
+  if (host.startsWith("matter:")) {
+    const nodeId = host.slice(7);
+    const resp = await fetch(`/api/matter/devices/${nodeId}/commands/brightness?brightness=${level}`, {
+      method: "POST",
+    });
+    if (!resp.ok) throw new Error("Brightness set failed: " + resp.status);
+    return resp.json();
+  }
   const resp = await fetch("/api/devices/" + encodeURIComponent(host) + "/brightness", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ level }),
   });
-  if (resp.ok === false) throw new Error("Brightness set failed: " + resp.status);
+  if (!resp.ok) throw new Error("Brightness set failed: " + resp.status);
   return resp.json();
 }
 
@@ -664,19 +672,22 @@ function buildAlertRow(device) {
 }
 
 /* ── TP-Link device cards ── */
-function renderDevices(devices, cameras) {
-  const lightDevices = devices.filter((d) => d.category === "light_switch");
-  const plugDevices  = devices.filter((d) => d.category === "smart_plug");
+function renderDevices(devices, cameras, matterDevices = []) {
+  const matterLights = matterDevices.filter((d) => d.category === "light_switch");
+  const matterPlugs  = matterDevices.filter((d) => d.category === "smart_plug");
 
-  deviceCount.textContent    = String(devices.length);
-  onCount.textContent        = String(devices.filter((d) => d.is_on === true).length);
+  const lightDevices = [...devices.filter((d) => d.category === "light_switch"), ...matterLights];
+  const plugDevices  = [...devices.filter((d) => d.category === "smart_plug"),   ...matterPlugs];
+
+  deviceCount.textContent    = String(devices.length + matterDevices.length);
+  onCount.textContent        = String([...devices, ...matterDevices].filter((d) => d.is_on === true).length);
   lightCount.textContent     = String(lightDevices.length);
   plugCount.textContent      = String(plugDevices.length);
   cameraTabCount.textContent = String(cameras.length);
 
   renderLightScenes(lightDevices);
   renderLightDragLock();
-  renderDeviceGroup(lightGrid, applyDeviceOrder(lightDevices, "light_switch"), "No TP-Link light switches found. Run discovery on the Raspberry Pi first.");
+  renderDeviceGroup(lightGrid, applyDeviceOrder(lightDevices, "light_switch"), "No light switches found.");
   renderPlugSection(plugDevices);
 }
 
@@ -846,7 +857,7 @@ function renderPlugSection(devices) {
            data-category="${escapeHtml(device.category || "")}">
         <div class="device-top">
           <div>
-            <h3 class="device-name">${escapeHtml(device.name)}</h3>
+            <h3 class="device-name">${escapeHtml(device.name)}${device.provider === "matter" ? '<span class="matter-badge">MATTER</span>' : ""}</h3>
             <p class="device-status">${escapeHtml(device.room || "")}</p>
           </div>
           <div class="device-top-right">
@@ -901,7 +912,7 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
            data-dim-locked="${dimLocked}">
         <div class="device-top">
           <div>
-            <h3 class="device-name">${escapeHtml(device.name)}</h3>
+            <h3 class="device-name">${escapeHtml(device.name)}${device.provider === "matter" ? '<span class="matter-badge">MATTER</span>' : ""}</h3>
             <p class="device-status">${escapeHtml(device.room || "")}</p>
           </div>
           <div class="device-top-right">
@@ -2390,7 +2401,7 @@ async function loadDevices() {
   if (statusDot) statusDot.classList.remove("online");
   apiStatus.textContent = "Refreshing";
 
-  const [deviceData, cameraData, tuyaData, weatherData, ecobeeData, homeAssistantData, alarmData] = await Promise.all([
+  const [deviceData, cameraData, tuyaData, weatherData, ecobeeData, homeAssistantData, alarmData, matterData] = await Promise.all([
     requestJson("/api/devices"),
     requestJson("/api/cameras"),
     requestJson("/api/tuya/devices"),
@@ -2398,6 +2409,7 @@ async function loadDevices() {
     requestJson("/api/ecobee/thermostats"),
     requestJson("/api/home-assistant/entities"),
     requestJson("/api/alarm"),
+    requestJson("/api/matter/devices").catch(() => ({ devices: [], matter_online: false })),
   ]);
 
   notifyDoorbellEvents(cameraData.cameras);
@@ -2406,13 +2418,15 @@ async function loadDevices() {
   latestTuyaDevices = tuyaData.devices;
   latestAlarmData   = alarmData;
 
-  renderDevices(deviceData.devices, cameraData.cameras);
+  renderDevices(deviceData.devices, cameraData.cameras, matterData.devices || []);
   renderTuyaDevices(tuyaData.devices);
   renderThermostats(ecobeeData);
   renderHomeAssistant(homeAssistantData);
   renderCameras(cameraData.cameras, tuyaData.devices);
   renderWeather(weatherData);
   renderAlarmSection(alarmData);
+  _updateMatterServerStatus(matterData.matter_online ?? false);
+  _renderMatterDeviceList(matterData.devices || []);
 
   if (statusDot) statusDot.classList.add("online");
   apiStatus.textContent = "Online";
@@ -2425,7 +2439,12 @@ async function loadDevices() {
 /* ── Send commands ── */
 async function sendCommand(host, command, options = {}) {
   apiStatus.textContent = "Sending";
-  await requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
+  if (host.startsWith("matter:")) {
+    const nodeId = host.slice(7);
+    await requestJson(`/api/matter/devices/${nodeId}/commands/${command}`, { method: "POST" });
+  } else {
+    await requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
+  }
   logActivity("Switch " + host.split(".").pop() + " turned " + command);
   if (options.skipRefresh !== true) await loadDevices();
 }
@@ -2481,6 +2500,14 @@ function activateView(viewName) {
     panel.classList.toggle("active", panel.dataset.viewPanel === viewName);
   });
   document.body.classList.toggle("home-assistant-mode", viewName === "homeassistant");
+  if (viewName === "discovery") {
+    requestJson("/api/matter/devices")
+      .then((data) => {
+        _updateMatterServerStatus(data.matter_online ?? false);
+        _renderMatterDeviceList(data.devices || []);
+      })
+      .catch(() => _updateMatterServerStatus(false));
+  }
 }
 
 /* ── Helper: update dial/gauge in new-style card ── */
@@ -2880,6 +2907,10 @@ document.addEventListener("click", async (event) => {
       lightCards.map((card) => {
         const host = card.dataset.host;
         if (host === undefined || host === null || String(host) === "") return Promise.resolve();
+        if (host.startsWith("matter:")) {
+          const nodeId = host.slice(7);
+          return requestJson(`/api/matter/devices/${nodeId}/commands/${command}`, { method: "POST" });
+        }
         return requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
       })
     );
@@ -3056,6 +3087,126 @@ try {
 }
 renderPalettePicker();
 renderAlarmSection();
+
+function _updateMatterServerStatus(online) {
+  const badge = document.querySelector("#matterServerStatus");
+  if (!badge) return;
+  badge.textContent = online ? "Online" : "Offline";
+  badge.className = "discovery-server-badge " + (online ? "online" : "offline");
+}
+
+function _renderMatterDeviceList(devices) {
+  const list = document.querySelector("#matterDeviceList");
+  if (!list) return;
+  if (!devices.length) {
+    list.innerHTML = '<p style="font-size:13px;color:var(--muted)">No Matter devices paired yet.</p>';
+    return;
+  }
+  list.innerHTML = devices.map((d) => `
+    <div class="discovery-device-row">
+      <div>
+        <div class="discovery-device-row-name">${escapeHtml(d.name)}</div>
+        ${d.room ? `<div class="discovery-device-row-room">${escapeHtml(d.room)}</div>` : ""}
+      </div>
+      <button class="discovery-remove-btn"
+              data-matter-remove="${d.node_id}"
+              title="Remove ${escapeHtml(d.name)}"
+              type="button">
+        <i class="ti ti-trash"></i>
+      </button>
+    </div>
+  `).join("");
+}
+
+/* ── MATTER COMMISSIONING MODAL ── */
+(function initMatterModal() {
+  const modal      = document.querySelector("#matterModal");
+  const step1      = document.querySelector("#matterStep1");
+  const step2      = document.querySelector("#matterStep2");
+  const spinner    = document.querySelector("#matterSpinner");
+  const statusText = document.querySelector("#matterCommissionStatus");
+  const errorBox   = document.querySelector("#matterError");
+  const errorText  = document.querySelector("#matterErrorText");
+  if (!modal) return;
+
+  function openModal() {
+    modal.hidden = false;
+    _showMatterStep(1);
+    document.querySelector("#matterSetupCode").value = "";
+    document.querySelector("#matterName").value  = "";
+    document.querySelector("#matterRoom").value  = "";
+  }
+
+  function closeModal() { modal.hidden = true; }
+
+  function _showMatterStep(n) {
+    step1.hidden = n !== 1;
+    step2.hidden = n !== 2;
+    errorBox.hidden = true;
+    spinner.style.display = "block";
+  }
+
+  function _showMatterError(msg) {
+    spinner.style.display = "none";
+    errorBox.hidden = false;
+    errorText.textContent = msg;
+  }
+
+  document.querySelector("#openMatterModal")?.addEventListener("click", openModal);
+  document.querySelector("#closeMatterModal")?.addEventListener("click", closeModal);
+  document.querySelector("#matterCancel")?.addEventListener("click", closeModal);
+  document.querySelector("#matterRetry")?.addEventListener("click", () => _showMatterStep(1));
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+
+  document.querySelector("#matterPair")?.addEventListener("click", async () => {
+    const code = document.querySelector("#matterSetupCode").value.trim();
+    const name = document.querySelector("#matterName").value.trim();
+    const room = document.querySelector("#matterRoom").value.trim();
+    if (!code) { document.querySelector("#matterSetupCode").focus(); return; }
+    if (!name) { document.querySelector("#matterName").focus(); return; }
+
+    _showMatterStep(2);
+    statusText.textContent = "Connecting…";
+
+    const steps = ["Connecting…", "Pairing…", "Commissioning…"];
+    let stepIdx = 0;
+    const timer = setInterval(() => {
+      if (stepIdx < steps.length - 1) statusText.textContent = steps[++stepIdx];
+    }, 8000);
+
+    try {
+      const resp = await fetch("/api/matter/commission", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ setup_code: code, name, room: room || null }),
+      });
+      clearInterval(timer);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `Server error ${resp.status}`);
+      }
+      spinner.style.display = "none";
+      statusText.textContent = "Done ✓";
+      setTimeout(() => { closeModal(); loadDevices(); }, 1200);
+    } catch (e) {
+      clearInterval(timer);
+      _showMatterError(e.message);
+    }
+  });
+
+  document.querySelector("#matterDeviceList")?.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-matter-remove]");
+    if (!btn) return;
+    const nodeId = btn.dataset.matterRemove;
+    if (!confirm("Remove this Matter device? It will need to be factory reset to pair again.")) return;
+    try {
+      await fetch(`/api/matter/devices/${nodeId}`, { method: "DELETE" });
+      loadDevices();
+    } catch {
+      logActivity("Failed to remove Matter device", "error");
+    }
+  });
+})();
 
 loadDevices().catch((error) => {
   apiStatus.textContent = "Error";
