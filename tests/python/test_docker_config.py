@@ -5,6 +5,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE_PI = PROJECT_ROOT / "Dockerfile.pi"
 COMPOSE_PI = PROJECT_ROOT / "docker-compose.pi.yml"
 ENV_EXAMPLE = PROJECT_ROOT / ".env.example"
+SETUP_SCRIPT = PROJECT_ROOT / "scripts" / "setup-pi-docker.sh"
 
 
 def test_dockerfile_pi_exists():
@@ -79,3 +80,32 @@ def test_env_example_has_required_keys():
         "DASHBOARD_SECRET_KEY",
     ]:
         assert key in content, f".env.example missing {key}"
+
+
+def test_setup_script_exists():
+    assert SETUP_SCRIPT.exists()
+
+
+def test_setup_script_is_executable():
+    import os
+    assert os.access(SETUP_SCRIPT, os.X_OK), "setup-pi-docker.sh must be executable"
+
+
+def test_setup_script_checks_for_devices_yaml():
+    content = SETUP_SCRIPT.read_text()
+    assert "devices.local.yaml" in content
+
+
+def test_setup_script_checks_for_env_file():
+    content = SETUP_SCRIPT.read_text()
+    assert ".env" in content
+
+
+def test_setup_script_calls_generate_go2rtc():
+    content = SETUP_SCRIPT.read_text()
+    assert "generate-go2rtc-config.py" in content
+
+
+def test_setup_script_uses_pi_compose_file():
+    content = SETUP_SCRIPT.read_text()
+    assert "docker-compose.pi.yml" in content
