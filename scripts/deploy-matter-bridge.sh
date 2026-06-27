@@ -41,8 +41,16 @@ rsync -avz --progress \
     --exclude='third_party/' \
     --exclude='build/docker-debug' \
     --exclude='build/rpi4-release' \
+    --exclude='build/dev-check' \
+    --exclude='build/matter-bridge' \
     "$PROJECT_ROOT/" \
     "${REMOTE}:${REMOTE_DIR}/"
+
+# Sync only the Matter bridge binary to avoid sending hundreds of MB of CHIP SDK artifacts
+echo "==> Syncing Matter bridge binary..."
+rsync -avz --progress \
+    "$BINARY" \
+    "${REMOTE}:${REMOTE_DIR}/build/matter-bridge/"
 
 # --------------------------------------------------------------------------- #
 # 3. Build Docker image on the Pi and (re)start the container

@@ -9,17 +9,20 @@ RUN apt-get update \
         libnl-3-200 \
         libnl-route-3-200 \
         iproute2 \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the pre-built aarch64 binary produced by scripts/build-matter-bridge.sh
 COPY build/matter-bridge/chip-bridge-app /usr/local/bin/chip-bridge
 
-RUN chmod +x /usr/local/bin/chip-bridge \
-    && useradd -m matter
+# Copy entrypoint script that sets up /data/bridge permissions and drops to matter user
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
-USER matter
+RUN chmod +x /usr/local/bin/chip-bridge /usr/local/bin/entrypoint.sh \
+    && useradd -m matter
 
 ENV BRIDGE_SYNC_URL=http://localhost:8000
 ENV MATTER_KVS_PATH=/data/bridge
 
-CMD ["/usr/local/bin/chip-bridge", "--KVS", "/data/bridge/kvs"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["--KVS", "/data/bridge/kvs"]
