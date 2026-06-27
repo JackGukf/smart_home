@@ -70,3 +70,21 @@ TEST(SyncClient, FetchDevicesBadJsonThrows) {
     client.devices_response = "not json";
     EXPECT_THROW(client.FetchDevices(), SyncClientError);
 }
+
+// MockSyncClient for use by higher-layer tests (BridgeDevice, main, etc.).
+// Include this file or forward-declare MockSyncClient in any test that needs
+// to inject preset HTTP responses without touching real network I/O.
+class MockSyncClient : public SyncClient {
+public:
+    MockSyncClient() : SyncClient("http://unused") {}
+
+    std::vector<DeviceInfo> preset_devices;
+    std::map<std::string, std::map<std::string, std::string>> preset_states;
+    std::vector<std::pair<std::string, std::string>> sent_commands;
+
+    std::vector<DeviceInfo> FetchDevices() override { return preset_devices; }
+    std::map<std::string, std::map<std::string, std::string>> FetchAllStates() override { return preset_states; }
+    void SendCommand(const std::string& device_id, const std::string& command) override {
+        sent_commands.push_back({device_id, command});
+    }
+};

@@ -1,7 +1,6 @@
 #include "SyncClient.h"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
-#include <sstream>
 
 using json = nlohmann::json;
 
@@ -9,6 +8,24 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::stri
     output->append(static_cast<char*>(contents), size * nmemb);
     return size * nmemb;
 }
+
+// RAII wrapper for a libcurl easy handle
+struct CurlHandle {
+    CURL* h = nullptr;
+    CurlHandle() : h(curl_easy_init()) {}
+    ~CurlHandle() { if (h) curl_easy_cleanup(h); }
+    operator CURL*() const { return h; }
+    CurlHandle(const CurlHandle&) = delete;
+    CurlHandle& operator=(const CurlHandle&) = delete;
+};
+
+// RAII wrapper for a curl_slist (HTTP headers)
+struct CurlSlist {
+    curl_slist* h = nullptr;
+    ~CurlSlist() { if (h) curl_slist_free_all(h); }
+    CurlSlist(const CurlSlist&) = delete;
+    CurlSlist& operator=(const CurlSlist&) = delete;
+};
 
 SyncClient::SyncClient(const std::string& base_url) : base_url_(base_url) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -19,8 +36,8 @@ SyncClient::~SyncClient() {
 }
 
 std::string SyncClient::DoGet(const std::string& path) {
-    CURL* curl = curl_easy_init();
-    if (!curl) throw SyncClientError("curl_easy_init failed");
+    CurlHandle curl;
+    if (!curl.h) throw SyncClientError("curl_easy_init failed");
 
     std::string response;
     const std::string url = base_url_ + path;
@@ -32,7 +49,7 @@ std::string SyncClient::DoGet(const std::string& path) {
     const CURLcode res = curl_easy_perform(curl);
     long http_code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    curl_easy_cleanup(curl);
+    // curl handle freed automatically by CurlHandle destructor
 
     if (res != CURLE_OK) {
         throw SyncClientError(std::string("GET ") + path + " failed: " + curl_easy_strerror(res));
@@ -44,17 +61,17 @@ std::string SyncClient::DoGet(const std::string& path) {
 }
 
 std::string SyncClient::DoPost(const std::string& path, const std::string& body) {
-    CURL* curl = curl_easy_init();
-    if (!curl) throw SyncClientError("curl_easy_init failed");
+    CurlHandle curl;
+    if (!curl.h) throw SyncClientError("curl_easy_init failed");
 
     std::string response;
     const std::string url = base_url_ + path;
-    curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
+    CurlSlist headers;
+    headers.h = curl_slist_append(headers.h, "Content-Type: application/json");
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.h);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
@@ -62,8 +79,7 @@ std::string SyncClient::DoPost(const std::string& path, const std::string& body)
     const CURLcode res = curl_easy_perform(curl);
     long http_code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
+    // curl handle and headers freed automatically by RAII destructors
 
     if (res != CURLE_OK) {
         throw SyncClientError(std::string("POST ") + path + " failed: " + curl_easy_strerror(res));
