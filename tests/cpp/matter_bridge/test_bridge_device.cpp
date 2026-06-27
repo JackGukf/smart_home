@@ -24,6 +24,7 @@ namespace chip {
     using AttributeId  = uint32_t;
     using DeviceTypeId = uint16_t;
     using DataVersion  = uint32_t;
+    using CommandId    = uint32_t;
 
     template <typename T>
     struct Span {
@@ -60,10 +61,6 @@ struct EmberAfCluster {
     const chip::CommandId*       acceptedCommandList;
     const chip::CommandId*       generatedCommandList;
 };
-
-namespace chip {
-    using CommandId = uint32_t;
-}
 
 struct EmberAfEndpointType {
     EmberAfCluster* cluster;
@@ -202,7 +199,7 @@ EmberAfStatus emberAfWriteAttribute(
     uint8_t*          value,
     uint8_t           attr_type)
 {
-    gStubs.write_calls.push_back({endpoint, cluster, attribute, value ? *value : 0, attr_type});
+    gStubs.write_calls.push_back({endpoint, cluster, attribute, value ? static_cast<uint8_t>(*value) : uint8_t{0}, attr_type});
     return EMBER_ZCL_STATUS_SUCCESS;
 }
 
