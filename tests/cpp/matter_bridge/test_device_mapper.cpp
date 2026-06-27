@@ -46,9 +46,15 @@ TEST(DeviceMapper, VirtualSwitchMapsToVirtualOnOffLight) {
 TEST(DeviceMapper, UnknownCategoryReturnsUnknown) {
     auto spec = MapCategoryToMatter("bogus_category");
     EXPECT_EQ(spec.type, MatterDeviceType::Unknown);
+    EXPECT_FALSE(spec.read_only);
 }
 
 TEST(DeviceMapper, DeviceTypeName) {
     EXPECT_STREQ(MatterDeviceTypeName(MatterDeviceType::OnOffLight), "OnOffLight");
+    EXPECT_STREQ(MatterDeviceTypeName(MatterDeviceType::DimmableLight), "DimmableLight");
+    EXPECT_STREQ(MatterDeviceTypeName(MatterDeviceType::OnOffPlugInUnit), "OnOffPlugInUnit");
+    EXPECT_STREQ(MatterDeviceTypeName(MatterDeviceType::TemperatureSensor), "TemperatureSensor");
+    EXPECT_STREQ(MatterDeviceTypeName(MatterDeviceType::HumiditySensor), "HumiditySensor");
+    EXPECT_STREQ(MatterDeviceTypeName(MatterDeviceType::VirtualOnOffLight), "VirtualOnOffLight");
     EXPECT_STREQ(MatterDeviceTypeName(MatterDeviceType::Unknown), "Unknown");
 }
