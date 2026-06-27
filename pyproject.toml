@@ -1,3 +1,6 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests/python"]
+markers = [
+    "matter_integration: requires native chip-bridge-app binary (build with scripts/build-matter-bridge-native.sh)",
+]
