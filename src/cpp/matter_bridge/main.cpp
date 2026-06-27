@@ -12,7 +12,6 @@
 #include "SyncClient.h"
 
 #include <app/server/Server.h>
-#include <app/server/CommissioningWindowManager.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
 #include <lib/core/ErrorStr.h>
@@ -21,6 +20,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -57,6 +58,26 @@ static std::mutex                              gDevicesMutex;
 static std::vector<std::unique_ptr<BridgeDevice>> gDevices;
 static std::atomic<bool>                       gRunning{true};
 
+// Condition variable used to wake the poll thread on shutdown instead of
+// waiting out the full kDevicePollIntervalSeconds sleep.
+static std::condition_variable gShutdownCv;
+static std::mutex              gShutdownMutex;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Parse a string state value to bool ("true" or "1" → true).
+static bool ParseBoolState(const std::string& val) {
+    return val == "true" || val == "1";
+}
+
+// ── Signal handler ─────────────────────────────────────────────────────────────
+
+static void HandleSignal(int /*sig*/) {
+    gRunning = false;
+    gShutdownCv.notify_all();
+    chip::DeviceLayer::PlatformMgr().StopEventLoopTask();
+}
+
 // ── CHIP SDK callbacks ────────────────────────────────────────────────────────
 
 // Called by the CHIP stack when an attribute is written (e.g. Apple Home
@@ -81,10 +102,24 @@ bool emberAfAttributeWriteAccessCallback(EndpointId, ClusterId, AttributeId) {
 // ── Device management ─────────────────────────────────────────────────────────
 
 // Must be called from the Matter event loop thread (or before RunEventLoop).
+// Clears old devices OUTSIDE the mutex (so destructors run without holding it),
+// then registers new devices and only takes the mutex briefly to push each
+// successfully-registered device into gDevices. Uses a separate slot counter so
+// that Unknown-category devices don't leave gaps in the endpoint ID space.
 static void RegisterDevices(const std::vector<DeviceInfo>& infos) {
-    std::lock_guard<std::mutex> lock(gDevicesMutex);
+    // Release old device objects without holding gDevicesMutex, so their
+    // destructors (which may call back into the CHIP registry) don't deadlock.
+    std::vector<std::unique_ptr<BridgeDevice>> old_devices;
+    {
+        std::lock_guard<std::mutex> lock(gDevicesMutex);
+        old_devices.swap(gDevices);
+    }
+    old_devices.clear(); // destructors run here, outside the lock
 
-    for (size_t i = 0; i < infos.size() && i < kMaxDynamicDevices; ++i) {
+    // ep_slot only advances for successfully registered devices, so endpoint IDs
+    // are contiguous even when Unknown-category entries are skipped.
+    uint8_t ep_slot = 0;
+    for (size_t i = 0; i < infos.size() && ep_slot < kMaxDynamicDevices; ++i) {
         const auto& info = infos[i];
         auto spec = MapCategoryToMatter(info.category, info.dimmable);
         if (spec.type == MatterDeviceType::Unknown) {
@@ -93,22 +128,24 @@ static void RegisterDevices(const std::vector<DeviceInfo>& infos) {
             continue;
         }
 
-        auto ep_id = static_cast<EndpointId>(kDynamicEndpointStart + i);
-        auto dev   = std::make_unique<BridgeDevice>(
-            static_cast<uint8_t>(i), ep_id, info);
+        auto ep_id = static_cast<EndpointId>(kDynamicEndpointStart + ep_slot);
+        auto dev   = std::make_unique<BridgeDevice>(ep_slot, ep_id, info);
 
+        // CHIP SDK calls (Register, UpdateOnOff, SetReachable) must NOT be made
+        // while holding gDevicesMutex — they can trigger callbacks that acquire
+        // other locks, risking lock-order inversion.
         CHIP_ERROR err = dev->Register();
         if (err != CHIP_NO_ERROR) {
             ChipLogError(AppServer, "Register endpoint %u ('%s') failed: %s",
                          ep_id, info.name.c_str(), ErrorStr(err));
+            ep_slot++;
             continue;
         }
 
         // Apply initial on/off state if available.
         auto it = info.state.find("on");
         if (it != info.state.end()) {
-            bool on = (it->second == "true" || it->second == "1");
-            dev->UpdateOnOff(on);
+            dev->UpdateOnOff(ParseBoolState(it->second));
         }
         dev->SetReachable(true);
 
@@ -116,7 +153,12 @@ static void RegisterDevices(const std::vector<DeviceInfo>& infos) {
                       info.name.c_str(), ep_id,
                       MatterDeviceTypeName(spec.type));
 
-        gDevices.push_back(std::move(dev));
+        // Only the push_back needs the mutex; CHIP SDK calls are done above.
+        {
+            std::lock_guard<std::mutex> lock(gDevicesMutex);
+            gDevices.push_back(std::move(dev));
+        }
+        ep_slot++;
     }
 }
 
@@ -139,8 +181,14 @@ static void PollLoop() {
     uint32_t ticks = 0;
 
     while (gRunning) {
-        std::this_thread::sleep_for(
-            std::chrono::seconds(kDevicePollIntervalSeconds));
+        // Interruptible sleep: woken immediately on shutdown instead of waiting
+        // out the full kDevicePollIntervalSeconds.
+        {
+            std::unique_lock<std::mutex> lk(gShutdownMutex);
+            gShutdownCv.wait_for(lk,
+                std::chrono::seconds(kDevicePollIntervalSeconds),
+                [] { return !gRunning.load(); });
+        }
 
         if (!gRunning) break;
         ++ticks;
@@ -160,15 +208,12 @@ static void PollLoop() {
                     ChipLogDetail(AppServer,
                                   "Device list changed (%zu → %zu), re-registering",
                                   current_count, new_infos.size());
-                    // Clear existing devices, then re-register from the Matter
-                    // event loop thread so emberAf* calls are thread-safe.
+                    // Re-register from the Matter event loop thread so that
+                    // emberAf* calls are thread-safe. RegisterDevices() handles
+                    // clearing the old device list internally (outside the mutex).
                     PlatformMgr().ScheduleWork([](intptr_t ctx) {
                         auto* infos =
                             reinterpret_cast<std::vector<DeviceInfo>*>(ctx);
-                        {
-                            std::lock_guard<std::mutex> lock(gDevicesMutex);
-                            gDevices.clear();
-                        }
                         RegisterDevices(*infos);
                         delete infos;
                     }, reinterpret_cast<intptr_t>(
@@ -192,7 +237,7 @@ static void PollLoop() {
                 auto        on_it  = state.find("on");
                 if (on_it == state.end()) continue;
 
-                bool on = (on_it->second == "true" || on_it->second == "1");
+                bool on = ParseBoolState(on_it->second);
                 auto* u = new OnOffUpdate{dev_ptr.get(), on};
                 PlatformMgr().ScheduleWork(ApplyOnOffUpdate,
                                            reinterpret_cast<intptr_t>(u));
@@ -229,6 +274,10 @@ int main(int argc, char* argv[]) {
     initParams.InitializeStaticResourcesBeforeServerInit();
     err = Server::GetInstance().Init(initParams);
     VerifyOrDie(err == CHIP_NO_ERROR);
+
+    // ── Signal handlers (SIGINT / SIGTERM for graceful systemctl stop) ────────
+    signal(SIGINT,  HandleSignal);
+    signal(SIGTERM, HandleSignal);
 
     // ── SyncClient setup ──────────────────────────────────────────────────────
     const char* base_url = GetBridgeSyncUrl();
@@ -280,6 +329,7 @@ int main(int argc, char* argv[]) {
 
     // ── Teardown ───────────────────────────────────────────────────────────────
     gRunning = false;
+    gShutdownCv.notify_all(); // wake poll thread immediately instead of waiting
     poll_thread.join();
 
     Server::GetInstance().Shutdown();
