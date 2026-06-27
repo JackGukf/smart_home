@@ -238,6 +238,7 @@ protected:
     void TearDown() override {
         // Registry may hold a pointer; clear stubs but registry self-cleans via Unregister
         gStubs.Reset();
+        SetCommandSender({});
     }
 };
 
