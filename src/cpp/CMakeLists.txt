@@ -46,4 +46,16 @@ if(BUILD_TESTING)
     target_include_directories(matter_bridge_mapper_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(matter_bridge_mapper_tests PRIVATE GTest::gtest_main)
     gtest_discover_tests(matter_bridge_mapper_tests)
+
+    add_executable(matter_bridge_sync_client_tests
+        ../../tests/cpp/matter_bridge/test_sync_client.cpp
+        matter_bridge/SyncClient.cpp
+    )
+    target_include_directories(matter_bridge_sync_client_tests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} /usr/include/nlohmann
+    )
+    target_link_libraries(matter_bridge_sync_client_tests
+        PRIVATE GTest::gtest_main curl
+    )
+    gtest_discover_tests(matter_bridge_sync_client_tests)
 endif()
