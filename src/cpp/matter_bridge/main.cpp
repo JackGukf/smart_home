@@ -187,6 +187,31 @@ static void ApplyOnOffUpdate(intptr_t ctx) {
 // ── Background poll thread ────────────────────────────────────────────────────
 
 static void PollLoop() {
+    // ── Initial device registration (runs before first sleep) ────────────────
+    // This must happen in the poll thread, not main(), so that RunEventLoop()
+    // starts immediately and the Matter event loop can handle iPhone
+    // commissioning while we wait for the Python dashboard to become ready.
+    while (gRunning) {
+        try {
+            auto infos = gSyncClient->FetchDevices();
+            if (!infos.empty()) {
+                PlatformMgr().ScheduleWork([](intptr_t ctx) {
+                    auto* p = reinterpret_cast<std::vector<DeviceInfo>*>(ctx);
+                    RegisterDevices(*p);
+                    delete p;
+                }, reinterpret_cast<intptr_t>(new std::vector<DeviceInfo>(std::move(infos))));
+                break;
+            }
+            ChipLogDetail(AppServer, "No devices yet; retrying in 5 s...");
+        } catch (const SyncClientError& e) {
+            const char* msg = e.what();
+            ChipLogError(AppServer, "Waiting for bridge sync API: %s - retrying in 5 s", msg);
+        }
+        std::unique_lock<std::mutex> lk(gShutdownMutex);
+        gShutdownCv.wait_for(lk, std::chrono::seconds(5),
+                              [] { return !gRunning.load(); });
+    }
+
     uint32_t ticks = 0;
 
     while (gRunning) {
@@ -302,28 +327,11 @@ int main(int argc, char* argv[]) {
         }
     });
 
-    // ── Initial device discovery (retry until Python dashboard is ready) ───────
-    std::vector<DeviceInfo> device_infos;
-    while (device_infos.empty() && gRunning) {
-        try {
-            device_infos = gSyncClient->FetchDevices();
-            if (device_infos.empty()) {
-                ChipLogDetail(AppServer,
-                              "No devices returned; retrying in 5 s...");
-                std::this_thread::sleep_for(std::chrono::seconds(5));
-            }
-        } catch (const SyncClientError& sync_err) {
-            const char* sync_msg = sync_err.what();
-            ChipLogError(AppServer, "Waiting for bridge sync API: %s - retrying in 5 s", sync_msg);
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-        }
-    }
-
-    if (!gRunning) return 0;
-
-    RegisterDevices(device_infos);
-
-    // ── Background poll thread ─────────────────────────────────────────────────
+    // ── Background poll thread ────────────────────────────────────────────────
+    // Starts immediately so RunEventLoop() is reached without delay.
+    // The poll thread handles initial device registration internally, retrying
+    // until the Python dashboard is ready — this way the Matter event loop
+    // (and iPhone commissioning) can proceed even if the dashboard is slow.
     std::thread poll_thread(PollLoop);
 
     ChipLogDetail(AppServer,
