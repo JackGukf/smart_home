@@ -1,0 +1,199 @@
+#include "BridgeDevice.h"
+#include <map>
+#include <mutex>
+
+// ─── Global endpoint registry ──────────────────────────────────────────────────
+
+static std::mutex                                  gRegistryMutex;
+static std::map<chip::EndpointId, BridgeDevice*>  gEndpointRegistry;
+
+void BridgeDeviceRegisterInstance(chip::EndpointId id, BridgeDevice* dev) {
+    std::lock_guard<std::mutex> lock(gRegistryMutex);
+    gEndpointRegistry[id] = dev;
+}
+
+void BridgeDeviceUnregisterInstance(chip::EndpointId id) {
+    std::lock_guard<std::mutex> lock(gRegistryMutex);
+    gEndpointRegistry.erase(id);
+}
+
+BridgeDevice* BridgeDeviceLookup(chip::EndpointId id) {
+    std::lock_guard<std::mutex> lock(gRegistryMutex);
+    auto it = gEndpointRegistry.find(id);
+    return (it != gEndpointRegistry.end()) ? it->second : nullptr;
+}
+
+// ─── Static cluster/attribute tables ──────────────────────────────────────────
+// These MUST be static (or global) — the CHIP stack holds raw pointers to them.
+
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sOnOffAttribs)
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_ON_OFF_ATTRIBUTE_ID, BOOLEAN, 1, 0),
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
+
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sBridgedBasicAttribs)
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_NODE_LABEL_ATTRIBUTE_ID, CHAR_STRING, kNodeLabelMaxSize,
+                              ZAP_ATTRIBUTE_MASK(WRITABLE)),
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_REACHABLE_ATTRIBUTE_ID, BOOLEAN, 1, 0),
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
+
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sDescriptorAttribs)
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_DEVICE_LIST_ATTRIBUTE_ID,  ARRAY, kDescriptorArraySize, 0),
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_SERVER_LIST_ATTRIBUTE_ID,  ARRAY, kDescriptorArraySize, 0),
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_CLIENT_LIST_ATTRIBUTE_ID,  ARRAY, kDescriptorArraySize, 0),
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_PARTS_LIST_ATTRIBUTE_ID,   ARRAY, kDescriptorArraySize, 0),
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
+
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sTempAttribs)
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_TEMP_MEASURED_VALUE_ATTRIBUTE_ID,     INT16S, 2, 0),
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_TEMP_MIN_MEASURED_VALUE_ATTRIBUTE_ID, INT16S, 2, 0),
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_TEMP_MAX_MEASURED_VALUE_ATTRIBUTE_ID, INT16S, 2, 0),
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
+
+// Cluster list: OnOff Light / virtual switch / plug-in unit (all share same clusters)
+DECLARE_DYNAMIC_CLUSTER_LIST_BEGIN(sOnOffClusters)
+    DECLARE_DYNAMIC_CLUSTER(ZCL_ON_OFF_CLUSTER_ID,
+                            sOnOffAttribs,
+                            ZAP_CLUSTER_MASK(SERVER),
+                            OnOffIncomingCommands, nullptr),
+    DECLARE_DYNAMIC_CLUSTER(ZCL_DESCRIPTOR_CLUSTER_ID,
+                            sDescriptorAttribs,
+                            ZAP_CLUSTER_MASK(SERVER),
+                            nullptr, nullptr),
+    DECLARE_DYNAMIC_CLUSTER(ZCL_BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER_ID,
+                            sBridgedBasicAttribs,
+                            ZAP_CLUSTER_MASK(SERVER),
+                            nullptr, nullptr),
+DECLARE_DYNAMIC_CLUSTER_LIST_END;
+
+// Cluster list: Temperature Sensor (read-only)
+DECLARE_DYNAMIC_CLUSTER_LIST_BEGIN(sTempClusters)
+    DECLARE_DYNAMIC_CLUSTER(ZCL_TEMP_MEASUREMENT_CLUSTER_ID,
+                            sTempAttribs,
+                            ZAP_CLUSTER_MASK(SERVER),
+                            nullptr, nullptr),
+    DECLARE_DYNAMIC_CLUSTER(ZCL_DESCRIPTOR_CLUSTER_ID,
+                            sDescriptorAttribs,
+                            ZAP_CLUSTER_MASK(SERVER),
+                            nullptr, nullptr),
+    DECLARE_DYNAMIC_CLUSTER(ZCL_BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER_ID,
+                            sBridgedBasicAttribs,
+                            ZAP_CLUSTER_MASK(SERVER),
+                            nullptr, nullptr),
+DECLARE_DYNAMIC_CLUSTER_LIST_END;
+
+// Endpoint type descriptors (one per Matter device type we support)
+DECLARE_DYNAMIC_ENDPOINT(sOnOffEndpointType, sOnOffClusters);
+DECLARE_DYNAMIC_ENDPOINT(sTempEndpointType,  sTempClusters);
+
+// ─── Device type lists per Matter type ────────────────────────────────────────
+
+static const EmberAfDeviceType kOnOffLightTypes[] = {
+    {kDeviceTypeIdOnOffLight, 1}, {kDeviceTypeIdBridgedNode, 1}
+};
+static const EmberAfDeviceType kPlugInUnitTypes[] = {
+    {kDeviceTypeIdOnOffPlugIn, 1}, {kDeviceTypeIdBridgedNode, 1}
+};
+static const EmberAfDeviceType kTempSensorTypes[] = {
+    {kDeviceTypeIdTempSensor, 1}, {kDeviceTypeIdBridgedNode, 1}
+};
+
+// ─── BridgeDevice implementation ──────────────────────────────────────────────
+
+BridgeDevice::BridgeDevice(uint8_t dynamic_index,
+                           chip::EndpointId endpoint_id,
+                           const DeviceInfo& info)
+    : device_id_(info.device_id),
+      name_(info.name),
+      dynamic_index_(dynamic_index),
+      endpoint_id_(endpoint_id),
+      spec_(MapCategoryToMatter(info.category, info.dimmable))
+{}
+
+BridgeDevice::~BridgeDevice() {
+    Unregister();
+}
+
+CHIP_ERROR BridgeDevice::Register() {
+    const EmberAfEndpointType* ep_type         = &sOnOffEndpointType;
+    const EmberAfDeviceType*   dev_types        = kOnOffLightTypes;
+    size_t                     dev_types_count  = ArraySize(kOnOffLightTypes);
+    size_t                     cluster_count    = ArraySize(sOnOffClusters);
+
+    if (spec_.type == MatterDeviceType::OnOffPlugInUnit) {
+        dev_types       = kPlugInUnitTypes;
+        dev_types_count = ArraySize(kPlugInUnitTypes);
+        // ep_type and cluster_count remain sOnOffEndpointType / sOnOffClusters
+    } else if (spec_.type == MatterDeviceType::TemperatureSensor) {
+        ep_type         = &sTempEndpointType;
+        dev_types       = kTempSensorTypes;
+        dev_types_count = ArraySize(kTempSensorTypes);
+        cluster_count   = ArraySize(sTempClusters);
+    }
+    // DimmableLight, VirtualOnOffLight → treated same as OnOffLight
+
+    CHIP_ERROR err = emberAfSetDynamicEndpoint(
+        dynamic_index_,
+        endpoint_id_,
+        ep_type,
+        chip::Span<chip::DataVersion>(data_versions_, cluster_count),
+        chip::Span<const EmberAfDeviceType>(dev_types, dev_types_count)
+    );
+
+    if (err == CHIP_NO_ERROR) {
+        BridgeDeviceRegisterInstance(endpoint_id_, this);
+    }
+    return err;
+}
+
+void BridgeDevice::Unregister() {
+    BridgeDeviceUnregisterInstance(endpoint_id_);
+    emberAfClearDynamicEndpoint(dynamic_index_);
+}
+
+void BridgeDevice::UpdateOnOff(bool on) {
+    uint8_t value = on ? 1 : 0;
+    emberAfWriteAttribute(
+        endpoint_id_,
+        ZCL_ON_OFF_CLUSTER_ID,
+        ZCL_ON_OFF_ATTRIBUTE_ID,
+        &value,
+        ZCL_BOOLEAN_ATTRIBUTE_TYPE
+    );
+}
+
+void BridgeDevice::SetReachable(bool reachable) {
+    uint8_t value = reachable ? 1 : 0;
+    emberAfWriteAttribute(
+        endpoint_id_,
+        ZCL_BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER_ID,
+        ZCL_REACHABLE_ATTRIBUTE_ID,
+        &value,
+        ZCL_BOOLEAN_ATTRIBUTE_TYPE
+    );
+}
+
+void BridgeDevice::OnAttributeChanged(chip::ClusterId   cluster_id,
+                                      chip::AttributeId attribute_id,
+                                      uint8_t*          value,
+                                      const CommandSenderFn& send_command) {
+    if (spec_.read_only) return;
+
+    if (cluster_id  == ZCL_ON_OFF_CLUSTER_ID &&
+        attribute_id == ZCL_ON_OFF_ATTRIBUTE_ID) {
+        bool on = (*value != 0);
+        send_command(device_id_, on ? "on" : "off");
+    }
+}
+
+// ─── Global callback ──────────────────────────────────────────────────────────
+
+void HandleAttributeChanged(chip::EndpointId   endpoint_id,
+                            chip::ClusterId    cluster_id,
+                            chip::AttributeId  attribute_id,
+                            uint8_t*           value,
+                            const CommandSenderFn& send_command) {
+    BridgeDevice* dev = BridgeDeviceLookup(endpoint_id);
+    if (dev) {
+        dev->OnAttributeChanged(cluster_id, attribute_id, value, send_command);
+    }
+}
