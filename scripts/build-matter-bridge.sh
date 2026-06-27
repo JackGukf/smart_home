@@ -14,6 +14,8 @@ echo "==> Activating CHIP SDK tools..."
 # shellcheck source=/dev/null
 source "$CHIP_DIR/scripts/activate.sh"
 
+# Temporarily patch the CHIP SDK bridge example to include our sources.
+# We restore the original BUILD.gn after the build to keep the submodule clean.
 echo "==> Copying bridge source files into CHIP SDK bridge example..."
 cp "$BRIDGE_SRC/BridgeDevice.h"   "$CHIP_BRIDGE_DIR/"
 cp "$BRIDGE_SRC/BridgeDevice.cpp" "$CHIP_BRIDGE_DIR/"
@@ -44,6 +46,9 @@ mkdir -p "$OUT_DIR"
 
 echo "==> Stripping binary..."
 aarch64-linux-gnu-strip "$OUT_DIR/chip-bridge-app"
+
+# Restore CHIP SDK to clean state (we patched BUILD.gn)
+git -C third_party/connectedhomeip checkout -- examples/bridge-app/linux/BUILD.gn
 
 echo "==> Done: $OUT_DIR/chip-bridge-app"
 ls -lh "$OUT_DIR/chip-bridge-app"

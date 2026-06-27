@@ -163,14 +163,20 @@ static void RegisterDevices(const std::vector<DeviceInfo>& infos) {
 // ── OnOff update helper (scheduled onto Matter event loop) ────────────────────
 
 struct OnOffUpdate {
-    BridgeDevice* dev;
-    bool          on;
+    std::string device_id;  // store ID, not raw pointer — avoids use-after-free on rescan
+    bool        on;
 };
 
 static void ApplyOnOffUpdate(intptr_t ctx) {
-    auto* u = reinterpret_cast<OnOffUpdate*>(ctx);
-    u->dev->UpdateOnOff(u->on);
-    delete u;
+    auto* upd = reinterpret_cast<OnOffUpdate*>(ctx);
+    std::unique_ptr<OnOffUpdate> guard(upd);  // RAII delete
+    std::lock_guard<std::mutex> lock(gDevicesMutex);
+    for (auto& dev : gDevices) {
+        if (dev->GetDeviceId() == upd->device_id) {
+            dev->UpdateOnOff(upd->on);
+            break;
+        }
+    }
 }
 
 // ── Background poll thread ────────────────────────────────────────────────────
@@ -236,9 +242,9 @@ static void PollLoop() {
                 if (on_it == state.end()) continue;
 
                 bool on = ParseBoolState(on_it->second);
-                auto* u = new OnOffUpdate{dev_ptr.get(), on};
+                auto* upd = new OnOffUpdate{dev_ptr->GetDeviceId(), on};
                 PlatformMgr().ScheduleWork(ApplyOnOffUpdate,
-                                           reinterpret_cast<intptr_t>(u));
+                                           reinterpret_cast<intptr_t>(upd));
             }
         } catch (const SyncClientError& e) {
             ChipLogError(AppServer, "FetchAllStates failed: %s", e.what());

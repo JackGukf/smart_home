@@ -15,7 +15,7 @@ Three layers:
 
 ```
 Apple Home ──Matter/BLE/mDNS──► C++ Matter Bridge Daemon
-                                        │  HTTP localhost:8765
+                                        │  HTTP localhost:8000
                                         ▼
                               Python Bridge Sync API  (bridge_sync.py)
                                         │
@@ -32,7 +32,7 @@ Built on the connectedhomeip SDK (CHIP SDK). Registers with Apple Home as a Matt
 
 **2. `src/python/bridge_sync.py` — Python Bridge Sync API**
 
-New FastAPI router mounted into `web_app.py`. Exposes internal HTTP endpoints on `localhost:8765` (not public-facing). The C++ bridge calls these to query the device list, send commands, and receive state updates. The Python poller already running for the dashboard detects state changes and POSTs them to the bridge.
+New FastAPI router mounted into `web_app.py`. Mounts its router at the `/bridge` prefix on the same web app (port 8000). The bridge endpoints are on the same port as the dashboard — no separate port — but are intended for localhost-only access from the C++ daemon. The C++ bridge calls these to query the device list, send commands, and receive state updates. The Python poller already running for the dashboard detects state changes and POSTs them to the bridge.
 
 **3. `third_party/connectedhomeip/` — CHIP SDK**
 
@@ -52,7 +52,7 @@ New service alongside the existing dashboard, matter-server, and go2rtc services
 1. User taps switch in Apple Home
 2. Apple Home sends Matter OnOff command to C++ bridge endpoint
 3. C++ bridge POSTs to Python:
-   POST localhost:8765/bridge/command
+   POST localhost:8000/bridge/command
    {"device_id": "kasa_living_room", "command": "on"}
 4. Python calls existing Kasa/Tuya SDK (same code dashboard already uses)
 5. Python responds 200 OK
@@ -66,7 +66,7 @@ New service alongside the existing dashboard, matter-server, and go2rtc services
 1. Python poller runs every 10s (same interval dashboard uses today)
 2. Poller detects state change (e.g. physical toggle of switch)
 3. Python POSTs to C++ bridge:
-   POST localhost:8765/bridge/state
+   POST localhost:8000/bridge/state
    {"device_id": "kasa_living_room", "state": {"on": false}}
 4. C++ bridge updates Matter attribute → Apple Home reflects new state
 ```
@@ -75,13 +75,13 @@ New service alongside the existing dashboard, matter-server, and go2rtc services
 
 ```
 1. Python dashboard starts (existing)
-2. C++ bridge starts, calls GET localhost:8765/bridge/devices
+2. C++ bridge starts, calls GET localhost:8000/bridge/devices
 3. Python returns full device list with types and current state
 4. C++ bridge registers one Matter endpoint per device
 5. Bridge announces via mDNS — Apple Home can commission it
 ```
 
-**IPC transport:** HTTP on `localhost:8765`. Matches existing Python API patterns, easy to test with curl, negligible latency on loopback with `network_mode: host`.
+**IPC transport:** HTTP on `localhost:8000` (the same port as the main dashboard). The `/bridge` router is mounted directly on the web app — no separate process or port. Easy to test with curl, negligible latency on loopback with `network_mode: host`.
 
 ---
 
@@ -114,7 +114,7 @@ src/cpp/matter_bridge/
   main.cpp
   BridgeDevice.h / .cpp              ← one Matter endpoint per dashboard device
   DeviceMapper.h / .cpp              ← category → Matter device type table
-  SyncClient.h / .cpp                ← HTTP client for localhost:8765
+  SyncClient.h / .cpp                ← HTTP client for localhost:8000
   tests/                             ← GoogleTest unit tests
 src/python/bridge_sync.py            ← new FastAPI router
 scripts/
@@ -148,7 +148,7 @@ matter-bridge:
   volumes:
     - matter-data:/data
   environment:
-    - BRIDGE_SYNC_URL=http://localhost:8765
+    - BRIDGE_SYNC_URL=http://localhost:8000
     - DASHBOARD_DEVICES_URL=http://localhost:8000
 ```
 

@@ -233,9 +233,10 @@ def create_app(
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     app.include_router(bridge_sync.router)
+    import functools as _functools
     bridge_sync.register_handlers(
-        get_devices_fn=_bridge_device_list,
-        execute_command_fn=_bridge_execute_command,
+        get_devices_fn=_functools.partial(_bridge_device_list, controller=app.state.controller),
+        execute_command_fn=_functools.partial(_bridge_execute_command, controller=app.state.controller),
     )
 
     @app.get("/")
@@ -487,6 +488,10 @@ async def _device_cards(app: FastAPI) -> list[dict[str, Any]]:
         except Exception:
             is_on = None
             brightness = None
+
+        # Keep bridge state cache fresh so GET /bridge/state/all is never stale.
+        if is_on is not None:
+            bridge_sync.update_state_cache(f"kasa:{switch.host}", {"on": is_on})
 
         cards.append(
             {
@@ -2575,13 +2580,13 @@ def _room_from_name(name: str) -> str:
     return first_word.title()
 
 
-async def _bridge_device_list() -> list[dict]:
+async def _bridge_device_list(controller: KasaLightSwitchController | None = None) -> list[dict]:
     """Return all bridgeable dashboard devices with current state for the C++ bridge."""
     devices: list[dict] = []
     cfg = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
 
     # TP-Link switches
-    controller = KasaLightSwitchController()
+    _ctrl = controller or KasaLightSwitchController()
     for sw_cfg in (cfg.get("tplink") or {}).get("switches") or []:
         host = str(sw_cfg.get("host") or "")
         name = str(sw_cfg.get("name") or host)
@@ -2590,7 +2595,7 @@ async def _bridge_device_list() -> list[dict]:
         on: bool | None = None
         try:
             sw = SwitchDefinition(name=name, host=host, model=str(sw_cfg.get("model") or ""))
-            status = await controller.status(sw)
+            status = await _ctrl.status(sw)
             on = status.is_on if status else None
         except Exception:  # noqa: BLE001
             pass
@@ -2620,13 +2625,13 @@ async def _bridge_device_list() -> list[dict]:
     return devices
 
 
-async def _bridge_execute_command(device_id: str, command: str) -> None:
+async def _bridge_execute_command(device_id: str, command: str, controller: KasaLightSwitchController | None = None) -> None:
     """Route a command from the C++ bridge to the appropriate device controller."""
     cfg = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
 
     if device_id.startswith("kasa:"):
         host = device_id[len("kasa:"):]
-        controller = KasaLightSwitchController()
+        _ctrl = controller or KasaLightSwitchController()
         sw_cfgs = (cfg.get("tplink") or {}).get("switches") or []
         sw_cfg = next((s for s in sw_cfgs if str(s.get("host")) == host), None)
         if sw_cfg is None:
@@ -2637,11 +2642,11 @@ async def _bridge_execute_command(device_id: str, command: str) -> None:
             model=str(sw_cfg.get("model") or ""),
         )
         if command == "on":
-            await controller.turn_on(sw)
+            await _ctrl.turn_on(sw)
         elif command == "off":
-            await controller.turn_off(sw)
+            await _ctrl.turn_off(sw)
         elif command == "toggle":
-            await controller.toggle(sw)
+            await _ctrl.toggle(sw)
         else:
             raise ValueError(f"Unknown command: {command}")
         return

@@ -3,14 +3,19 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from src.python import bridge_sync
 from src.python.bridge_sync import router, register_handlers, update_state_cache, _state_cache
 
 
 @pytest.fixture(autouse=True)
 def clear_state():
     _state_cache.clear()
+    bridge_sync._get_devices_fn = None
+    bridge_sync._execute_command_fn = None
     yield
     _state_cache.clear()
+    bridge_sync._get_devices_fn = None
+    bridge_sync._execute_command_fn = None
 
 
 @pytest.fixture
