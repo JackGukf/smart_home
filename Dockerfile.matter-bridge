@@ -1,0 +1,25 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libcurl4 \
+        libavahi-client3 \
+        libglib2.0-0 \
+        libdbus-1-3 \
+        libnl-3-200 \
+        libnl-route-3-200 \
+        iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the pre-built aarch64 binary produced by scripts/build-matter-bridge.sh
+COPY build/matter-bridge/chip-bridge-app /usr/local/bin/chip-bridge
+
+RUN chmod +x /usr/local/bin/chip-bridge \
+    && useradd -m matter
+
+USER matter
+
+ENV BRIDGE_SYNC_URL=http://localhost:8000
+ENV MATTER_KVS_PATH=/data/bridge
+
+CMD ["/usr/local/bin/chip-bridge", "--KVS", "/data/bridge/kvs"]

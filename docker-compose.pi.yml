@@ -27,5 +27,18 @@ services:
     volumes:
       - ./go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
 
+  matter-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.matter-bridge
+    image: smart-home-matter-bridge:latest
+    container_name: matter-bridge
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - matter-data:/data
+    environment:
+      - BRIDGE_SYNC_URL=http://localhost:8000
+
 volumes:
   matter-data:
