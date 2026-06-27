@@ -7,6 +7,14 @@
 static std::mutex                                  gRegistryMutex;
 static std::map<chip::EndpointId, BridgeDevice*>  gEndpointRegistry;
 
+// ─── Global command sender ─────────────────────────────────────────────────────
+
+static CommandSenderFn gCommandSender;
+
+void SetCommandSender(CommandSenderFn fn) {
+    gCommandSender = std::move(fn);
+}
+
 void BridgeDeviceRegisterInstance(chip::EndpointId id, BridgeDevice* dev) {
     std::lock_guard<std::mutex> lock(gRegistryMutex);
     gEndpointRegistry[id] = dev;
@@ -140,12 +148,15 @@ CHIP_ERROR BridgeDevice::Register() {
     );
 
     if (err == CHIP_NO_ERROR) {
+        registered_ = true;
         BridgeDeviceRegisterInstance(endpoint_id_, this);
     }
     return err;
 }
 
 void BridgeDevice::Unregister() {
+    if (!registered_) return;
+    registered_ = false;
     BridgeDeviceUnregisterInstance(endpoint_id_);
     emberAfClearDynamicEndpoint(dynamic_index_);
 }
@@ -174,26 +185,26 @@ void BridgeDevice::SetReachable(bool reachable) {
 
 void BridgeDevice::OnAttributeChanged(chip::ClusterId   cluster_id,
                                       chip::AttributeId attribute_id,
-                                      uint8_t*          value,
-                                      const CommandSenderFn& send_command) {
+                                      uint8_t*          value) {
     if (spec_.read_only) return;
 
     if (cluster_id  == ZCL_ON_OFF_CLUSTER_ID &&
         attribute_id == ZCL_ON_OFF_ATTRIBUTE_ID) {
         bool on = (*value != 0);
-        send_command(device_id_, on ? "on" : "off");
+        if (gCommandSender) {
+            gCommandSender(device_id_, on ? "on" : "off");
+        }
     }
 }
 
 // ─── Global callback ──────────────────────────────────────────────────────────
 
-void HandleAttributeChanged(chip::EndpointId   endpoint_id,
-                            chip::ClusterId    cluster_id,
-                            chip::AttributeId  attribute_id,
-                            uint8_t*           value,
-                            const CommandSenderFn& send_command) {
+void HandleAttributeChanged(chip::EndpointId  endpoint_id,
+                            chip::ClusterId   cluster_id,
+                            chip::AttributeId attribute_id,
+                            uint8_t*          value) {
     BridgeDevice* dev = BridgeDeviceLookup(endpoint_id);
     if (dev) {
-        dev->OnAttributeChanged(cluster_id, attribute_id, value, send_command);
+        dev->OnAttributeChanged(cluster_id, attribute_id, value);
     }
 }

@@ -32,6 +32,10 @@ static constexpr uint16_t kDescriptorArraySize = 254;
 // The caller supplies a function that sends the command to the real device via SyncClient.
 using CommandSenderFn = std::function<void(const std::string& device_id, const std::string& command)>;
 
+// Set the process-global CommandSenderFn used by HandleAttributeChanged.
+// Must be called (once) before any attribute-change callbacks fire.
+void SetCommandSender(CommandSenderFn fn);
+
 class BridgeDevice {
 public:
     // dynamic_index: 0-based slot in the dynamic endpoint array (max ~252)
@@ -67,10 +71,10 @@ public:
     MatterDeviceType   GetType() const { return spec_.type; }
 
     // Called by HandleAttributeChanged() when Apple Home writes to this device's endpoint.
+    // Reads the command sender from the process-global set by SetCommandSender().
     void OnAttributeChanged(chip::ClusterId cluster_id,
                             chip::AttributeId attribute_id,
-                            uint8_t* value,
-                            const CommandSenderFn& send_command);
+                            uint8_t* value);
 
 private:
     std::string      device_id_;
@@ -79,7 +83,10 @@ private:
     chip::EndpointId endpoint_id_;
     MatterDeviceSpec spec_;
 
-    // Per-instance data versions (one per cluster; arrays must outlive the endpoint)
+    bool             registered_ = false;
+
+    // Per-instance data versions (one per cluster; arrays must outlive the endpoint).
+    // 4 to accommodate future DimmableLight (adds LevelControl cluster)
     static constexpr size_t kMaxClusters = 4;
     chip::DataVersion data_versions_[kMaxClusters] = {};
 };
@@ -94,9 +101,8 @@ BridgeDevice* BridgeDeviceLookup(chip::EndpointId id);
 
 // ─── Global callback ──────────────────────────────────────────────────────────
 // main.cpp's MatterPostAttributeChangeCallback should delegate here.
-// send_command is typically SyncClient::SendCommand bound to the application's SyncClient.
-void HandleAttributeChanged(chip::EndpointId endpoint_id,
-                            chip::ClusterId  cluster_id,
+// The CommandSenderFn must have been set via SetCommandSender() before this fires.
+void HandleAttributeChanged(chip::EndpointId  endpoint_id,
+                            chip::ClusterId   cluster_id,
                             chip::AttributeId attribute_id,
-                            uint8_t*          value,
-                            const CommandSenderFn& send_command);
+                            uint8_t*          value);

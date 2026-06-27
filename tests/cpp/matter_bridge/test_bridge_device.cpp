@@ -382,12 +382,12 @@ TEST_F(BridgeDeviceTest, OnAttributeChangedOnOffOnSendsCommand) {
     BridgeDevice dev(0, 2, info);
 
     std::vector<std::pair<std::string,std::string>> commands;
-    CommandSenderFn sender = [&](const std::string& id, const std::string& cmd) {
+    SetCommandSender([&](const std::string& id, const std::string& cmd) {
         commands.push_back({id, cmd});
-    };
+    });
 
     uint8_t value = 1; // on
-    dev.OnAttributeChanged(ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &value, sender);
+    dev.OnAttributeChanged(ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &value);
 
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].first,  "kasa:1.2.3.4");
@@ -399,12 +399,12 @@ TEST_F(BridgeDeviceTest, OnAttributeChangedOnOffOffSendsCommand) {
     BridgeDevice dev(0, 2, info);
 
     std::vector<std::pair<std::string,std::string>> commands;
-    CommandSenderFn sender = [&](const std::string& id, const std::string& cmd) {
+    SetCommandSender([&](const std::string& id, const std::string& cmd) {
         commands.push_back({id, cmd});
-    };
+    });
 
     uint8_t value = 0; // off
-    dev.OnAttributeChanged(ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &value, sender);
+    dev.OnAttributeChanged(ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &value);
 
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].second, "off");
@@ -416,12 +416,12 @@ TEST_F(BridgeDeviceTest, OnAttributeChangedReadOnlyDeviceDoesNotSendCommand) {
     BridgeDevice dev(0, 2, info);
 
     std::vector<std::pair<std::string,std::string>> commands;
-    CommandSenderFn sender = [&](const std::string& id, const std::string& cmd) {
+    SetCommandSender([&](const std::string& id, const std::string& cmd) {
         commands.push_back({id, cmd});
-    };
+    });
 
     uint8_t value = 1;
-    dev.OnAttributeChanged(ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &value, sender);
+    dev.OnAttributeChanged(ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &value);
 
     EXPECT_TRUE(commands.empty());
 }
@@ -431,13 +431,13 @@ TEST_F(BridgeDeviceTest, OnAttributeChangedUnknownClusterDoesNotSendCommand) {
     BridgeDevice dev(0, 2, info);
 
     std::vector<std::pair<std::string,std::string>> commands;
-    CommandSenderFn sender = [&](const std::string& id, const std::string& cmd) {
+    SetCommandSender([&](const std::string& id, const std::string& cmd) {
         commands.push_back({id, cmd});
-    };
+    });
 
     uint8_t value = 1;
     // Wrong cluster ID
-    dev.OnAttributeChanged(0xDEAD, ZCL_ON_OFF_ATTRIBUTE_ID, &value, sender);
+    dev.OnAttributeChanged(0xDEAD, ZCL_ON_OFF_ATTRIBUTE_ID, &value);
     EXPECT_TRUE(commands.empty());
 }
 
@@ -475,20 +475,32 @@ TEST_F(BridgeDeviceTest, UnregisterRemovesOnlyTargetDevice) {
     dev2.Unregister();
 }
 
-// HandleAttributeChanged global function tests
-TEST_F(BridgeDeviceTest, HandleAttributeChangedDispatchesToCorrectDevice) {
+// ─── HandleAttributeChanged global function tests ─────────────────────────────
+
+TEST_F(BridgeDeviceTest, HandleAttributeChangedDispatchesToRegisteredDevice) {
     DeviceInfo info = MakeDevice("kasa:5.6.7.8", "light_switch");
     BridgeDevice dev(0, 4, info);
     dev.Register();
 
-    std::vector<std::pair<std::string,std::string>> commands;
-    // We test OnAttributeChanged directly; HandleAttributeChanged is a thin wrapper
-    // that looks up the device and delegates — tested via the device itself.
+    std::string received_id;
+    std::string received_cmd;
+    SetCommandSender([&](const std::string& id, const std::string& cmd) {
+        received_id  = id;
+        received_cmd = cmd;
+    });
+
     uint8_t value = 1;
-    CommandSenderFn sender = [&](const std::string& id, const std::string& cmd) {
-        commands.push_back({id, cmd});
-    };
-    dev.OnAttributeChanged(ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &value, sender);
-    ASSERT_EQ(commands.size(), 1u);
-    EXPECT_EQ(commands[0].first, "kasa:5.6.7.8");
+    HandleAttributeChanged(4, ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &value);
+
+    EXPECT_EQ(received_id,  "kasa:5.6.7.8");
+    EXPECT_EQ(received_cmd, "on");
+}
+
+TEST_F(BridgeDeviceTest, HandleAttributeChangedSafeForUnknownEndpoint) {
+    // No device registered for endpoint 999 — must not crash.
+    SetCommandSender([](const std::string&, const std::string&) {});
+    uint8_t value = 1;
+    EXPECT_NO_FATAL_FAILURE(
+        HandleAttributeChanged(999, ZCL_ON_OFF_CLUSTER_ID, ZCL_ON_OFF_ATTRIBUTE_ID, &value)
+    );
 }
