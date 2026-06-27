@@ -23,7 +23,6 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdlib>
-#include <cstring>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -138,7 +137,6 @@ static void RegisterDevices(const std::vector<DeviceInfo>& infos) {
         if (err != CHIP_NO_ERROR) {
             ChipLogError(AppServer, "Register endpoint %u ('%s') failed: %s",
                          ep_id, info.name.c_str(), ErrorStr(err));
-            ep_slot++;
             continue;
         }
 
