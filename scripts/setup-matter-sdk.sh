@@ -13,14 +13,8 @@ echo "==> Fetching v1.3.0.0 tag..."
 git fetch --depth=1 origin tag v1.3.0.0
 git checkout v1.3.0.0
 
-git submodule update --init --depth 1 \
-  third_party/pigweed/repo \
-  third_party/nlohmann_json \
-  third_party/jsoncpp/repo \
-  third_party/mbedtls/repo \
-  third_party/boringssl \
-  third_party/ot-br-posix \
-  third_party/openthread/ot-core
+echo "==> Initialising platform submodules for linux (uses official checkout script)..."
+python3 scripts/checkout_submodules.py --platform linux --shallow
 
 echo "==> Bootstrapping pigweed toolchain (downloads clang, gn, etc.)..."
 bash scripts/bootstrap.sh
