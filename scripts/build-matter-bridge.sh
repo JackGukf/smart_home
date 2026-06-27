@@ -25,14 +25,62 @@ cp "$BRIDGE_SRC/SyncClient.h"     "$CHIP_BRIDGE_DIR/"
 cp "$BRIDGE_SRC/SyncClient.cpp"   "$CHIP_BRIDGE_DIR/"
 cp "$BRIDGE_SRC/main.cpp"         "$CHIP_BRIDGE_DIR/"
 
-echo "==> Patching bridge-app BUILD.gn to include custom sources + libcurl..."
-# Adds our .cpp files to the sources list and curl to the libs list.
-# Uses sed to insert after the first "sources = [" line.
+echo "==> Writing bridge-app BUILD.gn with custom sources, libcurl and -fexceptions..."
 BUILD_GN="$CHIP_BRIDGE_DIR/BUILD.gn"
-if ! grep -q "BridgeDevice.cpp" "$BUILD_GN"; then
-  sed -i 's|sources = \[|sources = [\n    "BridgeDevice.cpp",\n    "DeviceMapper.cpp",\n    "SyncClient.cpp",|' "$BUILD_GN"
-  sed -i '/^executable/a\  libs = [ "curl" ]' "$BUILD_GN"
-fi
+cat > "$BUILD_GN" <<'BUILDGN'
+# Copyright (c) 2021 Project CHIP Authors
+# Licensed under the Apache License, Version 2.0
+
+import("//build_overrides/chip.gni")
+import("${chip_root}/build/chip/tools.gni")
+
+assert(chip_build_tools)
+
+executable("chip-bridge-app") {
+  libs = [ "curl" ]
+  sources = [
+    "BridgeDevice.cpp",
+    "DeviceMapper.cpp",
+    "SyncClient.cpp",
+    "${chip_root}/examples/bridge-app/linux/bridged-actions-stub.cpp",
+    "${chip_root}/examples/tv-app/tv-common/include/CHIPProjectAppConfig.h",
+    "Device.cpp",
+    "include/Device.h",
+    "include/main.h",
+    "main.cpp",
+  ]
+
+  deps = [
+    "${chip_root}/examples/bridge-app/bridge-common",
+    "${chip_root}/examples/platform/linux:app-main",
+    "${chip_root}/src/lib",
+  ]
+
+  cflags = [ "-Wconversion" ]
+  cflags_cc = [ "-fexceptions" ]
+
+  include_dirs = [
+    "include",
+    "/usr/local/include/chip-cross",
+  ]
+
+  output_dir = root_out_dir
+}
+
+group("linux") {
+  deps = [ ":chip-bridge-app" ]
+}
+
+group("default") {
+  deps = [ ":chip-bridge-app" ]
+}
+BUILDGN
+
+echo "==> Symlinking curl headers into chip-cross include path..."
+sudo mkdir -p /usr/local/include/chip-cross/curl
+for f in /usr/include/x86_64-linux-gnu/curl/*.h; do
+  sudo ln -sf "$f" "/usr/local/include/chip-cross/curl/$(basename "$f")"
+done
 
 echo "==> Running GN build for linux-arm64..."
 mkdir -p "$OUT_DIR"
@@ -40,7 +88,7 @@ mkdir -p "$OUT_DIR"
   "$CHIP_BRIDGE_DIR" \
   "$OUT_DIR" \
   'target_cpu="arm64"' \
-  'chip_mdns="platform"' \
+  'chip_mdns="minimal"' \
   'chip_inet_config_enable_ipv4=true' \
   'is_debug=false'
 

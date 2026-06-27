@@ -170,8 +170,9 @@ def create_app(
         class _AuthMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request: Request, call_next):  # type: ignore[override]
                 path = request.url.path
-                # Always allow login/logout and static assets
-                if path in _SKIP_PATHS or path.startswith("/static/"):
+                # Always allow login/logout, static assets, and bridge sync API
+                # (bridge endpoints are internal-only, called from localhost by the C++ bridge)
+                if path in _SKIP_PATHS or path.startswith("/static/") or path.startswith("/bridge/"):
                     return await call_next(request)
 
                 # Validate session cookie
