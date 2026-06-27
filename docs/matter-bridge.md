@@ -150,15 +150,6 @@ This uses the example test DAC (VID=0xFFF1) which Apple Home accepts for develop
 
 ---
 
-## Known Issues (Not Blocking)
-
-| Issue | Impact | Status |
-|-------|--------|--------|
-| Poll thread re-registers endpoints that already exist | Noisy "already exists" log errors every 60 s | Harmless; deferred |
-| Docker image rebuild fails on Pi (`apt-get` can't find `libnl-route-3-200`) | Cannot rebuild image on Pi | Worked around with bind mount on pre-built binary |
-
----
-
 ## Building the Bridge Binary
 
 ### Production (arm64, for Pi)

@@ -8,5 +8,7 @@ set -e
 mkdir -p /data/bridge
 chown matter:matter /data/bridge
 
-# Use gosu to drop to matter user and exec the bridge with all arguments
-exec gosu matter /usr/local/bin/chip-bridge "$@"
+# Drop privileges to the matter user and exec the bridge with all arguments.
+# Uses plain su (no gosu dependency) — su -s sets the shell, -c with exec
+# preserves the PID so SIGTERM from Docker reaches chip-bridge directly.
+exec su -s /bin/sh matter -c 'exec /usr/local/bin/chip-bridge "$@"' -- "$@"

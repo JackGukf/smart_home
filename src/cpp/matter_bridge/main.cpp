@@ -234,12 +234,21 @@ static void PollLoop() {
         if (do_rescan) {
             try {
                 auto new_infos = gSyncClient->FetchDevices();
+                // Count only registrable devices (Unknown category is skipped in
+                // RegisterDevices) so the comparison doesn't fire every 60 s when
+                // the device list contains any unmapped-category entries.
+                size_t registrable_count = 0;
+                for (const auto& di : new_infos) {
+                    if (MapCategoryToMatter(di.category, di.dimmable).type
+                            != MatterDeviceType::Unknown)
+                        ++registrable_count;
+                }
                 size_t current_count;
                 {
                     std::lock_guard<std::mutex> lock(gDevicesMutex);
                     current_count = gDevices.size();
                 }
-                if (new_infos.size() != current_count) {
+                if (registrable_count != current_count) {
                     ChipLogDetail(AppServer,
                                   "Device list changed (%zu → %zu), re-registering",
                                   current_count, new_infos.size());

@@ -9,7 +9,6 @@ RUN apt-get update \
         libnl-3-200 \
         libnl-route-3-200 \
         iproute2 \
-        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the pre-built aarch64 binary produced by scripts/build-matter-bridge.sh
