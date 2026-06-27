@@ -29,6 +29,7 @@ import yaml
 
 from src.python.tplink_switch import KasaLightSwitchController, SwitchDefinition
 from src.python.matter_device import DashboardMatterClient, node_to_device
+from src.python import bridge_sync
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -230,6 +231,12 @@ def create_app(
             return response
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    app.include_router(bridge_sync.router)
+    bridge_sync.register_handlers(
+        get_devices_fn=_bridge_device_list,
+        execute_command_fn=_bridge_execute_command,
+    )
 
     @app.get("/")
     async def dashboard() -> FileResponse:
@@ -2566,6 +2573,90 @@ def _room_from_name(name: str) -> str:
     if "bedroom" in first_word.lower():
         return first_word.title()
     return first_word.title()
+
+
+async def _bridge_device_list() -> list[dict]:
+    """Return all bridgeable dashboard devices with current state for the C++ bridge."""
+    devices: list[dict] = []
+    cfg = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
+
+    # TP-Link switches
+    controller = KasaLightSwitchController()
+    for sw_cfg in (cfg.get("tplink") or {}).get("switches") or []:
+        host = str(sw_cfg.get("host") or "")
+        name = str(sw_cfg.get("name") or host)
+        room = str(sw_cfg.get("room") or _room_from_name(name))
+        device_id = f"kasa:{host}"
+        on: bool | None = None
+        try:
+            sw = SwitchDefinition(name=name, host=host, model=str(sw_cfg.get("model") or ""))
+            status = await controller.status(sw)
+            on = status.is_on if status else None
+        except Exception:  # noqa: BLE001
+            pass
+        bridge_sync.update_state_cache(device_id, {"on": bool(on)})
+        devices.append({
+            "device_id": device_id,
+            "name": name,
+            "room": room,
+            "category": "light_switch",
+            "dimmable": False,
+            "state": {"on": bool(on)},
+        })
+
+    # Tuya devices
+    for tuya_dev in _load_tuya_devices(DEFAULT_CONFIG_PATH):
+        category = tuya_dev.category or "tuya_switch"
+        bridge_sync.update_state_cache(tuya_dev.device_id, {"on": False})
+        devices.append({
+            "device_id": tuya_dev.device_id,
+            "name": tuya_dev.name,
+            "room": tuya_dev.room,
+            "category": category,
+            "dimmable": False,
+            "state": {"on": False},
+        })
+
+    return devices
+
+
+async def _bridge_execute_command(device_id: str, command: str) -> None:
+    """Route a command from the C++ bridge to the appropriate device controller."""
+    cfg = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
+
+    if device_id.startswith("kasa:"):
+        host = device_id[len("kasa:"):]
+        controller = KasaLightSwitchController()
+        sw_cfgs = (cfg.get("tplink") or {}).get("switches") or []
+        sw_cfg = next((s for s in sw_cfgs if str(s.get("host")) == host), None)
+        if sw_cfg is None:
+            raise KeyError(device_id)
+        sw = SwitchDefinition(
+            name=str(sw_cfg.get("name") or host),
+            host=host,
+            model=str(sw_cfg.get("model") or ""),
+        )
+        if command == "on":
+            await controller.turn_on(sw)
+        elif command == "off":
+            await controller.turn_off(sw)
+        elif command == "toggle":
+            await controller.toggle(sw)
+        else:
+            raise ValueError(f"Unknown command: {command}")
+        return
+
+    # Tuya
+    tuya_devices = _load_tuya_devices(DEFAULT_CONFIG_PATH)
+    tuya_dev = next((d for d in tuya_devices if d.device_id == device_id), None)
+    if tuya_dev is None:
+        raise KeyError(device_id)
+    if command not in {"on", "off", "toggle"}:
+        raise ValueError(f"Unknown command: {command}")
+    current = await asyncio.to_thread(_tuya_current_status, tuya_dev)
+    current_value = _tuya_power_value(current, tuya_dev.power_dp)
+    next_value = not current_value if command == "toggle" else command == "on"
+    await asyncio.to_thread(_tuya_set_power, tuya_dev, next_value)
 
 
 app = create_app()
