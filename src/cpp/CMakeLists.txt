@@ -62,4 +62,20 @@ if(BUILD_TESTING)
         PRIVATE GTest::gtest_main CURL::libcurl
     )
     gtest_discover_tests(matter_bridge_sync_client_tests)
+
+    # BridgeDevice tests: all sources are #include-ed by the test translation unit,
+    # so only the test file itself is listed here. CHIP SDK globals are stubbed
+    # inside test_bridge_device.cpp; no real SDK linkage is required.
+    add_executable(matter_bridge_device_tests
+        ../../tests/cpp/matter_bridge/test_bridge_device.cpp
+    )
+    target_include_directories(matter_bridge_device_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_SOURCE_DIR}
+    )
+    target_link_libraries(matter_bridge_device_tests
+        PRIVATE GTest::gtest_main
+    )
+    gtest_discover_tests(matter_bridge_device_tests)
 endif()
