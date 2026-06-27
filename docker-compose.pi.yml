@@ -35,10 +35,24 @@ services:
     container_name: matter-bridge
     network_mode: host
     restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
     volumes:
       - matter-data:/data
+      - ./build/matter-bridge/chip-bridge-app:/usr/local/bin/chip-bridge:ro
     environment:
       - BRIDGE_SYNC_URL=http://localhost:8000
+      - MATTER_IFACE=wlan0
+    entrypoint:
+      - "/bin/sh"
+      - "-c"
+      - "ip link set docker0 down 2>/dev/null || true; exec /usr/local/bin/entrypoint.sh \"$@\""
+      - "--"
+    command:
+      - "--KVS"
+      - "/data/bridge/kvs"
+      - "--interface"
+      - "wlan0"
 
 volumes:
   matter-data:

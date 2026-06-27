@@ -11,6 +11,7 @@
 #include <app/CommandHandler.h>
 #include <app/ConcreteCommandPath.h>
 #include <app/server/Server.h>
+#include <credentials/examples/DeviceAttestationCredsExample.h>
 #include <lib/core/ErrorStr.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/Linux/NetworkCommissioningDriver.h>
@@ -297,6 +298,11 @@ int main(int argc, char* argv[]) {
     if (ChipLinuxAppInit(argc, argv) != 0) {
         return -1;
     }
+
+    // ChipLinuxAppMainLoop() normally sets up the example DAC provider, but we
+    // run our own event loop, so set it explicitly here before Server::Init().
+    chip::Credentials::SetDeviceAttestationCredentialsProvider(
+        chip::Credentials::Examples::GetExampleDACProvider());
 
     static CommonCaseDeviceServerInitParams initParams;
     initParams.InitializeStaticResourcesBeforeServerInit();
