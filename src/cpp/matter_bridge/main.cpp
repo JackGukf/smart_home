@@ -7,16 +7,21 @@
  *
  * Build: scripts/build-matter-bridge.sh (inside Docker dev container)
  */
+#include <AppMain.h>
+#include <app/CommandHandler.h>
+#include <app/ConcreteCommandPath.h>
+#include <app/server/Server.h>
+#include <lib/core/ErrorStr.h>
+#include <platform/CHIPDeviceLayer.h>
+#include <platform/Linux/NetworkCommissioningDriver.h>
+
+// Bridge-specific headers must come after SDK headers so chip:: types are resolved
 #include "BridgeDevice.h"
 #include "DeviceMapper.h"
 #include "SyncClient.h"
 
-#include <app/server/Server.h>
-#include <credentials/DeviceAttestationCredsProvider.h>
-#include <credentials/examples/DeviceAttestationCredsExample.h>
-#include <lib/core/ErrorStr.h>
-#include <platform/CHIPDeviceLayer.h>
-#include <platform/Linux/NetworkCommissioningDriver.h>
+// SDK bridge-app includes (for Action/EndpointListInfo types expected by bridged-actions-stub.cpp)
+#include "Device.h"
 
 #include <atomic>
 #include <chrono>
@@ -223,8 +228,9 @@ static void PollLoop() {
                     }, reinterpret_cast<intptr_t>(
                            new std::vector<DeviceInfo>(std::move(new_infos))));
                 }
-            } catch (const SyncClientError& e) {
-                ChipLogError(AppServer, "FetchDevices failed: %s", e.what());
+            } catch (const SyncClientError& poll_err) {
+                const char* poll_msg = poll_err.what();
+                ChipLogError(AppServer, "FetchDevices failed: %s", poll_msg);
             }
         }
 
@@ -246,8 +252,9 @@ static void PollLoop() {
                 PlatformMgr().ScheduleWork(ApplyOnOffUpdate,
                                            reinterpret_cast<intptr_t>(upd));
             }
-        } catch (const SyncClientError& e) {
-            ChipLogError(AppServer, "FetchAllStates failed: %s", e.what());
+        } catch (const SyncClientError& poll_err) {
+            const char* poll_msg = poll_err.what();
+            ChipLogError(AppServer, "FetchAllStates failed: %s", poll_msg);
         }
     }
 
@@ -258,25 +265,17 @@ static void PollLoop() {
 
 int main(int argc, char* argv[]) {
     // ── Platform / CHIP stack init ────────────────────────────────────────────
-    CHIP_ERROR err = Platform::MemoryInit();
-    VerifyOrDie(err == CHIP_NO_ERROR);
+    // ChipLinuxAppInit handles MemoryInit, InitChipStack, the commissionable
+    // data provider (discriminator/passcode), and the example DAC provider.
+    // It also parses standard CHIP CLI flags such as --KVS, --discriminator,
+    // --passcode that the container entrypoint passes through.
+    if (ChipLinuxAppInit(argc, argv) != 0) {
+        return -1;
+    }
 
-    err = PlatformMgr().InitChipStack();
-    VerifyOrDie(err == CHIP_NO_ERROR);
-
-    // Use example DAC provider (replace with production certificates before
-    // shipping a real product).
-    SetDeviceAttestationCredentialsProvider(
-        Credentials::Examples::GetExampleDACProvider());
-
-    // KVS / commissioning data path: /data/bridge/ (the matter-data Docker volume).
-    // At runtime, pass `--KVS /data/bridge/kvs` on the command line, or set the
-    // path before Server::Init() via ConfigurationMgr if programmatic override is
-    // needed. Leaving initParams at defaults means the SDK reads any --KVS flag
-    // supplied by the container's entrypoint.
     static CommonCaseDeviceServerInitParams initParams;
     initParams.InitializeStaticResourcesBeforeServerInit();
-    err = Server::GetInstance().Init(initParams);
+    CHIP_ERROR err = Server::GetInstance().Init(initParams);
     VerifyOrDie(err == CHIP_NO_ERROR);
 
     // ── Signal handlers (SIGINT / SIGTERM for graceful systemctl stop) ────────
@@ -296,9 +295,10 @@ int main(int argc, char* argv[]) {
         if (!gSyncClient) return;
         try {
             gSyncClient->SendCommand(device_id, command);
-        } catch (const SyncClientError& e) {
+        } catch (const SyncClientError& sync_err) {
+            const char* sync_msg = sync_err.what();
             ChipLogError(AppServer, "SendCommand(%s, %s) failed: %s",
-                         device_id.c_str(), command.c_str(), e.what());
+                         device_id.c_str(), command.c_str(), sync_msg);
         }
     });
 
@@ -312,10 +312,9 @@ int main(int argc, char* argv[]) {
                               "No devices returned; retrying in 5 s...");
                 std::this_thread::sleep_for(std::chrono::seconds(5));
             }
-        } catch (const SyncClientError& e) {
-            ChipLogError(AppServer,
-                         "Waiting for bridge sync API: %s — retrying in 5 s",
-                         e.what());
+        } catch (const SyncClientError& sync_err) {
+            const char* sync_msg = sync_err.what();
+            ChipLogError(AppServer, "Waiting for bridge sync API: %s - retrying in 5 s", sync_msg);
             std::this_thread::sleep_for(std::chrono::seconds(5));
         }
     }
@@ -339,4 +338,30 @@ int main(int argc, char* argv[]) {
     Server::GetInstance().Shutdown();
     PlatformMgr().Shutdown();
     return 0;
+}
+
+// ── AppMain.h required callbacks ──────────────────────────────────────────────
+// ChipLinuxAppMainLoop calls these; we don't use that loop but must satisfy the
+// link since AppMain.h declares them.
+void ApplicationInit() {}
+void ApplicationShutdown() {}
+
+// ── Bridge-app callbacks required by bridged-actions-stub.cpp ─────────────────
+// We don't implement the Actions cluster, so these stubs return empty results.
+
+std::vector<EndpointListInfo> GetEndpointListInfo(chip::EndpointId /* parentId */) {
+    return {};
+}
+
+std::vector<Action*> GetActionListInfo(chip::EndpointId /* parentId */) {
+    return {};
+}
+
+bool emberAfActionsClusterInstantActionCallback(
+    chip::app::CommandHandler* commandObj,
+    const chip::app::ConcreteCommandPath& commandPath,
+    const chip::app::Clusters::Actions::Commands::InstantAction::DecodableType& /* commandData */)
+{
+    commandObj->AddStatus(commandPath, chip::Protocols::InteractionModel::Status::NotFound);
+    return true;
 }

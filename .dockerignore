@@ -2,6 +2,7 @@
 .codex/
 .vscode/
 build/
+!build/matter-bridge/chip-bridge-app
 cmake-build-*/
 src/cpp/build/
 __pycache__/

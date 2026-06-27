@@ -59,6 +59,11 @@ echo "==> Building and starting matter-bridge container on Pi..."
 ssh "${REMOTE}" bash -s <<EOF
 set -euo pipefail
 cd "${REMOTE_DIR}"
+if ! docker compose version &>/dev/null; then
+    echo "ERROR: docker compose plugin is missing on the Pi."
+    echo "Install it with: sudo apt-get install -y docker-compose-plugin"
+    exit 1
+fi
 docker compose -f docker-compose.pi.yml build matter-bridge
 docker compose -f docker-compose.pi.yml up -d matter-bridge
 EOF

@@ -207,6 +207,8 @@ EmberAfStatus emberAfWriteAttribute(
 // We include the headers and .cpp directly so that the single test binary
 // exercises the real implementation with our stub globals.
 
+// Tell BridgeDevice.cpp to skip real CHIP SDK includes — stubs above cover everything.
+#define CHIP_SDK_STUB_TYPES_DEFINED
 #include "src/cpp/matter_bridge/DeviceMapper.h"
 #include "src/cpp/matter_bridge/SyncClient.h"
 #include "src/cpp/matter_bridge/BridgeDevice.h"

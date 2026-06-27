@@ -15,9 +15,17 @@ if ! command -v docker &>/dev/null; then
   exit 1
 fi
 if ! docker compose version &>/dev/null; then
-  echo "ERROR: docker compose (v2 plugin) is not available."
-  echo "Upgrade Docker or install the compose plugin."
-  exit 1
+  echo "==> Installing docker compose plugin (no sudo required)..."
+  DOCKER_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}"
+  mkdir -p "$DOCKER_CONFIG/cli-plugins"
+  curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-aarch64" \
+    -o "$DOCKER_CONFIG/cli-plugins/docker-compose"
+  chmod +x "$DOCKER_CONFIG/cli-plugins/docker-compose"
+  if ! docker compose version &>/dev/null; then
+    echo "ERROR: docker compose install failed — check your internet connection."
+    exit 1
+  fi
+  echo "    docker compose $(docker compose version --short) installed."
 fi
 if [[ ! -f configs/devices.local.yaml ]]; then
   echo "ERROR: configs/devices.local.yaml not found."

@@ -22,6 +22,7 @@ struct CurlHandle {
 // RAII wrapper for a curl_slist (HTTP headers)
 struct CurlSlist {
     curl_slist* h = nullptr;
+    CurlSlist() = default;
     ~CurlSlist() { if (h) curl_slist_free_all(h); }
     CurlSlist(const CurlSlist&) = delete;
     CurlSlist& operator=(const CurlSlist&) = delete;

@@ -1,3 +1,49 @@
+// When compiled as part of the CHIP SDK GN build, include real SDK headers so
+// chip:: types and ember AF macros are defined.  When the test driver
+// (test_bridge_device.cpp) #includes this file directly it defines
+// CHIP_SDK_STUB_TYPES_DEFINED first, supplying its own lightweight stubs instead.
+#ifndef CHIP_SDK_STUB_TYPES_DEFINED
+#include <app-common/zap-generated/ids/Attributes.h>
+#include <app-common/zap-generated/ids/Clusters.h>
+#include <app/util/af.h>
+#include <app/util/attribute-storage.h>
+
+// CHIP SDK v1.x uses C++ namespaces rather than old-style ZCL_* C macros.
+// Provide aliases so the same BridgeDevice.cpp compiles against either the
+// real SDK (here) or the minimal stubs in test_bridge_device.cpp.
+namespace _bdns = chip::app::Clusters;
+#define ZCL_ON_OFF_CLUSTER_ID                            _bdns::OnOff::Id
+#define ZCL_DESCRIPTOR_CLUSTER_ID                        _bdns::Descriptor::Id
+#define ZCL_BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER_ID  _bdns::BridgedDeviceBasicInformation::Id
+#define ZCL_TEMP_MEASUREMENT_CLUSTER_ID                  _bdns::TemperatureMeasurement::Id
+
+#define ZCL_ON_OFF_ATTRIBUTE_ID \
+    _bdns::OnOff::Attributes::OnOff::Id
+#define ZCL_NODE_LABEL_ATTRIBUTE_ID \
+    _bdns::BridgedDeviceBasicInformation::Attributes::NodeLabel::Id
+#define ZCL_REACHABLE_ATTRIBUTE_ID \
+    _bdns::BridgedDeviceBasicInformation::Attributes::Reachable::Id
+#define ZCL_DEVICE_LIST_ATTRIBUTE_ID \
+    _bdns::Descriptor::Attributes::DeviceTypeList::Id
+#define ZCL_SERVER_LIST_ATTRIBUTE_ID \
+    _bdns::Descriptor::Attributes::ServerList::Id
+#define ZCL_CLIENT_LIST_ATTRIBUTE_ID \
+    _bdns::Descriptor::Attributes::ClientList::Id
+#define ZCL_PARTS_LIST_ATTRIBUTE_ID \
+    _bdns::Descriptor::Attributes::PartsList::Id
+#define ZCL_TEMP_MEASURED_VALUE_ATTRIBUTE_ID \
+    _bdns::TemperatureMeasurement::Attributes::MeasuredValue::Id
+#define ZCL_TEMP_MIN_MEASURED_VALUE_ATTRIBUTE_ID \
+    _bdns::TemperatureMeasurement::Attributes::MinMeasuredValue::Id
+#define ZCL_TEMP_MAX_MEASURED_VALUE_ATTRIBUTE_ID \
+    _bdns::TemperatureMeasurement::Attributes::MaxMeasuredValue::Id
+
+// On-off accepted commands: Off=0x00, On=0x01, Toggle=0x02
+static const chip::CommandId OnOffIncomingCommands[] = {
+    0x00, 0x01, 0x02, chip::kInvalidCommandId
+};
+#endif
+
 #include "BridgeDevice.h"
 #include <map>
 #include <mutex>
