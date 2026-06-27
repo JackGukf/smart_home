@@ -1,3 +1,4 @@
 [submodule "third_party/connectedhomeip"]
 	path = third_party/connectedhomeip
 	url = https://github.com/project-chip/connectedhomeip.git
+	branch = v1.3-branch

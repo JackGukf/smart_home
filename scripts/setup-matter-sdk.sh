@@ -8,6 +8,11 @@ CHIP_DIR="$(git rev-parse --show-toplevel)/third_party/connectedhomeip"
 
 echo "==> Initialising CHIP SDK submodules (this downloads ~500 MB)..."
 cd "$CHIP_DIR"
+
+echo "==> Fetching v1.3.0.0 tag from origin..."
+git fetch --depth=1 origin tag v1.3.0.0 || true
+git checkout v1.3.0.0 2>/dev/null || git checkout "v1.3.0.0^{}" 2>/dev/null || echo "WARNING: Could not checkout v1.3.0.0 — proceeding with current HEAD"
+
 git submodule update --init --depth 1 \
   third_party/pigweed/repo \
   third_party/nlohmann_json \
