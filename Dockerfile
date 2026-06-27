@@ -8,6 +8,8 @@ ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=${USER_UID}
 
+RUN dpkg --add-architecture arm64
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash-completion \
@@ -31,6 +33,17 @@ RUN apt-get update \
         mosquitto-clients \
         nano \
         ninja-build \
+        libssl-dev \
+        libdbus-1-dev \
+        libglib2.0-dev \
+        libavahi-client-dev \
+        libreadline-dev \
+        libgirepository1.0-dev \
+        libcairo2-dev \
+        nlohmann-json3-dev \
+        unzip \
+        libcurl4-openssl-dev \
+        libcurl4-openssl-dev:arm64 \
         pkg-config \
         python3 \
         python3-dev \
