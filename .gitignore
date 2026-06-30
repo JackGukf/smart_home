@@ -36,6 +36,9 @@ compile_commands.json
 *.lib
 *.exe
 
+# chip-tool session state (Matter commissioning credentials)
+.chip-tool/
+
 # Logs and runtime data
 *.log
 logs/

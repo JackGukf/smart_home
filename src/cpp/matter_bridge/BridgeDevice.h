@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <string>
-#include <functional>
 
 // CHIP SDK headers — only available after CHIP SDK bootstrap (Task 6).
 // When compiling without the real SDK (e.g. unit tests) these are satisfied by
@@ -25,16 +24,9 @@ static constexpr chip::DeviceTypeId kDeviceTypeIdOnOffPlugIn    = 0x010A;
 static constexpr chip::DeviceTypeId kDeviceTypeIdTempSensor     = 0x0302;
 static constexpr chip::DeviceTypeId kDeviceTypeIdHumiditySensor = 0x0307;
 
-static constexpr uint16_t kNodeLabelMaxSize    = 32;
+static constexpr uint16_t kNodeLabelMaxSize    = 64;
+static constexpr uint16_t kProductNameMaxSize  = 64;
 static constexpr uint16_t kDescriptorArraySize = 254;
-
-// Callback type: invoked when Apple Home writes an attribute to a bridged device.
-// The caller supplies a function that sends the command to the real device via SyncClient.
-using CommandSenderFn = std::function<void(const std::string& device_id, const std::string& command)>;
-
-// Set the process-global CommandSenderFn used by HandleAttributeChanged.
-// Must be called (once) before any attribute-change callbacks fire.
-void SetCommandSender(CommandSenderFn fn);
 
 class BridgeDevice {
 public:
@@ -60,18 +52,27 @@ public:
     void Unregister();
 
     // Update Matter OnOff attribute (endpoint_id_, OnOff cluster, OnOff attribute).
+    // Returns true if the value changed, false if it was already the same (no-op).
+    // notify: pass false when called from the ZCL external-attribute-write path
+    // (HandleOnOffCommand) — the SDK's emAfWriteAttribute() already calls
+    // MatterReportingAttributeChangeCallback() itself once that write returns, so
+    // notifying here too double-bumps the cluster DataVersion and double-queues the
+    // report for the same change. Pass true (default) for poll-driven/initial sync
+    // (ApplyOnOffUpdate, RegisterDevices), where nothing else fires the notification.
     // Call from Matter event loop thread.
-    void UpdateOnOff(bool on);
+    bool UpdateOnOff(bool on, bool notify = true);
 
     // Mark the device as reachable/unreachable in BridgedDeviceBasicInformation.
     void SetReachable(bool reachable);
 
-    const std::string& GetDeviceId() const { return device_id_; }
+    const std::string& GetDeviceId()  const { return device_id_; }
+    const std::string& GetName()      const { return name_; }
     chip::EndpointId   GetEndpointId() const { return endpoint_id_; }
-    MatterDeviceType   GetType() const { return spec_.type; }
+    MatterDeviceType   GetType()       const { return spec_.type; }
+    int8_t             GetLastOnValue() const { return last_on_value_; }
+    bool               GetReachable()  const { return reachable_; }
 
-    // Called by HandleAttributeChanged() when Apple Home writes to this device's endpoint.
-    // Reads the command sender from the process-global set by SetCommandSender().
+    // Called by HandleAttributeChanged() when the ZCL layer writes to this device's endpoint.
     void OnAttributeChanged(chip::ClusterId cluster_id,
                             chip::AttributeId attribute_id,
                             uint8_t* value);
@@ -83,7 +84,12 @@ private:
     chip::EndpointId endpoint_id_;
     MatterDeviceSpec spec_;
 
-    bool             registered_ = false;
+    bool             registered_  = false;
+    bool             reachable_   = false;
+
+    // Tracks on/off state; -1 = never set, 0 = off, 1 = on.
+    // Served directly by emberAfExternalAttributeReadCallback.
+    int8_t           last_on_value_ = -1;
 
     // Per-instance data versions (one per cluster; arrays must outlive the endpoint).
     // 4 to accommodate future DimmableLight (adds LevelControl cluster)
@@ -101,7 +107,6 @@ BridgeDevice* BridgeDeviceLookup(chip::EndpointId id);
 
 // ─── Global callback ──────────────────────────────────────────────────────────
 // main.cpp's MatterPostAttributeChangeCallback should delegate here.
-// The CommandSenderFn must have been set via SetCommandSender() before this fires.
 void HandleAttributeChanged(chip::EndpointId  endpoint_id,
                             chip::ClusterId   cluster_id,
                             chip::AttributeId attribute_id,

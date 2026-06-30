@@ -14,16 +14,22 @@ echo "==> Activating CHIP SDK tools..."
 # shellcheck source=/dev/null
 source "$CHIP_DIR/scripts/activate.sh"
 
+# zap-cli lives in CIPD; activate.sh doesn't add it to PATH
+export ZAP_INSTALL_PATH="$CHIP_DIR/.environment/cipd/packages/zap"
+
 # Temporarily patch the CHIP SDK bridge example to include our sources.
 # We restore the original BUILD.gn after the build to keep the submodule clean.
 echo "==> Copying bridge source files into CHIP SDK bridge example..."
-cp "$BRIDGE_SRC/BridgeDevice.h"   "$CHIP_BRIDGE_DIR/"
-cp "$BRIDGE_SRC/BridgeDevice.cpp" "$CHIP_BRIDGE_DIR/"
-cp "$BRIDGE_SRC/DeviceMapper.h"   "$CHIP_BRIDGE_DIR/"
-cp "$BRIDGE_SRC/DeviceMapper.cpp" "$CHIP_BRIDGE_DIR/"
-cp "$BRIDGE_SRC/SyncClient.h"     "$CHIP_BRIDGE_DIR/"
-cp "$BRIDGE_SRC/SyncClient.cpp"   "$CHIP_BRIDGE_DIR/"
-cp "$BRIDGE_SRC/main.cpp"         "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/BridgeDevice.h"      "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/BridgeDevice.cpp"    "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/DeviceMapper.h"      "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/DeviceMapper.cpp"    "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/SyncClient.h"        "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/SyncClient.cpp"      "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/main.cpp"            "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/CHIPProjectConfig.h"    "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/SystemProjectConfig.h" "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/CHIPProjectAppConfig.h" "$CHIP_BRIDGE_DIR/"
 
 echo "==> Writing bridge-app BUILD.gn with custom sources, libcurl and -fexceptions..."
 BUILD_GN="$CHIP_BRIDGE_DIR/BUILD.gn"
@@ -82,6 +88,12 @@ for f in /usr/include/x86_64-linux-gnu/curl/*.h; do
   sudo ln -sf "$f" "/usr/local/include/chip-cross/curl/$(basename "$f")"
 done
 
+# CHIPProjectConfig.h is already copied to $CHIP_BRIDGE_DIR above.
+# Pass chip_project_config_include so it reaches ALL compilation units
+# including src/system (where CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE lives).
+# Patching CHIPProjectAppConfig.h does NOT work — that file is app-layer only
+# and never included by the system library.
+
 echo "==> Running GN build for linux-arm64..."
 mkdir -p "$OUT_DIR"
 "$CHIP_DIR/scripts/examples/gn_build_example.sh" \
@@ -90,7 +102,9 @@ mkdir -p "$OUT_DIR"
   'target_cpu="arm64"' \
   'chip_mdns="minimal"' \
   'chip_inet_config_enable_ipv4=true' \
-  'is_debug=false'
+  'is_debug=false' \
+  'chip_project_config_include="<CHIPProjectConfig.h>"' \
+  'chip_project_config_include_dirs=["//"]'
 
 echo "==> Stripping binary..."
 aarch64-linux-gnu-strip "$OUT_DIR/chip-bridge-app"

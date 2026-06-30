@@ -2,7 +2,10 @@
 
 MatterDeviceSpec MapCategoryToMatter(const std::string& category, bool dimmable) {
     if (category == "light_switch") {
-        return {dimmable ? MatterDeviceType::DimmableLight : MatterDeviceType::OnOffLight, false};
+        // DimmableLight requires the LevelControl cluster which we don't implement.
+        // Apple Home tries to dim and gets "No response" without it, so always use OnOffLight.
+        (void)dimmable;
+        return {MatterDeviceType::OnOffLight, false};
     }
     if (category == "outlet" || category == "tuya_switch") {
         return {MatterDeviceType::OnOffPlugInUnit, false};

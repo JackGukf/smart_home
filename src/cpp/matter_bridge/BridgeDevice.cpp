@@ -5,6 +5,7 @@
 #ifndef CHIP_SDK_STUB_TYPES_DEFINED
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
+#include <app/reporting/reporting.h>
 #include <app/util/af.h>
 #include <app/util/attribute-storage.h>
 
@@ -19,6 +20,8 @@ namespace _bdns = chip::app::Clusters;
 
 #define ZCL_ON_OFF_ATTRIBUTE_ID \
     _bdns::OnOff::Attributes::OnOff::Id
+#define ZCL_PRODUCT_NAME_ATTRIBUTE_ID \
+    _bdns::BridgedDeviceBasicInformation::Attributes::ProductName::Id
 #define ZCL_NODE_LABEL_ATTRIBUTE_ID \
     _bdns::BridgedDeviceBasicInformation::Attributes::NodeLabel::Id
 #define ZCL_REACHABLE_ATTRIBUTE_ID \
@@ -53,14 +56,6 @@ static const chip::CommandId OnOffIncomingCommands[] = {
 static std::mutex                                  gRegistryMutex;
 static std::map<chip::EndpointId, BridgeDevice*>  gEndpointRegistry;
 
-// ─── Global command sender ─────────────────────────────────────────────────────
-
-static CommandSenderFn gCommandSender;
-
-void SetCommandSender(CommandSenderFn fn) {
-    gCommandSender = std::move(fn);
-}
-
 void BridgeDeviceRegisterInstance(chip::EndpointId id, BridgeDevice* dev) {
     std::lock_guard<std::mutex> lock(gRegistryMutex);
     gEndpointRegistry[id] = dev;
@@ -85,6 +80,7 @@ DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sOnOffAttribs)
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sBridgedBasicAttribs)
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_PRODUCT_NAME_ATTRIBUTE_ID, CHAR_STRING, kProductNameMaxSize, 0),
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_NODE_LABEL_ATTRIBUTE_ID, CHAR_STRING, kNodeLabelMaxSize,
                               ZAP_ATTRIBUTE_MASK(WRITABLE)),
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_REACHABLE_ATTRIBUTE_ID, BOOLEAN, 1, 0),
@@ -185,17 +181,23 @@ CHIP_ERROR BridgeDevice::Register() {
     }
     // DimmableLight, VirtualOnOffLight → treated same as OnOffLight
 
+    // parentEndpointId = 1: registers this device under the bridge aggregator
+    // endpoint so it appears in ep=1's PartsList. Without this, Apple Home
+    // cannot discover bridged devices (PartsList stays empty).
     CHIP_ERROR err = emberAfSetDynamicEndpoint(
         dynamic_index_,
         endpoint_id_,
         ep_type,
         chip::Span<chip::DataVersion>(data_versions_, cluster_count),
-        chip::Span<const EmberAfDeviceType>(dev_types, dev_types_count)
+        chip::Span<const EmberAfDeviceType>(dev_types, dev_types_count),
+        /* parentEndpointId = */ 1
     );
 
     if (err == CHIP_NO_ERROR) {
         registered_ = true;
         BridgeDeviceRegisterInstance(endpoint_id_, this);
+        // NodeLabel and Reachable are served directly by
+        // emberAfExternalAttributeReadCallback — no emberAfWriteAttribute needed.
     }
     return err;
 }
@@ -204,43 +206,48 @@ void BridgeDevice::Unregister() {
     if (!registered_) return;
     registered_ = false;
     BridgeDeviceUnregisterInstance(endpoint_id_);
+    // Must disable before clearing — without this the SDK slot stays marked
+    // "occupied" and the next emberAfSetDynamicEndpoint on the same index
+    // fails with "Trying to add dynamic endpoint that already exists".
+    emberAfEndpointEnableDisable(endpoint_id_, false);
     emberAfClearDynamicEndpoint(dynamic_index_);
 }
 
-void BridgeDevice::UpdateOnOff(bool on) {
-    uint8_t value = on ? 1 : 0;
-    emberAfWriteAttribute(
-        endpoint_id_,
-        ZCL_ON_OFF_CLUSTER_ID,
-        ZCL_ON_OFF_ATTRIBUTE_ID,
-        &value,
-        ZCL_BOOLEAN_ATTRIBUTE_TYPE
-    );
+bool BridgeDevice::UpdateOnOff(bool on, bool notify) {
+    int8_t new_val = on ? 1 : 0;
+    bool changed = (last_on_value_ != new_val);
+    last_on_value_ = new_val;
+    // notify=false from HandleOnOffCommand (ZCL external-attribute-write path):
+    // emAfWriteAttribute() in the SDK calls MatterReportingAttributeChangeCallback
+    // itself right after emberAfExternalAttributeWriteCallback() returns, so firing
+    // it here too would bump the cluster DataVersion twice for one logical change.
+    // notify=true (default) from ApplyOnOffUpdate/RegisterDevices: nothing else in
+    // those paths notifies the subscription engine, so we must do it here.
+    if (changed && notify) {
+        MatterReportingAttributeChangeCallback(endpoint_id_,
+                                               ZCL_ON_OFF_CLUSTER_ID,
+                                               ZCL_ON_OFF_ATTRIBUTE_ID);
+    }
+    return changed;
 }
 
 void BridgeDevice::SetReachable(bool reachable) {
-    uint8_t value = reachable ? 1 : 0;
-    emberAfWriteAttribute(
-        endpoint_id_,
-        ZCL_BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER_ID,
-        ZCL_REACHABLE_ATTRIBUTE_ID,
-        &value,
-        ZCL_BOOLEAN_ATTRIBUTE_TYPE
-    );
+    reachable_ = reachable;
+    MatterReportingAttributeChangeCallback(endpoint_id_,
+                                           ZCL_BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER_ID,
+                                           ZCL_REACHABLE_ATTRIBUTE_ID);
 }
 
 void BridgeDevice::OnAttributeChanged(chip::ClusterId   cluster_id,
                                       chip::AttributeId attribute_id,
                                       uint8_t*          value) {
-    if (spec_.read_only) return;
-
-    if (cluster_id  == ZCL_ON_OFF_CLUSTER_ID &&
-        attribute_id == ZCL_ON_OFF_ATTRIBUTE_ID) {
-        bool on = (*value != 0);
-        if (gCommandSender) {
-            gCommandSender(device_id_, on ? "on" : "off");
-        }
-    }
+    // The ZCL on-off-server fires MatterPostAttributeChangeCallback after writing
+    // the attribute.  By the time this runs, HandleOnOffCommand (dispatched from
+    // emberAfExternalAttributeWriteCallback) has already queued the HTTP call on
+    // a background thread.  Nothing to do here.
+    (void)cluster_id;
+    (void)attribute_id;
+    (void)value;
 }
 
 // ─── Global callback ──────────────────────────────────────────────────────────

@@ -2581,34 +2581,50 @@ def _room_from_name(name: str) -> str:
     return first_word.title()
 
 
+def _bridge_allowlist() -> set[str] | None:
+    """Return the set of device_ids to expose, or None to expose all.
+
+    Set BRIDGE_DEVICE_ALLOWLIST=kasa:192.168.0.73,kasa:192.168.0.110 to restrict
+    which devices the C++ Matter bridge sees.  Unset (or empty) → all devices.
+    """
+    raw = os.environ.get("BRIDGE_DEVICE_ALLOWLIST", "").strip()
+    if not raw:
+        return None
+    return {s.strip() for s in raw.split(",") if s.strip()}
+
+
 async def _bridge_device_list(controller: KasaLightSwitchController | None = None) -> list[dict]:
     """Return all bridgeable dashboard devices with current state for the C++ bridge."""
-    devices: list[dict] = []
-    cfg = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
-
-    # TP-Link switches
     _ctrl = controller or KasaLightSwitchController()
-    for sw_cfg in (cfg.get("tplink") or {}).get("switches") or []:
-        host = str(sw_cfg.get("host") or "")
-        name = str(sw_cfg.get("name") or host)
-        room = str(sw_cfg.get("room") or _room_from_name(name))
-        device_id = f"kasa:{host}"
+    allowlist = _bridge_allowlist()
+
+    # TP-Link switches — query all in parallel so a single slow switch doesn't
+    # push the total response time past the C++ bridge's HTTP timeout.
+    async def _kasa_entry(dash_dev) -> dict:
+        sw = dash_dev.switch
+        device_id = f"kasa:{sw.host}"
         on: bool | None = None
         try:
-            sw = SwitchDefinition(name=name, host=host, model=str(sw_cfg.get("model") or ""))
             status = await _ctrl.status(sw)
             on = status.is_on if status else None
         except Exception:  # noqa: BLE001
             pass
+        is_dimmable = "dimmer" in str(dash_dev.device_type or "").lower()
         bridge_sync.update_state_cache(device_id, {"on": bool(on)})
-        devices.append({
+        return {
             "device_id": device_id,
-            "name": name,
-            "room": room,
+            "name": sw.name,
+            "room": _room_from_name(sw.name),
             "category": "light_switch",
-            "dimmable": False,
+            "dimmable": is_dimmable,
             "state": {"on": bool(on)},
-        })
+        }
+
+    kasa_results = await asyncio.gather(
+        *[_kasa_entry(d) for d in _load_switches(DEFAULT_DISCOVERY_PATH)],
+        return_exceptions=True,
+    )
+    devices: list[dict] = [r for r in kasa_results if isinstance(r, dict)]
 
     # Tuya devices
     for tuya_dev in _load_tuya_devices(DEFAULT_CONFIG_PATH):
@@ -2623,31 +2639,37 @@ async def _bridge_device_list(controller: KasaLightSwitchController | None = Non
             "state": {"on": False},
         })
 
+    if allowlist is not None:
+        devices = [d for d in devices if d["device_id"] in allowlist]
     return devices
 
 
 async def _bridge_execute_command(device_id: str, command: str, controller: KasaLightSwitchController | None = None) -> None:
     """Route a command from the C++ bridge to the appropriate device controller."""
-    cfg = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
-
     if device_id.startswith("kasa:"):
         host = device_id[len("kasa:"):]
         _ctrl = controller or KasaLightSwitchController()
-        sw_cfgs = (cfg.get("tplink") or {}).get("switches") or []
-        sw_cfg = next((s for s in sw_cfgs if str(s.get("host")) == host), None)
-        if sw_cfg is None:
-            raise KeyError(device_id)
-        sw = SwitchDefinition(
-            name=str(sw_cfg.get("name") or host),
-            host=host,
-            model=str(sw_cfg.get("model") or ""),
+        # Look up the switch in the same discovery file the dashboard uses
+        sw = next(
+            (d.switch for d in _load_switches(DEFAULT_DISCOVERY_PATH) if d.switch.host == host),
+            None,
         )
+        if sw is None:
+            raise KeyError(device_id)
         if command == "on":
             await _ctrl.turn_on(sw)
+            bridge_sync.update_state_cache(device_id, {"on": True}, authoritative=True)
         elif command == "off":
             await _ctrl.turn_off(sw)
+            bridge_sync.update_state_cache(device_id, {"on": False}, authoritative=True)
         elif command == "toggle":
             await _ctrl.toggle(sw)
+            try:
+                st = await _ctrl.status(sw)
+                if st:
+                    bridge_sync.update_state_cache(device_id, {"on": st.is_on}, authoritative=True)
+            except Exception:  # noqa: BLE001
+                pass
         else:
             raise ValueError(f"Unknown command: {command}")
         return

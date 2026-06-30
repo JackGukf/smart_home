@@ -8,11 +8,14 @@
  * Build: scripts/build-matter-bridge.sh (inside Docker dev container)
  */
 #include <AppMain.h>
+#include <app-common/zap-generated/cluster-objects.h>
 #include <app/CommandHandler.h>
 #include <app/ConcreteCommandPath.h>
+#include <app/reporting/reporting.h>
 #include <app/server/Server.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
 #include <lib/core/ErrorStr.h>
+#include <lib/support/ZclString.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/Linux/NetworkCommissioningDriver.h>
 
@@ -42,8 +45,11 @@ using namespace chip::DeviceLayer;
 
 static constexpr uint16_t kDevicePollIntervalSeconds   = 10;
 static constexpr uint16_t kDeviceRescanIntervalSeconds = 60;
-// Endpoint 0 = root node, endpoint 1 = aggregator/bridge; dynamic starts at 2.
-static constexpr EndpointId kDynamicEndpointStart = 2;
+// Endpoint 0 = root node, endpoint 1 = aggregator/bridge.
+// ep=2 is reserved by the bridge-app ZAP static config (example light with
+// LevelControl) — starting at 3 avoids that LevelControl data leaking into our
+// OnOffLight devices and confusing Apple Home into treating them as DimmableLight.
+static constexpr EndpointId kDynamicEndpointStart = 3;
 static constexpr uint8_t    kMaxDynamicDevices    = 50;
 
 // ── Globals ───────────────────────────────────────────────────────────────────
@@ -85,13 +91,16 @@ static void HandleSignal(int /*sig*/) {
 
 // ── CHIP SDK callbacks ────────────────────────────────────────────────────────
 
-// Called by the CHIP stack when an attribute is written (e.g. Apple Home
-// toggles a switch).  Delegates to HandleAttributeChanged() which uses the
-// process-global CommandSenderFn installed via SetCommandSender().
+// Called by the CHIP stack when an attribute is written.
+// Delegates to HandleAttributeChanged() for logging; the actual command is
+// dispatched via HandleOnOffCommand on a background thread, not here.
 void MatterPostAttributeChangeCallback(const ConcreteAttributePath& path,
                                        uint8_t  /*type*/,
                                        uint16_t /*size*/,
                                        uint8_t* value) {
+    ChipLogDetail(AppServer, "ATTR_CHANGE ep=%u cluster=0x%04X attr=0x%04X val=%u",
+                  path.mEndpointId, (unsigned)path.mClusterId,
+                  (unsigned)path.mAttributeId, value ? (unsigned)*value : 0);
     HandleAttributeChanged(path.mEndpointId, path.mClusterId,
                            path.mAttributeId, value);
 }
@@ -102,6 +111,126 @@ bool emberAfAttributeReadAccessCallback(EndpointId, ClusterId, AttributeId) {
 }
 bool emberAfAttributeWriteAccessCallback(EndpointId, ClusterId, AttributeId) {
     return true;
+}
+
+// ── OnOff command dispatch ────────────────────────────────────────────────────
+// We do NOT define emberAfOnOffCluster{On,Off,Toggle}CommandCallback here.
+// The CHIP SDK provides weak no-op defaults (returning false) so the ZCL
+// on-off cluster server handles every InvokeCommand internally:
+//   On     → writes OnOff=1
+//   Off    → writes OnOff=0
+//   Toggle → reads current value, writes NOT(current value)
+// Each write goes through emberAfExternalAttributeWriteCallback below, which is
+// the single place we update local state and dispatch the HTTP command.
+//
+// Reason: if we handle the command in emberAfOnOffCluster*Callback AND the ZCL
+// server also writes the attribute, Toggle breaks — our callback updates
+// last_on_value_ first, then the ZCL server reads the already-updated value
+// and writes the *opposite* toggle result, firing a second spurious HTTP call
+// that immediately reverses the command.  Apple Home sees the ON→OFF bounce and
+// shows the device as "not available".
+
+static void HandleOnOffCommand(EndpointId endpoint, bool new_on) {
+    BridgeDevice* dev = BridgeDeviceLookup(endpoint);
+    if (!dev) return;
+    const std::string device_id = dev->GetDeviceId();
+    ChipLogDetail(AppServer, "OnOff cmd ep=%u → %s (dev=%s)",
+                  endpoint, new_on ? "on" : "off", device_id.c_str());
+
+    // Returns false when the value didn't change (e.g. "On" sent to a device
+    // that is already on).  Skip the HTTP call in that case.
+    // notify=false: we're inside emberAfExternalAttributeWriteCallback, called
+    // from the SDK's emAfWriteAttribute() — it calls
+    // MatterReportingAttributeChangeCallback itself right after this returns, so
+    // notifying here too would double-bump the cluster DataVersion and double-
+    // queue the same report (confirmed by reading
+    // src/app/util/attribute-table.cpp's emAfWriteAttribute()).
+    if (!dev->UpdateOnOff(new_on, /*notify=*/false)) return;
+
+    // The actual HTTP call to the Python bridge must NOT block the Matter event
+    // loop — doing so prevents the InvokeResponse from being sent quickly and
+    // causes Apple Home to timeout the command and show "not available".
+    std::thread([device_id, new_on]() {
+        if (gSyncClient) {
+            try {
+                gSyncClient->SendCommand(device_id, new_on ? "on" : "off");
+            } catch (const SyncClientError& e) {
+                ChipLogError(AppServer, "SendCommand failed: %s", e.what());
+            }
+        }
+    }).detach();
+}
+
+// ── External attribute callbacks ──────────────────────────────────────────────
+// DECLARE_DYNAMIC_ATTRIBUTE always sets ATTRIBUTE_MASK_EXTERNAL_STORAGE, so
+// the CHIP SDK calls these for every dynamic attribute read/write instead of
+// touching its static SRAM attribute store.  We serve values from BridgeDevice.
+//
+// emberAfExternalAttributeWriteCallback is the PRIMARY dispatch point for all
+// On/Off state changes — both InvokeCommand (On/Off/Toggle via ZCL server) and
+// direct WriteAttribute from a controller.  The ZCL on-off server writes the
+// attribute here AFTER computing the correct new value (Toggle uses the current
+// value from emberAfExternalAttributeReadCallback, so it always computes the
+// right toggle without any race with our local state).
+
+using IMStatus = chip::Protocols::InteractionModel::Status;
+using namespace chip::app::Clusters;
+
+IMStatus emberAfExternalAttributeReadCallback(EndpointId endpoint,
+                                              ClusterId  clusterId,
+                                              const EmberAfAttributeMetadata* am,
+                                              uint8_t*   buffer,
+                                              uint16_t   maxReadLength)
+{
+    BridgeDevice* dev = BridgeDeviceLookup(endpoint);
+    if (!dev) {
+        memset(buffer, 0, maxReadLength);
+        return IMStatus::Success;
+    }
+
+    if (clusterId == OnOff::Id) {
+        if (am->attributeId == OnOff::Attributes::OnOff::Id && maxReadLength >= 1) {
+            *buffer = (dev->GetLastOnValue() == 1) ? 1 : 0;
+            return IMStatus::Success;
+        }
+    } else if (clusterId == BridgedDeviceBasicInformation::Id) {
+        if (am->attributeId == BridgedDeviceBasicInformation::Attributes::ProductName::Id ||
+            am->attributeId == BridgedDeviceBasicInformation::Attributes::NodeLabel::Id) {
+            const auto& name = dev->GetName();
+            size_t cap = (maxReadLength > 1) ? (maxReadLength - 1) : 0;
+            size_t len = std::min(name.size(), cap);
+            buffer[0] = static_cast<uint8_t>(len);
+            memcpy(buffer + 1, name.c_str(), len);
+            return IMStatus::Success;
+        }
+        if (am->attributeId == BridgedDeviceBasicInformation::Attributes::Reachable::Id
+            && maxReadLength >= 1) {
+            *buffer = dev->GetReachable() ? 1 : 0;
+            return IMStatus::Success;
+        }
+    }
+
+    // ClusterRevision, FeatureMap, AcceptedCommandList, etc. — return zeros
+    // so the SDK can still encode a valid (default) response.
+    memset(buffer, 0, maxReadLength);
+    return IMStatus::Success;
+}
+
+IMStatus emberAfExternalAttributeWriteCallback(EndpointId endpoint,
+                                               ClusterId  clusterId,
+                                               const EmberAfAttributeMetadata* am,
+                                               uint8_t*   buffer)
+{
+    // Called by the ZCL server for every attribute write on dynamic (external-
+    // storage) endpoints.  This is the single dispatch point for On/Off state
+    // changes regardless of whether the trigger was an InvokeCommand (On, Off,
+    // Toggle) or a direct WriteAttribute from the controller.
+    if (clusterId == OnOff::Id &&
+        am->attributeId == OnOff::Attributes::OnOff::Id) {
+        bool on = (*buffer != 0);
+        HandleOnOffCommand(endpoint, on);
+    }
+    return IMStatus::Success;
 }
 
 // ── Device management ─────────────────────────────────────────────────────────
@@ -250,18 +379,12 @@ static void PollLoop() {
                 }
                 if (registrable_count != current_count) {
                     ChipLogDetail(AppServer,
-                                  "Device list changed (%zu → %zu), re-registering",
+                                  "Device list changed (%zu → %zu), restarting for clean re-registration",
                                   current_count, new_infos.size());
-                    // Re-register from the Matter event loop thread so that
-                    // emberAf* calls are thread-safe. RegisterDevices() handles
-                    // clearing the old device list internally (outside the mutex).
-                    PlatformMgr().ScheduleWork([](intptr_t ctx) {
-                        auto* infos =
-                            reinterpret_cast<std::vector<DeviceInfo>*>(ctx);
-                        RegisterDevices(*infos);
-                        delete infos;
-                    }, reinterpret_cast<intptr_t>(
-                           new std::vector<DeviceInfo>(std::move(new_infos))));
+                    // exit(0) lets Docker (restart: unless-stopped) bring us back
+                    // with a clean CHIP stack rather than risking in-process
+                    // re-registration failures from stale endpoint slot state.
+                    PlatformMgr().ScheduleWork([](intptr_t) { exit(0); }, 0);
                 }
             } catch (const SyncClientError& poll_err) {
                 const char* poll_msg = poll_err.what();
@@ -318,6 +441,12 @@ int main(int argc, char* argv[]) {
     CHIP_ERROR err = Server::GetInstance().Init(initParams);
     VerifyOrDie(err == CHIP_NO_ERROR);
 
+    // Disable the static example DimmableLight from the bridge-app ZAP config
+    // (ep=2). If left enabled it appears in the aggregator PartsList with an
+    // empty NodeLabel, causing Apple Home to show it as "Light 1" and pushing
+    // our real devices to "Light 2-8".
+    emberAfEndpointEnableDisable(2, false);
+
     // ── Signal handlers (SIGINT / SIGTERM for graceful systemctl stop) ────────
     signal(SIGINT,  HandleSignal);
     signal(SIGTERM, HandleSignal);
@@ -327,20 +456,6 @@ int main(int argc, char* argv[]) {
     ChipLogDetail(AppServer, "Bridge sync URL: %s", base_url);
     SyncClient sync_client(base_url);
     gSyncClient = &sync_client;
-
-    // Install the CommandSenderFn that HandleAttributeChanged() will use when
-    // Apple Home writes to a bridged device (e.g. toggles a switch).
-    SetCommandSender([](const std::string& device_id,
-                        const std::string& command) {
-        if (!gSyncClient) return;
-        try {
-            gSyncClient->SendCommand(device_id, command);
-        } catch (const SyncClientError& sync_err) {
-            const char* sync_msg = sync_err.what();
-            ChipLogError(AppServer, "SendCommand(%s, %s) failed: %s",
-                         device_id.c_str(), command.c_str(), sync_msg);
-        }
-    });
 
     // ── Background poll thread ────────────────────────────────────────────────
     // Starts immediately so RunEventLoop() is reached without delay.
