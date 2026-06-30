@@ -1871,6 +1871,7 @@ function saveCachedSnapshot(cameraId, dataUri) {
 async function cacheSnapshotsInBackground(cameras) {
   for (const camera of cameras) {
     if (!camera.view_url || activeCameraIds.has(cameraIdFor(camera))) continue;
+    if (camera.battery_powered) continue;
     const cameraId = cameraIdFor(camera);
     try {
       const response = await fetch(camera.snapshot_url || snapshotUrlFor(camera));

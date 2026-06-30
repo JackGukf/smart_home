@@ -53,6 +53,10 @@ services:
       - "/data/bridge/kvs"
       - "--interface"
       - "wlan0"
+      - "--discriminator"
+      - "2861"
+      - "--passcode"
+      - "56123489"
 
 volumes:
   matter-data:
