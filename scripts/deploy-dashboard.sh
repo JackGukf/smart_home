@@ -22,6 +22,20 @@ REMOTE_HOME="/home/${PI_USER}"
 REMOTE_PATH="${REMOTE_HOME}/smart-home-rpi4"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+BUILD_COUNT_FILE="${PROJECT_ROOT}/BUILD_COUNT"
+PREV_BUILD="$(cat "${BUILD_COUNT_FILE}" 2>/dev/null || echo 0)"
+BUILD_NUMBER=$((PREV_BUILD + 1))
+echo "${BUILD_NUMBER}" > "${BUILD_COUNT_FILE}"
+DEPLOYED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+printf '{"build": %s, "deployed_at": "%s"}\n' "${BUILD_NUMBER}" "${DEPLOYED_AT}" \
+    > "${PROJECT_ROOT}/src/python/web_static/build_info.json"
+echo "==> Build #${BUILD_NUMBER}"
+
+# Bust browser cache for app.js/styles.css so clients pick up the new build immediately.
+INDEX_FILE="${PROJECT_ROOT}/src/python/web_static/index.html"
+sed -i -E "s#(app\.js\?v=)[^\"']*#\1build${BUILD_NUMBER}#" "${INDEX_FILE}"
+sed -i -E "s#(styles\.css\?v=)[^\"']*#\1build${BUILD_NUMBER}#" "${INDEX_FILE}"
+
 echo "==> Deploying dashboard to ${PI_TARGET}..."
 ssh "${PI_TARGET}" "mkdir -p ${REMOTE_PATH}/src/python ${REMOTE_PATH}/src/python/web_static ${REMOTE_PATH}/deploy/systemd/user ${REMOTE_PATH}/scripts"
 

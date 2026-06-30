@@ -108,6 +108,7 @@ const weatherForecast   = document.querySelector("#weatherForecast");
 const deviceCount       = document.querySelector("#deviceCount");
 const onCount           = document.querySelector("#onCount");
 const cameraCount       = document.querySelector("#cameraCount");
+const buildBadge        = document.querySelector("#buildBadge");
 const indoorTemp        = document.querySelector("#indoorTemp");
 const outdoorTemp       = document.querySelector("#outdoorTemp");
 const refreshButton     = document.querySelector("#refreshButton");
@@ -2167,6 +2168,14 @@ function cameraMedia(camera) {
     }
     return `<video class="camera-media" src="${liveUrl}" controls muted playsinline></video>`;
   }
+  if (camera.battery_powered) {
+    const cameraId = cameraIdFor(camera);
+    const cached = loadCachedSnapshot(cameraId);
+    if (cached) {
+      return `<img class="camera-media camera-preview" src="${cached}" alt="${escapeHtml(camera.name)} last view" data-camera-snap="${escapeHtml(cameraId)}" />`;
+    }
+    return `<div class="camera-placeholder doorbell-placeholder">Battery camera<br /><span>Tap View to load a picture</span></div>`;
+  }
   if (camera.view_url || camera.snapshot_url) {
     const cameraId = cameraIdFor(camera);
     const cached = loadCachedSnapshot(cameraId);
@@ -3304,6 +3313,18 @@ function _renderMatterDeviceList(devices) {
     }
   });
 })();
+
+async function loadBuildInfo() {
+  if (!buildBadge) return;
+  try {
+    const response = await fetch(`/static/build_info.json?ts=${Date.now()}`);
+    if (!response.ok) return;
+    const info = await response.json();
+    if (info.build !== undefined) buildBadge.textContent = `Build #${info.build}`;
+  } catch {}
+}
+
+loadBuildInfo();
 
 loadDevices().catch((error) => {
   apiStatus.textContent = "Error";
