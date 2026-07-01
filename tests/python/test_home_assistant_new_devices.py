@@ -128,3 +128,103 @@ def test_entities_endpoint_flags_is_new_for_unseen_light_switch(tmp_path: Path, 
     flags = {e["entity_id"]: e["is_new"] for e in second["entities"]}
     assert flags["switch.garage_plug"] is True
     assert flags["light.kitchen"] is False
+
+
+import yaml
+from unittest.mock import patch
+
+from src.python.web_app import (
+    _ha_light_switch_dashboard_category,
+    _load_home_assistant_devices,
+    _write_home_assistant_device_to_config,
+)
+
+
+def test_ha_light_switch_dashboard_category_outlet_is_plug() -> None:
+    assert _ha_light_switch_dashboard_category("outlet") == "smart_plug"
+
+
+def test_ha_light_switch_dashboard_category_defaults_to_light() -> None:
+    assert _ha_light_switch_dashboard_category(None) == "light_switch"
+    assert _ha_light_switch_dashboard_category("switch") == "light_switch"
+
+
+def test_load_home_assistant_devices_missing_file_returns_empty(tmp_path: Path) -> None:
+    assert _load_home_assistant_devices(tmp_path / "missing.yaml") == []
+
+
+def test_write_home_assistant_device_creates_section(tmp_path: Path) -> None:
+    config = tmp_path / "devices.local.yaml"
+    with patch("src.python.web_app.DEFAULT_CONFIG_PATH", config):
+        _write_home_assistant_device_to_config(
+            "switch.north_bedroom_light_switch", "North bedroom light switch", "North Bedroom", "light_switch"
+        )
+    data = yaml.safe_load(config.read_text())
+    assert data["home_assistant_devices"][0] == {
+        "entity_id": "switch.north_bedroom_light_switch",
+        "name": "North bedroom light switch",
+        "room": "North Bedroom",
+        "category": "light_switch",
+    }
+
+
+def test_write_home_assistant_device_overwrites_existing_entry(tmp_path: Path) -> None:
+    config = tmp_path / "devices.local.yaml"
+    config.write_text(
+        "home_assistant_devices:\n"
+        "- {entity_id: switch.a, name: Old, category: light_switch}\n"
+    )
+    with patch("src.python.web_app.DEFAULT_CONFIG_PATH", config):
+        _write_home_assistant_device_to_config("switch.a", "New Name", None, "smart_plug")
+    data = yaml.safe_load(config.read_text())
+    assert len(data["home_assistant_devices"]) == 1
+    assert data["home_assistant_devices"][0]["name"] == "New Name"
+    assert data["home_assistant_devices"][0]["category"] == "smart_plug"
+    assert "room" not in data["home_assistant_devices"][0]
+
+
+def test_confirm_endpoint_writes_config_and_marks_known(tmp_path: Path, monkeypatch) -> None:
+    discovery = tmp_path / "tplink_switches.json"
+    discovery.write_text('{"switches": []}')
+    config = tmp_path / "devices.local.yaml"
+    known_path = tmp_path / "known.json"
+    monkeypatch.setattr("src.python.web_app.DEFAULT_HA_KNOWN_ENTITIES_PATH", known_path)
+    from src.python.web_app import create_app
+    from fastapi.testclient import TestClient
+
+    class _FakeController:
+        async def status(self, switch):
+            raise AssertionError("not used")
+
+    with patch("src.python.web_app.DEFAULT_CONFIG_PATH", config):
+        client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=_FakeController()))
+        response = client.post(
+            "/api/home-assistant/devices/switch.north_bedroom_light_switch/confirm",
+            json={"name": "North bedroom light switch", "room": "North Bedroom", "category": "light_switch"},
+        )
+        assert response.status_code == 200
+        data = yaml.safe_load(config.read_text())
+        assert data["home_assistant_devices"][0]["entity_id"] == "switch.north_bedroom_light_switch"
+
+    assert "switch.north_bedroom_light_switch" in _load_known_ha_entities(known_path)
+
+
+def test_ignore_endpoint_marks_known_without_touching_config(tmp_path: Path, monkeypatch) -> None:
+    discovery = tmp_path / "tplink_switches.json"
+    discovery.write_text('{"switches": []}')
+    config = tmp_path / "devices.local.yaml"
+    known_path = tmp_path / "known.json"
+    monkeypatch.setattr("src.python.web_app.DEFAULT_HA_KNOWN_ENTITIES_PATH", known_path)
+    from src.python.web_app import create_app
+    from fastapi.testclient import TestClient
+
+    class _FakeController:
+        async def status(self, switch):
+            raise AssertionError("not used")
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=_FakeController()))
+    response = client.post("/api/home-assistant/devices/switch.unwanted/ignore")
+
+    assert response.status_code == 200
+    assert not config.exists()
+    assert "switch.unwanted" in _load_known_ha_entities(known_path)

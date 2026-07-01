@@ -56,6 +56,12 @@ class _MatterCommissionBody(BaseModel):
     room: str | None = None
 
 
+class _HomeAssistantDeviceConfirmBody(BaseModel):
+    name: str
+    room: str | None = None
+    category: str
+
+
 @dataclass(frozen=True)
 class DashboardDevice:
     switch: SwitchDefinition
@@ -338,6 +344,25 @@ def create_app(
     @app.post("/api/home-assistant/entities/{entity_id}/commands/{command}")
     async def home_assistant_command(entity_id: str, command: str) -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_service_command, app.state.config_path, entity_id, command)
+
+    @app.post("/api/home-assistant/devices/{entity_id}/confirm")
+    async def home_assistant_device_confirm(
+        entity_id: str, body: _HomeAssistantDeviceConfirmBody
+    ) -> dict[str, Any]:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Name cannot be empty")
+        room = (body.room or "").strip() or None
+        await asyncio.to_thread(
+            _write_home_assistant_device_to_config, entity_id, name, room, body.category
+        )
+        await asyncio.to_thread(_mark_ha_entity_known, DEFAULT_HA_KNOWN_ENTITIES_PATH, entity_id)
+        return {"status": "ok"}
+
+    @app.post("/api/home-assistant/devices/{entity_id}/ignore")
+    async def home_assistant_device_ignore(entity_id: str) -> dict[str, Any]:
+        await asyncio.to_thread(_mark_ha_entity_known, DEFAULT_HA_KNOWN_ENTITIES_PATH, entity_id)
+        return {"status": "ok"}
 
     @app.post("/api/home-assistant/climate/{entity_id}")
     async def home_assistant_climate(entity_id: str, update: ClimateUpdateRequest) -> dict[str, Any]:
@@ -2498,6 +2523,32 @@ def _remove_matter_device_from_config(node_id: int) -> None:
     cfg.setdefault("matter", {})["devices"] = [
         d for d in devices if int(d.get("node_id", -1)) != node_id
     ]
+    DEFAULT_CONFIG_PATH.write_text(yaml.dump(cfg, default_flow_style=False))
+
+
+def _ha_light_switch_dashboard_category(device_class: str | None) -> str:
+    if str(device_class or "").lower() == "outlet":
+        return "smart_plug"
+    return "light_switch"
+
+
+def _load_home_assistant_devices(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return cfg.get("home_assistant_devices") or []
+
+
+def _write_home_assistant_device_to_config(entity_id: str, name: str, room: str | None, category: str) -> None:
+    cfg: dict = {}
+    if DEFAULT_CONFIG_PATH.exists():
+        cfg = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text()) or {}
+    devices: list[dict] = cfg.setdefault("home_assistant_devices", [])
+    devices[:] = [d for d in devices if d.get("entity_id") != entity_id]
+    entry: dict[str, Any] = {"entity_id": entity_id, "name": name, "category": category}
+    if room:
+        entry["room"] = room
+    devices.append(entry)
     DEFAULT_CONFIG_PATH.write_text(yaml.dump(cfg, default_flow_style=False))
 
 
