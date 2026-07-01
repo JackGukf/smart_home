@@ -3115,11 +3115,22 @@ document.addEventListener("click", async (event) => {
 /* ── Notification actions ── */
 document.addEventListener("click", (event) => {
   const closeBtn = event.target.closest("button[data-notif-close]");
-  if (closeBtn) { dismissNotification(closeBtn.dataset.notifClose); return; }
+  if (closeBtn) {
+    const notif = notifMap.get(closeBtn.dataset.notifClose);
+    if (notif?.type === "new_device" && notif.entityId) {
+      requestJson(`/api/home-assistant/devices/${encodeURIComponent(notif.entityId)}/ignore`, { method: "POST" }).catch(console.error);
+    }
+    dismissNotification(closeBtn.dataset.notifClose);
+    return;
+  }
 
   const respondBtn = event.target.closest("button[data-notif-respond]");
   if (respondBtn) {
     const notif = notifMap.get(respondBtn.dataset.notifRespond);
+    if (notif?.type === "new_device") {
+      window.openNewDeviceModal(notif);
+      return;
+    }
     if (notif) respondToNotification(notif);
     dismissNotification(respondBtn.dataset.notifRespond);
   }
@@ -3339,6 +3350,56 @@ function _renderMatterDeviceList(devices) {
       logActivity("Failed to remove Matter device", "error");
     }
   });
+})();
+
+/* ── NEW-DEVICE CONFIRMATION MODAL ── */
+(function initNewDeviceModal() {
+  const modal = document.querySelector("#newDeviceModal");
+  if (!modal) return;
+  let currentNotif = null;
+
+  function openModal(notif) {
+    currentNotif = notif;
+    document.querySelector("#newDeviceName").value = notif.suggestedName || "";
+    document.querySelector("#newDeviceRoom").value = notif.suggestedRoom || "";
+    document.querySelector("#newDeviceCategory").value = notif.suggestedCategory || "light_switch";
+    modal.hidden = false;
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+    currentNotif = null;
+  }
+
+  document.querySelector("#closeNewDeviceModal")?.addEventListener("click", closeModal);
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+
+  document.querySelector("#newDeviceIgnore")?.addEventListener("click", async () => {
+    if (!currentNotif) return;
+    const notif = currentNotif;
+    closeModal();
+    dismissNotification(notif.id);
+    await requestJson(`/api/home-assistant/devices/${encodeURIComponent(notif.entityId)}/ignore`, { method: "POST" }).catch(console.error);
+  });
+
+  document.querySelector("#newDeviceConfirm")?.addEventListener("click", async () => {
+    if (!currentNotif) return;
+    const notif = currentNotif;
+    const name = document.querySelector("#newDeviceName").value.trim();
+    const room = document.querySelector("#newDeviceRoom").value.trim();
+    const category = document.querySelector("#newDeviceCategory").value;
+    if (!name) { document.querySelector("#newDeviceName").focus(); return; }
+    closeModal();
+    dismissNotification(notif.id);
+    await requestJson(`/api/home-assistant/devices/${encodeURIComponent(notif.entityId)}/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, room: room || null, category }),
+    }).catch(console.error);
+    await loadDevices();
+  });
+
+  window.openNewDeviceModal = openModal;
 })();
 
 async function loadBuildInfo() {
