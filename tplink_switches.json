@@ -50,12 +50,12 @@
       "name": "Family room switch"
     },
     {
-      "alias": "Living room switch 2",
+      "alias": "Living room light switch 2",
       "device_type": "DeviceType.WallSwitch",
       "host": "192.168.0.73",
       "is_on": false,
       "model": "HS200",
-      "name": "Living room switch 2"
+      "name": "Living room light switch 2"
     }
   ]
 }

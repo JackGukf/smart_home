@@ -11,13 +11,15 @@ public:
     FakeSyncClient() : SyncClient("http://localhost:8000") {}
     std::string devices_response;
     std::string states_response;
+    std::string last_get_path;
     std::string last_post_path;
     std::string last_post_body;
 
 protected:
     std::string DoGet(const std::string& path) override {
+        last_get_path = path;
         if (path == "/bridge/devices") return devices_response;
-        if (path == "/bridge/state/all") return states_response;
+        if (path.rfind("/bridge/state/all", 0) == 0) return states_response;
         throw SyncClientError("unexpected GET: " + path);
     }
     std::string DoPost(const std::string& path, const std::string& body) override {
@@ -56,6 +58,17 @@ TEST(SyncClient, FetchAllStatesParsesJson) {
     EXPECT_EQ(states.at("kasa:192.168.1.10").at("on"), "true");
 }
 
+TEST(SyncClient, FetchAllStatesForRequestsOnlyRegisteredDeviceIds) {
+    FakeSyncClient client;
+    client.states_response = R"({"kasa:192.168.0.73":{"on":true}})";
+
+    auto states = client.FetchAllStatesFor({"kasa:192.168.0.73"});
+
+    EXPECT_EQ(client.last_get_path, "/bridge/state/all?device_id=kasa:192.168.0.73");
+    ASSERT_EQ(states.count("kasa:192.168.0.73"), 1u);
+    EXPECT_EQ(states.at("kasa:192.168.0.73").at("on"), "true");
+}
+
 TEST(SyncClient, SendCommandPostsCorrectBody) {
     FakeSyncClient client;
     client.SendCommand("kasa:192.168.1.10", "on");
@@ -84,6 +97,8 @@ public:
 
     std::vector<DeviceInfo> FetchDevices() override { return preset_devices; }
     std::map<std::string, std::map<std::string, std::string>> FetchAllStates() override { return preset_states; }
+    std::map<std::string, std::map<std::string, std::string>> FetchAllStatesFor(
+        const std::vector<std::string>&) override { return preset_states; }
     void SendCommand(const std::string& device_id, const std::string& command) override {
         sent_commands.push_back({device_id, command});
     }

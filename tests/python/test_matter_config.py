@@ -56,3 +56,11 @@ def test_remove_matter_device_missing_config(tmp_path):
     _, remove_fn = _import_helpers()
     with patch("src.python.web_app.DEFAULT_CONFIG_PATH", config):
         remove_fn(1)  # Must not raise
+
+
+def test_matter_bridge_config_raises_linux_packet_buffer_capacity():
+    config = Path("src/cpp/matter_bridge/CHIPProjectConfig.h")
+    content = config.read_text()
+
+    assert "#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 0" in content
+    assert "#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_CAPACITY_MAX 9050" in content

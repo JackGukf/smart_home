@@ -121,7 +121,7 @@ cameras:
     host: 192.168.0.95
     model: Wyze RTSP
     room: Home
-    stream_name: wyze_camera
+    go2rtc_enabled: false
     go2rtc_url: http://192.168.0.10:1984
     username_env: WYZE_RTSP_USERNAME
     password_env: WYZE_RTSP_PASSWORD
@@ -274,6 +274,8 @@ def test_devices_endpoint_loads_discovered_switches_and_plugs(tmp_path: Path) ->
             "category": "light_switch",
             "room": "Family Room",
             "is_on": True,
+            "is_dimmable": True,
+            "brightness": None,
         },
         {
             "id": "192.168.0.73",
@@ -284,6 +286,8 @@ def test_devices_endpoint_loads_discovered_switches_and_plugs(tmp_path: Path) ->
             "category": "light_switch",
             "room": "Living Room",
             "is_on": False,
+            "is_dimmable": False,
+            "brightness": None,
         },
         {
             "id": "192.168.0.51",
@@ -294,6 +298,8 @@ def test_devices_endpoint_loads_discovered_switches_and_plugs(tmp_path: Path) ->
             "category": "smart_plug",
             "room": "Office Plug",
             "is_on": False,
+            "is_dimmable": False,
+            "brightness": None,
         },
     ]
 
@@ -509,6 +515,8 @@ def test_tuya_endpoint_loads_configured_devices_without_exposing_keys(tmp_path: 
     _write_tuya_config(config)
     monkeypatch.setenv("TUYA_SENSOR_KEY", "sensor-secret")
     monkeypatch.setenv("TUYA_SWITCH_KEY", "switch-secret")
+    monkeypatch.setattr(web_app_module, "_tuya_status", lambda _device: (_ for _ in ()).throw(RuntimeError("offline")))
+    monkeypatch.setattr(web_app_module, "_tuya_cloud_client", lambda: None)
     client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
 
     response = client.get("/api/tuya/devices")
@@ -1348,3 +1356,24 @@ def test_ambient_runtime_state_tracks_power_commands() -> None:
 
     web_app_module._remember_ambient_light_command(light, "on", {})
     assert web_app_module._ambient_light_card(light)["is_on"] is True
+
+
+def test_bridge_allowlist_limits_state_cache_to_exposed_devices(tmp_path, monkeypatch):
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.yaml"
+    _write_discovery(discovery)
+    _write_tuya_config(config)
+
+    monkeypatch.setattr(web_app_module, "DEFAULT_DISCOVERY_PATH", discovery)
+    monkeypatch.setattr(web_app_module, "DEFAULT_CONFIG_PATH", config)
+    monkeypatch.setenv("BRIDGE_DEVICE_ALLOWLIST", "kasa:192.168.0.73")
+    web_app_module.bridge_sync._state_cache.clear()
+
+    app = create_app(controller=FakeController())
+    client = TestClient(app)
+
+    resp = client.get("/bridge/devices")
+
+    assert resp.status_code == 200
+    assert [d["device_id"] for d in resp.json()] == ["kasa:192.168.0.73"]
+    assert set(web_app_module.bridge_sync._state_cache) == {"kasa:192.168.0.73"}

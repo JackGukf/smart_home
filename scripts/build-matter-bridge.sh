@@ -11,8 +11,12 @@ CHIP_BRIDGE_DIR="$CHIP_DIR/examples/bridge-app/linux"
 OUT_DIR="$PROJECT_ROOT/build/matter-bridge"
 
 echo "==> Activating CHIP SDK tools..."
+# CHIP's activate.sh is a symlink to scripts/setup/bootstrap.sh and expects
+# paths relative to the connectedhomeip checkout.
+pushd "$CHIP_DIR" >/dev/null
 # shellcheck source=/dev/null
-source "$CHIP_DIR/scripts/activate.sh"
+source scripts/activate.sh
+popd >/dev/null
 
 # zap-cli lives in CIPD; activate.sh doesn't add it to PATH
 export ZAP_INSTALL_PATH="$CHIP_DIR/.environment/cipd/packages/zap"
@@ -96,7 +100,8 @@ done
 
 echo "==> Running GN build for linux-arm64..."
 mkdir -p "$OUT_DIR"
-"$CHIP_DIR/scripts/examples/gn_build_example.sh" \
+pushd "$CHIP_DIR" >/dev/null
+scripts/examples/gn_build_example.sh \
   "$CHIP_BRIDGE_DIR" \
   "$OUT_DIR" \
   'target_cpu="arm64"' \
@@ -105,6 +110,7 @@ mkdir -p "$OUT_DIR"
   'is_debug=false' \
   'chip_project_config_include="<CHIPProjectConfig.h>"' \
   'chip_project_config_include_dirs=["//"]'
+popd >/dev/null
 
 echo "==> Stripping binary..."
 aarch64-linux-gnu-strip "$OUT_DIR/chip-bridge-app"

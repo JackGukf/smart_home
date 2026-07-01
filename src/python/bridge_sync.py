@@ -10,11 +10,12 @@ Endpoints the C++ bridge calls:
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Callable, Awaitable
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,18 @@ _pending_until: dict[str, float] = {}
 _COMMAND_PENDING_TTL_SECONDS = 3.0
 
 
+def _bridge_allowlist() -> set[str] | None:
+    raw = os.environ.get("BRIDGE_DEVICE_ALLOWLIST", "").strip()
+    if not raw:
+        return None
+    return {s.strip() for s in raw.split(",") if s.strip()}
+
+
+def _is_exposed_device(device_id: str) -> bool:
+    allowlist = _bridge_allowlist()
+    return allowlist is None or device_id in allowlist
+
+
 def mark_command_pending(device_id: str) -> None:
     """Call right before executing a command so concurrent status reads can't
     race it and clobber the cache with the pre-command value."""
@@ -75,12 +88,18 @@ def update_state_cache(device_id: str, state: dict[str, Any], *, authoritative: 
     another command's pending window, since it may be reading a value the
     in-flight command is about to change.
     """
+    if not _is_exposed_device(device_id):
+        _state_cache.pop(device_id, None)
+        _pending_until.pop(device_id, None)
+        return
+
     if authoritative:
         _pending_until.pop(device_id, None)
     elif _pending_until.get(device_id, 0.0) > time.monotonic():
         logger.debug("Dropping stale status read for %s — command in flight", device_id)
         return
     _state_cache[device_id] = state
+
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -101,9 +120,12 @@ async def list_devices() -> list[dict[str, Any]]:
 
 
 @router.get("/state/all")
-async def all_states() -> dict[str, dict[str, Any]]:
-    """Return the latest cached state for every device."""
-    return dict(_state_cache)
+async def all_states(device_id: list[str] | None = Query(default=None)) -> dict[str, dict[str, Any]]:
+    """Return the latest cached state, optionally restricted to exposed devices."""
+    requested = set(device_id) if device_id else _bridge_allowlist()
+    if not requested:
+        return dict(_state_cache)
+    return {dev_id: state for dev_id, state in _state_cache.items() if dev_id in requested}
 
 
 @router.post("/command", status_code=200)

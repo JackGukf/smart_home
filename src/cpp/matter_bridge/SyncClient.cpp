@@ -1,6 +1,7 @@
 #include "SyncClient.h"
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <sstream>
 
 using json = nlohmann::json;
 
@@ -117,8 +118,28 @@ std::vector<DeviceInfo> SyncClient::FetchDevices() {
     return devices;
 }
 
+static std::string BuildStatePath(const std::vector<std::string>& device_ids) {
+    if (device_ids.empty()) {
+        return "/bridge/state/all";
+    }
+
+    std::ostringstream path;
+    path << "/bridge/state/all";
+    const char* separator = "?";
+    for (const auto& device_id : device_ids) {
+        path << separator << "device_id=" << device_id;
+        separator = "&";
+    }
+    return path.str();
+}
+
 std::map<std::string, std::map<std::string, std::string>> SyncClient::FetchAllStates() {
-    const std::string body = DoGet("/bridge/state/all");
+    return FetchAllStatesFor({});
+}
+
+std::map<std::string, std::map<std::string, std::string>> SyncClient::FetchAllStatesFor(
+    const std::vector<std::string>& device_ids) {
+    const std::string body = DoGet(BuildStatePath(device_ids));
     json j;
     try {
         j = json::parse(body);

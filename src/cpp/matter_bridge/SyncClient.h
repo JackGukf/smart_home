@@ -25,6 +25,8 @@ public:
 
     virtual std::vector<DeviceInfo> FetchDevices();
     virtual std::map<std::string, std::map<std::string, std::string>> FetchAllStates();
+    virtual std::map<std::string, std::map<std::string, std::string>> FetchAllStatesFor(
+        const std::vector<std::string>& device_ids);
     virtual void SendCommand(const std::string& device_id, const std::string& command);
 
 protected:

@@ -2620,14 +2620,20 @@ async def _bridge_device_list(controller: KasaLightSwitchController | None = Non
             "state": {"on": bool(on)},
         }
 
+    kasa_switches = _load_switches(DEFAULT_DISCOVERY_PATH)
+    if allowlist is not None:
+        kasa_switches = [d for d in kasa_switches if f"kasa:{d.switch.host}" in allowlist]
+
     kasa_results = await asyncio.gather(
-        *[_kasa_entry(d) for d in _load_switches(DEFAULT_DISCOVERY_PATH)],
+        *[_kasa_entry(d) for d in kasa_switches],
         return_exceptions=True,
     )
     devices: list[dict] = [r for r in kasa_results if isinstance(r, dict)]
 
     # Tuya devices
     for tuya_dev in _load_tuya_devices(DEFAULT_CONFIG_PATH):
+        if allowlist is not None and tuya_dev.device_id not in allowlist:
+            continue
         category = tuya_dev.category or "tuya_switch"
         bridge_sync.update_state_cache(tuya_dev.device_id, {"on": False})
         devices.append({

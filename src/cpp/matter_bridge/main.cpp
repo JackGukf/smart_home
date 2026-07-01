@@ -379,12 +379,14 @@ static void PollLoop() {
                 }
                 if (registrable_count != current_count) {
                     ChipLogDetail(AppServer,
-                                  "Device list changed (%zu → %zu), restarting for clean re-registration",
-                                  current_count, new_infos.size());
-                    // exit(0) lets Docker (restart: unless-stopped) bring us back
-                    // with a clean CHIP stack rather than risking in-process
-                    // re-registration failures from stale endpoint slot state.
-                    PlatformMgr().ScheduleWork([](intptr_t) { exit(0); }, 0);
+                                  "Device list changed (%zu → %zu registrable); keeping existing Matter endpoints stable",
+                                  current_count, registrable_count);
+                    // Do not restart from the poll loop. /bridge/devices can be
+                    // partial during dashboard restarts or slow device status
+                    // reads; restarting a commissioned bridge drops active
+                    // controller sessions and makes Apple Home show No Response.
+                    // Endpoint topology changes require an intentional bridge
+                    // restart/recommission after the device list is known stable.
                 }
             } catch (const SyncClientError& poll_err) {
                 const char* poll_msg = poll_err.what();
@@ -394,7 +396,15 @@ static void PollLoop() {
 
         // ── Poll current state and push to Matter attributes ──────────────────
         try {
-            auto states = gSyncClient->FetchAllStates();
+            std::vector<std::string> registered_device_ids;
+            {
+                std::lock_guard<std::mutex> lock(gDevicesMutex);
+                for (const auto& dev_ptr : gDevices) {
+                    registered_device_ids.push_back(dev_ptr->GetDeviceId());
+                }
+            }
+
+            auto states = gSyncClient->FetchAllStatesFor(registered_device_ids);
 
             std::lock_guard<std::mutex> lock(gDevicesMutex);
             for (const auto& dev_ptr : gDevices) {

@@ -132,3 +132,26 @@ def test_pending_window_expires(client):
     bridge_sync._pending_until["kasa:1.2.3.4"] = time.monotonic() - 1  # force-expire
     update_state_cache("kasa:1.2.3.4", {"on": False})
     assert _state_cache["kasa:1.2.3.4"] == {"on": False}
+
+
+def test_state_all_can_be_filtered_to_exposed_devices(client):
+    update_state_cache("kasa:192.168.0.73", {"on": True})
+    update_state_cache("kasa:192.168.0.51", {"on": False})
+
+    resp = client.get("/bridge/state/all?device_id=kasa:192.168.0.73")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"kasa:192.168.0.73": {"on": True}}
+
+
+def test_state_cache_ignores_non_allowlisted_devices(client, monkeypatch):
+    monkeypatch.setenv("BRIDGE_DEVICE_ALLOWLIST", "kasa:192.168.0.73")
+
+    update_state_cache("kasa:192.168.0.73", {"on": True})
+    update_state_cache("kasa:192.168.0.51", {"on": False})
+
+    resp = client.get("/bridge/state/all")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"kasa:192.168.0.73": {"on": True}}
+    assert set(_state_cache) == {"kasa:192.168.0.73"}
