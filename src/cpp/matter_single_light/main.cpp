@@ -5,9 +5,11 @@
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/ConcreteAttributePath.h>
+#include <lib/support/Span.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/PlatformManager.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -15,6 +17,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace chip;
 using namespace chip::app;
@@ -22,16 +25,32 @@ using namespace chip::app::Clusters;
 using chip::DeviceLayer::PlatformMgr;
 
 namespace {
-constexpr EndpointId kLightEndpoint = 1;
-constexpr const char * kDeviceId    = "kasa:192.168.0.73";
-constexpr const char * kDeviceName  = "Living room light switch 2";
-constexpr int kPollSeconds          = 5;
+struct LightSpec
+{
+    EndpointId endpoint;
+    const char * deviceId;
+    const char * name;
+};
+
+constexpr std::array<LightSpec, 4> kLights = {{
+    { 1, "kasa:192.168.0.110", "Kitchen light switch" },
+    { 2, "kasa:192.168.0.143", "Master bedroom light switch" },
+    { 3, "kasa:192.168.0.61", "Family room light switch" },
+    { 4, "kasa:192.168.0.73", "Living room light switch" },
+}};
+constexpr int kPollSeconds = 5;
+
+struct OnOffUpdate
+{
+    size_t index;
+    bool on;
+};
 
 std::unique_ptr<SyncClient> gSyncClient;
 std::atomic_bool gRunning{ true };
-std::atomic_bool gSuppressNextOnOffCommand{ false };
-std::atomic<int> gLastPublishedOnOff{ -1 };
-std::atomic<int> gLastPolledOnOff{ -1 };
+std::array<std::atomic_bool, kLights.size()> gSuppressNextOnOffCommand;
+std::array<std::atomic<int>, kLights.size()> gLastPublishedOnOff;
+std::array<std::atomic<int>, kLights.size()> gLastPolledOnOff;
 std::mutex gCommandMutex;
 
 bool ParseBoolState(const std::string & value)
@@ -39,69 +58,115 @@ bool ParseBoolState(const std::string & value)
     return value == "true" || value == "1" || value == "on" || value == "True";
 }
 
-void ApplyMatterOnOff(intptr_t ctx)
+const LightSpec * FindLightByEndpoint(EndpointId endpoint, size_t * index = nullptr)
 {
-    const bool on     = ctx != 0;
-    const int desired = on ? 1 : 0;
-    if (gLastPublishedOnOff.load() == desired)
+    for (size_t i = 0; i < kLights.size(); ++i)
     {
-        return;
+        if (kLights[i].endpoint == endpoint)
+        {
+            if (index != nullptr)
+            {
+                *index = i;
+            }
+            return &kLights[i];
+        }
     }
-
-    gSuppressNextOnOffCommand.store(true);
-    Protocols::InteractionModel::Status status = OnOff::Attributes::OnOff::Set(kLightEndpoint, on);
-    gSuppressNextOnOffCommand.store(false);
-    if (status == Protocols::InteractionModel::Status::Success)
-    {
-        gLastPublishedOnOff.store(desired);
-        ChipLogProgress(AppServer, "Single light: published polled OnOff=%d", on);
-        return;
-    }
-
-    ChipLogError(AppServer, "Single light: failed to update Matter OnOff=%d status=%u", on, to_underlying(status));
+    return nullptr;
 }
 
-void SendKasaCommandAsync(bool on)
+void ApplyMatterOnOff(intptr_t ctx)
 {
-    std::thread([on] {
+    std::unique_ptr<OnOffUpdate> update(reinterpret_cast<OnOffUpdate *>(ctx));
+    if (update->index >= kLights.size())
+    {
+        return;
+    }
+
+    const auto & light = kLights[update->index];
+    const int desired  = update->on ? 1 : 0;
+    if (gLastPublishedOnOff[update->index].load() == desired)
+    {
+        return;
+    }
+
+    gSuppressNextOnOffCommand[update->index].store(true);
+    Protocols::InteractionModel::Status status = OnOff::Attributes::OnOff::Set(light.endpoint, update->on);
+    gSuppressNextOnOffCommand[update->index].store(false);
+    if (status == Protocols::InteractionModel::Status::Success)
+    {
+        gLastPublishedOnOff[update->index].store(desired);
+        ChipLogProgress(AppServer, "Fixed lights: published %s OnOff=%d", light.name, update->on);
+        return;
+    }
+
+    ChipLogError(AppServer, "Fixed lights: failed to update %s OnOff=%d status=%u", light.name, update->on,
+                 to_underlying(status));
+}
+
+void SendKasaCommandAsync(size_t index, bool on)
+{
+    if (index >= kLights.size())
+    {
+        return;
+    }
+
+    const std::string deviceId = kLights[index].deviceId;
+    const std::string name     = kLights[index].name;
+    std::thread([deviceId, name, on] {
         std::lock_guard<std::mutex> lock(gCommandMutex);
         try
         {
-            gSyncClient->SendCommand(kDeviceId, on ? "on" : "off");
-            ChipLogProgress(AppServer, "Single light: sent %s to %s", on ? "on" : "off", kDeviceId);
+            gSyncClient->SendCommand(deviceId, on ? "on" : "off");
+            ChipLogProgress(AppServer, "Fixed lights: sent %s to %s (%s)", on ? "on" : "off", name.c_str(),
+                            deviceId.c_str());
         }
         catch (const std::exception & ex)
         {
-            ChipLogError(AppServer, "Single light: command %s failed: %s", on ? "on" : "off", ex.what());
+            ChipLogError(AppServer, "Fixed lights: command %s failed for %s: %s", on ? "on" : "off", name.c_str(),
+                         ex.what());
         }
     }).detach();
 }
 
 void PollLoop()
 {
+    std::vector<std::string> deviceIds;
+    deviceIds.reserve(kLights.size());
+    for (const auto & light : kLights)
+    {
+        deviceIds.emplace_back(light.deviceId);
+    }
+
     while (gRunning.load())
     {
         try
         {
-            auto states = gSyncClient->FetchAllStatesFor({ kDeviceId });
-            auto devIt = states.find(kDeviceId);
-            if (devIt != states.end())
+            auto states = gSyncClient->FetchAllStatesFor(deviceIds);
+            for (size_t i = 0; i < kLights.size(); ++i)
             {
-                auto onIt = devIt->second.find("on");
-                if (onIt != devIt->second.end())
+                const auto & light = kLights[i];
+                auto devIt        = states.find(light.deviceId);
+                if (devIt == states.end())
                 {
-                    bool on         = ParseBoolState(onIt->second);
-                    const int polled = on ? 1 : 0;
-                    if (gLastPolledOnOff.exchange(polled) != polled)
-                    {
-                        PlatformMgr().ScheduleWork(ApplyMatterOnOff, polled);
-                    }
+                    continue;
+                }
+                auto onIt = devIt->second.find("on");
+                if (onIt == devIt->second.end())
+                {
+                    continue;
+                }
+
+                bool on          = ParseBoolState(onIt->second);
+                const int polled = on ? 1 : 0;
+                if (gLastPolledOnOff[i].exchange(polled) != polled)
+                {
+                    PlatformMgr().ScheduleWork(ApplyMatterOnOff, reinterpret_cast<intptr_t>(new OnOffUpdate{ i, on }));
                 }
             }
         }
         catch (const std::exception & ex)
         {
-            ChipLogError(AppServer, "Single light: state poll failed: %s", ex.what());
+            ChipLogError(AppServer, "Fixed lights: state poll failed: %s", ex.what());
         }
 
         for (int i = 0; i < kPollSeconds && gRunning.load(); ++i)
@@ -114,20 +179,22 @@ void PollLoop()
 
 void MatterPostAttributeChangeCallback(const ConcreteAttributePath & attributePath, uint8_t type, uint16_t size, uint8_t * value)
 {
-    if (attributePath.mEndpointId != kLightEndpoint || attributePath.mClusterId != OnOff::Id ||
+    size_t index = 0;
+    const LightSpec * light = FindLightByEndpoint(attributePath.mEndpointId, &index);
+    if (light == nullptr || attributePath.mClusterId != OnOff::Id ||
         attributePath.mAttributeId != OnOff::Attributes::OnOff::Id || value == nullptr)
     {
         return;
     }
 
     bool on = (*value != 0);
-    gLastPublishedOnOff.store(on ? 1 : 0);
-    ChipLogProgress(AppServer, "Single light: Matter OnOff changed to %d", on);
-    if (gSuppressNextOnOffCommand.exchange(false))
+    gLastPublishedOnOff[index].store(on ? 1 : 0);
+    ChipLogProgress(AppServer, "Fixed lights: Matter OnOff changed for %s to %d", light->name, on);
+    if (gSuppressNextOnOffCommand[index].exchange(false))
     {
         return;
     }
-    SendKasaCommandAsync(on);
+    SendKasaCommandAsync(index, on);
 }
 
 void emberAfOnOffClusterInitCallback(EndpointId endpoint) {}
@@ -135,7 +202,20 @@ void MatterLevelControlPluginServerInitCallback() {}
 
 void ApplicationInit()
 {
-    ChipLogProgress(AppServer, "Single light accessory ready for %s (%s)", kDeviceName, kDeviceId);
+    for (size_t i = 0; i < kLights.size(); ++i)
+    {
+        auto label    = CharSpan::fromCharString(kLights[i].name);
+        auto uniqueId = CharSpan::fromCharString(kLights[i].deviceId);
+        BridgedDeviceBasicInformation::Attributes::NodeLabel::Set(kLights[i].endpoint, label);
+        BridgedDeviceBasicInformation::Attributes::ProductName::Set(kLights[i].endpoint, label);
+        BridgedDeviceBasicInformation::Attributes::UniqueID::Set(kLights[i].endpoint, uniqueId);
+        BridgedDeviceBasicInformation::Attributes::Reachable::Set(kLights[i].endpoint, true);
+        gSuppressNextOnOffCommand[i].store(false);
+        gLastPublishedOnOff[i].store(-1);
+        gLastPolledOnOff[i].store(-1);
+        ChipLogProgress(AppServer, "Fixed lights accessory endpoint %u: %s (%s)", kLights[i].endpoint, kLights[i].name,
+                        kLights[i].deviceId);
+    }
 }
 
 void ApplicationShutdown()

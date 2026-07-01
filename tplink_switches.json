@@ -10,12 +10,12 @@
       "name": "Kitchen light switch"
     },
     {
-      "alias": "Master bedroom light",
+      "alias": "Master bedroom light switch",
       "device_type": "DeviceType.WallSwitch",
       "host": "192.168.0.143",
       "is_on": true,
       "model": "HS200",
-      "name": "Master bedroom light"
+      "name": "Master bedroom light switch"
     },
     {
       "alias": null,
@@ -42,20 +42,20 @@
       "name": "Office switch"
     },
     {
-      "alias": "Family room switch",
+      "alias": "Family room light switch",
       "device_type": "DeviceType.Dimmer",
       "host": "192.168.0.61",
       "is_on": false,
       "model": "HS220",
-      "name": "Family room switch"
+      "name": "Family room light switch"
     },
     {
-      "alias": "Living room light switch 2",
+      "alias": "Living room light switch",
       "device_type": "DeviceType.WallSwitch",
       "host": "192.168.0.73",
       "is_on": false,
       "model": "HS200",
-      "name": "Living room light switch 2"
+      "name": "Living room light switch"
     }
   ]
 }

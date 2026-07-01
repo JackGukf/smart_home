@@ -40,20 +40,20 @@ def _write_discovery(path: Path) -> None:
   "count": 2,
   "switches": [
     {
-      "alias": "Family room switch",
+      "alias": "Family room light switch",
       "device_type": "DeviceType.Dimmer",
       "host": "192.168.0.61",
       "is_on": false,
       "model": "HS220",
-      "name": "Family room switch"
+      "name": "Family room light switch"
     },
     {
-      "alias": "Living room switch 2",
+      "alias": "Living room light switch",
       "device_type": "DeviceType.WallSwitch",
       "host": "192.168.0.73",
       "is_on": true,
       "model": "HS200",
-      "name": "Living room switch 2"
+      "name": "Living room light switch"
     },
     {
       "alias": "Office plug",
@@ -267,7 +267,7 @@ def test_devices_endpoint_loads_discovered_switches_and_plugs(tmp_path: Path) ->
     assert response.json()["devices"] == [
         {
             "id": "192.168.0.61",
-            "name": "Family room switch",
+            "name": "Family room light switch",
             "host": "192.168.0.61",
             "model": "HS220",
             "type": "Dimmer",
@@ -279,7 +279,7 @@ def test_devices_endpoint_loads_discovered_switches_and_plugs(tmp_path: Path) ->
         },
         {
             "id": "192.168.0.73",
-            "name": "Living room switch 2",
+            "name": "Living room light switch",
             "host": "192.168.0.73",
             "model": "HS200",
             "type": "WallSwitch",
