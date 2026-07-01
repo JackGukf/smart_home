@@ -1869,28 +1869,34 @@ function saveCachedSnapshot(cameraId, dataUri) {
   try { localStorage.setItem(SNAP_PREFIX + cameraId, dataUri); } catch {}
 }
 
+async function captureSnapshotOnce(camera) {
+  const cameraId = cameraIdFor(camera);
+  try {
+    const response = await fetch(camera.snapshot_url || snapshotUrlFor(camera));
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUri = reader.result;
+        saveCachedSnapshot(cameraId, dataUri);
+        const img = cameraGrid.querySelector(`img[data-camera-snap="${CSS.escape(cameraId)}"]`);
+        if (img) img.src = dataUri;
+        resolve(dataUri);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function cacheSnapshotsInBackground(cameras) {
   for (const camera of cameras) {
     if (!camera.view_url || activeCameraIds.has(cameraIdFor(camera))) continue;
     if (camera.battery_powered) continue;
-    const cameraId = cameraIdFor(camera);
-    try {
-      const response = await fetch(camera.snapshot_url || snapshotUrlFor(camera));
-      if (!response.ok) continue;
-      const blob = await response.blob();
-      await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUri = reader.result;
-          saveCachedSnapshot(cameraId, dataUri);
-          const img = cameraGrid.querySelector(`img[data-camera-snap="${CSS.escape(cameraId)}"]`);
-          if (img) img.src = dataUri;
-          resolve();
-        };
-        reader.onerror = resolve;
-        reader.readAsDataURL(blob);
-      });
-    } catch {}
+    await captureSnapshotOnce(camera);
     await new Promise((r) => setTimeout(r, 300));
   }
 }
@@ -2824,14 +2830,19 @@ document.addEventListener("click", (event) => {
   const cameraId = button.dataset.cameraToggle;
   const camera   = latestCameraById.get(cameraId);
   if (!camera) return;
-  if (activeCameraIds.has(cameraId)) {
-    activeCameraIds.delete(cameraId);
-  } else {
+  const activating = !activeCameraIds.has(cameraId);
+  if (activating) {
     activeCameraIds.add(cameraId);
+  } else {
+    activeCameraIds.delete(cameraId);
   }
   const card = button.closest(".camera-card");
   card.querySelector(".camera-frame").innerHTML  = cameraMedia(camera) + cameraBatteryBadge(camera);
   card.querySelector(".camera-action").innerHTML = cameraAction(camera);
+
+  if (activating && camera.battery_powered) {
+    captureSnapshotOnce(camera).catch(() => {});
+  }
 });
 
 document.addEventListener("click", (event) => {
