@@ -9,7 +9,7 @@ import threading
 import asyncio
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 from urllib.parse import urlencode
 from urllib.parse import quote
 from urllib.parse import quote_plus
@@ -59,7 +59,7 @@ class _MatterCommissionBody(BaseModel):
 class _HomeAssistantDeviceConfirmBody(BaseModel):
     name: str
     room: str | None = None
-    category: str
+    category: Literal["light_switch", "smart_plug"]
 
 
 @dataclass(frozen=True)
@@ -588,7 +588,7 @@ def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
                 "category": entry.get("category") or "light_switch",
                 "is_dimmable": False,
                 "room": entry.get("room") or "",
-                "is_on": (state_entity.get("state") == "on") if state_entity else None,
+                "is_on": {"on": True, "off": False}.get(state_entity.get("state")) if state_entity else None,
                 "brightness": None,
             }
         )

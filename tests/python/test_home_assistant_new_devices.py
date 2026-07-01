@@ -387,3 +387,100 @@ def test_devices_endpoint_includes_confirmed_home_assistant_light_switch(tmp_pat
             "brightness": None,
         }
     ]
+
+
+def test_confirm_endpoint_rejects_invalid_category_and_does_not_write_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    discovery = tmp_path / "tplink_switches.json"
+    discovery.write_text('{"switches": []}')
+    config = tmp_path / "devices.local.yaml"
+    known_path = tmp_path / "known.json"
+    monkeypatch.setattr("src.python.web_app.DEFAULT_HA_KNOWN_ENTITIES_PATH", known_path)
+    from src.python.web_app import create_app
+    from fastapi.testclient import TestClient
+
+    class _FakeController:
+        async def status(self, switch):
+            raise AssertionError("not used")
+
+    with patch("src.python.web_app.DEFAULT_CONFIG_PATH", config):
+        client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=_FakeController()))
+        response = client.post(
+            "/api/home-assistant/devices/switch.north_bedroom_light_switch/confirm",
+            json={"name": "North bedroom light switch", "room": "North Bedroom", "category": "bogus"},
+        )
+        assert response.status_code == 422
+        assert not config.exists()
+
+
+def test_confirm_endpoint_accepts_valid_smart_plug_category(tmp_path: Path, monkeypatch) -> None:
+    discovery = tmp_path / "tplink_switches.json"
+    discovery.write_text('{"switches": []}')
+    config = tmp_path / "devices.local.yaml"
+    known_path = tmp_path / "known.json"
+    monkeypatch.setattr("src.python.web_app.DEFAULT_HA_KNOWN_ENTITIES_PATH", known_path)
+    from src.python.web_app import create_app
+    from fastapi.testclient import TestClient
+
+    class _FakeController:
+        async def status(self, switch):
+            raise AssertionError("not used")
+
+    with patch("src.python.web_app.DEFAULT_CONFIG_PATH", config):
+        client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=_FakeController()))
+        response = client.post(
+            "/api/home-assistant/devices/switch.garage_plug/confirm",
+            json={"name": "Garage plug", "room": "Garage", "category": "smart_plug"},
+        )
+        assert response.status_code == 200
+        data = yaml.safe_load(config.read_text())
+        assert data["home_assistant_devices"][0]["category"] == "smart_plug"
+
+
+def test_home_assistant_device_cards_maps_off_state_to_is_on_false(tmp_path: Path, monkeypatch) -> None:
+    config = tmp_path / "devices.local.yaml"
+    config.write_text(
+        "home_assistant:\n"
+        "  base_url: http://127.0.0.1:8123\n"
+        "  token_env: HOME_ASSISTANT_TOKEN\n"
+        "home_assistant_devices:\n"
+        "- entity_id: switch.north_bedroom_light_switch\n"
+        "  name: North bedroom light switch\n"
+        "  room: North Bedroom\n"
+        "  category: light_switch\n"
+    )
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_home_assistant_get(home_assistant_config, token, path):
+        return [{"entity_id": "switch.north_bedroom_light_switch", "state": "off", "attributes": {}}]
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_home_assistant_get)
+
+    cards = _home_assistant_device_cards(config)
+
+    assert cards[0]["is_on"] is False
+
+
+def test_home_assistant_device_cards_maps_unavailable_state_to_is_on_none(tmp_path: Path, monkeypatch) -> None:
+    config = tmp_path / "devices.local.yaml"
+    config.write_text(
+        "home_assistant:\n"
+        "  base_url: http://127.0.0.1:8123\n"
+        "  token_env: HOME_ASSISTANT_TOKEN\n"
+        "home_assistant_devices:\n"
+        "- entity_id: switch.north_bedroom_light_switch\n"
+        "  name: North bedroom light switch\n"
+        "  room: North Bedroom\n"
+        "  category: light_switch\n"
+    )
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_home_assistant_get(home_assistant_config, token, path):
+        return [{"entity_id": "switch.north_bedroom_light_switch", "state": "unavailable", "attributes": {}}]
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_home_assistant_get)
+
+    cards = _home_assistant_device_cards(config)
+
+    assert cards[0]["is_on"] is None
