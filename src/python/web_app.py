@@ -35,6 +35,7 @@ from src.python import bridge_sync
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DISCOVERY_PATH = PROJECT_ROOT / "tplink_switches.json"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "devices.local.yaml"
+DEFAULT_HA_KNOWN_ENTITIES_PATH = PROJECT_ROOT / "home_assistant_known_entities.json"
 STATIC_DIR = PROJECT_ROOT / "src" / "python" / "web_static"
 AMBIENT_LIGHT_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
 
@@ -1826,6 +1827,40 @@ def _home_assistant_entity_domain(entity_id: str | None) -> str:
     if not entity_id or "." not in entity_id:
         return ""
     return entity_id.split(".", 1)[0]
+
+
+def _load_known_ha_entities(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    return set(payload.get("known_entity_ids") or [])
+
+
+def _save_known_ha_entities(path: Path, entity_ids: set[str]) -> None:
+    path.write_text(
+        json.dumps({"known_entity_ids": sorted(entity_ids)}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _seed_known_ha_entities_if_missing(path: Path, states: list[dict[str, Any]]) -> None:
+    if path.exists():
+        return
+    seed_ids = {
+        str(entity.get("entity_id"))
+        for entity in states
+        if _home_assistant_entity_domain(entity.get("entity_id")) in {"light", "switch"}
+    }
+    _save_known_ha_entities(path, seed_ids)
+
+
+def _mark_ha_entity_known(path: Path, entity_id: str) -> None:
+    known = _load_known_ha_entities(path)
+    known.add(entity_id)
+    _save_known_ha_entities(path, known)
 
 
 def _ecobee_payload(path: Path) -> dict[str, Any]:
