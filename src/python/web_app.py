@@ -534,6 +534,7 @@ async def _device_cards(app: FastAPI) -> list[dict[str, Any]]:
                 "brightness": brightness,
             }
         )
+    cards.extend(await asyncio.to_thread(_home_assistant_device_cards, app.state.config_path))
     return cards
 
 
@@ -557,6 +558,41 @@ def _load_switches(path: Path) -> list[DashboardDevice]:
             )
         )
     return devices
+
+
+def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
+    entries = _load_home_assistant_devices(path)
+    if not entries:
+        return []
+    config = _load_home_assistant_config(path)
+    token = os.getenv(config.token_env)
+    states_by_id: dict[str, dict[str, Any]] = {}
+    if token:
+        try:
+            states = _home_assistant_get(config, token, "/api/states")
+            states_by_id = {str(e.get("entity_id")): e for e in states}
+        except Exception:
+            states_by_id = {}
+
+    cards = []
+    for entry in entries:
+        entity_id = entry.get("entity_id")
+        state_entity = states_by_id.get(entity_id)
+        cards.append(
+            {
+                "id": entity_id,
+                "name": entry.get("name") or entity_id,
+                "host": f"ha:{entity_id}",
+                "model": "Home Assistant",
+                "type": "Home Assistant",
+                "category": entry.get("category") or "light_switch",
+                "is_dimmable": False,
+                "room": entry.get("room") or "",
+                "is_on": (state_entity.get("state") == "on") if state_entity else None,
+                "brightness": None,
+            }
+        )
+    return cards
 
 
 def _camera_cards(path: Path, check_ports: bool = True) -> list[dict[str, Any]]:

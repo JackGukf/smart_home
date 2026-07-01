@@ -228,3 +228,97 @@ def test_ignore_endpoint_marks_known_without_touching_config(tmp_path: Path, mon
     assert response.status_code == 200
     assert not config.exists()
     assert "switch.unwanted" in _load_known_ha_entities(known_path)
+
+
+from src.python.web_app import _home_assistant_device_cards
+
+
+def test_home_assistant_device_cards_empty_when_no_confirmed_devices(tmp_path: Path) -> None:
+    config = tmp_path / "devices.local.yaml"
+    assert _home_assistant_device_cards(config) == []
+
+
+def test_home_assistant_device_cards_shapes_card_from_config_and_live_state(tmp_path: Path, monkeypatch) -> None:
+    config = tmp_path / "devices.local.yaml"
+    config.write_text(
+        "home_assistant:\n"
+        "  base_url: http://127.0.0.1:8123\n"
+        "  token_env: HOME_ASSISTANT_TOKEN\n"
+        "home_assistant_devices:\n"
+        "- entity_id: switch.north_bedroom_light_switch\n"
+        "  name: North bedroom light switch\n"
+        "  room: North Bedroom\n"
+        "  category: light_switch\n"
+    )
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_home_assistant_get(home_assistant_config, token, path):
+        return [{"entity_id": "switch.north_bedroom_light_switch", "state": "on", "attributes": {}}]
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_home_assistant_get)
+
+    cards = _home_assistant_device_cards(config)
+
+    assert cards == [
+        {
+            "id": "switch.north_bedroom_light_switch",
+            "name": "North bedroom light switch",
+            "host": "ha:switch.north_bedroom_light_switch",
+            "model": "Home Assistant",
+            "type": "Home Assistant",
+            "category": "light_switch",
+            "is_dimmable": False,
+            "room": "North Bedroom",
+            "is_on": True,
+            "brightness": None,
+        }
+    ]
+
+
+def test_devices_endpoint_includes_confirmed_home_assistant_light_switch(tmp_path: Path, monkeypatch) -> None:
+    discovery = tmp_path / "tplink_switches.json"
+    discovery.write_text('{"switches": []}')
+    config = tmp_path / "devices.local.yaml"
+    config.write_text(
+        "home_assistant:\n"
+        "  base_url: http://127.0.0.1:8123\n"
+        "  token_env: HOME_ASSISTANT_TOKEN\n"
+        "home_assistant_devices:\n"
+        "- entity_id: switch.north_bedroom_light_switch\n"
+        "  name: North bedroom light switch\n"
+        "  room: North Bedroom\n"
+        "  category: light_switch\n"
+    )
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_home_assistant_get(home_assistant_config, token, path):
+        return [{"entity_id": "switch.north_bedroom_light_switch", "state": "on", "attributes": {}}]
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_home_assistant_get)
+
+    from src.python.web_app import create_app
+    from fastapi.testclient import TestClient
+
+    class _FakeController:
+        async def status(self, switch):
+            raise AssertionError("no tplink switches configured")
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=_FakeController()))
+    response = client.get("/api/devices")
+
+    assert response.status_code == 200
+    devices = response.json()["devices"]
+    assert devices == [
+        {
+            "id": "switch.north_bedroom_light_switch",
+            "name": "North bedroom light switch",
+            "host": "ha:switch.north_bedroom_light_switch",
+            "model": "Home Assistant",
+            "type": "Home Assistant",
+            "category": "light_switch",
+            "is_dimmable": False,
+            "room": "North Bedroom",
+            "is_on": True,
+            "brightness": None,
+        }
+    ]
