@@ -1626,6 +1626,11 @@ def _home_assistant_payload(path: Path) -> dict[str, Any]:
         and not _is_ignored_home_assistant_entity(entity)
     ]
     entities.sort(key=lambda item: (item["domain"], item["name"].lower()))
+
+    _seed_known_ha_entities_if_missing(DEFAULT_HA_KNOWN_ENTITIES_PATH, states)
+    known_ids = _load_known_ha_entities(DEFAULT_HA_KNOWN_ENTITIES_PATH)
+    _mark_new_light_switch_entities(entities, known_ids)
+
     return {
         "status": "ok",
         "source": "Home Assistant",
@@ -1861,6 +1866,12 @@ def _mark_ha_entity_known(path: Path, entity_id: str) -> None:
     known = _load_known_ha_entities(path)
     known.add(entity_id)
     _save_known_ha_entities(path, known)
+
+
+def _mark_new_light_switch_entities(entities: list[dict[str, Any]], known_ids: set[str]) -> None:
+    for entity in entities:
+        if entity.get("domain") in {"light", "switch"}:
+            entity["is_new"] = entity.get("entity_id") not in known_ids
 
 
 def _ecobee_payload(path: Path) -> dict[str, Any]:
