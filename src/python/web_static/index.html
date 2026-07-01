@@ -388,6 +388,36 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="newDeviceModal" hidden aria-modal="true" role="dialog" aria-labelledby="newDeviceModalTitle">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title" id="newDeviceModalTitle">New Device Found</span>
+      <button class="modal-close" id="closeNewDeviceModal" type="button" aria-label="Close">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+    <label class="modal-label">
+      Name
+      <input class="modal-input" id="newDeviceName" type="text">
+    </label>
+    <label class="modal-label">
+      Room
+      <input class="modal-input" id="newDeviceRoom" type="text">
+    </label>
+    <label class="modal-label">
+      Add to
+      <select class="modal-input" id="newDeviceCategory">
+        <option value="light_switch">Lights</option>
+        <option value="smart_plug">Plugs</option>
+      </select>
+    </label>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="newDeviceIgnore" type="button">Ignore</button>
+      <button class="btn-primary" id="newDeviceConfirm" type="button">Add to Dashboard</button>
+    </div>
+  </div>
+</div>
+
 <div class="weather-backdrop" id="weatherBackdrop"></div>
 <div class="weather-dropdown" id="weatherDropdown" aria-hidden="true">
   <div class="weather-dropdown-current">

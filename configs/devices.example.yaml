@@ -157,4 +157,12 @@ matter:
     # - node_id: 1
     #   name: Kitchen Switch
     #   room: Kitchen
-    #   category: light_switch
+
+home_assistant_devices:
+  # Written automatically when you confirm a new-device popup on the dashboard.
+  # entity_id must match a Home Assistant light/switch entity_id.
+  # category is either light_switch (Lights view) or smart_plug (Plugs view).
+  # - entity_id: switch.north_bedroom_light_switch
+  #   name: North bedroom light switch
+  #   room: North Bedroom
+  #   category: light_switch

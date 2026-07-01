@@ -9,7 +9,7 @@ import threading
 import asyncio
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 from urllib.parse import urlencode
 from urllib.parse import quote
 from urllib.parse import quote_plus
@@ -35,6 +35,7 @@ from src.python import bridge_sync
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DISCOVERY_PATH = PROJECT_ROOT / "tplink_switches.json"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "devices.local.yaml"
+DEFAULT_HA_KNOWN_ENTITIES_PATH = PROJECT_ROOT / "home_assistant_known_entities.json"
 STATIC_DIR = PROJECT_ROOT / "src" / "python" / "web_static"
 AMBIENT_LIGHT_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
 
@@ -53,6 +54,12 @@ class _MatterCommissionBody(BaseModel):
     setup_code: str
     name: str
     room: str | None = None
+
+
+class _HomeAssistantDeviceConfirmBody(BaseModel):
+    name: str
+    room: str | None = None
+    category: Literal["light_switch", "smart_plug"]
 
 
 @dataclass(frozen=True)
@@ -338,6 +345,25 @@ def create_app(
     async def home_assistant_command(entity_id: str, command: str) -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_service_command, app.state.config_path, entity_id, command)
 
+    @app.post("/api/home-assistant/devices/{entity_id}/confirm")
+    async def home_assistant_device_confirm(
+        entity_id: str, body: _HomeAssistantDeviceConfirmBody
+    ) -> dict[str, Any]:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Name cannot be empty")
+        room = (body.room or "").strip() or None
+        await asyncio.to_thread(
+            _write_home_assistant_device_to_config, entity_id, name, room, body.category
+        )
+        await asyncio.to_thread(_mark_ha_entity_known, DEFAULT_HA_KNOWN_ENTITIES_PATH, entity_id)
+        return {"status": "ok"}
+
+    @app.post("/api/home-assistant/devices/{entity_id}/ignore")
+    async def home_assistant_device_ignore(entity_id: str) -> dict[str, Any]:
+        await asyncio.to_thread(_mark_ha_entity_known, DEFAULT_HA_KNOWN_ENTITIES_PATH, entity_id)
+        return {"status": "ok"}
+
     @app.post("/api/home-assistant/climate/{entity_id}")
     async def home_assistant_climate(entity_id: str, update: ClimateUpdateRequest) -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_climate_update, app.state.config_path, entity_id, update)
@@ -508,6 +534,7 @@ async def _device_cards(app: FastAPI) -> list[dict[str, Any]]:
                 "brightness": brightness,
             }
         )
+    cards.extend(await asyncio.to_thread(_home_assistant_device_cards, app.state.config_path))
     return cards
 
 
@@ -531,6 +558,41 @@ def _load_switches(path: Path) -> list[DashboardDevice]:
             )
         )
     return devices
+
+
+def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
+    entries = _load_home_assistant_devices(path)
+    if not entries:
+        return []
+    config = _load_home_assistant_config(path)
+    token = os.getenv(config.token_env)
+    states_by_id: dict[str, dict[str, Any]] = {}
+    if token:
+        try:
+            states = _home_assistant_get(config, token, "/api/states")
+            states_by_id = {str(e.get("entity_id")): e for e in states}
+        except Exception:
+            states_by_id = {}
+
+    cards = []
+    for entry in entries:
+        entity_id = entry.get("entity_id")
+        state_entity = states_by_id.get(entity_id)
+        cards.append(
+            {
+                "id": entity_id,
+                "name": entry.get("name") or entity_id,
+                "host": f"ha:{entity_id}",
+                "model": "Home Assistant",
+                "type": "Home Assistant",
+                "category": entry.get("category") or "light_switch",
+                "is_dimmable": False,
+                "room": entry.get("room") or "",
+                "is_on": {"on": True, "off": False}.get(state_entity.get("state")) if state_entity else None,
+                "brightness": None,
+            }
+        )
+    return cards
 
 
 def _camera_cards(path: Path, check_ports: bool = True) -> list[dict[str, Any]]:
@@ -798,10 +860,11 @@ def _tuya_cards_from_home_assistant(path: Path, discovery_path: Path | None = No
     except Exception:
         return []
     tplink_names = _tplink_device_names(discovery_path)
+    confirmed_entity_ids = {str(d.get("entity_id")) for d in _load_home_assistant_devices(path)}
     cards = [
         _tuya_home_assistant_card(entity)
         for entity in states
-        if _is_tuya_home_assistant_entity(entity, tplink_names)
+        if _is_tuya_home_assistant_entity(entity, tplink_names, confirmed_entity_ids)
     ]
     cards.sort(key=lambda item: (item["category"], item["name"].lower()))
     return cards
@@ -823,8 +886,14 @@ def _tplink_device_names(discovery_path: Path | None) -> set[str]:
         return set()
 
 
-def _is_tuya_home_assistant_entity(entity: dict[str, Any], tplink_names: set[str] | None = None) -> bool:
+def _is_tuya_home_assistant_entity(
+    entity: dict[str, Any],
+    tplink_names: set[str] | None = None,
+    confirmed_entity_ids: set[str] | None = None,
+) -> bool:
     entity_id = str(entity.get("entity_id") or "")
+    if confirmed_entity_ids and entity_id in confirmed_entity_ids:
+        return False
     domain = _home_assistant_entity_domain(entity_id)
     if domain not in {"light", "switch", "sensor", "binary_sensor", "cover", "fan", "lock"}:
         return False
@@ -1625,6 +1694,11 @@ def _home_assistant_payload(path: Path) -> dict[str, Any]:
         and not _is_ignored_home_assistant_entity(entity)
     ]
     entities.sort(key=lambda item: (item["domain"], item["name"].lower()))
+
+    _seed_known_ha_entities_if_missing(DEFAULT_HA_KNOWN_ENTITIES_PATH, states)
+    known_ids = _load_known_ha_entities(DEFAULT_HA_KNOWN_ENTITIES_PATH)
+    _mark_new_light_switch_entities(entities, known_ids)
+
     return {
         "status": "ok",
         "source": "Home Assistant",
@@ -1826,6 +1900,46 @@ def _home_assistant_entity_domain(entity_id: str | None) -> str:
     if not entity_id or "." not in entity_id:
         return ""
     return entity_id.split(".", 1)[0]
+
+
+def _load_known_ha_entities(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    return set(payload.get("known_entity_ids") or [])
+
+
+def _save_known_ha_entities(path: Path, entity_ids: set[str]) -> None:
+    path.write_text(
+        json.dumps({"known_entity_ids": sorted(entity_ids)}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _seed_known_ha_entities_if_missing(path: Path, states: list[dict[str, Any]]) -> None:
+    if path.exists():
+        return
+    seed_ids = {
+        str(entity.get("entity_id"))
+        for entity in states
+        if _home_assistant_entity_domain(entity.get("entity_id")) in {"light", "switch"}
+    }
+    _save_known_ha_entities(path, seed_ids)
+
+
+def _mark_ha_entity_known(path: Path, entity_id: str) -> None:
+    known = _load_known_ha_entities(path)
+    known.add(entity_id)
+    _save_known_ha_entities(path, known)
+
+
+def _mark_new_light_switch_entities(entities: list[dict[str, Any]], known_ids: set[str]) -> None:
+    for entity in entities:
+        if entity.get("domain") in {"light", "switch"}:
+            entity["is_new"] = entity.get("entity_id") not in known_ids
 
 
 def _ecobee_payload(path: Path) -> dict[str, Any]:
@@ -2452,6 +2566,32 @@ def _remove_matter_device_from_config(node_id: int) -> None:
     cfg.setdefault("matter", {})["devices"] = [
         d for d in devices if int(d.get("node_id", -1)) != node_id
     ]
+    DEFAULT_CONFIG_PATH.write_text(yaml.dump(cfg, default_flow_style=False))
+
+
+def _ha_light_switch_dashboard_category(device_class: str | None) -> str:
+    if str(device_class or "").lower() == "outlet":
+        return "smart_plug"
+    return "light_switch"
+
+
+def _load_home_assistant_devices(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return cfg.get("home_assistant_devices") or []
+
+
+def _write_home_assistant_device_to_config(entity_id: str, name: str, room: str | None, category: str) -> None:
+    cfg: dict = {}
+    if DEFAULT_CONFIG_PATH.exists():
+        cfg = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text()) or {}
+    devices: list[dict] = cfg.setdefault("home_assistant_devices", [])
+    devices[:] = [d for d in devices if d.get("entity_id") != entity_id]
+    entry: dict[str, Any] = {"entity_id": entity_id, "name": name, "category": category}
+    if room:
+        entry["room"] = room
+    devices.append(entry)
     DEFAULT_CONFIG_PATH.write_text(yaml.dump(cfg, default_flow_style=False))
 
 

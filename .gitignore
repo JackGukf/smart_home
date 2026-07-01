@@ -57,3 +57,7 @@ logs/
 .DS_Store
 Thumbs.db
 .worktrees
+
+# Per-machine registry of Home Assistant entities already surfaced on the
+# dashboard; seeded from the local HA instance, must not be shared across machines.
+home_assistant_known_entities.json
