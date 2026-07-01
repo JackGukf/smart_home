@@ -275,6 +275,59 @@ def test_home_assistant_device_cards_shapes_card_from_config_and_live_state(tmp_
     ]
 
 
+def test_home_assistant_device_cards_returns_card_with_none_state_when_ha_unreachable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = tmp_path / "devices.local.yaml"
+    config.write_text(
+        "home_assistant:\n"
+        "  base_url: http://127.0.0.1:8123\n"
+        "  token_env: HOME_ASSISTANT_TOKEN\n"
+        "home_assistant_devices:\n"
+        "- entity_id: switch.north_bedroom_light_switch\n"
+        "  name: North bedroom light switch\n"
+        "  room: North Bedroom\n"
+        "  category: light_switch\n"
+    )
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_home_assistant_get(home_assistant_config, token, path):
+        raise RuntimeError("HA down")
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_home_assistant_get)
+
+    cards = _home_assistant_device_cards(config)
+
+    assert len(cards) == 1
+    assert cards[0]["id"] == "switch.north_bedroom_light_switch"
+    assert cards[0]["host"] == "ha:switch.north_bedroom_light_switch"
+    assert cards[0]["is_on"] is None
+
+
+def test_home_assistant_device_cards_returns_card_with_none_state_when_no_token(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = tmp_path / "devices.local.yaml"
+    config.write_text(
+        "home_assistant:\n"
+        "  base_url: http://127.0.0.1:8123\n"
+        "  token_env: HOME_ASSISTANT_TOKEN\n"
+        "home_assistant_devices:\n"
+        "- entity_id: switch.north_bedroom_light_switch\n"
+        "  name: North bedroom light switch\n"
+        "  room: North Bedroom\n"
+        "  category: light_switch\n"
+    )
+    monkeypatch.delenv("HOME_ASSISTANT_TOKEN", raising=False)
+
+    cards = _home_assistant_device_cards(config)
+
+    assert len(cards) == 1
+    assert cards[0]["id"] == "switch.north_bedroom_light_switch"
+    assert cards[0]["host"] == "ha:switch.north_bedroom_light_switch"
+    assert cards[0]["is_on"] is None
+
+
 def test_devices_endpoint_includes_confirmed_home_assistant_light_switch(tmp_path: Path, monkeypatch) -> None:
     discovery = tmp_path / "tplink_switches.json"
     discovery.write_text('{"switches": []}')
