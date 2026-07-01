@@ -2262,6 +2262,28 @@ function notifyDoorbellEvents(cameras) {
   doorbellEventsReady = true;
 }
 
+function notifySeenNewHomeAssistantDevices(entities) {
+  for (const entity of entities || []) {
+    if (!entity.is_new) continue;
+    pushNotification(
+      "new_device",
+      "New device found: " + entity.name,
+      "Add it to your dashboard?",
+      {
+        entityId: entity.entity_id,
+        suggestedName: entity.name,
+        suggestedRoom: _guessRoomFromName(entity.name),
+        suggestedCategory: entity.domain === "switch" && entity.device_class === "outlet" ? "smart_plug" : "light_switch",
+      }
+    );
+  }
+}
+
+function _guessRoomFromName(name) {
+  const firstWord = String(name || "").split(" switch")[0].split(" light")[0].trim();
+  return firstWord;
+}
+
 function renderNotifications() {
   const area = document.querySelector("#notifArea");
   if (!area) return;
@@ -2513,6 +2535,7 @@ async function loadDevices() {
   ]);
 
   notifyDoorbellEvents(cameraData.cameras);
+  notifySeenNewHomeAssistantDevices(homeAssistantData.entities);
 
   latestCameras     = cameraData.cameras;
   latestTuyaDevices = tuyaData.devices;
@@ -2542,6 +2565,9 @@ async function sendCommand(host, command, options = {}) {
   if (host.startsWith("matter:")) {
     const nodeId = host.slice(7);
     await requestJson(`/api/matter/devices/${nodeId}/commands/${command}`, { method: "POST" });
+  } else if (host.startsWith("ha:")) {
+    const entityId = host.slice(3);
+    await requestJson(`/api/home-assistant/entities/${encodeURIComponent(entityId)}/commands/${command}`, { method: "POST" });
   } else {
     await requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
   }
