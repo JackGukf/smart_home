@@ -2271,6 +2271,7 @@ function notifySeenNewHomeAssistantDevices(entities) {
       "Add it to your dashboard?",
       {
         entityId: entity.entity_id,
+        eventKey: entity.entity_id,
         suggestedName: entity.name,
         suggestedRoom: _guessRoomFromName(entity.name),
         suggestedCategory: entity.domain === "switch" && entity.device_class === "outlet" ? "smart_plug" : "light_switch",
