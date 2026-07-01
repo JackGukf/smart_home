@@ -860,10 +860,11 @@ def _tuya_cards_from_home_assistant(path: Path, discovery_path: Path | None = No
     except Exception:
         return []
     tplink_names = _tplink_device_names(discovery_path)
+    confirmed_entity_ids = {str(d.get("entity_id")) for d in _load_home_assistant_devices(path)}
     cards = [
         _tuya_home_assistant_card(entity)
         for entity in states
-        if _is_tuya_home_assistant_entity(entity, tplink_names)
+        if _is_tuya_home_assistant_entity(entity, tplink_names, confirmed_entity_ids)
     ]
     cards.sort(key=lambda item: (item["category"], item["name"].lower()))
     return cards
@@ -885,8 +886,14 @@ def _tplink_device_names(discovery_path: Path | None) -> set[str]:
         return set()
 
 
-def _is_tuya_home_assistant_entity(entity: dict[str, Any], tplink_names: set[str] | None = None) -> bool:
+def _is_tuya_home_assistant_entity(
+    entity: dict[str, Any],
+    tplink_names: set[str] | None = None,
+    confirmed_entity_ids: set[str] | None = None,
+) -> bool:
     entity_id = str(entity.get("entity_id") or "")
+    if confirmed_entity_ids and entity_id in confirmed_entity_ids:
+        return False
     domain = _home_assistant_entity_domain(entity_id)
     if domain not in {"light", "switch", "sensor", "binary_sensor", "cover", "fan", "lock"}:
         return False

@@ -275,6 +275,18 @@ def test_home_assistant_device_cards_shapes_card_from_config_and_live_state(tmp_
     ]
 
 
+from src.python.web_app import _is_tuya_home_assistant_entity
+
+
+def test_is_tuya_home_assistant_entity_excludes_confirmed_entity_ids() -> None:
+    entity = {"entity_id": "switch.north_bedroom_light_switch", "attributes": {"friendly_name": "North bedroom light switch"}}
+    assert _is_tuya_home_assistant_entity(entity) is True
+    assert (
+        _is_tuya_home_assistant_entity(entity, confirmed_entity_ids={"switch.north_bedroom_light_switch"})
+        is False
+    )
+
+
 def test_home_assistant_device_cards_returns_card_with_none_state_when_ha_unreachable(
     tmp_path: Path, monkeypatch
 ) -> None:
