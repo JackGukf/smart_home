@@ -176,6 +176,11 @@ const activeCameraIds   = new Set();
 let latestCameras       = [];
 let latestTuyaDevices   = [];
 let latestAlarmData     = null;
+let latestSwitchDevices = [];
+let latestMatterDevices = [];
+let latestThermostats   = [];
+let areasDoc            = { areas: [], assignments: {} };
+let currentAreaId       = null;
 let doorbellEventsReady = false;
 const latestCameraById  = new Map();
 const lastDoorbellEventById = new Map();
@@ -2530,7 +2535,7 @@ async function loadDevices() {
   if (statusDot) statusDot.classList.remove("online");
   apiStatus.textContent = "Refreshing";
 
-  const [deviceData, cameraData, tuyaData, weatherData, ecobeeData, homeAssistantData, alarmData, matterData] = await Promise.all([
+  const [deviceData, cameraData, tuyaData, weatherData, ecobeeData, homeAssistantData, alarmData, matterData, areasData] = await Promise.all([
     requestJson("/api/devices"),
     requestJson("/api/cameras"),
     requestJson("/api/tuya/devices"),
@@ -2539,14 +2544,19 @@ async function loadDevices() {
     requestJson("/api/home-assistant/entities"),
     requestJson("/api/alarm"),
     requestJson("/api/matter/devices").catch(() => ({ devices: [], matter_online: false })),
+    requestJson("/api/areas").catch(() => areasDoc),
   ]);
 
   notifyDoorbellEvents(cameraData.cameras);
   notifySeenNewHomeAssistantDevices(homeAssistantData.entities);
 
-  latestCameras     = cameraData.cameras;
-  latestTuyaDevices = tuyaData.devices;
-  latestAlarmData   = alarmData;
+  latestCameras       = cameraData.cameras;
+  latestTuyaDevices   = tuyaData.devices;
+  latestAlarmData     = alarmData;
+  latestSwitchDevices = deviceData.devices;
+  latestMatterDevices = matterData.devices || [];
+  latestThermostats   = ecobeeData?.thermostats || [];
+  areasDoc            = areasData;
 
   renderDevices(deviceData.devices, cameraData.cameras, matterData.devices || []);
   renderTuyaDevices(tuyaData.devices);
@@ -2557,6 +2567,7 @@ async function loadDevices() {
   renderAlarmSection(alarmData);
   _updateMatterServerStatus(matterData.matter_online ?? false);
   _renderMatterDeviceList(matterData.devices || []);
+  renderHomeView();
 
   if (statusDot) statusDot.classList.add("online");
   apiStatus.textContent = "Online";
@@ -2565,6 +2576,521 @@ async function loadDevices() {
 
   cacheSnapshotsInBackground(cameraData.cameras).catch(console.error);
 }
+
+/* ═════════════════ HOME (AREAS) VIEW ═════════════════ */
+
+const AREA_ICON_CHOICES = [
+  "home", "sofa", "bed", "chef-hat", "bath", "desk",
+  "car", "tree", "flower", "door", "stairs", "device-tv",
+  "barbell", "sun-high", "plant", "toys",
+];
+
+const AREA_KIND_ICONS = {
+  light: "ti-bulb",
+  plug: "ti-plug",
+  sensor: "ti-radar-2",
+  camera: "ti-video",
+  thermostat: "ti-temperature",
+};
+
+function areaSlug(name) {
+  return String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/* Flatten every dashboard device into {key, kind, name, room, data} entries.
+   Keys must stay stable across refreshes — they anchor area assignments. */
+function collectHomeInventory() {
+  const inventory = [];
+
+  for (const device of [...latestSwitchDevices, ...latestMatterDevices]) {
+    inventory.push({
+      key: `dev:${device.host}`,
+      kind: device.category === "smart_plug" ? "plug" : "light",
+      name: device.name,
+      room: device.room || "",
+      data: device,
+    });
+  }
+
+  const visibleSensors = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  for (const group of groupSensorDevices(visibleSensors)) {
+    inventory.push({
+      key: `sensor:${areaSlug(group.name)}`,
+      kind: "sensor",
+      name: group.name,
+      room: group.readings[0]?.room || "",
+      data: group,
+    });
+  }
+
+  const tuyaCams = latestTuyaDevices.filter(isTuyaCamera).map(tuyaCameraCard);
+  for (const camera of [...latestCameras, ...tuyaCams]) {
+    inventory.push({
+      key: `cam:${cameraIdFor(camera)}`,
+      kind: "camera",
+      name: camera.name || cameraIdFor(camera),
+      room: camera.room || "",
+      data: camera,
+    });
+  }
+
+  for (const thermostat of latestThermostats) {
+    inventory.push({
+      key: `thermo:${thermostat.id}`,
+      kind: "thermostat",
+      name: thermostat.name,
+      room: thermostat.room || "",
+      data: thermostat,
+    });
+  }
+
+  return inventory;
+}
+
+/* Resolve every device into an area: explicit assignment wins, then a room
+   name that exactly matches a defined area. Everything else lands in the
+   catch-all "Unassigned" bucket — room names never spawn areas on their own,
+   because many devices report their own name as a "room". */
+function resolveHomeAreas() {
+  const areaById = new Map();
+  for (const area of areasDoc.areas) {
+    areaById.set(area.id, { ...area, custom: true, devices: [] });
+  }
+  const idByName = new Map([...areaById.values()].map((a) => [a.name.toLowerCase(), a.id]));
+  areaById.set("auto:unassigned", {
+    id: "auto:unassigned", name: "Unassigned", icon: "help-hexagon", custom: false, devices: [],
+  });
+
+  for (const item of collectHomeInventory()) {
+    let areaId = areasDoc.assignments[item.key];
+    if (!areaId || !areaById.has(areaId)) {
+      const room = String(item.room || "").trim().toLowerCase();
+      areaId = idByName.get(room) || "auto:unassigned";
+    }
+    areaById.get(areaId).devices.push(item);
+  }
+
+  const areas = [...areaById.values()];
+  const customOrder = new Map(areasDoc.areas.map((a, i) => [a.id, i]));
+  areas.sort((a, b) => {
+    if (a.id === "auto:unassigned") return 1;
+    if (b.id === "auto:unassigned") return -1;
+    return customOrder.get(a.id) - customOrder.get(b.id);
+  });
+  return areas;
+}
+
+function areaTemperature(area) {
+  const thermo = area.devices.find((d) => d.kind === "thermostat" && d.data.temperature != null);
+  if (thermo) {
+    const unit = thermo.data.temperature_unit?.includes("F") ? "°F" : "°C";
+    return `${Math.round(Number(thermo.data.temperature))}${unit}`;
+  }
+  for (const item of area.devices) {
+    if (item.kind !== "sensor") continue;
+    const reading = item.data.readings.find((r) => String(r.category || "").includes("temperature"));
+    if (!reading) continue;
+    const value = readingMetricNumber(reading);
+    if (Number.isFinite(value)) return `${Math.round(value)}°`;
+  }
+  return null;
+}
+
+function areaCardHtml(area) {
+  const switches = area.devices.filter((d) => d.kind === "light" || d.kind === "plug");
+  const lightsOn = switches.filter((d) => d.data.is_on === true).length;
+  const cameras  = area.devices.filter((d) => d.kind === "camera").length;
+  const sensors  = area.devices.filter((d) => d.kind === "sensor").length;
+  const temp     = areaTemperature(area);
+  const lit      = lightsOn > 0;
+
+  const chips = [];
+  if (switches.length) {
+    chips.push(`<span class="area-chip ${lit ? "lit" : ""}"><i class="ti ti-bulb"></i>${lightsOn}/${switches.length}</span>`);
+  }
+  if (temp)    chips.push(`<span class="area-chip warm"><i class="ti ti-temperature"></i>${temp}</span>`);
+  if (cameras) chips.push(`<span class="area-chip"><i class="ti ti-video"></i>${cameras}</span>`);
+  if (sensors) chips.push(`<span class="area-chip"><i class="ti ti-radar-2"></i>${sensors}</span>`);
+
+  const count = area.devices.length;
+  return `
+    <div class="area-card ${lit ? "lit" : ""}" data-area-id="${escapeHtml(area.id)}" role="button" tabindex="0"
+         aria-label="Open ${escapeHtml(area.name)}">
+      <div class="area-card-glow"></div>
+      <div class="area-card-top">
+        <span class="area-card-icon"><i class="ti ti-${escapeHtml(area.icon)}"></i></span>
+        ${switches.length ? `
+          <button class="area-lights-toggle ${lit ? "on" : ""}" data-area-lights="${escapeHtml(area.id)}"
+            type="button" title="${lit ? "Turn off" : "Turn on"} all lights in ${escapeHtml(area.name)}">
+            <i class="ti ti-power"></i>
+          </button>` : ""}
+      </div>
+      <h3 class="area-card-name">${escapeHtml(area.name)}</h3>
+      <div class="area-card-sub">${count} device${count === 1 ? "" : "s"}</div>
+      <div class="area-card-chips">${chips.join("")}</div>
+    </div>`;
+}
+
+function renderHomeView() {
+  const areaGrid = document.querySelector("#areaGrid");
+  if (!areaGrid) return;
+
+  const areas = resolveHomeAreas();
+  const shown = areas.filter((a) => a.custom || a.devices.length > 0);
+  const totalDevices = areas.reduce((sum, a) => sum + a.devices.length, 0);
+
+  const areaCountBadge = document.querySelector("#areaCount");
+  if (areaCountBadge) areaCountBadge.textContent = String(shown.length);
+  const homeMeta = document.querySelector("#homeMeta");
+  if (homeMeta) homeMeta.textContent = `${totalDevices} devices · ${shown.length} area${shown.length === 1 ? "" : "s"}`;
+
+  areaGrid.innerHTML =
+    shown.map(areaCardHtml).join("") +
+    `<button class="area-card area-card-add" id="areaAddCard" type="button">
+       <span class="area-add-plus"><i class="ti ti-plus"></i></span>
+       <span class="area-add-label">New Area</span>
+     </button>`;
+
+  if (currentAreaId) {
+    const area = areas.find((a) => a.id === currentAreaId);
+    if (area) {
+      renderAreaDetail(area);
+      return;
+    }
+    currentAreaId = null;
+  }
+  showHomeOverview();
+}
+
+function showHomeOverview() {
+  const overview = document.querySelector("#homeOverview");
+  const detail   = document.querySelector("#homeAreaDetail");
+  if (overview) overview.hidden = false;
+  if (detail)   detail.hidden = true;
+}
+
+function areaThermoCardHtml(thermostat) {
+  const temp = thermostat.temperature != null ? Math.round(Number(thermostat.temperature)) : "--";
+  const unit = thermostat.temperature_unit?.includes("F") ? "°F" : "°C";
+  const humidity = thermostat.humidity != null ? ` · ${thermostat.humidity}%` : "";
+  return `
+    <div class="area-thermo-card" data-goto-view="climate" role="button" tabindex="0">
+      <span class="area-thermo-icon"><i class="ti ti-temperature"></i></span>
+      <div class="area-thermo-info">
+        <h3>${escapeHtml(thermostat.name)}</h3>
+        <p>${escapeHtml(String(thermostat.hvac_mode || "off").toUpperCase())} · ${escapeHtml(thermostat.equipment_status || "idle")}${humidity}</p>
+      </div>
+      <div class="area-thermo-temp mono">${temp}<small>${unit}</small></div>
+    </div>`;
+}
+
+function renderAreaDetail(area) {
+  const overview = document.querySelector("#homeOverview");
+  const detail   = document.querySelector("#homeAreaDetail");
+  if (!detail) return;
+  if (overview) overview.hidden = true;
+  detail.hidden = false;
+
+  const iconEl = document.querySelector("#areaDetailIcon");
+  if (iconEl) iconEl.innerHTML = `<i class="ti ti-${escapeHtml(area.icon)}"></i>`;
+  const nameEl = document.querySelector("#areaDetailName");
+  if (nameEl) nameEl.textContent = area.name;
+  const metaEl = document.querySelector("#areaDetailMeta");
+  if (metaEl) metaEl.textContent = `${area.devices.length} device${area.devices.length === 1 ? "" : "s"}`;
+  const deleteBtn = document.querySelector("#areaDeleteButton");
+  if (deleteBtn) deleteBtn.hidden = !area.custom;
+  const manageBtn = document.querySelector("#areaManageButton");
+  if (manageBtn) manageBtn.hidden = false;
+
+  const body = document.querySelector("#areaDetailBody");
+  if (!body) return;
+
+  if (area.devices.length === 0) {
+    body.innerHTML = `
+      <div class="area-empty">
+        <i class="ti ti-layout-grid-add"></i>
+        <p>No devices in this area yet.</p>
+        <button class="btn-primary" id="areaEmptyManage" type="button">Assign Devices</button>
+      </div>`;
+    return;
+  }
+
+  const switches    = area.devices.filter((d) => d.kind === "light" || d.kind === "plug").map((d) => d.data);
+  const sensors     = area.devices.filter((d) => d.kind === "sensor").map((d) => d.data);
+  const cameras     = area.devices.filter((d) => d.kind === "camera").map((d) => d.data);
+  const thermostats = area.devices.filter((d) => d.kind === "thermostat").map((d) => d.data);
+
+  const sections = [];
+  if (switches.length) {
+    sections.push(`
+      <div class="area-subsection">
+        <div class="area-subsection-title"><i class="ti ti-bulb"></i> Lights &amp; Plugs</div>
+        <div class="device-grid" id="areaSwitchGrid"></div>
+      </div>`);
+  }
+  if (thermostats.length) {
+    sections.push(`
+      <div class="area-subsection">
+        <div class="area-subsection-title"><i class="ti ti-temperature"></i> Climate</div>
+        <div class="area-thermo-row">${thermostats.map(areaThermoCardHtml).join("")}</div>
+      </div>`);
+  }
+  if (sensors.length) {
+    sections.push(`
+      <div class="area-subsection">
+        <div class="area-subsection-title"><i class="ti ti-radar-2"></i> Sensors</div>
+        <div class="device-grid">${sensors.map(renderSensorDeviceCard).join("")}</div>
+      </div>`);
+  }
+  if (cameras.length) {
+    sections.push(`
+      <div class="area-subsection">
+        <div class="area-subsection-title"><i class="ti ti-video"></i> Cameras</div>
+        <div class="camera-grid">${cameras.map((camera) => cameraCardHtml(camera)).join("")}</div>
+      </div>`);
+  }
+  body.innerHTML = sections.join("");
+
+  const switchGrid = body.querySelector("#areaSwitchGrid");
+  if (switchGrid) renderDeviceGroup(switchGrid, switches, "No switches.");
+}
+
+async function refreshAreas() {
+  areasDoc = await requestJson("/api/areas").catch(() => areasDoc);
+}
+
+async function toggleAreaLights(areaId) {
+  const area = resolveHomeAreas().find((a) => a.id === areaId);
+  if (!area) return;
+  const switches = area.devices.filter((d) => d.kind === "light" || d.kind === "plug");
+  if (switches.length === 0) return;
+  const anyOn = switches.some((d) => d.data.is_on === true);
+  const command = anyOn ? "off" : "on";
+  await Promise.all(
+    switches.map((d) => sendCommand(d.data.host, command, { skipRefresh: true }).catch(console.error))
+  );
+  logActivity(`${area.name} lights → ${command}`);
+  await loadDevices();
+}
+
+/* ── New Area modal ── */
+let areaModalIcon = "home";
+
+function renderAreaIconPicker() {
+  const picker = document.querySelector("#areaIconPicker");
+  if (!picker) return;
+  picker.innerHTML = AREA_ICON_CHOICES.map((icon) => `
+    <button class="area-icon-choice ${icon === areaModalIcon ? "selected" : ""}"
+      data-area-icon="${icon}" type="button" title="${icon}">
+      <i class="ti ti-${icon}"></i>
+    </button>`).join("");
+}
+
+function openAreaModal() {
+  const modal = document.querySelector("#areaModal");
+  if (!modal) return;
+  areaModalIcon = "home";
+  const input = document.querySelector("#areaNameInput");
+  if (input) input.value = "";
+  const error = document.querySelector("#areaModalError");
+  if (error) error.hidden = true;
+  renderAreaIconPicker();
+  modal.hidden = false;
+  input?.focus();
+}
+
+function closeAreaModal() {
+  const modal = document.querySelector("#areaModal");
+  if (modal) modal.hidden = true;
+}
+
+function showAreaModalError(message) {
+  const error = document.querySelector("#areaModalError");
+  const text  = document.querySelector("#areaModalErrorText");
+  if (text) text.textContent = message;
+  if (error) error.hidden = false;
+}
+
+function apiErrorDetail(error, fallback) {
+  try {
+    const payload = JSON.parse(error.message);
+    if (payload && payload.detail) return String(payload.detail);
+  } catch {}
+  return fallback;
+}
+
+async function createAreaFromModal() {
+  const input = document.querySelector("#areaNameInput");
+  const name = (input?.value || "").trim();
+  if (!name) {
+    showAreaModalError("Give the area a name first.");
+    input?.focus();
+    return;
+  }
+  try {
+    await requestJson("/api/areas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, icon: areaModalIcon }),
+    });
+  } catch (error) {
+    showAreaModalError(apiErrorDetail(error, "Could not create the area."));
+    return;
+  }
+  closeAreaModal();
+  logActivity(`Area "${name}" created`);
+  await refreshAreas();
+  renderHomeView();
+}
+
+/* ── Manage Devices modal ── */
+
+async function openAssignModal() {
+  if (!currentAreaId) return;
+  const modal = document.querySelector("#assignModal");
+  if (!modal) return;
+  const area = resolveHomeAreas().find((a) => a.id === currentAreaId);
+  const title = document.querySelector("#assignModalTitle");
+  if (title) title.textContent = `Manage Devices — ${area ? area.name : ""}`;
+  renderAssignList();
+  modal.hidden = false;
+}
+
+function renderAssignList() {
+  const list = document.querySelector("#assignDeviceList");
+  if (!list) return;
+
+  const areas = resolveHomeAreas();
+  const membership = new Map();
+  areas.forEach((area) => area.devices.forEach((item) => membership.set(item.key, area.id)));
+
+  const inventory = collectHomeInventory().sort((a, b) =>
+    a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind.localeCompare(b.kind)
+  );
+
+  const optionsFor = (selectedId) =>
+    ['<option value="">Unassigned</option>']
+      .concat(areasDoc.areas.map((a) =>
+        `<option value="${escapeHtml(a.id)}"${a.id === selectedId ? " selected" : ""}>${escapeHtml(a.name)}</option>`))
+      .join("");
+
+  list.innerHTML = inventory.map((item) => {
+    const areaId = membership.get(item.key);
+    const inCurrent = areaId === currentAreaId;
+    return `
+      <div class="assign-device-row ${inCurrent ? "in-area" : ""}">
+        <span class="assign-device-icon"><i class="ti ${AREA_KIND_ICONS[item.kind] || "ti-cpu"}"></i></span>
+        <span class="assign-device-name">${escapeHtml(item.name)}</span>
+        <select class="assign-area-select" data-assign-key="${escapeHtml(item.key)}" aria-label="Area for ${escapeHtml(item.name)}">
+          ${optionsFor(areaId === "auto:unassigned" ? "" : areaId)}
+        </select>
+      </div>`;
+  }).join("");
+}
+
+function closeAssignModal() {
+  const modal = document.querySelector("#assignModal");
+  if (modal) modal.hidden = true;
+}
+
+async function deleteCurrentArea() {
+  if (!currentAreaId || currentAreaId.startsWith("auto:")) return;
+  const area = areasDoc.areas.find((a) => a.id === currentAreaId);
+  const name = area ? area.name : "this area";
+  if (!window.confirm(`Delete "${name}"? Its devices move to Unassigned.`)) return;
+  try {
+    await requestJson(`/api/areas/${encodeURIComponent(currentAreaId)}`, { method: "DELETE" });
+  } catch (error) {
+    console.error(error);
+    return;
+  }
+  logActivity(`Area "${name}" deleted`);
+  currentAreaId = null;
+  await refreshAreas();
+  renderHomeView();
+}
+
+/* ── Home view events ── */
+document.addEventListener("click", (event) => {
+  const toggle = event.target.closest(".area-lights-toggle");
+  if (toggle) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleAreaLights(toggle.dataset.areaLights).catch(console.error);
+    return;
+  }
+  if (event.target.closest("#areaAddCard")) {
+    openAreaModal();
+    return;
+  }
+  const card = event.target.closest(".area-card[data-area-id]");
+  if (card) {
+    currentAreaId = card.dataset.areaId;
+    renderHomeView();
+    return;
+  }
+  if (event.target.closest("#areaEmptyManage")) {
+    openAssignModal().catch(console.error);
+    return;
+  }
+  const gotoCard = event.target.closest("[data-goto-view]");
+  if (gotoCard) activateView(gotoCard.dataset.gotoView);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const card = event.target.closest?.(".area-card[data-area-id]");
+  if (!card) return;
+  event.preventDefault();
+  currentAreaId = card.dataset.areaId;
+  renderHomeView();
+});
+
+document.addEventListener("change", async (event) => {
+  const select = event.target.closest("select[data-assign-key]");
+  if (!select) return;
+  const deviceKey = select.dataset.assignKey;
+  const targetAreaId = select.value || null;
+  select.disabled = true;
+  try {
+    await requestJson("/api/areas/assignments", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_key: deviceKey, area_id: targetAreaId }),
+    });
+    await refreshAreas();
+    renderHomeView();
+  } catch (error) {
+    console.error(error);
+  }
+  renderAssignList();
+});
+
+(function initHomeView() {
+  document.querySelector("#addAreaButton")?.addEventListener("click", openAreaModal);
+  document.querySelector("#areaBackButton")?.addEventListener("click", () => {
+    currentAreaId = null;
+    renderHomeView();
+  });
+  document.querySelector("#areaManageButton")?.addEventListener("click", () => openAssignModal().catch(console.error));
+  document.querySelector("#areaDeleteButton")?.addEventListener("click", () => deleteCurrentArea().catch(console.error));
+
+  document.querySelector("#closeAreaModal")?.addEventListener("click", closeAreaModal);
+  document.querySelector("#areaCancel")?.addEventListener("click", closeAreaModal);
+  document.querySelector("#areaCreate")?.addEventListener("click", () => createAreaFromModal().catch(console.error));
+  document.querySelector("#areaNameInput")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") createAreaFromModal().catch(console.error);
+  });
+  document.querySelector("#areaIconPicker")?.addEventListener("click", (event) => {
+    const choice = event.target.closest("button[data-area-icon]");
+    if (!choice) return;
+    areaModalIcon = choice.dataset.areaIcon;
+    renderAreaIconPicker();
+  });
+
+  document.querySelector("#closeAssignModal")?.addEventListener("click", closeAssignModal);
+  document.querySelector("#assignDone")?.addEventListener("click", closeAssignModal);
+})();
 
 /* ── Send commands ── */
 async function sendCommand(host, command, options = {}) {

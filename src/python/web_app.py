@@ -36,6 +36,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DISCOVERY_PATH = PROJECT_ROOT / "tplink_switches.json"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "devices.local.yaml"
 DEFAULT_HA_KNOWN_ENTITIES_PATH = PROJECT_ROOT / "home_assistant_known_entities.json"
+DEFAULT_AREAS_PATH = PROJECT_ROOT / "dashboard_areas.json"
+# Mirrors the areas defined in Home Assistant; seeded when no areas file exists yet.
+DEFAULT_AREAS = [
+    {"id": "living-room", "name": "Living Room", "icon": "sofa"},
+    {"id": "kitchen", "name": "Kitchen", "icon": "chef-hat"},
+    {"id": "bedroom", "name": "Bedroom", "icon": "bed"},
+    {"id": "front-door", "name": "Front Door", "icon": "door"},
+    {"id": "family-room", "name": "Family Room", "icon": "sofa"},
+    {"id": "office", "name": "Office", "icon": "desk"},
+    {"id": "utility-room", "name": "Utility Room", "icon": "tools"},
+]
 STATIC_DIR = PROJECT_ROOT / "src" / "python" / "web_static"
 AMBIENT_LIGHT_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
 
@@ -148,17 +159,34 @@ class ClimateUpdateRequest(BaseModel):
     target_temp_high: float | None = None
 
 
+class AreaCreateRequest(BaseModel):
+    name: str
+    icon: str | None = None
+
+
+class AreaUpdateRequest(BaseModel):
+    name: str | None = None
+    icon: str | None = None
+
+
+class AreaAssignRequest(BaseModel):
+    device_key: str
+    area_id: str | None = None
+
+
 def create_app(
     discovery_path: Path = DEFAULT_DISCOVERY_PATH,
     config_path: Path = DEFAULT_CONFIG_PATH,
     controller: KasaLightSwitchController | None = None,
     check_camera_ports: bool = True,
+    areas_path: Path = DEFAULT_AREAS_PATH,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Raspberry Pi 4 Dashboard")
     app.state.discovery_path = discovery_path
     app.state.config_path = config_path
     app.state.controller = controller or KasaLightSwitchController()
     app.state.check_camera_ports = check_camera_ports
+    app.state.areas_path = areas_path
 
     _raw_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else None
     _raw_cfg = _raw_cfg or {}
@@ -258,6 +286,71 @@ def create_app(
     @app.get("/api/devices")
     async def devices() -> dict[str, list[dict[str, Any]]]:
         return {"devices": await _device_cards(app)}
+
+    @app.get("/api/areas")
+    async def areas_get() -> dict[str, Any]:
+        return _load_areas(app.state.areas_path)
+
+    @app.post("/api/areas")
+    async def areas_create(body: AreaCreateRequest) -> dict[str, Any]:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Area name cannot be empty")
+        if len(name) > 40:
+            raise HTTPException(status_code=400, detail="Area name is too long")
+        doc = _load_areas(app.state.areas_path)
+        area_id = _area_slug(name)
+        if not area_id:
+            raise HTTPException(status_code=400, detail="Area name must contain letters or digits")
+        if any(a["id"] == area_id or a["name"].lower() == name.lower() for a in doc["areas"]):
+            raise HTTPException(status_code=409, detail="An area with this name already exists")
+        area = {"id": area_id, "name": name, "icon": (body.icon or "home").strip() or "home"}
+        doc["areas"].append(area)
+        _save_areas(app.state.areas_path, doc)
+        return {"area": area}
+
+    @app.patch("/api/areas/{area_id}")
+    async def areas_update(area_id: str, body: AreaUpdateRequest) -> dict[str, Any]:
+        doc = _load_areas(app.state.areas_path)
+        area = next((a for a in doc["areas"] if a["id"] == area_id), None)
+        if area is None:
+            raise HTTPException(status_code=404, detail="Area not found")
+        if body.name is not None:
+            name = body.name.strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="Area name cannot be empty")
+            if len(name) > 40:
+                raise HTTPException(status_code=400, detail="Area name is too long")
+            area["name"] = name
+        if body.icon is not None:
+            area["icon"] = body.icon.strip() or "home"
+        _save_areas(app.state.areas_path, doc)
+        return {"area": area}
+
+    @app.delete("/api/areas/{area_id}")
+    async def areas_delete(area_id: str) -> dict[str, Any]:
+        doc = _load_areas(app.state.areas_path)
+        if not any(a["id"] == area_id for a in doc["areas"]):
+            raise HTTPException(status_code=404, detail="Area not found")
+        doc["areas"] = [a for a in doc["areas"] if a["id"] != area_id]
+        doc["assignments"] = {k: v for k, v in doc["assignments"].items() if v != area_id}
+        _save_areas(app.state.areas_path, doc)
+        return {"ok": True}
+
+    @app.put("/api/areas/assignments")
+    async def areas_assign(body: AreaAssignRequest) -> dict[str, Any]:
+        device_key = body.device_key.strip()
+        if not device_key:
+            raise HTTPException(status_code=400, detail="device_key cannot be empty")
+        doc = _load_areas(app.state.areas_path)
+        if body.area_id:
+            if not any(a["id"] == body.area_id for a in doc["areas"]):
+                raise HTTPException(status_code=404, detail="Area not found")
+            doc["assignments"][device_key] = body.area_id
+        else:
+            doc["assignments"].pop(device_key, None)
+        _save_areas(app.state.areas_path, doc)
+        return {"assignments": doc["assignments"]}
 
     @app.get("/api/cameras")
     async def cameras() -> dict[str, list[dict[str, Any]]]:
@@ -406,8 +499,9 @@ def create_app(
         if not shutil.which("ffmpeg"):
             raise HTTPException(status_code=503, detail="ffmpeg is required for camera snapshots")
 
+        frame = await asyncio.to_thread(_capture_rtsp_frame, camera.stream_url)
         return Response(
-            _capture_rtsp_frame(camera.stream_url),
+            frame,
             media_type="image/jpeg",
             headers={"Cache-Control": "no-store"},
         )
@@ -1902,6 +1996,45 @@ def _home_assistant_entity_domain(entity_id: str | None) -> str:
     return entity_id.split(".", 1)[0]
 
 
+def _area_slug(name: str) -> str:
+    slug = "".join(ch if ch.isalnum() else "-" for ch in name.strip().lower())
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-")
+
+
+def _default_areas_doc() -> dict[str, Any]:
+    return {"areas": [dict(a) for a in DEFAULT_AREAS], "assignments": {}}
+
+
+def _load_areas(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return _default_areas_doc()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return _default_areas_doc()
+    areas = [
+        {
+            "id": str(a.get("id") or ""),
+            "name": str(a.get("name") or ""),
+            "icon": str(a.get("icon") or "home"),
+        }
+        for a in (payload.get("areas") or [])
+        if isinstance(a, dict) and a.get("id") and a.get("name")
+    ]
+    assignments = {
+        str(k): str(v)
+        for k, v in (payload.get("assignments") or {}).items()
+        if v
+    }
+    return {"areas": areas, "assignments": assignments}
+
+
+def _save_areas(path: Path, doc: dict[str, Any]) -> None:
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
 def _load_known_ha_entities(path: Path) -> set[str]:
     if not path.exists():
         return set()
@@ -2672,28 +2805,31 @@ def _mjpeg_frames(rtsp_url: str, camera: CameraDefinition) -> Iterator[bytes]:
 
 
 def _capture_rtsp_frame(rtsp_url: str) -> bytes:
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-rtsp_transport",
-            "tcp",
-            "-i",
-            rtsp_url,
-            "-frames:v",
-            "1",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "pipe:1",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        timeout=15,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                rtsp_url,
+                "-frames:v",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "pipe:1",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=502, detail="Timed out reading a camera frame") from exc
     if result.returncode != 0 or not result.stdout:
         raise HTTPException(status_code=502, detail="Could not read a camera frame")
     return result.stdout
@@ -2734,41 +2870,33 @@ def _bridge_allowlist() -> set[str] | None:
 
 
 async def _bridge_device_list(controller: KasaLightSwitchController | None = None) -> list[dict]:
-    """Return all bridgeable dashboard devices with current state for the C++ bridge."""
-    _ctrl = controller or KasaLightSwitchController()
+    """Return bridgeable dashboard devices without doing live device I/O.
+
+    Matter calls this during startup/rescan. Live Kasa status reads can block the
+    FastAPI event loop long enough that even cache-only /bridge/state/all times
+    out, which makes Apple Home mark the bridge No Response. State freshness is
+    handled by dashboard polling and command-authoritative cache updates.
+    """
+    del controller
     allowlist = _bridge_allowlist()
 
-    # TP-Link switches — query all in parallel so a single slow switch doesn't
-    # push the total response time past the C++ bridge's HTTP timeout.
-    async def _kasa_entry(dash_dev) -> dict:
+    devices: list[dict] = []
+    for dash_dev in _load_switches(DEFAULT_DISCOVERY_PATH):
         sw = dash_dev.switch
         device_id = f"kasa:{sw.host}"
-        on: bool | None = None
-        try:
-            status = await _ctrl.status(sw)
-            on = status.is_on if status else None
-        except Exception:  # noqa: BLE001
-            pass
-        is_dimmable = "dimmer" in str(dash_dev.device_type or "").lower()
-        bridge_sync.update_state_cache(device_id, {"on": bool(on)})
-        return {
+        if allowlist is not None and device_id not in allowlist:
+            continue
+
+        state = bridge_sync.cached_state_for(device_id) or {"on": False}
+        bridge_sync.update_state_cache(device_id, state)
+        devices.append({
             "device_id": device_id,
             "name": sw.name,
             "room": _room_from_name(sw.name),
             "category": "light_switch",
-            "dimmable": is_dimmable,
-            "state": {"on": bool(on)},
-        }
-
-    kasa_switches = _load_switches(DEFAULT_DISCOVERY_PATH)
-    if allowlist is not None:
-        kasa_switches = [d for d in kasa_switches if f"kasa:{d.switch.host}" in allowlist]
-
-    kasa_results = await asyncio.gather(
-        *[_kasa_entry(d) for d in kasa_switches],
-        return_exceptions=True,
-    )
-    devices: list[dict] = [r for r in kasa_results if isinstance(r, dict)]
+            "dimmable": False,
+            "state": state,
+        })
 
     # Tuya devices
     for tuya_dev in _load_tuya_devices(DEFAULT_CONFIG_PATH):

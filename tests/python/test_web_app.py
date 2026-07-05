@@ -4,14 +4,16 @@ from fastapi.testclient import TestClient
 
 from src.python import web_app as web_app_module
 from src.python.tplink_switch import SwitchState
-from src.python.web_app import TuyaDefinition, _govee_ble_command_bytes, _rtsp_url_from_config, _tuya_card, _tuya_direct_sensor_supplements, create_app
+from src.python.web_app import DEFAULT_AREAS, TuyaDefinition, _govee_ble_command_bytes, _rtsp_url_from_config, _tuya_card, _tuya_direct_sensor_supplements, create_app
 
 
 class FakeController:
     def __init__(self) -> None:
         self.commands: list[tuple[str, str]] = []
+        self.status_calls: list[str] = []
 
     async def status(self, switch):
+        self.status_calls.append(switch.host)
         return SwitchState(
             name=switch.name,
             host=switch.host,
@@ -48,12 +50,12 @@ def _write_discovery(path: Path) -> None:
       "name": "Family room light switch"
     },
     {
-      "alias": "Living room light switch",
+      "alias": "Living room light switch 2",
       "device_type": "DeviceType.WallSwitch",
       "host": "192.168.0.73",
       "is_on": true,
       "model": "HS200",
-      "name": "Living room light switch"
+      "name": "Living room light switch 2"
     },
     {
       "alias": "Office plug",
@@ -279,7 +281,7 @@ def test_devices_endpoint_loads_discovered_switches_and_plugs(tmp_path: Path) ->
         },
         {
             "id": "192.168.0.73",
-            "name": "Living room light switch",
+            "name": "Living room light switch 2",
             "host": "192.168.0.73",
             "model": "HS200",
             "type": "WallSwitch",
@@ -1358,6 +1360,13 @@ def test_ambient_runtime_state_tracks_power_commands() -> None:
     assert web_app_module._ambient_light_card(light)["is_on"] is True
 
 
+def test_camera_snapshot_offloads_blocking_ffmpeg_from_event_loop() -> None:
+    source = Path("src/python/web_app.py").read_text(encoding="utf-8")
+
+    assert "await asyncio.to_thread(_capture_rtsp_frame, camera.stream_url)" in source
+    assert "except subprocess.TimeoutExpired" in source
+
+
 def test_bridge_allowlist_limits_state_cache_to_exposed_devices(tmp_path, monkeypatch):
     discovery = tmp_path / "tplink.json"
     config = tmp_path / "devices.yaml"
@@ -1369,11 +1378,121 @@ def test_bridge_allowlist_limits_state_cache_to_exposed_devices(tmp_path, monkey
     monkeypatch.setenv("BRIDGE_DEVICE_ALLOWLIST", "kasa:192.168.0.73")
     web_app_module.bridge_sync._state_cache.clear()
 
-    app = create_app(controller=FakeController())
+    controller = FakeController()
+    app = create_app(controller=controller)
     client = TestClient(app)
 
     resp = client.get("/bridge/devices")
 
     assert resp.status_code == 200
     assert [d["device_id"] for d in resp.json()] == ["kasa:192.168.0.73"]
+    assert resp.json()[0]["dimmable"] is False
+    assert resp.json()[0]["state"] == {"on": False}
+    assert controller.status_calls == []
     assert set(web_app_module.bridge_sync._state_cache) == {"kasa:192.168.0.73"}
+
+
+def _areas_client(tmp_path: Path) -> TestClient:
+    discovery = tmp_path / "tplink_switches.json"
+    _write_discovery(discovery)
+    return TestClient(
+        create_app(
+            discovery_path=discovery,
+            controller=FakeController(),
+            areas_path=tmp_path / "dashboard_areas.json",
+        )
+    )
+
+
+def test_areas_endpoint_starts_with_default_areas(tmp_path: Path) -> None:
+    client = _areas_client(tmp_path)
+
+    response = client.get("/api/areas")
+
+    assert response.status_code == 200
+    assert response.json() == {"areas": DEFAULT_AREAS, "assignments": {}}
+
+
+def test_areas_create_slugifies_name_and_persists(tmp_path: Path) -> None:
+    client = _areas_client(tmp_path)
+
+    response = client.post("/api/areas", json={"name": "Front Yard", "icon": "fence"})
+
+    assert response.status_code == 200
+    assert response.json()["area"] == {"id": "front-yard", "name": "Front Yard", "icon": "fence"}
+    assert client.get("/api/areas").json()["areas"] == DEFAULT_AREAS + [
+        {"id": "front-yard", "name": "Front Yard", "icon": "fence"}
+    ]
+
+
+def test_areas_create_rejects_blank_and_duplicate_names(tmp_path: Path) -> None:
+    client = _areas_client(tmp_path)
+
+    assert client.post("/api/areas", json={"name": "   "}).status_code == 400
+    assert client.post("/api/areas", json={"name": "!!!"}).status_code == 400
+    assert client.post("/api/areas", json={"name": "x" * 41}).status_code == 400
+    # "Living Room" is one of the seeded default areas.
+    assert client.post("/api/areas", json={"name": "living room"}).status_code == 409
+    assert client.post("/api/areas", json={"name": "Sun Room"}).status_code == 200
+    assert client.post("/api/areas", json={"name": "sun room"}).status_code == 409
+
+
+def test_areas_update_renames_and_changes_icon(tmp_path: Path) -> None:
+    client = _areas_client(tmp_path)
+    client.post("/api/areas", json={"name": "Den"})
+
+    response = client.patch("/api/areas/den", json={"name": "Study", "icon": "device-desktop"})
+
+    assert response.status_code == 200
+    assert response.json()["area"] == {"id": "den", "name": "Study", "icon": "device-desktop"}
+    assert client.patch("/api/areas/nope", json={"name": "X"}).status_code == 404
+
+
+def test_areas_assignment_lifecycle(tmp_path: Path) -> None:
+    client = _areas_client(tmp_path)
+
+    assign = client.put(
+        "/api/areas/assignments",
+        json={"device_key": "switch:192.168.0.61", "area_id": "living-room"},
+    )
+    assert assign.status_code == 200
+    assert assign.json()["assignments"] == {"switch:192.168.0.61": "living-room"}
+
+    missing = client.put(
+        "/api/areas/assignments",
+        json={"device_key": "switch:192.168.0.61", "area_id": "garage"},
+    )
+    assert missing.status_code == 404
+
+    cleared = client.put(
+        "/api/areas/assignments",
+        json={"device_key": "switch:192.168.0.61", "area_id": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["assignments"] == {}
+
+
+def test_areas_delete_removes_area_and_its_assignments(tmp_path: Path) -> None:
+    client = _areas_client(tmp_path)
+    client.post("/api/areas", json={"name": "Garage"})
+    client.post("/api/areas", json={"name": "Porch"})
+    client.put("/api/areas/assignments", json={"device_key": "camera:front", "area_id": "garage"})
+    client.put("/api/areas/assignments", json={"device_key": "camera:back", "area_id": "porch"})
+
+    response = client.delete("/api/areas/garage")
+
+    assert response.status_code == 200
+    doc = client.get("/api/areas").json()
+    ids = [a["id"] for a in doc["areas"]]
+    assert "garage" not in ids
+    assert "porch" in ids
+    assert doc["assignments"] == {"camera:back": "porch"}
+    assert client.delete("/api/areas/garage").status_code == 404
+
+
+def test_areas_load_falls_back_to_defaults_on_corrupt_file(tmp_path: Path) -> None:
+    areas_path = tmp_path / "dashboard_areas.json"
+    areas_path.write_text("not-json{", encoding="utf-8")
+    client = _areas_client(tmp_path)
+
+    assert client.get("/api/areas").json() == {"areas": DEFAULT_AREAS, "assignments": {}}
