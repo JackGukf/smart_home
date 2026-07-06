@@ -215,6 +215,32 @@ function logActivity(text, type = "normal") {
   while (activityLog.children.length > 8) activityLog.removeChild(activityLog.lastElementChild);
 }
 
+/* ── Sidebar collapsibles: Settings group + Recent Activity ── */
+(function initSidebarCollapsibles() {
+  const settingsToggle = document.querySelector("#systemSettingsToggle");
+  settingsToggle?.addEventListener("click", () => {
+    const open = settingsToggle.classList.toggle("open");
+    document.querySelectorAll(".system-settings-item").forEach((item) => {
+      item.hidden = !open;
+    });
+    settingsToggle.title = open ? "Hide theme and startup settings" : "Show theme and startup settings";
+  });
+
+  const activityToggle = document.querySelector("#activityToggle");
+  activityToggle?.addEventListener("click", () => {
+    if (!activityLog) return;
+    activityLog.hidden = !activityLog.hidden;
+    activityToggle.classList.toggle("open", !activityLog.hidden);
+    activityToggle.title = activityLog.hidden ? "Show recent activity" : "Hide recent activity";
+  });
+  activityToggle?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      activityToggle.click();
+    }
+  });
+})();
+
 /* ── API helper ── */
 async function requestJson(url, options = {}) {
   const response = await fetch(url, options);
@@ -1431,30 +1457,37 @@ function buildThermoDial(thermostatId, ui, currentTemp) {
 }
 
 function refreshThermoDial(thermostatId) {
-  const ui   = thermoUIState.get(thermostatId);
-  const wrap = document.querySelector(`.thermo-dial-wrap[data-thermo-dial="${thermostatId}"]`);
-  if (!ui || !wrap) return;
+  const ui = thermoUIState.get(thermostatId);
+  if (!ui) return;
 
   const MIN = 10, MAX = 32, SEGS = 40;
   const litSegs  = Math.round(((ui.target - MIN) / (MAX - MIN)) * SEGS);
   const arcColor = THERMO_MODE_COLORS[ui.mode] || "var(--t-text-dim2)";
 
-  wrap.querySelectorAll(".thermo-dial-svg line").forEach((ln, i) => {
-    const lit = ui.mode !== "off" && i < litSegs;
-    ln.setAttribute("stroke", lit ? arcColor : "var(--t-seg-off)");
-    ln.style.filter = lit ? `drop-shadow(0 0 3px ${arcColor}99)` : "none";
-  });
+  /* The same thermostat can be shown in both the Climate view and the Home
+     panel — keep every dial instance in sync. */
+  document.querySelectorAll(`.thermo-dial-wrap[data-thermo-dial="${CSS.escape(thermostatId)}"]`).forEach((wrap) => {
+    wrap.querySelectorAll(".thermo-dial-svg line").forEach((ln, i) => {
+      const lit = ui.mode !== "off" && i < litSegs;
+      ln.setAttribute("stroke", lit ? arcColor : "var(--t-seg-off)");
+      ln.style.filter = lit ? `drop-shadow(0 0 3px ${arcColor}99)` : "none";
+    });
 
-  const numEl    = wrap.querySelector(".thermo-target-num");
-  const statusEl = wrap.querySelector(".thermo-status-lbl");
-  if (numEl) numEl.textContent = `${ui.target}°`;
-  if (statusEl) {
-    statusEl.textContent = ui.mode === "off" ? "Off"
-      : ui.mode === "heat" ? `Heating to ${ui.target}°`
-      : ui.mode === "cool" ? `Cooling to ${ui.target}°`
-      : `Auto · ${ui.target}°`;
-    statusEl.style.color = ui.mode === "off" ? "var(--t-text-dim2)" : arcColor;
-  }
+    const numEl    = wrap.querySelector(".thermo-target-num");
+    const statusEl = wrap.querySelector(".thermo-status-lbl");
+    if (numEl) numEl.textContent = `${ui.target}°`;
+    if (statusEl) {
+      statusEl.textContent = ui.mode === "off" ? "Off"
+        : ui.mode === "heat" ? `Heating to ${ui.target}°`
+        : ui.mode === "cool" ? `Cooling to ${ui.target}°`
+        : `Auto · ${ui.target}°`;
+      statusEl.style.color = ui.mode === "off" ? "var(--t-text-dim2)" : arcColor;
+    }
+  });
+}
+
+function thermoArticlesFor(thermostatId) {
+  return document.querySelectorAll(`article.thermo-card[data-thermostat-id="${CSS.escape(thermostatId)}"]`);
 }
 
 function applyThermoModeUI(article, thermoId, newMode) {
@@ -1525,20 +1558,29 @@ function renderThermostats(payload) {
     return;
   }
 
-  const MODES_DEF = [
-    { id: "heat", label: "HEAT", color: THERMO_MODE_COLORS.heat },
-    { id: "cool", label: "COOL", color: THERMO_MODE_COLORS.cool },
-    { id: "auto", label: "AUTO", color: THERMO_MODE_COLORS.auto },
-    { id: "off",  label: "OFF",  color: null },
-  ];
+  thermostatGrid.innerHTML = thermostats
+    .map((th) => thermoCardHtml(th, th.status || payload.status || "unknown"))
+    .join("");
 
-  thermostatGrid.innerHTML = thermostats.map((th) => {
+  thermostatGrid.querySelectorAll(".thermo-dial-wrap").forEach(attachThermoDrag);
+}
+
+const THERMO_MODES_DEF = [
+  { id: "heat", label: "HEAT", color: THERMO_MODE_COLORS.heat },
+  { id: "cool", label: "COOL", color: THERMO_MODE_COLORS.cool },
+  { id: "auto", label: "AUTO", color: THERMO_MODE_COLORS.auto },
+  { id: "off",  label: "OFF",  color: null },
+];
+
+/* Full interactive thermostat card — shared by the Climate view and the
+   Home view Climate panel. All controls are wired via delegated
+   data-thermo-* handlers, so copies stay functional anywhere. */
+function thermoCardHtml(th, status = "unknown") {
     const ui      = getThermoUI(th);
     const current = th.temperature != null ? Math.round(Number(th.temperature)) : "--";
-    const status  = th.status || payload.status || "unknown";
     const humidity = th.humidity != null ? `${th.humidity}%` : "--";
 
-    const modeButtons = MODES_DEF.map((m) => {
+    const modeButtons = THERMO_MODES_DEF.map((m) => {
       const active = ui.mode === m.id;
       const shadow = active && m.color
         ? `0 0 0 1px ${m.color}66, 0 6px 16px -6px ${m.color}55`
@@ -1615,9 +1657,6 @@ function renderThermostats(payload) {
         </div>
       </article>
     `;
-  }).join("");
-
-  document.querySelectorAll(".thermo-dial-wrap").forEach(attachThermoDrag);
 }
 
 async function updateClimate(thermostatId, payload) {
@@ -1658,6 +1697,8 @@ function setHeaderWeatherUnavailable(message) {
   if (weatherIcon) weatherIcon.className = "ti ti-cloud";
   if (weatherTemp) weatherTemp.textContent = "--°C";
   if (weatherCondition) weatherCondition.textContent = "Weather unavailable";
+  const weatherLocation = document.querySelector("#weatherLocation");
+  if (weatherLocation) weatherLocation.textContent = "—";
   if (weatherFeels) weatherFeels.textContent = "--°C";
   if (weatherHumidity) weatherHumidity.textContent = "--%";
   if (weatherWind) weatherWind.textContent = "--";
@@ -1691,6 +1732,8 @@ function renderWeather(weather) {
   if (weatherIcon) weatherIcon.className = "ti " + icon;
   if (weatherTemp) weatherTemp.textContent = tempDisplay;
   if (weatherCondition) weatherCondition.textContent = weather.condition || "Outdoor";
+  const weatherLocation = document.querySelector("#weatherLocation");
+  if (weatherLocation) weatherLocation.textContent = weather.location || "Local";
   if (weatherFeels) weatherFeels.textContent = feelsDisplay;
   if (weatherHumidity) weatherHumidity.textContent = humidityDisplay;
   if (weatherWind) weatherWind.textContent = windDisplay;
@@ -2539,7 +2582,7 @@ async function loadDevices() {
     requestJson("/api/devices"),
     requestJson("/api/cameras"),
     requestJson("/api/tuya/devices"),
-    requestJson("/api/weather"),
+    requestJson("/api/weather").catch(() => null), // weather being down must not kill the refresh
     requestJson("/api/ecobee/thermostats"),
     requestJson("/api/home-assistant/entities"),
     requestJson("/api/alarm"),
@@ -2578,6 +2621,8 @@ async function loadDevices() {
 }
 
 /* ═════════════════ HOME (AREAS) VIEW ═════════════════ */
+
+const HOME_AREA_ORDER_KEY = "home_area_order";
 
 const AREA_ICON_CHOICES = [
   "home", "sofa", "bed", "chef-hat", "bath", "desk",
@@ -2672,7 +2717,13 @@ function resolveHomeAreas() {
 
   const areas = [...areaById.values()];
   const customOrder = new Map(areasDoc.areas.map((a, i) => [a.id, i]));
+  let savedOrder = [];
+  try { savedOrder = JSON.parse(localStorage.getItem(HOME_AREA_ORDER_KEY) || "[]") || []; } catch {}
+  const savedIndex = new Map(savedOrder.map((id, i) => [id, i]));
   areas.sort((a, b) => {
+    const sa = savedIndex.has(a.id) ? savedIndex.get(a.id) : Infinity;
+    const sb = savedIndex.has(b.id) ? savedIndex.get(b.id) : Infinity;
+    if (sa !== sb) return sa - sb;
     if (a.id === "auto:unassigned") return 1;
     if (b.id === "auto:unassigned") return -1;
     return customOrder.get(a.id) - customOrder.get(b.id);
@@ -2715,7 +2766,7 @@ function areaCardHtml(area) {
   const count = area.devices.length;
   return `
     <div class="area-card ${lit ? "lit" : ""}" data-area-id="${escapeHtml(area.id)}" role="button" tabindex="0"
-         aria-label="Open ${escapeHtml(area.name)}">
+         draggable="true" aria-label="Open ${escapeHtml(area.name)}">
       <div class="area-card-glow"></div>
       <div class="area-card-top">
         <span class="area-card-icon"><i class="ti ti-${escapeHtml(area.icon)}"></i></span>
@@ -2725,8 +2776,10 @@ function areaCardHtml(area) {
             <i class="ti ti-power"></i>
           </button>` : ""}
       </div>
-      <h3 class="area-card-name">${escapeHtml(area.name)}</h3>
-      <div class="area-card-sub">${count} device${count === 1 ? "" : "s"}</div>
+      <div class="area-card-copy">
+        <h3 class="area-card-name">${escapeHtml(area.name)}</h3>
+        <div class="area-card-sub">${count} device${count === 1 ? "" : "s"}</div>
+      </div>
       <div class="area-card-chips">${chips.join("")}</div>
     </div>`;
 }
@@ -2750,6 +2803,13 @@ function renderHomeView() {
        <span class="area-add-plus"><i class="ti ti-plus"></i></span>
        <span class="area-add-label">New Area</span>
      </button>`;
+  layoutAreaGrid();
+
+  renderHomeClimate();
+  renderHomeCamera();
+  renderCustomHomeCards();
+  const picker = document.querySelector("#homeSensorPicker");
+  if (picker && !picker.hidden) renderHomeSensorPicker();
 
   if (currentAreaId) {
     const area = areas.find((a) => a.id === currentAreaId);
@@ -2761,6 +2821,736 @@ function renderHomeView() {
   }
   showHomeOverview();
 }
+
+/* Fit every area tile inside the Areas card with the whole tile visible.
+   Densities carry the real minimum tile size their typography needs; we try
+   normal → compact → tiny, and if even tiny cannot fit, zoom the grid down —
+   tiles are never clipped, whatever the card size. */
+const AREA_DENSITIES = [
+  { cls: "",        minW: 106, minH: 104 },
+  { cls: "compact", minW: 82,  minH: 84 },
+  { cls: "tiny",    minW: 58,  minH: 52 },
+];
+
+function layoutAreaGrid() {
+  const grid = document.querySelector("#areaGrid");
+  if (!grid) return;
+  const count = grid.children.length;
+  if (!count) return;
+  const gap = 8;
+
+  grid.style.zoom = "";
+  const width = grid.clientWidth;
+  if (width < 30) return;
+
+  if (!homeGridMode()) {
+    // Flex fallback (narrow screens): natural rows, normal density.
+    const cols = Math.max(1, Math.floor((width + gap) / (118 + gap)));
+    grid.style.gridTemplateColumns = `repeat(${Math.min(cols, count)}, minmax(0, 1fr))`;
+    grid.style.gridAutoRows = "";
+    grid.classList.remove("compact", "tiny", "fitted");
+    return;
+  }
+
+  const height = grid.clientHeight;
+  let chosen = null;
+  for (const density of AREA_DENSITIES) {
+    let best = null;
+    for (let c = 1; c <= count; c++) {
+      const rows = Math.ceil(count / c);
+      const tileW = (width - gap * (c - 1)) / c;
+      const tileH = (height - gap * (rows - 1)) / rows;
+      if (tileW < density.minW || tileH < density.minH) continue;
+      const score = Math.min(tileW / density.minW, tileH / density.minH);
+      if (!best || score > best.score) best = { cols: c, score };
+    }
+    if (best) { chosen = { cols: best.cols, cls: density.cls, zoom: 1 }; break; }
+  }
+  if (!chosen) {
+    // Nothing fits even at tiny density: zoom the whole grid down to fit.
+    const tiny = AREA_DENSITIES[AREA_DENSITIES.length - 1];
+    let best = { zoom: 0, cols: 1 };
+    for (let c = 1; c <= count; c++) {
+      const rows = Math.ceil(count / c);
+      const tileW = (width - gap * (c - 1)) / c;
+      const tileH = (height - gap * (rows - 1)) / rows;
+      const zoom = Math.min(tileW / tiny.minW, tileH / tiny.minH);
+      if (zoom > best.zoom) best = { zoom, cols: c };
+    }
+    chosen = { cols: best.cols, cls: "tiny", zoom: Math.max(0.25, Math.min(1, best.zoom)) };
+  }
+
+  if (chosen.zoom !== 1) grid.style.zoom = String(Math.round(chosen.zoom * 100) / 100);
+  grid.style.gridTemplateColumns = `repeat(${Math.min(chosen.cols, count)}, minmax(0, 1fr))`;
+  grid.style.gridAutoRows = "minmax(0, 1fr)";
+  // "tiny" builds on the compact typography and additionally hides rows.
+  grid.classList.toggle("compact", chosen.cls === "compact" || chosen.cls === "tiny");
+  grid.classList.toggle("tiny", chosen.cls === "tiny");
+  grid.classList.add("fitted");
+}
+
+/* ── Home dashboard panels (climate + camera) ── */
+const HOME_TEMP_SENSORS_KEY = "home_temp_sensors";
+const HOME_CAMERA_KEY = "home_camera_id";
+
+/* Every temperature source on the dashboard: ecobee remote sensors plus any
+   Tuya/HA sensor group that reports a temperature reading. */
+function homeTempSources() {
+  const sources = [];
+  for (const th of latestThermostats) {
+    const unit = th.temperature_unit?.includes("F") ? "°F" : "°C";
+    for (const sensor of th.sensors || []) {
+      if (sensor.temperature == null) continue;
+      sources.push({
+        id: `ecobee:${th.id}:${sensor.name}`,
+        name: sensor.name,
+        temp: Math.round(Number(sensor.temperature)),
+        unit,
+        occupied: sensor.occupied,
+      });
+    }
+  }
+  const visibleSensors = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  for (const group of groupSensorDevices(visibleSensors)) {
+    const reading = group.readings.find((r) => String(r.category || "").includes("temperature"));
+    if (!reading) continue;
+    const value = readingMetricNumber(reading);
+    if (!Number.isFinite(value)) continue;
+    sources.push({ id: `tuya:${areaSlug(group.name)}`, name: group.name, temp: Math.round(value), unit: "°" });
+  }
+  return sources;
+}
+
+function selectedTempSensorIds(sources) {
+  try {
+    const raw = localStorage.getItem(HOME_TEMP_SENSORS_KEY);
+    if (raw != null) {
+      const saved = new Set(JSON.parse(raw));
+      return new Set(sources.filter((s) => saved.has(s.id)).map((s) => s.id));
+    }
+  } catch {}
+  return new Set(sources.map((s) => s.id));
+}
+
+function renderHomeClimate() {
+  const body = document.querySelector("#homeClimateBody");
+  if (!body) return;
+
+  /* Dial-only summary: the wheel mirrors the thermostat state; clicking it
+     jumps to the Climate view for the full controls. */
+  const thermoCards = latestThermostats.map((th) => {
+    const ui = getThermoUI(th);
+    const current = th.temperature != null ? Math.round(Number(th.temperature)) : "--";
+    return `
+      <div class="home-dial" data-goto-view="climate" role="button" tabindex="0"
+           title="Open Climate for full thermostat controls">
+        <div class="home-dial-name">${escapeHtml(th.name)}</div>
+        ${buildThermoDial(th.id, ui, current)}
+        <div class="home-dial-sub">${escapeHtml(String(th.hvac_mode || "off").toUpperCase())}${th.humidity != null ? ` · ${escapeHtml(String(th.humidity))}% humidity` : ""}</div>
+      </div>`;
+  }).join("");
+  const sources = homeTempSources();
+  const chosen = selectedTempSensorIds(sources);
+  const rows = sources.filter((s) => chosen.has(s.id)).map((s) => `
+    <div class="home-temp-row">
+      ${s.occupied != null ? `<span class="thermo-occ-dot${s.occupied ? " occupied" : ""}"></span>` : `<span class="home-temp-dot"></span>`}
+      <span class="home-temp-name">${escapeHtml(s.name)}</span>
+      <span class="home-temp-value mono" style="color:${tempRangeColor(s.temp)}">${s.temp}${s.unit}</span>
+    </div>`).join("");
+
+  const content =
+    (thermoCards || `<div class="home-empty">No thermostat found</div>`) +
+    (sources.length
+      ? (rows ? `<div class="home-temp-list">${rows}</div>` : `<div class="home-empty">No sensors selected — use the filter above</div>`)
+      : "");
+  body.innerHTML = `<div class="home-fit-clip"><div class="home-fit">${content}</div></div>`;
+  fitClimateBody();
+}
+
+/* Scale the Climate card contents (dial + sensor list) to fill the card:
+   grow with the width, and fit entirely inside the card height. */
+const CLIMATE_DESIGN_W = 260;
+
+function fitClimateBody() {
+  const body = document.querySelector("#homeClimateBody");
+  const clip = body?.querySelector(".home-fit-clip");
+  const inner = clip?.querySelector(".home-fit");
+  if (!body || !clip || !inner) return;
+
+  const fixed = homeGridMode();
+  inner.style.transform = "none";
+  inner.style.marginLeft = "0";
+  clip.style.height = "";
+  inner.style.width = `${CLIMATE_DESIGN_W}px`;
+
+  const availW = clip.clientWidth;
+  const availH = fixed ? clip.clientHeight : 0;
+  const naturalH = inner.scrollHeight;
+  if (availW < 40 || !naturalH) return;
+
+  let scale = availW / CLIMATE_DESIGN_W;
+  if (fixed) scale = Math.min(scale, availH / naturalH);
+  if (!inner.querySelector(".thermo-dial-wrap")) scale = Math.min(scale, 1); // don't blow up empty states
+  scale = Math.max(0.3, Math.min(scale, 2.2));
+
+  inner.style.transform = `scale(${scale})`;
+  inner.style.marginLeft = `${Math.max(0, (availW - CLIMATE_DESIGN_W * scale) / 2)}px`;
+  if (!fixed) clip.style.height = `${Math.ceil(naturalH * scale)}px`;
+}
+
+/* Re-fit areas and climate live while their cards are resized. */
+(function initHomeFitObservers() {
+  if (typeof ResizeObserver === "undefined") return;
+  const observer = new ResizeObserver(() => {
+    layoutAreaGrid();
+    fitClimateBody();
+  });
+  const areasCard = document.querySelector(".home-areas.home-card");
+  const climateCard = document.querySelector("#homeClimatePanel");
+  if (areasCard) observer.observe(areasCard);
+  if (climateCard) observer.observe(climateCard);
+})();
+
+function renderHomeSensorPicker() {
+  const picker = document.querySelector("#homeSensorPicker");
+  if (!picker) return;
+  const sources = homeTempSources();
+  const chosen = selectedTempSensorIds(sources);
+  picker.innerHTML = sources.length
+    ? sources.map((s) => `
+        <label class="home-picker-row">
+          <input type="checkbox" data-temp-sensor-id="${escapeHtml(s.id)}" ${chosen.has(s.id) ? "checked" : ""}>
+          <span class="home-picker-name">${escapeHtml(s.name)}</span>
+          <span class="mono home-picker-temp">${s.temp}${s.unit}</span>
+        </label>`).join("")
+    : `<div class="home-empty">No temperature sensors available</div>`;
+}
+
+function homeCameraList() {
+  const tuyaCams = latestTuyaDevices.filter(isTuyaCamera).map(tuyaCameraCard);
+  return [...latestCameras, ...tuyaCams];
+}
+
+function renderHomeCamera() {
+  const body = document.querySelector("#homeCameraBody");
+  const select = document.querySelector("#homeCameraSelect");
+  if (!body || !select) return;
+
+  const cameras = homeCameraList();
+  let savedId = null;
+  try { savedId = localStorage.getItem(HOME_CAMERA_KEY); } catch {}
+  const camera = cameras.find((c) => cameraIdFor(c) === savedId) || cameras[0] || null;
+
+  select.innerHTML = cameras.map((c) => {
+    const id = cameraIdFor(c);
+    return `<option value="${escapeHtml(id)}"${camera && cameraIdFor(camera) === id ? " selected" : ""}>${escapeHtml(c.name || id)}</option>`;
+  }).join("");
+  select.hidden = cameras.length === 0;
+
+  if (!camera) {
+    body.innerHTML = `<div class="home-empty">No cameras found</div>`;
+    return;
+  }
+  body.innerHTML = `
+    <div class="home-camera-frame" data-goto-view="cameras" role="button" tabindex="0"
+         title="Open the Cameras view">
+      ${cameraMedia(camera)}${cameraBatteryBadge(camera)}
+    </div>
+    <div class="home-camera-meta">${escapeHtml(camera.name)}${camera.room ? ` · ${escapeHtml(camera.room)}` : ""}</div>`;
+}
+
+/* ── Bluetooth: music card on Home, scan/connect modal under Discovery ── */
+let latestBluetooth = null;
+
+async function refreshBluetooth() {
+  latestBluetooth = await requestJson("/api/bluetooth/devices").catch(() => null);
+  renderBluetoothCard();
+  renderBtModalList();
+}
+
+/* Home card: playback placeholder that just reflects the connected speaker. */
+function renderBluetoothCard() {
+  const body = document.querySelector("#btDeviceList");
+  if (!body) return;
+  const devices = latestBluetooth?.status === "ok" ? latestBluetooth.devices || [] : [];
+  const connected = devices.filter((device) => device.connected);
+  const status = connected.length
+    ? `Connected · ${connected.map((device) => escapeHtml(device.name)).join(", ")}`
+    : "No speaker connected";
+  body.innerHTML = `
+    <div class="home-music-placeholder">
+      <i class="ti ti-music" aria-hidden="true"></i>
+      <div class="home-music-status">${status}</div>
+      <small>Music playback coming soon — pair speakers via Discovery → Bluetooth</small>
+    </div>`;
+}
+
+function renderBtModalList() {
+  const list = document.querySelector("#btModalList");
+  if (!list) return;
+  if (!latestBluetooth) {
+    list.innerHTML = `<div class="home-empty">Bluetooth status unavailable</div>`;
+    return;
+  }
+  if (latestBluetooth.status !== "ok") {
+    list.innerHTML = `<div class="home-empty">${escapeHtml(latestBluetooth.message || "Bluetooth unavailable")}</div>`;
+    return;
+  }
+  const devices = latestBluetooth.devices || [];
+  if (!devices.length) {
+    list.innerHTML = `<div class="home-empty">No devices known yet — press Scan to discover speakers nearby.</div>`;
+    return;
+  }
+  list.innerHTML = devices.map((device) => {
+    const isAudio = /audio|headset|headphone|speaker/i.test(String(device.icon || ""));
+    return `
+      <div class="custom-device-row bt-device-row">
+        <span class="assign-device-icon"><i class="ti ${isAudio ? "ti-music" : "ti-bluetooth"}"></i></span>
+        <span class="custom-device-name">
+          ${escapeHtml(device.name)}
+          <small class="bt-mac mono">${device.type ? `${escapeHtml(device.type)} · ` : ""}${escapeHtml(device.mac)}</small>
+        </span>
+        ${device.connected ? `<span class="bt-status">Connected</span>` : ""}
+        <button class="command ${device.connected ? "" : "primary"}" type="button"
+          data-bt-action="${device.connected ? "disconnect" : "connect"}"
+          data-bt-mac="${escapeHtml(device.mac)}">
+          ${device.connected ? "Disconnect" : "Connect"}
+        </button>
+      </div>`;
+  }).join("");
+}
+
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-bt-action]");
+  if (!btn) return;
+  const mac = btn.dataset.btMac;
+  const action = btn.dataset.btAction;
+  btn.disabled = true;
+  btn.textContent = action === "connect" ? "Connecting…" : "Disconnecting…";
+  try {
+    const result = await requestJson(`/api/bluetooth/devices/${encodeURIComponent(mac)}/${action}`, { method: "POST" });
+    logActivity(result.message || `Bluetooth ${action} ${result.status}`, result.status === "ok" ? "normal" : "warn");
+  } catch (error) {
+    console.error(error);
+    logActivity("Bluetooth action failed", "error");
+  }
+  await refreshBluetooth();
+});
+
+(function initBluetoothUi() {
+  const modal = document.querySelector("#btModal");
+  const openModal = () => {
+    if (modal) modal.hidden = false;
+    refreshBluetooth().catch(console.error);
+  };
+  const closeModal = () => { if (modal) modal.hidden = true; };
+
+  document.querySelector("#btScanNav")?.addEventListener("click", openModal);
+  document.querySelector("#closeBtModal")?.addEventListener("click", closeModal);
+  modal?.addEventListener("click", (event) => {
+    if (event.target === modal) closeModal();
+  });
+
+  const scanBtn = document.querySelector("#btModalScan");
+  scanBtn?.addEventListener("click", async () => {
+    const list = document.querySelector("#btModalList");
+    scanBtn.disabled = true;
+    if (list) list.innerHTML = `<div class="home-empty"><i class="ti ti-loader-2 spin"></i> Scanning for ~8 seconds…</div>`;
+    try {
+      latestBluetooth = await requestJson("/api/bluetooth/scan", { method: "POST" });
+      logActivity("Bluetooth scan finished");
+    } catch (error) {
+      console.error(error);
+      latestBluetooth = null;
+    }
+    renderBluetoothCard();
+    renderBtModalList();
+    scanBtn.disabled = false;
+  });
+  refreshBluetooth().catch(console.error);
+})();
+
+/* ── Custom device cards: user-defined cards with hand-picked devices ── */
+const HOME_CUSTOM_CARDS_KEY = "home_custom_cards";
+let editingCustomCardId = null;
+
+function loadCustomCards() {
+  try { return JSON.parse(localStorage.getItem(HOME_CUSTOM_CARDS_KEY) || "[]") || []; } catch { return []; }
+}
+
+function saveCustomCards(cards) {
+  try { localStorage.setItem(HOME_CUSTOM_CARDS_KEY, JSON.stringify(cards)); } catch {}
+}
+
+function customCardRowHtml(item) {
+  const icon = AREA_KIND_ICONS[item.kind] || "ti-cpu";
+  if (item.kind === "light" || item.kind === "plug") {
+    const on = item.data.is_on === true;
+    return `
+      <div class="custom-device-row">
+        <span class="assign-device-icon"><i class="ti ${icon}"></i></span>
+        <span class="custom-device-name">${escapeHtml(item.name)}</span>
+        <button class="area-lights-toggle ${on ? "on" : ""}" data-custom-toggle="${escapeHtml(String(item.data.host))}"
+          type="button" title="Turn ${on ? "off" : "on"} ${escapeHtml(item.name)}">
+          <i class="ti ti-power"></i>
+        </button>
+      </div>`;
+  }
+  let value = "";
+  let goto = "tuya";
+  if (item.kind === "thermostat") {
+    value = item.data.temperature != null ? `${Math.round(Number(item.data.temperature))}°` : "--";
+    goto = "climate";
+  } else if (item.kind === "camera") {
+    value = "view";
+    goto = "cameras";
+  } else if (item.kind === "sensor") {
+    const reading = item.data.readings.find((r) => String(r.category || "").includes("temperature"));
+    const num = reading ? readingMetricNumber(reading) : NaN;
+    value = Number.isFinite(num) ? `${Math.round(num)}°`
+      : item.data.readings.some(isAlertDetected) ? "Alert" : "OK";
+  }
+  return `
+    <div class="custom-device-row" data-goto-view="${goto}" role="button" tabindex="0"
+         title="Open the related view">
+      <span class="assign-device-icon"><i class="ti ${icon}"></i></span>
+      <span class="custom-device-name">${escapeHtml(item.name)}</span>
+      <span class="custom-device-value mono">${escapeHtml(String(value))}</span>
+    </div>`;
+}
+
+function renderCustomHomeCards() {
+  const grid = document.querySelector("#homeCardGrid");
+  if (!grid) return;
+  const cards = loadCustomCards();
+  const inventoryByKey = new Map(collectHomeInventory().map((item) => [item.key, item]));
+
+  for (const el of grid.querySelectorAll(".home-custom-card")) {
+    const id = el.dataset.homeCard.slice("custom:".length);
+    if (!cards.some((c) => c.id === id)) el.remove();
+  }
+
+  for (const card of cards) {
+    let el = grid.querySelector(`.home-card[data-home-card="custom:${CSS.escape(card.id)}"]`);
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "panel home-panel home-card home-custom-card";
+      el.dataset.homeCard = `custom:${card.id}`;
+      el.innerHTML = `
+        <div class="home-panel-head">
+          <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
+          <span class="panel-title"><i class="ti ti-layout-list"></i> <span data-custom-name></span></span>
+          <button class="home-gear-btn" data-custom-edit="${escapeHtml(card.id)}" type="button" title="Edit name or linked devices">
+            <i class="ti ti-pencil"></i>
+          </button>
+        </div>
+        <div class="home-custom-body" data-custom-body></div>
+        <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>`;
+      grid.appendChild(el);
+    }
+    el.querySelector("[data-custom-name]").textContent = card.name;
+    const rows = (card.devices || [])
+      .map((key) => inventoryByKey.get(key))
+      .filter(Boolean)
+      .map(customCardRowHtml)
+      .join("");
+    el.querySelector("[data-custom-body]").innerHTML =
+      rows || `<div class="home-empty">No devices linked — click the pencil to pick some.</div>`;
+  }
+  applyHomeCardLayout();
+}
+
+function openCustomCardModal(cardId = null) {
+  const modal = document.querySelector("#customCardModal");
+  if (!modal) return;
+  editingCustomCardId = cardId;
+  const card = loadCustomCards().find((c) => c.id === cardId) || null;
+  const title = document.querySelector("#customCardModalTitle");
+  if (title) title.textContent = card ? "Edit Card" : "New Card";
+  const nameInput = document.querySelector("#customCardNameInput");
+  if (nameInput) nameInput.value = card ? card.name : "";
+  const deleteBtn = document.querySelector("#customCardDelete");
+  if (deleteBtn) deleteBtn.hidden = !card;
+  const errorBox = document.querySelector("#customCardError");
+  if (errorBox) errorBox.hidden = true;
+
+  const chosen = new Set(card?.devices || []);
+  const list = document.querySelector("#customCardDeviceList");
+  if (list) {
+    const inventory = collectHomeInventory().sort((a, b) =>
+      a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind.localeCompare(b.kind)
+    );
+    list.innerHTML = inventory.map((item) => `
+      <label class="assign-device-row">
+        <input type="checkbox" data-custom-device-key="${escapeHtml(item.key)}" ${chosen.has(item.key) ? "checked" : ""}>
+        <span class="assign-device-icon"><i class="ti ${AREA_KIND_ICONS[item.kind] || "ti-cpu"}"></i></span>
+        <span class="assign-device-name">${escapeHtml(item.name)}</span>
+      </label>`).join("");
+  }
+  modal.hidden = false;
+  nameInput?.focus();
+}
+
+function closeCustomCardModal() {
+  const modal = document.querySelector("#customCardModal");
+  if (modal) modal.hidden = true;
+  editingCustomCardId = null;
+}
+
+function saveCustomCardFromModal() {
+  const name = document.querySelector("#customCardNameInput")?.value.trim() || "";
+  if (!name) {
+    const errorBox = document.querySelector("#customCardError");
+    const errorText = document.querySelector("#customCardErrorText");
+    if (errorText) errorText.textContent = "Card name cannot be empty";
+    if (errorBox) errorBox.hidden = false;
+    return;
+  }
+  const devices = [...document.querySelectorAll("#customCardDeviceList input[data-custom-device-key]:checked")]
+    .map((box) => box.dataset.customDeviceKey);
+  const cards = loadCustomCards();
+  if (editingCustomCardId) {
+    const card = cards.find((c) => c.id === editingCustomCardId);
+    if (card) { card.name = name; card.devices = devices; }
+  } else {
+    cards.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, devices });
+  }
+  saveCustomCards(cards);
+  closeCustomCardModal();
+  renderCustomHomeCards();
+  logActivity(`Card "${name}" saved`);
+}
+
+function deleteCustomCardFromModal() {
+  if (!editingCustomCardId) return;
+  const cards = loadCustomCards();
+  const card = cards.find((c) => c.id === editingCustomCardId);
+  if (!card) { closeCustomCardModal(); return; }
+  if (!window.confirm(`Delete card "${card.name}"?`)) return;
+  saveCustomCards(cards.filter((c) => c.id !== editingCustomCardId));
+  // Drop its saved grid cell too.
+  const layout = loadHomeLayout();
+  delete layout[`custom:${editingCustomCardId}`];
+  saveHomeLayout(layout);
+  logActivity(`Card "${card.name}" deleted`);
+  closeCustomCardModal();
+  renderCustomHomeCards();
+}
+
+document.addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-custom-edit]");
+  if (!btn) return;
+  openCustomCardModal(btn.dataset.customEdit);
+});
+
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-custom-toggle]");
+  if (!btn) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const host = String(btn.dataset.customToggle);
+  const command = btn.classList.contains("on") ? "off" : "on";
+  btn.classList.toggle("on");
+  btn.disabled = true;
+  try {
+    if (host.startsWith("matter:")) {
+      await requestJson(`/api/matter/devices/${host.slice(7)}/commands/${command}`, { method: "POST" });
+    } else {
+      await requestJson(`/api/devices/${host}/commands/${command}`, { method: "POST" });
+    }
+    logActivity(`${command === "on" ? "Turned on" : "Turned off"} device from card`);
+    await loadDevices();
+  } catch (error) {
+    console.error(error);
+    btn.classList.toggle("on");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* ── Home card layout: free grid placement ─────────────────────────────
+   Cards live on a 12-column grid with fixed row height. Every card keeps
+   its own cell {x, y, w, h}; moving or resizing one card never shifts the
+   others, so any arrangement — including stacked columns — sticks. */
+const HOME_CARD_LAYOUT_KEY = "home_card_layout";
+const HOME_GRID_COLS = 12;
+const HOME_GRID_ROW = 40;
+const HOME_GRID_GAP = 16;
+
+const DEFAULT_HOME_LAYOUT = {
+  weather:   { x: 1, y: 1, w: 4, h: 5 },
+  camera:    { x: 1, y: 6, w: 4, h: 7 },
+  climate:   { x: 5, y: 1, w: 4, h: 9 },
+  bluetooth: { x: 5, y: 10, w: 4, h: 6 },
+  areas:     { x: 9, y: 1, w: 4, h: 12 },
+};
+
+function loadHomeLayout() {
+  try { return JSON.parse(localStorage.getItem(HOME_CARD_LAYOUT_KEY) || "{}") || {}; } catch { return {}; }
+}
+
+function saveHomeLayout(layout) {
+  try { localStorage.setItem(HOME_CARD_LAYOUT_KEY, JSON.stringify(layout)); } catch {}
+}
+
+/* Below 1100px the layout falls back to a flex column (see CSS); fit logic
+   switches to natural heights there. */
+function homeGridMode() {
+  const grid = document.querySelector("#homeCardGrid");
+  return !!grid && getComputedStyle(grid).display === "grid";
+}
+
+function setCardCell(card, lay) {
+  card.style.gridColumn = `${lay.x} / span ${lay.w}`;
+  card.style.gridRow = `${lay.y} / span ${lay.h}`;
+}
+
+function cardLayoutOf(card) {
+  const id = card.dataset.homeCard;
+  return { ...(loadHomeLayout()[id] || DEFAULT_HOME_LAYOUT[id] || { x: 1, y: 1, w: 4, h: 6 }) };
+}
+
+function persistCardLayout(card, lay) {
+  const layout = loadHomeLayout();
+  layout[card.dataset.homeCard] = lay;
+  saveHomeLayout(layout);
+}
+
+function applyHomeCardLayout() {
+  const grid = document.querySelector("#homeCardGrid");
+  if (!grid) return;
+  const layout = loadHomeLayout();
+  let changed = false;
+  for (const card of grid.querySelectorAll(".home-card")) {
+    const id = card.dataset.homeCard;
+    let lay = layout[id] || DEFAULT_HOME_LAYOUT[id];
+    if (!lay) {
+      // New (custom) card: park it below everything currently placed.
+      const placed = Object.entries(DEFAULT_HOME_LAYOUT)
+        .filter(([key]) => !layout[key])
+        .map(([, l]) => l)
+        .concat(Object.values(layout));
+      const bottom = placed.reduce((max, l) => Math.max(max, l.y + l.h), 1);
+      lay = { x: 1, y: bottom, w: 4, h: 6 };
+      layout[id] = lay;
+      changed = true;
+    }
+    setCardCell(card, lay);
+  }
+  if (changed) saveHomeLayout(layout);
+}
+
+function homeGridPitch(grid) {
+  const cellW = (grid.clientWidth - HOME_GRID_GAP * (HOME_GRID_COLS - 1)) / HOME_GRID_COLS;
+  return { pitchX: cellW + HOME_GRID_GAP, pitchY: HOME_GRID_ROW + HOME_GRID_GAP };
+}
+
+function homeCellsOverlap(a, b) {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+function otherCardCells(excludeCard) {
+  const grid = document.querySelector("#homeCardGrid");
+  if (!grid) return [];
+  return [...grid.querySelectorAll(".home-card")]
+    .filter((c) => c !== excludeCard)
+    .map((c) => cardLayoutOf(c));
+}
+
+(function initHomeCardLayout() {
+  const grid = document.querySelector("#homeCardGrid");
+  if (!grid) return;
+
+  renderCustomHomeCards();
+  applyHomeCardLayout();
+
+  /* Move: pointer-drag from the header grip; only this card changes cell. */
+  grid.addEventListener("pointerdown", (event) => {
+    const grip = event.target.closest(".home-card-grip");
+    const card = grip?.closest(".home-card");
+    if (!card || !homeGridMode()) return;
+    event.preventDefault();
+    const { pitchX, pitchY } = homeGridPitch(grid);
+    const gridRect = grid.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    const grabX = event.clientX - cardRect.left;
+    const grabY = event.clientY - cardRect.top;
+    const lay = cardLayoutOf(card);
+    card.classList.add("dragging");
+
+    const onMove = (move) => {
+      const x = 1 + Math.round((move.clientX - grabX - gridRect.left) / pitchX);
+      const y = 1 + Math.round((move.clientY - grabY - gridRect.top) / pitchY);
+      lay.x = Math.min(Math.max(1, x), HOME_GRID_COLS - lay.w + 1);
+      lay.y = Math.max(1, y);
+      setCardCell(card, lay);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      card.classList.remove("dragging");
+      // If dropped onto another card, slide down to the first free row —
+      // the dragged card yields, never the others.
+      const others = otherCardCells(card);
+      let guard = 0;
+      while (others.some((o) => homeCellsOverlap(lay, o)) && guard++ < 200) lay.y += 1;
+      setCardCell(card, lay);
+      persistCardLayout(card, lay);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  });
+
+  /* Resize: corner grip adjusts the card's column/row span. */
+  grid.addEventListener("pointerdown", (event) => {
+    const handle = event.target.closest(".home-card-resize");
+    const card = handle?.closest(".home-card");
+    if (!card || !homeGridMode()) return;
+    event.preventDefault();
+    const { pitchX, pitchY } = homeGridPitch(grid);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const lay = cardLayoutOf(card);
+    const startW = lay.w;
+    const startH = lay.h;
+    card.classList.add("resizing");
+
+    const others = otherCardCells(card);
+    const onMove = (move) => {
+      const w = Math.min(Math.max(2, startW + Math.round((move.clientX - startX) / pitchX)), HOME_GRID_COLS - lay.x + 1);
+      const h = Math.max(3, startH + Math.round((move.clientY - startY) / pitchY));
+      // Grow only until touching a neighbour — cards never overlap or move.
+      if (!others.some((o) => homeCellsOverlap({ ...lay, w, h }, o))) {
+        lay.w = w;
+        lay.h = h;
+      } else if (!others.some((o) => homeCellsOverlap({ ...lay, w }, o))) {
+        lay.w = w;
+      } else if (!others.some((o) => homeCellsOverlap({ ...lay, h }, o))) {
+        lay.h = h;
+      }
+      setCardCell(card, lay);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      card.classList.remove("resizing");
+      persistCardLayout(card, lay);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  });
+
+  /* Double-click the corner grip: reset the card to its default cell. */
+  grid.addEventListener("dblclick", (event) => {
+    const handle = event.target.closest(".home-card-resize");
+    const card = handle?.closest(".home-card");
+    if (!card) return;
+    const layout = loadHomeLayout();
+    delete layout[card.dataset.homeCard];
+    saveHomeLayout(layout);
+    applyHomeCardLayout();
+  });
+})();
 
 function showHomeOverview() {
   const overview = document.querySelector("#homeOverview");
@@ -3046,6 +3836,17 @@ document.addEventListener("keydown", (event) => {
   renderHomeView();
 });
 
+document.addEventListener("change", (event) => {
+  const checkbox = event.target.closest("input[data-temp-sensor-id]");
+  if (!checkbox) return;
+  const sources = homeTempSources();
+  const chosen = selectedTempSensorIds(sources);
+  if (checkbox.checked) chosen.add(checkbox.dataset.tempSensorId);
+  else chosen.delete(checkbox.dataset.tempSensorId);
+  try { localStorage.setItem(HOME_TEMP_SENSORS_KEY, JSON.stringify([...chosen])); } catch {}
+  renderHomeClimate();
+});
+
 document.addEventListener("change", async (event) => {
   const select = event.target.closest("select[data-assign-key]");
   if (!select) return;
@@ -3067,6 +3868,63 @@ document.addEventListener("change", async (event) => {
 });
 
 (function initHomeView() {
+  /* Custom card modal */
+  document.querySelector("#addCustomCardButton")?.addEventListener("click", () => openCustomCardModal());
+  document.querySelector("#closeCustomCardModal")?.addEventListener("click", closeCustomCardModal);
+  document.querySelector("#customCardCancel")?.addEventListener("click", closeCustomCardModal);
+  document.querySelector("#customCardSave")?.addEventListener("click", saveCustomCardFromModal);
+  document.querySelector("#customCardDelete")?.addEventListener("click", deleteCustomCardFromModal);
+  document.querySelector("#customCardNameInput")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") saveCustomCardFromModal();
+  });
+
+  /* Area tile drag-to-reorder inside the Areas card */
+  const areaGridEl = document.querySelector("#areaGrid");
+  let draggedAreaCard = null;
+  areaGridEl?.addEventListener("dragstart", (event) => {
+    const card = event.target.closest(".area-card[data-area-id]");
+    if (!card) return;
+    event.stopPropagation();
+    draggedAreaCard = card;
+    card.classList.add("dragging");
+    event.dataTransfer.effectAllowed = "move";
+    try { event.dataTransfer.setData("text/plain", card.dataset.areaId); } catch {}
+  });
+  areaGridEl?.addEventListener("dragover", (event) => {
+    if (!draggedAreaCard) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    const target = event.target.closest(".area-card[data-area-id]");
+    if (!target || target === draggedAreaCard) return;
+    const rect = target.getBoundingClientRect();
+    const before = (event.clientX - rect.left) / rect.width < 0.5;
+    areaGridEl.insertBefore(draggedAreaCard, before ? target : target.nextSibling);
+  });
+  areaGridEl?.addEventListener("drop", (event) => {
+    if (draggedAreaCard) { event.preventDefault(); event.stopPropagation(); }
+  });
+  areaGridEl?.addEventListener("dragend", (event) => {
+    if (!draggedAreaCard) return;
+    event.stopPropagation();
+    draggedAreaCard.classList.remove("dragging");
+    draggedAreaCard = null;
+    const order = [...areaGridEl.querySelectorAll(".area-card[data-area-id]")].map((c) => c.dataset.areaId);
+    try { localStorage.setItem(HOME_AREA_ORDER_KEY, JSON.stringify(order)); } catch {}
+    logActivity("Areas rearranged");
+  });
+
+  document.querySelector("#homeSensorGear")?.addEventListener("click", () => {
+    const picker = document.querySelector("#homeSensorPicker");
+    if (!picker) return;
+    picker.hidden = !picker.hidden;
+    if (!picker.hidden) renderHomeSensorPicker();
+  });
+  document.querySelector("#homeCameraSelect")?.addEventListener("change", (event) => {
+    try { localStorage.setItem(HOME_CAMERA_KEY, event.target.value); } catch {}
+    renderHomeCamera();
+  });
+
   document.querySelector("#addAreaButton")?.addEventListener("click", openAreaModal);
   document.querySelector("#areaBackButton")?.addEventListener("click", () => {
     currentAreaId = null;
@@ -3300,9 +4158,7 @@ document.addEventListener("click", (event) => {
   const btn = event.target.closest("button[data-thermo-mode]");
   if (!btn) return;
   const id = btn.dataset.thermoId;
-  const article = btn.closest("article");
-  if (!article) return;
-  applyThermoModeUI(article, id, btn.dataset.thermoMode);
+  thermoArticlesFor(id).forEach((article) => applyThermoModeUI(article, id, btn.dataset.thermoMode));
 });
 
 document.addEventListener("click", (event) => {
@@ -3312,8 +4168,10 @@ document.addEventListener("click", (event) => {
   const ui  = thermoUIState.get(id);
   if (!ui) return;
   ui.fan = btn.dataset.thermoFan;
-  btn.closest("article")?.querySelectorAll(".thermo-fan-btn").forEach((b) => {
-    b.classList.toggle("active", b.dataset.thermoFan === ui.fan);
+  thermoArticlesFor(id).forEach((article) => {
+    article.querySelectorAll(".thermo-fan-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.thermoFan === ui.fan);
+    });
   });
 });
 
@@ -3326,11 +4184,12 @@ document.addEventListener("click", (event) => {
   if (!ui || !preset) return;
   ui.target = preset.target;
   ui.preset = preset.id;
-  const article = btn.closest("article");
-  article?.querySelectorAll(".thermo-preset-btn").forEach((b) => {
-    b.classList.toggle("active", b.dataset.thermoPreset === preset.id);
+  thermoArticlesFor(id).forEach((article) => {
+    article.querySelectorAll(".thermo-preset-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.thermoPreset === preset.id);
+    });
+    applyThermoModeUI(article, id, preset.mode);
   });
-  applyThermoModeUI(article, id, preset.mode);
 });
 
 document.addEventListener("click", (event) => {
@@ -3530,6 +4389,38 @@ document.addEventListener("click", (event) => {
 railButtons.forEach((btn) => {
   btn.addEventListener("click", () => activateView(btn.dataset.view));
 });
+
+/* ── Startup (default) view ── */
+const DEFAULT_VIEW_KEY = "default_view";
+
+function getDefaultView() {
+  try {
+    const saved = localStorage.getItem(DEFAULT_VIEW_KEY);
+    if (saved && railButtons.some((btn) => btn.dataset.view === saved)) return saved;
+  } catch {}
+  return "home";
+}
+
+(function initDefaultView() {
+  const select = document.querySelector("#defaultViewSelect");
+  if (select) {
+    select.innerHTML = railButtons.map((btn) => {
+      const label = [...btn.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent.trim())
+        .join("").trim() || btn.dataset.view;
+      return `<option value="${escapeHtml(btn.dataset.view)}">${escapeHtml(label)}</option>`;
+    }).join("");
+    select.value = getDefaultView();
+    select.addEventListener("change", () => {
+      try { localStorage.setItem(DEFAULT_VIEW_KEY, select.value); } catch {}
+      logActivity(`Startup view → ${select.options[select.selectedIndex]?.text || select.value}`);
+    });
+    // Keep the row from hijacking clicks meant for the select.
+    select.addEventListener("click", (event) => event.stopPropagation());
+  }
+  activateView(getDefaultView());
+})();
 
 /* Light drag lock */
 if (lightDragLock) {

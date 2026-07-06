@@ -314,6 +314,35 @@ aside {
 
 .room-list { padding: 0 8px; }
 
+/* Collapsible sidebar bits: [hidden] must beat the flex display rules */
+.room-item[hidden],
+.sidebar-activity[hidden] { display: none; }
+
+.settings-chevron {
+  margin-left: auto;
+  font-size: 14px;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+
+#systemSettingsToggle.open .settings-chevron { transform: rotate(90deg); }
+
+.system-settings-item { padding-left: 24px; }
+
+.sidebar-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sidebar-section-toggle:hover { color: var(--text); }
+
+.sidebar-section-toggle .ti-info-circle { font-size: 13px; }
+
+.sidebar-section-toggle.open .ti-info-circle { color: var(--accent); }
+
 .room-item {
   display: flex;
   align-items: center;
@@ -1404,12 +1433,6 @@ aside {
 .theme-preview-grid .device-footer { display: none; }
 
 /* ── BOTTOM ROW ── */
-.bottom-row {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-}
-
 .panel {
   background: var(--card);
   border: 1px solid var(--border);
@@ -1431,6 +1454,35 @@ aside {
 
 /* ── ACTIVITY LOG ── */
 .activity-list { display: flex; flex-direction: column; gap: 10px; }
+
+/* Compact activity feed in the sidebar (under SYSTEM) */
+.sidebar-activity {
+  padding: 2px 20px 10px;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.sidebar-activity .activity-text { font-size: 11px; }
+.sidebar-activity .activity-time { font-size: 9.5px; }
+
+/* Startup view picker in the sidebar */
+.startup-view-row { cursor: default; }
+
+.startup-view-select {
+  margin-left: auto;
+  max-width: 108px;
+  padding: 3px 6px;
+  font-size: 11px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.startup-view-select option { color: #1b1b1f; background: #f4f4f6; }
 
 .activity-item { display: flex; align-items: center; gap: 10px; }
 
@@ -3063,29 +3115,514 @@ aside {
 }
 
 /* ── Area cards grid ── */
+/* ── Home layout: free-placement card grid ── */
+.home-layout {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: 40px;
+  gap: 16px;
+}
+
+.home-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.home-card.dragging {
+  opacity: 0.8;
+  z-index: 6;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+  cursor: grabbing;
+}
+
+/* ── Weather card ── */
+.home-weather-loc {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--t-text-dim);
+  white-space: nowrap;
+}
+
+.home-weather-loc i { font-size: 13px; color: var(--t-text); }
+
+.home-weather-body {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 10px;
+  padding: 10px 8px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+
+.home-weather-body:hover { background: rgba(255, 255, 255, 0.03); }
+
+.home-weather-body > i {
+  font-size: 58px;
+  line-height: 1;
+  color: var(--amber);
+  flex-shrink: 0;
+}
+
+.home-weather-main { min-width: 0; }
+
+.home-weather-temp {
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.home-weather-label {
+  font-size: 12px;
+  color: var(--t-text);
+  margin-top: 2px;
+}
+
+.home-weather-cond {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+/* ── Custom device cards ── */
+.home-custom-body {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.custom-device-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition: background 0.12s;
+}
+
+.custom-device-row:hover { background: rgba(255, 255, 255, 0.04); }
+.custom-device-row[data-goto-view] { cursor: pointer; }
+
+.custom-device-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-device-value { font-size: 12px; color: var(--t-text-dim); }
+
+.custom-card-delete { margin-right: auto; color: var(--red); }
+
+/* Custom cards (e.g. LIGHTS): compact rows that track the card's size.
+   The card becomes a size container so row/toggle dimensions follow the
+   grid cell whenever the card is resized. */
+.home-custom-card .custom-device-row { padding: 3px 8px; gap: 8px; }
+.home-custom-card .custom-device-name { font-size: 11.5px; }
+.home-custom-card .area-lights-toggle {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+}
+
+@media (min-width: 1101px) {
+  .home-custom-card { container-type: size; }
+  .home-custom-card .custom-device-row {
+    padding: clamp(1px, 1.2cqh, 6px) 8px;
+  }
+  .home-custom-card .custom-device-name { font-size: clamp(10px, 4cqh, 14px); }
+  .home-custom-card .custom-device-value { font-size: clamp(9.5px, 3.6cqh, 13px); }
+  .home-custom-card .assign-device-icon { font-size: clamp(11px, 4.4cqh, 17px); }
+  .home-custom-card .area-lights-toggle {
+    width: clamp(16px, 6.5cqh, 32px);
+    height: clamp(16px, 6.5cqh, 32px);
+    font-size: clamp(10px, 4cqh, 19px);
+  }
+}
+
+/* ── Bluetooth audio card ── */
+.home-bt-body {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.bt-mac {
+  display: block;
+  font-size: 9.5px;
+  color: var(--t-text-dim2);
+  margin-top: 1px;
+}
+
+.bt-status {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--green);
+  white-space: nowrap;
+}
+
+.bt-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 4px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+/* Music card: placeholder until playback lands */
+.home-music-placeholder {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  text-align: center;
+  color: var(--t-text-dim);
+}
+
+.home-music-placeholder > .ti-music { font-size: 30px; color: var(--t-text-dim2); }
+
+.home-music-status { font-size: 13px; color: var(--t-text); }
+
+.home-music-placeholder small { font-size: 10.5px; color: var(--t-text-dim2); }
+
+.assign-device-row input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.home-card-grip {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 22px;
+  margin-left: -4px;
+  flex-shrink: 0;
+  color: var(--t-text-dim2);
+  font-size: 14px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.home-card-grip:hover { color: var(--t-text); }
+.home-card-grip:active { cursor: grabbing; }
+.home-card.resizing { user-select: none; }
+
+.home-card-resize {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--t-text-dim2);
+  font-size: 13px;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.home-card:hover .home-card-resize { opacity: 1; }
+.home-card-resize:hover { color: var(--accent); }
+
+.home-panel { padding: 14px 16px 16px; }
+
+.home-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.home-panel-head .panel-title { margin-bottom: 0; margin-right: auto; }
+
+.home-gear-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--t-card-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--t-text-dim);
+  font-size: 15px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.home-gear-btn:hover { color: var(--accent); border-color: var(--accent-border); }
+
+.home-sensor-picker[hidden] { display: none; }
+
+.home-sensor-picker {
+  margin: 10px 0 2px;
+  padding: 8px;
+  border: 1px solid var(--t-card-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.home-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.home-picker-row:hover { background: rgba(255, 255, 255, 0.05); }
+.home-picker-row input[type="checkbox"] { accent-color: var(--accent); flex-shrink: 0; }
+.home-picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-picker-temp { font-size: 11px; color: var(--t-text-dim); }
+
+.home-climate-body {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.home-fit-clip {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.home-fit {
+  transform-origin: top left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Dial-only climate summary — click through for the full thermostat. */
+.home-dial {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.home-dial:hover { background: rgba(255, 255, 255, 0.03); }
+.home-dial:focus-visible { outline: 1px solid var(--accent-border); }
+.home-dial .thermo-dial-wrap { touch-action: auto; }
+
+.home-dial-name { font-size: 12.5px; font-weight: 600; }
+.home-dial-sub { font-size: 11px; color: var(--muted); }
+
+.home-climate-body .thermo-card { width: 100%; }
+
+.home-temp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--t-card-border);
+  padding-top: 8px;
+}
+
+.home-temp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  border-radius: 7px;
+  font-size: 12.5px;
+}
+
+.home-temp-row:hover { background: rgba(255, 255, 255, 0.03); }
+.home-temp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--t-off-muted, rgba(255,255,255,0.18)); flex-shrink: 0; }
+.home-temp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-temp-value { font-size: 13px; }
+
+.home-camera-select {
+  max-width: 55%;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--t-text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.home-camera-select option { color: #1b1b1f; background: #f4f4f6; }
+
+.home-camera-body {
+  margin-top: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.home-camera-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--t-card-border);
+  cursor: pointer;
+}
+
+.home-camera-frame .camera-media,
+.home-camera-frame .camera-placeholder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.home-camera-frame .camera-placeholder {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-size: 12px;
+  color: var(--t-text-dim);
+}
+
+.home-camera-frame:hover { border-color: var(--border-hover); }
+
+.home-camera-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
+
+.home-areas {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.home-areas-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .area-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  align-content: start;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Denser typography as tiles shrink — toggled by layoutAreaGrid() */
+.area-grid.compact .area-card { padding: 6px 8px; gap: 3px; }
+.area-grid.compact .area-card-icon { width: 22px; height: 22px; font-size: 11px; border-radius: 7px; }
+.area-grid.compact .area-card-name { font-size: 11px; }
+.area-grid.compact .area-card-sub { font-size: 9px; }
+.area-grid.compact .area-chip { font-size: 9px; padding: 0 4px; gap: 2px; }
+.area-grid.compact .area-chip i { font-size: 9.5px; }
+.area-grid.compact .area-lights-toggle { width: 20px; height: 20px; font-size: 11px; }
+.area-grid.tiny .area-card-sub,
+.area-grid.tiny .area-card-chips,
+.area-grid.tiny .area-add-label { display: none; }
+.area-grid.tiny .area-card-add { min-height: 0; }
+
+/* In fitted (fixed-height) mode chips must not wrap into extra rows. */
+.area-grid.fitted .area-card-chips {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .area-card {
   position: relative;
   overflow: hidden;
-  padding: 20px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  min-height: 0;
+  padding: 9px 10px;
   border: 1px solid var(--t-card-border);
-  border-radius: var(--radius);
-  background: linear-gradient(160deg, var(--card-2) 0%, var(--card) 55%, var(--surface) 100%);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--card-2) 0%, var(--card) 60%, var(--surface) 100%);
   cursor: pointer;
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .area-card:hover,
 .area-card:focus-visible {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   border-color: var(--border-hover);
-  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
   outline: none;
+}
+
+.area-card.dragging { opacity: 0.45; }
+
+.area-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .area-card.lit {
@@ -3101,10 +3638,10 @@ aside {
 
 .area-card-glow {
   position: absolute;
-  top: -60px;
-  left: -60px;
-  width: 170px;
-  height: 170px;
+  top: -40px;
+  left: -40px;
+  width: 120px;
+  height: 120px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(var(--t-accent-rgb), 0.22) 0%, transparent 70%);
   opacity: 0;
@@ -3115,25 +3652,21 @@ aside {
 .area-card.lit .area-card-glow,
 .area-card:hover .area-card-glow { opacity: 1; }
 
-.area-card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
 .area-card-icon {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 13px;
-  font-size: 21px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  font-size: 14px;
+  flex-shrink: 0;
   color: var(--t-text-dim);
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.015));
   border: 1px solid var(--t-card-border);
   transition: color 0.2s, box-shadow 0.2s;
 }
+
+.area-card-copy { min-width: 0; }
 
 .area-card.lit .area-card-icon {
   color: var(--t-accent);
@@ -3145,8 +3678,9 @@ aside {
 .area-lights-toggle {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
   border-radius: 50%;
   border: 1px solid var(--t-card-border);
   background: rgba(255, 255, 255, 0.04);
@@ -3166,50 +3700,51 @@ aside {
 }
 
 .area-card-name {
-  font-size: 16px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .area-card-sub {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
-  margin-bottom: 12px;
 }
 
 .area-card-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  min-height: 22px;
+  gap: 4px;
+  min-height: 16px;
 }
 
 .area-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
+  gap: 3px;
+  padding: 1px 6px;
   border-radius: 999px;
   border: 1px solid var(--t-card-border);
   background: rgba(255, 255, 255, 0.03);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--t-text-dim);
 }
 
-.area-chip i { font-size: 12px; }
+.area-chip i { font-size: 11px; }
 .area-chip.lit  { color: var(--amber);  border-color: rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.08); }
 .area-chip.warm { color: var(--orange); border-color: rgba(251, 146, 60, 0.35); background: rgba(251, 146, 60, 0.08); }
 
 /* "New Area" dashed card */
 .area-card-add {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  min-height: 150px;
+  gap: 8px;
+  min-height: 64px;
   border: 1.5px dashed var(--border-hover);
   background: none;
   color: var(--muted);
@@ -3225,16 +3760,16 @@ aside {
 .area-add-plus {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   border: 1px solid currentColor;
-  font-size: 20px;
+  font-size: 13px;
   transition: transform 0.18s;
 }
 
 .area-card-add:hover .area-add-plus { transform: rotate(90deg) scale(1.08); }
-.area-add-label { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.area-add-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 
 /* ── Area detail ── */
 .area-detail-header { align-items: center; }
@@ -3450,8 +3985,13 @@ aside {
   text-overflow: ellipsis;
 }
 
+@media (max-width: 1100px) {
+  /* Grid placement doesn't fit small screens: stack cards in one column.
+     grid-column/grid-row inline styles are inert inside a flex container. */
+  .home-layout { display: flex; flex-direction: column; }
+}
+
 @media (max-width: 700px) {
-  .area-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .area-card { padding: 14px; }
+  .area-grid { grid-template-columns: 1fr; gap: 8px; }
   .area-icon-picker { grid-template-columns: repeat(6, 1fr); }
 }

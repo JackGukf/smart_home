@@ -6,20 +6,24 @@ INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
 APP_JS = PROJECT_ROOT / "src" / "python" / "web_static" / "app.js"
 
 
-def test_weather_details_live_in_header_and_dashboard_weather_card_is_removed() -> None:
+def test_weather_card_lives_in_home_view_with_forecast_dropdown() -> None:
     html = INDEX_HTML.read_text(encoding="utf-8")
     header = html[html.index("<header>"):html.index("</header>")]
+    home = html[html.index('data-view-panel="home"'):html.index('data-view-panel="cameras"')]
 
-    assert 'id="headerWeather"' in header
-    assert 'id="weatherTemp"' in header
-    assert 'id="weatherCondition"' in header
-    assert 'id="weatherFeels"' in header
-    assert 'id="weatherHumidity"' in header
-    assert 'id="weatherWind"' in header
-    assert 'id="weatherPressure"' in header
-    assert 'id="weatherUv"' in header
-    assert 'id="weatherGrid"' not in html
-    assert '<i class="ti ti-cloud"></i> Weather' not in html
+    # Weather moved out of the header into a Home view card.
+    assert 'id="headerWeather"' not in header
+    assert 'id="weatherTemp"' not in header
+    assert 'id="homeWeatherPanel"' in home
+    assert 'id="weatherTemp"' in home
+    assert 'id="weatherLocation"' in home
+    assert "Outdoor Temperature" in home
+
+    # Forecast dropdown still exists and opens from the card.
+    assert 'id="headerWeather"' in home
+    assert 'id="weatherDropdown"' in html
+    assert 'id="weatherFeels"' in html
+    assert 'id="weatherForecast"' in html
 
 
 def test_theme_view_under_system_owns_palette_picker() -> None:

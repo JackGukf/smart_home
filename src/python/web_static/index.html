@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build11">
+  <link rel="stylesheet" href="/static/styles.css?v=build20">
 </head>
 <body>
 
@@ -21,13 +21,6 @@
     </div>
   </div>
   <div class="header-right">
-    <button class="header-weather" id="headerWeather" type="button" aria-expanded="false" aria-haspopup="true" title="Click for weather details">
-      <i class="ti ti-cloud" id="weatherIcon" aria-hidden="true"></i>
-      <div class="header-weather-text">
-        <span id="weatherTemp">--°C</span>
-        <small id="weatherCondition">Weather</small>
-      </div>
-    </button>
     <div class="time-block">
       <div class="time" id="clock">--:--:--</div>
       <div class="date" id="dateDisplay">Loading…</div>
@@ -48,12 +41,12 @@
   <aside>
     <div class="sidebar-section">Views</div>
     <ul class="room-list">
-      <li class="room-item" data-view="home">
+      <li class="room-item active" data-view="home">
         <span class="room-icon"><i class="ti ti-home-2"></i></span>
         Home
         <span class="room-badge" id="areaCount">–</span>
       </li>
-      <li class="room-item active" data-view="cameras">
+      <li class="room-item" data-view="cameras">
         <span class="room-icon"><i class="ti ti-video"></i></span>
         Cameras
         <span class="room-badge" id="cameraTabCount">–</span>
@@ -101,19 +94,45 @@
         <span class="room-icon"><i class="ti ti-antenna"></i></span>
         Add Matter
       </li>
+      <li class="room-item" id="btScanNav" title="Scan and connect Bluetooth speakers">
+        <span class="room-icon"><i class="ti ti-bluetooth"></i></span>
+        Bluetooth
+      </li>
     </ul>
 
     <div class="sidebar-section">System</div>
     <ul class="room-list">
-      <li class="room-item" data-view="theme">
+      <li class="room-item" id="systemSettingsToggle" title="Show theme and startup settings">
+        <span class="room-icon"><i class="ti ti-settings"></i></span>
+        Settings
+        <i class="ti ti-chevron-right settings-chevron" aria-hidden="true"></i>
+      </li>
+      <li class="room-item system-settings-item" data-view="theme" hidden>
         <span class="room-icon"><i class="ti ti-palette"></i></span>
         Theme
+      </li>
+      <li class="room-item system-settings-item startup-view-row" hidden>
+        <span class="room-icon"><i class="ti ti-pin"></i></span>
+        Startup
+        <select id="defaultViewSelect" class="startup-view-select" aria-label="View shown after refresh" title="View shown when the dashboard loads"></select>
       </li>
       <li class="room-item" id="refreshButton">
         <span class="room-icon"><i class="ti ti-refresh"></i></span>
         Refresh
       </li>
     </ul>
+
+    <div class="sidebar-section sidebar-section-toggle" id="activityToggle" role="button" tabindex="0" title="Show recent activity">
+      Recent Activity
+      <i class="ti ti-info-circle" aria-hidden="true"></i>
+    </div>
+    <div class="activity-list sidebar-activity" id="activityLog" hidden>
+      <div class="activity-item">
+        <div class="activity-dot"></div>
+        <div class="activity-text">Dashboard started</div>
+        <div class="activity-time">just now</div>
+      </div>
+    </div>
 
     <div class="sidebar-footer">
       <span id="apiStatus">Connecting…</span>
@@ -233,7 +252,7 @@
     </div>
 
     <!-- ── HOME (AREAS) VIEW ── -->
-    <div class="view-panel" data-view-panel="home">
+    <div class="view-panel active" data-view-panel="home">
 
       <!-- Areas overview -->
       <div id="homeOverview">
@@ -241,13 +260,88 @@
           <span class="section-title">Home</span>
           <div class="section-actions">
             <span class="section-meta" id="homeMeta">Devices by area</span>
+            <button class="area-add-btn" id="addCustomCardButton" type="button" title="Create a new card and pick the devices it shows">
+              <i class="ti ti-layout-grid-add"></i> New Card
+            </button>
             <button class="area-add-btn" id="addAreaButton" type="button" title="Create a new area">
               <i class="ti ti-plus"></i> New Area
             </button>
           </div>
         </div>
-        <div class="area-grid" id="areaGrid">
-          <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+
+        <div class="home-layout" id="homeCardGrid">
+
+          <!-- Weather display -->
+          <div class="panel home-panel home-card home-weather-card" id="homeWeatherPanel" data-home-card="weather">
+            <div class="home-panel-head">
+              <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
+              <span class="panel-title"><i class="ti ti-cloud"></i> Weather</span>
+              <span class="home-weather-loc"><i class="ti ti-map-pin-filled"></i> <span id="weatherLocation">—</span></span>
+            </div>
+            <button class="home-weather-body" id="headerWeather" type="button" aria-expanded="false" aria-haspopup="true" title="Click for forecast">
+              <i class="ti ti-cloud home-weather-icon" id="weatherIcon" aria-hidden="true"></i>
+              <div class="home-weather-main">
+                <div class="home-weather-temp mono" id="weatherTemp">--°C</div>
+                <div class="home-weather-label">Outdoor Temperature</div>
+                <div class="home-weather-cond" id="weatherCondition">Weather</div>
+              </div>
+            </button>
+            <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
+          </div>
+
+          <!-- Climate display -->
+          <div class="panel home-panel home-card" id="homeClimatePanel" data-home-card="climate">
+            <div class="home-panel-head">
+              <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
+              <span class="panel-title"><i class="ti ti-temperature"></i> Climate</span>
+              <button class="home-gear-btn" id="homeSensorGear" type="button" title="Choose temperature sensors to display">
+                <i class="ti ti-adjustments-horizontal"></i>
+              </button>
+            </div>
+            <div class="home-sensor-picker" id="homeSensorPicker" hidden></div>
+            <div class="home-climate-body" id="homeClimateBody">
+              <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+            </div>
+            <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
+          </div>
+
+          <!-- Camera display -->
+          <div class="panel home-panel home-card" id="homeCameraPanel" data-home-card="camera">
+            <div class="home-panel-head">
+              <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
+              <span class="panel-title"><i class="ti ti-video"></i> Camera</span>
+              <select id="homeCameraSelect" class="home-camera-select" aria-label="Camera to display"></select>
+            </div>
+            <div class="home-camera-body" id="homeCameraBody">
+              <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+            </div>
+            <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
+          </div>
+
+          <!-- Music (Bluetooth audio) -->
+          <div class="panel home-panel home-card" id="homeBluetoothPanel" data-home-card="bluetooth">
+            <div class="home-panel-head">
+              <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
+              <span class="panel-title"><i class="ti ti-music"></i> Music</span>
+            </div>
+            <div class="home-bt-body" id="btDeviceList">
+              <div class="home-empty">Checking Bluetooth…</div>
+            </div>
+            <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
+          </div>
+
+          <!-- Areas rail -->
+          <div class="home-areas home-card" data-home-card="areas">
+            <div class="home-areas-title">
+              <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
+              <i class="ti ti-layout-grid"></i> Areas
+            </div>
+            <div class="area-grid" id="areaGrid">
+              <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+            </div>
+            <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
+          </div>
+
         </div>
       </div>
 
@@ -277,7 +371,7 @@
     </div>
 
     <!-- ── CAMERAS VIEW ── -->
-    <div class="view-panel active" data-view-panel="cameras">
+    <div class="view-panel" data-view-panel="cameras">
       <div class="section-header">
         <span class="section-title">Cameras</span>
         <span class="section-meta">Live feeds</span>
@@ -368,20 +462,6 @@
           Add Matter Device
         </button>
         <div id="matterDeviceList" class="discovery-device-list"></div>
-      </div>
-    </div>
-
-    <!-- ── BOTTOM ROW ── -->
-    <div class="bottom-row">
-      <div class="panel">
-        <div class="panel-title"><i class="ti ti-list-details"></i> Recent Activity</div>
-        <div class="activity-list" id="activityLog">
-          <div class="activity-item">
-            <div class="activity-dot"></div>
-            <div class="activity-text">Dashboard started</div>
-            <div class="activity-time">just now</div>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -509,6 +589,54 @@
   </div>
 </div>
 
+<!-- ── CUSTOM HOME CARD MODAL ── -->
+<div class="modal-overlay" id="customCardModal" hidden aria-modal="true" role="dialog" aria-labelledby="customCardModalTitle">
+  <div class="modal-card assign-modal-card">
+    <div class="modal-header">
+      <span class="modal-title" id="customCardModalTitle">New Card</span>
+      <button class="modal-close" id="closeCustomCardModal" type="button" aria-label="Close">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+    <label class="modal-label">
+      Name
+      <input class="modal-input" id="customCardNameInput" type="text" placeholder="Movie Night" maxlength="40" autocomplete="off">
+    </label>
+    <div class="modal-label">
+      Devices
+      <div class="assign-device-list" id="customCardDeviceList"></div>
+    </div>
+    <div class="modal-error" id="customCardError" hidden><span id="customCardErrorText"></span></div>
+    <div class="modal-actions">
+      <button class="btn-secondary custom-card-delete" id="customCardDelete" type="button" hidden>
+        <i class="ti ti-trash"></i> Delete Card
+      </button>
+      <button class="btn-secondary" id="customCardCancel" type="button">Cancel</button>
+      <button class="btn-primary" id="customCardSave" type="button">Save Card</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── BLUETOOTH SCAN MODAL ── -->
+<div class="modal-overlay" id="btModal" hidden aria-modal="true" role="dialog" aria-labelledby="btModalTitle">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title" id="btModalTitle">Bluetooth Devices</span>
+      <button class="modal-close" id="closeBtModal" type="button" aria-label="Close">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+    <div class="bt-modal-list" id="btModalList">
+      <div class="home-empty">Checking Bluetooth…</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-primary" id="btModalScan" type="button" title="Scan for nearby Bluetooth devices (~8s)">
+        <i class="ti ti-radar-2"></i> Scan
+      </button>
+    </div>
+  </div>
+</div>
+
 <div class="weather-backdrop" id="weatherBackdrop"></div>
 <div class="weather-dropdown" id="weatherDropdown" aria-hidden="true">
   <div class="weather-dropdown-current">
@@ -536,6 +664,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build11"></script>
+<script src="/static/app.js?v=build20"></script>
 </body>
 </html>

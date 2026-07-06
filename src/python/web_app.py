@@ -434,6 +434,26 @@ def create_app(
     async def home_assistant_entities() -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_payload, app.state.config_path)
 
+    @app.get("/api/bluetooth/devices")
+    async def bluetooth_devices() -> dict[str, Any]:
+        return await asyncio.to_thread(_bluetooth_devices_payload)
+
+    @app.post("/api/bluetooth/scan")
+    async def bluetooth_scan() -> dict[str, Any]:
+        return await asyncio.to_thread(_bluetooth_scan_payload)
+
+    @app.post("/api/bluetooth/devices/{mac}/connect")
+    async def bluetooth_connect(mac: str) -> dict[str, Any]:
+        if not _valid_bt_mac(mac):
+            raise HTTPException(status_code=400, detail="Invalid Bluetooth address")
+        return await asyncio.to_thread(_bluetooth_connect, mac)
+
+    @app.post("/api/bluetooth/devices/{mac}/disconnect")
+    async def bluetooth_disconnect(mac: str) -> dict[str, Any]:
+        if not _valid_bt_mac(mac):
+            raise HTTPException(status_code=400, detail="Invalid Bluetooth address")
+        return await asyncio.to_thread(_bluetooth_disconnect, mac)
+
     @app.post("/api/home-assistant/entities/{entity_id}/commands/{command}")
     async def home_assistant_command(entity_id: str, command: str) -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_service_command, app.state.config_path, entity_id, command)
@@ -2855,6 +2875,123 @@ def _room_from_name(name: str) -> str:
     if "bedroom" in first_word.lower():
         return first_word.title()
     return first_word.title()
+
+
+def _valid_bt_mac(mac: str) -> bool:
+    parts = mac.split(":")
+    return len(parts) == 6 and all(
+        len(p) == 2 and all(c in "0123456789abcdefABCDEF" for c in p) for p in parts
+    )
+
+
+def _bluetoothctl(args: list[str], timeout: int) -> subprocess.CompletedProcess | None:
+    """Run a bluetoothctl command; None when BlueZ is unavailable or times out."""
+    try:
+        return subprocess.run(
+            ["bluetoothctl", *args], capture_output=True, text=True, timeout=timeout
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+_BT_UNAVAILABLE = {
+    "status": "unavailable",
+    "message": "Bluetooth is not available on this host",
+    "devices": [],
+}
+
+
+_BT_ICON_LABELS = {
+    "audio-card": "Speaker",
+    "audio-headset": "Headset",
+    "audio-headphones": "Headphones",
+    "input-keyboard": "Keyboard",
+    "input-mouse": "Mouse",
+    "input-gaming": "Game controller",
+    "phone": "Phone",
+    "computer": "Computer",
+    "video-display": "TV / Display",
+    "camera-photo": "Camera",
+    "watch": "Watch",
+    "printer": "Printer",
+}
+
+
+def _bluetooth_devices_payload() -> dict[str, Any]:
+    listing = _bluetoothctl(["devices"], timeout=10)
+    if listing is None:
+        return dict(_BT_UNAVAILABLE)
+    devices = []
+    for line in listing.stdout.splitlines():
+        parts = line.strip().split(" ", 2)
+        if len(parts) < 3 or parts[0] != "Device" or not _valid_bt_mac(parts[1]):
+            continue
+        mac, listing_name = parts[1], parts[2]
+        info = _bluetoothctl(["info", mac], timeout=10)
+        text = info.stdout if info else ""
+        fields = {}
+        for info_line in text.splitlines():
+            stripped = info_line.strip()
+            for key in ("Name:", "Alias:", "Icon:"):
+                if stripped.startswith(key):
+                    fields[key[:-1].lower()] = stripped.split(":", 1)[1].strip()
+        name = fields.get("name") or fields.get("alias") or listing_name
+        paired = "Paired: yes" in text
+        connected = "Connected: yes" in text
+        icon = fields.get("icon", "")
+        type_label = _BT_ICON_LABELS.get(icon, "")
+        # BlueZ shows the dashed MAC as the name until it is resolved; those
+        # are almost always anonymous BLE advertisers — hide them unless we
+        # know something about them (paired, connected, or a device class).
+        unresolved = name.replace("-", ":").upper() == mac.upper()
+        if unresolved and not (paired or connected or type_label):
+            continue
+        if unresolved:
+            name = f"Unknown {type_label.lower()}" if type_label else "Unknown device"
+        devices.append(
+            {
+                "mac": mac,
+                "name": name,
+                "type": type_label,
+                "paired": paired,
+                "connected": connected,
+                "icon": icon,
+            }
+        )
+    devices.sort(key=lambda d: (not d["connected"], not d["paired"], d["name"].lower()))
+    return {"status": "ok", "devices": devices}
+
+
+def _bluetooth_scan_payload() -> dict[str, Any]:
+    _bluetoothctl(["power", "on"], timeout=10)  # idempotent; scans need a powered adapter
+    scan = _bluetoothctl(["--timeout", "8", "scan", "on"], timeout=25)
+    if scan is None:
+        return dict(_BT_UNAVAILABLE)
+    return _bluetooth_devices_payload()
+
+
+def _bluetooth_connect(mac: str) -> dict[str, Any]:
+    if _bluetoothctl(["show"], timeout=10) is None:
+        return dict(_BT_UNAVAILABLE)
+    _bluetoothctl(["pair", mac], timeout=30)  # no-op if already paired
+    _bluetoothctl(["trust", mac], timeout=10)
+    result = _bluetoothctl(["connect", mac], timeout=30)
+    output = result.stdout if result else ""
+    if "Connection successful" in output or "already connected" in output.lower():
+        return {"status": "ok", "message": f"Connected to {mac}"}
+    detail = output.strip().splitlines()[-1] if output.strip() else "bluetoothctl connect failed"
+    return {"status": "error", "message": detail}
+
+
+def _bluetooth_disconnect(mac: str) -> dict[str, Any]:
+    result = _bluetoothctl(["disconnect", mac], timeout=15)
+    if result is None:
+        return dict(_BT_UNAVAILABLE)
+    output = result.stdout
+    if "Successful" in output or "not connected" in output.lower():
+        return {"status": "ok", "message": f"Disconnected {mac}"}
+    detail = output.strip().splitlines()[-1] if output.strip() else "bluetoothctl disconnect failed"
+    return {"status": "error", "message": detail}
 
 
 def _bridge_allowlist() -> set[str] | None:
