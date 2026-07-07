@@ -2806,6 +2806,7 @@ function renderHomeView() {
   layoutAreaGrid();
 
   renderHomeClimate();
+  renderHomeTempSensors();
   renderHomeCamera();
   renderCustomHomeCards();
   const picker = document.querySelector("#homeSensorPicker");
@@ -2949,30 +2950,55 @@ function renderHomeClimate() {
         <div class="home-dial-sub">${escapeHtml(String(th.hvac_mode || "off").toUpperCase())}${th.humidity != null ? ` · ${escapeHtml(String(th.humidity))}% humidity` : ""}</div>
       </div>`;
   }).join("");
-  const sources = homeTempSources();
-  const chosen = selectedTempSensorIds(sources);
-  const rows = sources.filter((s) => chosen.has(s.id)).map((s) => `
-    <div class="home-temp-row">
-      ${s.occupied != null ? `<span class="thermo-occ-dot${s.occupied ? " occupied" : ""}"></span>` : `<span class="home-temp-dot"></span>`}
-      <span class="home-temp-name">${escapeHtml(s.name)}</span>
-      <span class="home-temp-value mono" style="color:${tempRangeColor(s.temp)}">${s.temp}${s.unit}</span>
-    </div>`).join("");
 
-  const content =
-    (thermoCards || `<div class="home-empty">No thermostat found</div>`) +
-    (sources.length
-      ? (rows ? `<div class="home-temp-list">${rows}</div>` : `<div class="home-empty">No sensors selected — use the filter above</div>`)
-      : "");
+  const content = thermoCards || `<div class="home-empty">No thermostat found</div>`;
   body.innerHTML = `<div class="home-fit-clip"><div class="home-fit">${content}</div></div>`;
   fitClimateBody();
 }
 
-/* Scale the Climate card contents (dial + sensor list) to fill the card:
-   grow with the width, and fit entirely inside the card height. */
+/* Temperature sensors card: ecobee remote sensors + Tuya/HA readings as
+   thermometer tiles — drag to rearrange, sized by the card (CSS container
+   queries handle the scaling). */
+const HOME_TEMP_ORDER_KEY = "home_temp_sensor_order";
+
+function orderedTempSources(sources) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HOME_TEMP_ORDER_KEY) || "[]");
+    if (Array.isArray(saved) && saved.length) {
+      const pos = new Map(saved.map((id, index) => [id, index]));
+      return [...sources].sort(
+        (a, b) => (pos.has(a.id) ? pos.get(a.id) : Infinity) - (pos.has(b.id) ? pos.get(b.id) : Infinity)
+      );
+    }
+  } catch {}
+  return sources;
+}
+
+function renderHomeTempSensors() {
+  const body = document.querySelector("#homeTempSensorsBody");
+  if (!body) return;
+
+  const sources = homeTempSources();
+  const chosen = selectedTempSensorIds(sources);
+  const tiles = orderedTempSources(sources.filter((s) => chosen.has(s.id))).map((s) => `
+    <div class="temp-sensor-tile" draggable="true" data-temp-tile-id="${escapeHtml(s.id)}"
+         title="${escapeHtml(s.name)} — drag to rearrange">
+      ${s.occupied != null ? `<span class="thermo-occ-dot${s.occupied ? " occupied" : ""}" title="${s.occupied ? "Occupied" : "Unoccupied"}"></span>` : ""}
+      <span class="temp-tile-icon" style="color:${tempRangeColor(s.temp)}"><i class="ti ti-temperature" aria-hidden="true"></i></span>
+      <span class="temp-tile-value mono" style="color:${tempRangeColor(s.temp)}">${s.temp}${s.unit}</span>
+      <span class="temp-tile-name">${escapeHtml(s.name)}</span>
+    </div>`).join("");
+
+  body.innerHTML = sources.length
+    ? (tiles ? `<div class="temp-tile-grid">${tiles}</div>` : `<div class="home-empty">No sensors selected — use the filter above</div>`)
+    : `<div class="home-empty">No temperature sensors found</div>`;
+}
+
+/* Scale a card's fit-wrapped contents to fill it: grow with the width, and
+   fit entirely inside the card height. */
 const CLIMATE_DESIGN_W = 260;
 
-function fitClimateBody() {
-  const body = document.querySelector("#homeClimateBody");
+function fitHomeFitBody(body) {
   const clip = body?.querySelector(".home-fit-clip");
   const inner = clip?.querySelector(".home-fit");
   if (!body || !clip || !inner) return;
@@ -2990,7 +3016,7 @@ function fitClimateBody() {
 
   let scale = availW / CLIMATE_DESIGN_W;
   if (fixed) scale = Math.min(scale, availH / naturalH);
-  if (!inner.querySelector(".thermo-dial-wrap")) scale = Math.min(scale, 1); // don't blow up empty states
+  if (!inner.querySelector(".thermo-dial-wrap")) scale = Math.min(scale, 1.4); // don't blow up empty states
   scale = Math.max(0.3, Math.min(scale, 2.2));
 
   inner.style.transform = `scale(${scale})`;
@@ -2998,7 +3024,12 @@ function fitClimateBody() {
   if (!fixed) clip.style.height = `${Math.ceil(naturalH * scale)}px`;
 }
 
-/* Re-fit areas and climate live while their cards are resized. */
+function fitClimateBody() {
+  fitHomeFitBody(document.querySelector("#homeClimateBody"));
+}
+
+/* Re-fit areas and climate live while their cards are resized. The sensors
+   card scales through CSS container queries instead. */
 (function initHomeFitObservers() {
   if (typeof ResizeObserver === "undefined") return;
   const observer = new ResizeObserver(() => {
@@ -3182,20 +3213,26 @@ function saveCustomCards(cards) {
   try { localStorage.setItem(HOME_CUSTOM_CARDS_KEY, JSON.stringify(cards)); } catch {}
 }
 
+/* Lights and plugs render as square tiles inside custom cards: drag the
+   tile to rearrange, hit its power button to toggle. */
+function customCardTileHtml(item) {
+  const icon = AREA_KIND_ICONS[item.kind] || "ti-cpu";
+  const on = item.data.is_on === true;
+  return `
+    <div class="custom-light-tile ${on ? "on" : ""}" draggable="true"
+      data-tile-key="${escapeHtml(item.key)}" title="Drag to rearrange">
+      <button class="area-lights-toggle tile-power ${on ? "on" : ""}" type="button"
+        data-custom-toggle="${escapeHtml(String(item.data.host))}"
+        title="Turn ${on ? "off" : "on"} ${escapeHtml(item.name)}">
+        <i class="ti ti-power"></i>
+      </button>
+      <i class="ti ${icon} custom-tile-icon" aria-hidden="true"></i>
+      <span class="custom-tile-name">${escapeHtml(item.name)}</span>
+    </div>`;
+}
+
 function customCardRowHtml(item) {
   const icon = AREA_KIND_ICONS[item.kind] || "ti-cpu";
-  if (item.kind === "light" || item.kind === "plug") {
-    const on = item.data.is_on === true;
-    return `
-      <div class="custom-device-row">
-        <span class="assign-device-icon"><i class="ti ${icon}"></i></span>
-        <span class="custom-device-name">${escapeHtml(item.name)}</span>
-        <button class="area-lights-toggle ${on ? "on" : ""}" data-custom-toggle="${escapeHtml(String(item.data.host))}"
-          type="button" title="Turn ${on ? "off" : "on"} ${escapeHtml(item.name)}">
-          <i class="ti ti-power"></i>
-        </button>
-      </div>`;
-  }
   let value = "";
   let goto = "tuya";
   if (item.kind === "thermostat") {
@@ -3249,13 +3286,20 @@ function renderCustomHomeCards() {
       grid.appendChild(el);
     }
     el.querySelector("[data-custom-name]").textContent = card.name;
-    const rows = (card.devices || [])
+    const items = (card.devices || [])
       .map((key) => inventoryByKey.get(key))
-      .filter(Boolean)
+      .filter(Boolean);
+    const tiles = items
+      .filter((item) => item.kind === "light" || item.kind === "plug")
+      .map(customCardTileHtml)
+      .join("");
+    const rows = items
+      .filter((item) => item.kind !== "light" && item.kind !== "plug")
       .map(customCardRowHtml)
       .join("");
     el.querySelector("[data-custom-body]").innerHTML =
-      rows || `<div class="home-empty">No devices linked — click the pencil to pick some.</div>`;
+      (tiles ? `<div class="custom-tile-grid">${tiles}</div>` : "") + rows ||
+      `<div class="home-empty">No devices linked — click the pencil to pick some.</div>`;
   }
   applyHomeCardLayout();
 }
@@ -3349,8 +3393,10 @@ document.addEventListener("click", async (event) => {
   event.preventDefault();
   event.stopPropagation();
   const host = String(btn.dataset.customToggle);
+  const tile = btn.closest(".custom-light-tile");
   const command = btn.classList.contains("on") ? "off" : "on";
   btn.classList.toggle("on");
+  tile?.classList.toggle("on");
   btn.disabled = true;
   try {
     if (host.startsWith("matter:")) {
@@ -3363,6 +3409,7 @@ document.addEventListener("click", async (event) => {
   } catch (error) {
     console.error(error);
     btn.classList.toggle("on");
+    tile?.classList.toggle("on");
   } finally {
     btn.disabled = false;
   }
@@ -3844,7 +3891,7 @@ document.addEventListener("change", (event) => {
   if (checkbox.checked) chosen.add(checkbox.dataset.tempSensorId);
   else chosen.delete(checkbox.dataset.tempSensorId);
   try { localStorage.setItem(HOME_TEMP_SENSORS_KEY, JSON.stringify([...chosen])); } catch {}
-  renderHomeClimate();
+  renderHomeTempSensors();
 });
 
 document.addEventListener("change", async (event) => {
@@ -4374,6 +4421,76 @@ document.addEventListener("drop", (event) => {
   event.preventDefault();
   saveCameraOrderFromDom();
   logActivity("Camera order saved");
+});
+
+/* ── Home card tile drag ordering (custom-card lights + temp sensors) ──
+   Both grids flow left-to-right, so insertion position follows the pointer's
+   horizontal side of the hovered tile. */
+const TILE_DRAG_SELECTOR = ".custom-light-tile[data-tile-key], .temp-sensor-tile[data-temp-tile-id]";
+
+function saveCustomTileOrderFromDom(cardEl) {
+  const id = cardEl?.dataset.homeCard?.slice("custom:".length);
+  if (!id) return;
+  const cards = loadCustomCards();
+  const card = cards.find((c) => c.id === id);
+  if (!card) return;
+  const tileKeys = [...cardEl.querySelectorAll(".custom-light-tile[data-tile-key]")]
+    .map((tile) => tile.dataset.tileKey);
+  const rows = (card.devices || []).filter((key) => !tileKeys.includes(key));
+  card.devices = [...tileKeys, ...rows];
+  saveCustomCards(cards);
+}
+
+function saveTempTileOrderFromDom() {
+  const ids = [...document.querySelectorAll("#homeTempSensorsBody .temp-sensor-tile")]
+    .map((tile) => tile.dataset.tempTileId);
+  try { localStorage.setItem(HOME_TEMP_ORDER_KEY, JSON.stringify(ids)); } catch {}
+}
+
+function persistTileOrder(tile) {
+  if (tile.matches(".custom-light-tile")) {
+    saveCustomTileOrderFromDom(tile.closest(".home-custom-card"));
+    logActivity("Card switches rearranged");
+  } else {
+    saveTempTileOrderFromDom();
+    logActivity("Temperature sensors rearranged");
+  }
+}
+
+document.addEventListener("dragstart", (event) => {
+  const tile = event.target.closest?.(TILE_DRAG_SELECTOR);
+  if (!tile) return;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", tile.dataset.tileKey || tile.dataset.tempTileId || "");
+  tile.classList.add("dragging");
+});
+
+document.addEventListener("dragend", (event) => {
+  const tile = event.target.closest?.(TILE_DRAG_SELECTOR);
+  if (!tile) return;
+  tile.classList.remove("dragging");
+  persistTileOrder(tile);
+});
+
+document.addEventListener("dragover", (event) => {
+  const target = event.target.closest?.(TILE_DRAG_SELECTOR);
+  const grid = target?.closest(".custom-tile-grid, .temp-tile-grid");
+  // querySelector scoped to the grid keeps reordering within one card.
+  const dragging = grid?.querySelector(".dragging");
+  if (!target || !grid || !dragging || target === dragging) return;
+  event.preventDefault();
+  const rect = target.getBoundingClientRect();
+  const insertAfter = event.clientX > rect.left + rect.width / 2;
+  grid.insertBefore(dragging, insertAfter ? target.nextSibling : target);
+});
+
+document.addEventListener("drop", (event) => {
+  const target = event.target.closest?.(TILE_DRAG_SELECTOR);
+  const grid = target?.closest(".custom-tile-grid, .temp-tile-grid");
+  const dragging = grid?.querySelector(".dragging");
+  if (!target || !grid || !dragging) return;
+  event.preventDefault();
+  persistTileOrder(dragging);
 });
 /* Palette picker */
 document.addEventListener("click", (event) => {
