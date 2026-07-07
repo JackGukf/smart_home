@@ -5,7 +5,6 @@
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/ConcreteAttributePath.h>
-#include <lib/support/Span.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/PlatformManager.h>
 
@@ -36,7 +35,7 @@ constexpr std::array<LightSpec, 4> kLights = {{
     { 1, "kasa:192.168.0.110", "Kitchen light switch" },
     { 2, "kasa:192.168.0.143", "Master bedroom light switch" },
     { 3, "kasa:192.168.0.61", "Family room light switch" },
-    { 4, "kasa:192.168.0.73", "Living room light switch" },
+    { 4, "kasa:192.168.0.73", "Living room light switch 2" },
 }};
 constexpr int kPollSeconds = 5;
 
@@ -204,12 +203,6 @@ void ApplicationInit()
 {
     for (size_t i = 0; i < kLights.size(); ++i)
     {
-        auto label    = CharSpan::fromCharString(kLights[i].name);
-        auto uniqueId = CharSpan::fromCharString(kLights[i].deviceId);
-        BridgedDeviceBasicInformation::Attributes::NodeLabel::Set(kLights[i].endpoint, label);
-        BridgedDeviceBasicInformation::Attributes::ProductName::Set(kLights[i].endpoint, label);
-        BridgedDeviceBasicInformation::Attributes::UniqueID::Set(kLights[i].endpoint, uniqueId);
-        BridgedDeviceBasicInformation::Attributes::Reachable::Set(kLights[i].endpoint, true);
         gSuppressNextOnOffCommand[i].store(false);
         gLastPublishedOnOff[i].store(-1);
         gLastPolledOnOff[i].store(-1);

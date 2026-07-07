@@ -79,6 +79,12 @@ def mark_command_pending(device_id: str) -> None:
     _pending_until[device_id] = time.monotonic() + _COMMAND_PENDING_TTL_SECONDS
 
 
+def cached_state_for(device_id: str) -> dict[str, Any] | None:
+    """Return a shallow copy of the latest cached state for a device."""
+    state = _state_cache.get(device_id)
+    return dict(state) if state is not None else None
+
+
 def update_state_cache(device_id: str, state: dict[str, Any], *, authoritative: bool = False) -> None:
     """Update the cached state for a device.
 

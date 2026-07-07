@@ -67,6 +67,7 @@ public:
 
     const std::string& GetDeviceId()  const { return device_id_; }
     const std::string& GetName()      const { return name_; }
+    const std::string& GetUniqueId()  const { return unique_id_; }
     chip::EndpointId   GetEndpointId() const { return endpoint_id_; }
     MatterDeviceType   GetType()       const { return spec_.type; }
     int8_t             GetLastOnValue() const { return last_on_value_; }
@@ -80,6 +81,7 @@ public:
 private:
     std::string      device_id_;
     std::string      name_;
+    std::string      unique_id_;
     uint8_t          dynamic_index_;
     chip::EndpointId endpoint_id_;
     MatterDeviceSpec spec_;

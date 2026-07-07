@@ -46,7 +46,8 @@ std::string SyncClient::DoGet(const std::string& path) {
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 500L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 2000L);
 
     const CURLcode res = curl_easy_perform(curl);
     long http_code = 0;
@@ -76,7 +77,8 @@ std::string SyncClient::DoPost(const std::string& path, const std::string& body)
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.h);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 500L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 2000L);
 
     const CURLcode res = curl_easy_perform(curl);
     long http_code = 0;

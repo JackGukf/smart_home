@@ -10,7 +10,9 @@
 #include <AppMain.h>
 #include <app-common/zap-generated/cluster-objects.h>
 #include <app/CommandHandler.h>
+#include <app/CommandHandlerInterface.h>
 #include <app/ConcreteCommandPath.h>
+#include <app/InteractionModelEngine.h>
 #include <app/reporting/reporting.h>
 #include <app/server/Server.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
@@ -18,6 +20,7 @@
 #include <lib/support/ZclString.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/Linux/NetworkCommissioningDriver.h>
+#include <system/SystemConfig.h>
 
 // Bridge-specific headers must come after SDK headers so chip:: types are resolved
 #include "BridgeDevice.h"
@@ -43,6 +46,11 @@ using namespace chip::DeviceLayer;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+static_assert(CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE == 0,
+              "Matter bridge must use heap packet buffers for Apple Home wildcard subscriptions");
+static_assert(CHIP_SYSTEM_CONFIG_PACKETBUFFER_CAPACITY_MAX >= 9050,
+              "Matter bridge packet buffer capacity must fit Apple Home wildcard subscription reports");
+
 static constexpr uint16_t kDevicePollIntervalSeconds   = 10;
 static constexpr uint16_t kDeviceRescanIntervalSeconds = 60;
 // Endpoint 0 = root node, endpoint 1 = aggregator/bridge.
@@ -50,7 +58,7 @@ static constexpr uint16_t kDeviceRescanIntervalSeconds = 60;
 // LevelControl) — starting at 3 avoids that LevelControl data leaking into our
 // OnOffLight devices and confusing Apple Home into treating them as DimmableLight.
 static constexpr EndpointId kDynamicEndpointStart = 3;
-static constexpr uint8_t    kMaxDynamicDevices    = 50;
+static constexpr uint8_t    kMaxDynamicDevices    = 4;
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -113,6 +121,9 @@ bool emberAfAttributeWriteAccessCallback(EndpointId, ClusterId, AttributeId) {
     return true;
 }
 
+using IMStatus = chip::Protocols::InteractionModel::Status;
+using namespace chip::app::Clusters;
+
 // ── OnOff command dispatch ────────────────────────────────────────────────────
 // We do NOT define emberAfOnOffCluster{On,Off,Toggle}CommandCallback here.
 // The CHIP SDK provides weak no-op defaults (returning false) so the ZCL
@@ -161,6 +172,80 @@ static void HandleOnOffCommand(EndpointId endpoint, bool new_on) {
     }).detach();
 }
 
+class DynamicOnOffCommandHandler : public CommandHandlerInterface
+{
+public:
+    DynamicOnOffCommandHandler() : CommandHandlerInterface(Optional<EndpointId>::Missing(), OnOff::Id) {}
+
+    void InvokeCommand(HandlerContext & ctx) override
+    {
+        const EndpointId endpoint = ctx.mRequestPath.mEndpointId;
+        BridgeDevice* dev = BridgeDeviceLookup(endpoint);
+        if (!dev)
+        {
+            ctx.mCommandHandler.AddStatus(ctx.mRequestPath, IMStatus::UnsupportedEndpoint);
+            ctx.SetCommandHandled();
+            return;
+        }
+
+        switch (ctx.mRequestPath.mCommandId)
+        {
+        case OnOff::Commands::Off::Id:
+            HandleOnOffCommand(endpoint, false);
+            ctx.mCommandHandler.AddStatus(ctx.mRequestPath, IMStatus::Success);
+            ctx.SetCommandHandled();
+            return;
+        case OnOff::Commands::On::Id:
+            HandleOnOffCommand(endpoint, true);
+            ctx.mCommandHandler.AddStatus(ctx.mRequestPath, IMStatus::Success);
+            ctx.SetCommandHandled();
+            return;
+        case OnOff::Commands::Toggle::Id:
+            HandleOnOffCommand(endpoint, dev->GetLastOnValue() != 1);
+            ctx.mCommandHandler.AddStatus(ctx.mRequestPath, IMStatus::Success);
+            ctx.SetCommandHandled();
+            return;
+        default:
+            ctx.mCommandHandler.AddStatus(ctx.mRequestPath, IMStatus::UnsupportedCommand);
+            ctx.SetCommandHandled();
+            return;
+        }
+    }
+
+    CHIP_ERROR EnumerateAcceptedCommands(const ConcreteClusterPath & cluster,
+                                         CommandIdCallback callback,
+                                         void * context) override
+    {
+        if (!BridgeDeviceLookup(cluster.mEndpointId))
+        {
+            return CHIP_ERROR_NOT_IMPLEMENTED;
+        }
+        for (CommandId command : { OnOff::Commands::Off::Id, OnOff::Commands::On::Id, OnOff::Commands::Toggle::Id })
+        {
+            if (callback(command, context) == Loop::Break)
+            {
+                break;
+            }
+        }
+        return CHIP_NO_ERROR;
+    }
+
+    CHIP_ERROR EnumerateGeneratedCommands(const ConcreteClusterPath & cluster,
+                                          CommandIdCallback callback,
+                                          void * context) override
+    {
+        if (!BridgeDeviceLookup(cluster.mEndpointId))
+        {
+            return CHIP_ERROR_NOT_IMPLEMENTED;
+        }
+        (void) callback;
+        (void) context;
+        return CHIP_NO_ERROR;
+    }
+};
+
+static DynamicOnOffCommandHandler gDynamicOnOffCommandHandler;
+
 // ── External attribute callbacks ──────────────────────────────────────────────
 // DECLARE_DYNAMIC_ATTRIBUTE always sets ATTRIBUTE_MASK_EXTERNAL_STORAGE, so
 // the CHIP SDK calls these for every dynamic attribute read/write instead of
@@ -172,9 +257,6 @@ static void HandleOnOffCommand(EndpointId endpoint, bool new_on) {
 // attribute here AFTER computing the correct new value (Toggle uses the current
 // value from emberAfExternalAttributeReadCallback, so it always computes the
 // right toggle without any race with our local state).
-
-using IMStatus = chip::Protocols::InteractionModel::Status;
-using namespace chip::app::Clusters;
 
 IMStatus emberAfExternalAttributeReadCallback(EndpointId endpoint,
                                               ClusterId  clusterId,
@@ -195,12 +277,16 @@ IMStatus emberAfExternalAttributeReadCallback(EndpointId endpoint,
         }
     } else if (clusterId == BridgedDeviceBasicInformation::Id) {
         if (am->attributeId == BridgedDeviceBasicInformation::Attributes::ProductName::Id ||
-            am->attributeId == BridgedDeviceBasicInformation::Attributes::NodeLabel::Id) {
-            const auto& name = dev->GetName();
+            am->attributeId == BridgedDeviceBasicInformation::Attributes::NodeLabel::Id ||
+            am->attributeId == BridgedDeviceBasicInformation::Attributes::UniqueID::Id) {
+            const auto& value =
+                (am->attributeId == BridgedDeviceBasicInformation::Attributes::UniqueID::Id)
+                    ? dev->GetUniqueId()
+                    : dev->GetName();
             size_t cap = (maxReadLength > 1) ? (maxReadLength - 1) : 0;
-            size_t len = std::min(name.size(), cap);
+            size_t len = std::min(value.size(), cap);
             buffer[0] = static_cast<uint8_t>(len);
-            memcpy(buffer + 1, name.c_str(), len);
+            memcpy(buffer + 1, value.c_str(), len);
             return IMStatus::Success;
         }
         if (am->attributeId == BridgedDeviceBasicInformation::Attributes::Reachable::Id
@@ -450,6 +536,9 @@ int main(int argc, char* argv[]) {
     initParams.InitializeStaticResourcesBeforeServerInit();
     CHIP_ERROR err = Server::GetInstance().Init(initParams);
     VerifyOrDie(err == CHIP_NO_ERROR);
+    err = InteractionModelEngine::GetInstance()->RegisterCommandHandler(&gDynamicOnOffCommandHandler);
+    VerifyOrDie(err == CHIP_NO_ERROR);
+    ChipLogDetail(AppServer, "Registered dynamic OnOff command handler");
 
     // Disable the static example DimmableLight from the bridge-app ZAP config
     // (ep=2). If left enabled it appears in the aggregator PartsList with an
@@ -483,6 +572,7 @@ int main(int argc, char* argv[]) {
     gShutdownCv.notify_all(); // wake poll thread immediately instead of waiting
     poll_thread.join();
 
+    InteractionModelEngine::GetInstance()->UnregisterCommandHandler(&gDynamicOnOffCommandHandler);
     Server::GetInstance().Shutdown();
     PlatformMgr().Shutdown();
     return 0;
@@ -491,6 +581,21 @@ int main(int argc, char* argv[]) {
 // ── AppMain.h required callbacks ──────────────────────────────────────────────
 // ChipLinuxAppMainLoop calls these; we don't use that loop but must satisfy the
 // link since AppMain.h declares them.
+// No-op plugin init callbacks for clusters pruned from bridge-app.zap.
+// CHIP's util.cpp still references these stock bridge app extension points.
+void MatterDiagnosticLogsPluginServerInitCallback() {}
+void MatterEthernetNetworkDiagnosticsPluginServerInitCallback() {}
+void MatterGeneralDiagnosticsPluginServerInitCallback() {}
+void MatterLevelControlPluginServerInitCallback() {}
+void MatterLocalizationConfigurationPluginServerInitCallback() {}
+void MatterOnOffPluginServerInitCallback() {}
+void MatterSoftwareDiagnosticsPluginServerInitCallback() {}
+void MatterSwitchPluginServerInitCallback() {}
+void MatterThreadNetworkDiagnosticsPluginServerInitCallback() {}
+void MatterTimeFormatLocalizationPluginServerInitCallback() {}
+void MatterUserLabelPluginServerInitCallback() {}
+void MatterWiFiNetworkDiagnosticsPluginServerInitCallback() {}
+
 void ApplicationInit() {}
 void ApplicationShutdown() {}
 

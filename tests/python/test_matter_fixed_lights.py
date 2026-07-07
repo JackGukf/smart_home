@@ -12,7 +12,7 @@ def test_fixed_light_accessory_contains_four_expected_switches() -> None:
     assert '"kasa:192.168.0.110", "Kitchen light switch"' in source
     assert '"kasa:192.168.0.143", "Master bedroom light switch"' in source
     assert '"kasa:192.168.0.61", "Family room light switch"' in source
-    assert '"kasa:192.168.0.73", "Living room light switch"' in source
+    assert '"kasa:192.168.0.73", "Living room light switch 2"' in source
     assert "FetchAllStatesFor(deviceIds)" in source
 
 
@@ -27,7 +27,3 @@ def test_single_light_build_script_generates_four_onoff_endpoints() -> None:
     assert 'CHIPProjectConfig.h' in script
     assert 'SystemProjectConfig.h' in script
     assert 'cluster.get("code") != 8' in script
-    assert 'Bridged Device Basic Information' in script
-    assert 'MA-bridgednode' in script
-    assert 'NodeLabel' in script
-    assert 'UniqueID' in script

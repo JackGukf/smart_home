@@ -9,6 +9,27 @@ CHIP_DIR="$PROJECT_ROOT/third_party/connectedhomeip"
 BRIDGE_SRC="$PROJECT_ROOT/src/cpp/matter_bridge"
 CHIP_BRIDGE_DIR="$CHIP_DIR/examples/bridge-app/linux"
 OUT_DIR="$PROJECT_ROOT/build/matter-bridge"
+CHIP_REPORTING_ENGINE_CPP="$CHIP_DIR/src/app/reporting/Engine.cpp"
+
+cleanup() {
+  git -C "$CHIP_DIR" checkout -- \
+    examples/bridge-app/linux/BUILD.gn \
+    examples/bridge-app/linux/main.cpp \
+    examples/bridge-app/bridge-common/bridge-app.zap \
+    src/app/reporting/Engine.cpp >/dev/null 2>&1 || true
+  rm -f \
+    "$CHIP_BRIDGE_DIR/BridgeDevice.cpp" \
+    "$CHIP_BRIDGE_DIR/BridgeDevice.h" \
+    "$CHIP_BRIDGE_DIR/CHIPProjectAppConfig.h" \
+    "$CHIP_BRIDGE_DIR/include/CHIPProjectAppConfig.h" \
+    "$CHIP_BRIDGE_DIR/include/CHIPProjectConfig.h" \
+    "$CHIP_BRIDGE_DIR/DeviceMapper.cpp" \
+    "$CHIP_BRIDGE_DIR/DeviceMapper.h" \
+    "$CHIP_BRIDGE_DIR/SyncClient.cpp" \
+    "$CHIP_BRIDGE_DIR/SyncClient.h" \
+    "$CHIP_BRIDGE_DIR/include/SystemProjectConfig.h"
+}
+trap cleanup EXIT
 
 echo "==> Activating CHIP SDK tools..."
 # CHIP's activate.sh is a symlink to scripts/setup/bootstrap.sh and expects
@@ -31,9 +52,10 @@ cp "$BRIDGE_SRC/DeviceMapper.cpp"    "$CHIP_BRIDGE_DIR/"
 cp "$BRIDGE_SRC/SyncClient.h"        "$CHIP_BRIDGE_DIR/"
 cp "$BRIDGE_SRC/SyncClient.cpp"      "$CHIP_BRIDGE_DIR/"
 cp "$BRIDGE_SRC/main.cpp"            "$CHIP_BRIDGE_DIR/"
-cp "$BRIDGE_SRC/CHIPProjectConfig.h"    "$CHIP_BRIDGE_DIR/"
-cp "$BRIDGE_SRC/SystemProjectConfig.h" "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/CHIPProjectConfig.h"    "$CHIP_BRIDGE_DIR/include/"
+cp "$BRIDGE_SRC/SystemProjectConfig.h" "$CHIP_BRIDGE_DIR/include/"
 cp "$BRIDGE_SRC/CHIPProjectAppConfig.h" "$CHIP_BRIDGE_DIR/"
+cp "$BRIDGE_SRC/CHIPProjectAppConfig.h" "$CHIP_BRIDGE_DIR/include/"
 
 echo "==> Writing bridge-app BUILD.gn with custom sources, libcurl and -fexceptions..."
 BUILD_GN="$CHIP_BRIDGE_DIR/BUILD.gn"
@@ -53,7 +75,7 @@ executable("chip-bridge-app") {
     "DeviceMapper.cpp",
     "SyncClient.cpp",
     "${chip_root}/examples/bridge-app/linux/bridged-actions-stub.cpp",
-    "${chip_root}/examples/tv-app/tv-common/include/CHIPProjectAppConfig.h",
+    "CHIPProjectAppConfig.h",
     "Device.cpp",
     "include/Device.h",
     "include/main.h",
@@ -70,6 +92,7 @@ executable("chip-bridge-app") {
   cflags_cc = [ "-fexceptions" ]
 
   include_dirs = [
+    ".",
     "include",
     "/usr/local/include/chip-cross",
   ]
@@ -85,6 +108,106 @@ group("default") {
   deps = [ ":chip-bridge-app" ]
 }
 BUILDGN
+
+echo "==> Pruning bridge ZAP model for Apple Home subscription stability..."
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+p = Path("third_party/connectedhomeip/examples/bridge-app/bridge-common/bridge-app.zap")
+data = json.loads(p.read_text())
+
+ROOT_CLUSTERS = {29, 31, 40, 48, 49, 60, 62, 63}
+AGGREGATOR_CLUSTERS = {3, 29}
+BASIC_ATTRS = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    65528, 65529, 65531, 65532, 65533,
+}
+OPCREDS_ATTRS = {
+    # Exclude NOCs, Fabrics, and TrustedRootCertificates from wildcard reports;
+    # Apple Home can otherwise exceed the packet buffer once multiple fabrics exist.
+    2, 3, 5,
+    65528, 65529, 65531, 65532, 65533,
+}
+
+for endpoint_type in data.get("endpointTypes", []):
+    device_type = endpoint_type.get("deviceTypeCode")
+    clusters = []
+    for cluster in endpoint_type.get("clusters", []):
+        code = cluster.get("code")
+        side = cluster.get("side")
+        if device_type == 22:
+            if code not in ROOT_CLUSTERS or side != "server":
+                continue
+            if code == 40:
+                cluster = dict(cluster)
+                cluster["attributes"] = [
+                    attr for attr in cluster.get("attributes", [])
+                    if not attr.get("included") or attr.get("code") in BASIC_ATTRS
+                ]
+            if code == 62:
+                cluster = dict(cluster)
+                cluster["attributes"] = [
+                    attr for attr in cluster.get("attributes", [])
+                    if not attr.get("included") or attr.get("code") in OPCREDS_ATTRS
+                ]
+        elif device_type == 14:
+            if code not in AGGREGATOR_CLUSTERS or side != "server":
+                continue
+        elif device_type == 257:
+            continue
+        clusters.append(cluster)
+    endpoint_type["clusters"] = clusters
+
+data["endpointTypes"] = [
+    endpoint_type for endpoint_type in data.get("endpointTypes", [])
+    if endpoint_type.get("deviceTypeCode") in (22, 14)
+]
+data["endpoints"] = [
+    endpoint for endpoint in data.get("endpoints", [])
+    if endpoint.get("endpointId") in (0, 1)
+]
+
+p.write_text(json.dumps(data, indent=2))
+PY
+
+echo "==> Bounding CHIP report chunks for Apple Home wildcard subscriptions..."
+python3 - <<'PY'
+from pathlib import Path
+
+p = Path("third_party/connectedhomeip/src/app/reporting/Engine.cpp")
+s = p.read_text()
+s = s.replace(
+    """#if CONFIG_BUILD_FOR_HOST_UNIT_TEST
+        uint32_t attributesRead = 0;
+#endif
+""",
+    """        // Apple Home's bridge wildcard subscription can include large list
+        // attributes. Keep ReportData chunks bounded so an oversized wildcard
+        // response resumes in the next chunk without turning every attribute
+        // into a separate report.
+        constexpr uint32_t kMaxAttributesPerReportChunk = 8;
+        uint32_t attributesRead = 0;
+""",
+)
+s = s.replace(
+    """#if CONFIG_BUILD_FOR_HOST_UNIT_TEST
+            attributesRead++;
+            if (attributesRead > mMaxAttributesPerChunk)
+            {
+                ExitNow(err = CHIP_ERROR_BUFFER_TOO_SMALL);
+            }
+#endif
+""",
+    """            attributesRead++;
+            if (attributesRead > kMaxAttributesPerReportChunk)
+            {
+                ExitNow(err = CHIP_ERROR_BUFFER_TOO_SMALL);
+            }
+""",
+)
+p.write_text(s)
+PY
 
 echo "==> Symlinking curl headers into chip-cross include path..."
 sudo mkdir -p /usr/local/include/chip-cross/curl
@@ -109,14 +232,15 @@ scripts/examples/gn_build_example.sh \
   'chip_inet_config_enable_ipv4=true' \
   'is_debug=false' \
   'chip_project_config_include="<CHIPProjectConfig.h>"' \
-  'chip_project_config_include_dirs=["//"]'
+  'chip_project_config_include_dirs=["//include"]'
 popd >/dev/null
 
 echo "==> Stripping binary..."
 aarch64-linux-gnu-strip "$OUT_DIR/chip-bridge-app"
 
-# Restore CHIP SDK to clean state (we patched BUILD.gn)
-git -C third_party/connectedhomeip checkout -- examples/bridge-app/linux/BUILD.gn
+# Restore CHIP SDK to clean state before returning to the workspace.
+cleanup
+trap - EXIT
 
 echo "==> Done: $OUT_DIR/chip-bridge-app"
 ls -lh "$OUT_DIR/chip-bridge-app"

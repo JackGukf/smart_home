@@ -26,6 +26,8 @@ namespace _bdns = chip::app::Clusters;
     _bdns::BridgedDeviceBasicInformation::Attributes::NodeLabel::Id
 #define ZCL_REACHABLE_ATTRIBUTE_ID \
     _bdns::BridgedDeviceBasicInformation::Attributes::Reachable::Id
+#define ZCL_UNIQUE_ID_ATTRIBUTE_ID \
+    _bdns::BridgedDeviceBasicInformation::Attributes::UniqueID::Id
 #define ZCL_DEVICE_LIST_ATTRIBUTE_ID \
     _bdns::Descriptor::Attributes::DeviceTypeList::Id
 #define ZCL_SERVER_LIST_ATTRIBUTE_ID \
@@ -84,6 +86,7 @@ DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sBridgedBasicAttribs)
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_NODE_LABEL_ATTRIBUTE_ID, CHAR_STRING, kNodeLabelMaxSize,
                               ZAP_ATTRIBUTE_MASK(WRITABLE)),
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_REACHABLE_ATTRIBUTE_ID, BOOLEAN, 1, 0),
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_UNIQUE_ID_ATTRIBUTE_ID, CHAR_STRING, 32, 0),
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sDescriptorAttribs)
@@ -154,6 +157,7 @@ BridgeDevice::BridgeDevice(uint8_t dynamic_index,
                            const DeviceInfo& info)
     : device_id_(info.device_id),
       name_(info.name),
+      unique_id_(info.device_id),
       dynamic_index_(dynamic_index),
       endpoint_id_(endpoint_id),
       spec_(MapCategoryToMatter(info.category, info.dimmable))

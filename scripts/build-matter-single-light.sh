@@ -42,32 +42,6 @@ data = json.loads(s)
 for endpoint_type in data.get("endpointTypes", []):
     if endpoint_type.get("deviceTypeCode") == 256:
         endpoint_type["clusters"] = [cluster for cluster in endpoint_type.get("clusters", []) if cluster.get("code") != 8]
-        endpoint_type["deviceTypes"] = [
-            {"code": 256, "profileId": 259, "label": "MA-onofflight", "name": "MA-onofflight"},
-            {"code": 19, "profileId": 259, "label": "MA-bridgednode", "name": "MA-bridgednode"},
-        ]
-        endpoint_type["deviceVersions"] = [1, 2]
-        endpoint_type["clusters"].append({
-            "name": "Bridged Device Basic Information",
-            "code": 57,
-            "mfgCode": None,
-            "define": "BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER",
-            "side": "server",
-            "enabled": 1,
-            "attributes": [
-                {"name": "VendorName", "code": 1, "mfgCode": None, "side": "server", "type": "char_string", "included": 1, "storageOption": "RAM", "singleton": 0, "bounded": 0, "defaultValue": "Smart Home RPi4", "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "VendorID", "code": 2, "mfgCode": None, "side": "server", "type": "vendor_id", "included": 1, "storageOption": "RAM", "singleton": 0, "bounded": 0, "defaultValue": "65521", "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "ProductName", "code": 3, "mfgCode": None, "side": "server", "type": "char_string", "included": 1, "storageOption": "RAM", "singleton": 0, "bounded": 0, "defaultValue": "Kasa light switch", "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "NodeLabel", "code": 5, "mfgCode": None, "side": "server", "type": "char_string", "included": 1, "storageOption": "NVM", "singleton": 0, "bounded": 0, "defaultValue": "", "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "Reachable", "code": 17, "mfgCode": None, "side": "server", "type": "boolean", "included": 1, "storageOption": "RAM", "singleton": 0, "bounded": 0, "defaultValue": "true", "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "UniqueID", "code": 18, "mfgCode": None, "side": "server", "type": "char_string", "included": 1, "storageOption": "RAM", "singleton": 0, "bounded": 0, "defaultValue": "", "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "GeneratedCommandList", "code": 65528, "mfgCode": None, "side": "server", "type": "array", "included": 1, "storageOption": "External", "singleton": 0, "bounded": 0, "defaultValue": None, "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "AcceptedCommandList", "code": 65529, "mfgCode": None, "side": "server", "type": "array", "included": 1, "storageOption": "External", "singleton": 0, "bounded": 0, "defaultValue": None, "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "AttributeList", "code": 65531, "mfgCode": None, "side": "server", "type": "array", "included": 1, "storageOption": "External", "singleton": 0, "bounded": 0, "defaultValue": None, "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "FeatureMap", "code": 65532, "mfgCode": None, "side": "server", "type": "bitmap32", "included": 1, "storageOption": "RAM", "singleton": 0, "bounded": 0, "defaultValue": "0", "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-                {"name": "ClusterRevision", "code": 65533, "mfgCode": None, "side": "server", "type": "int16u", "included": 1, "storageOption": "RAM", "singleton": 0, "bounded": 0, "defaultValue": "3", "reportable": 1, "minInterval": 1, "maxInterval": 65534, "reportableChange": 0},
-            ],
-        })
 light_endpoint = next(endpoint for endpoint in data["endpoints"] if endpoint.get("endpointId") == 1)
 data["endpoints"] = [endpoint for endpoint in data["endpoints"] if endpoint.get("endpointId") in (0, 1)]
 for endpoint_id in (2, 3, 4):

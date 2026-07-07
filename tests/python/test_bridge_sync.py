@@ -5,7 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from src.python import bridge_sync
-from src.python.bridge_sync import router, register_handlers, update_state_cache, _state_cache
+from src.python.bridge_sync import router, register_handlers, update_state_cache, cached_state_for, _state_cache
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +39,16 @@ def test_update_state_cache_visible_in_state_all(client):
     resp = client.get("/bridge/state/all")
     assert resp.status_code == 200
     assert resp.json() == {"kasa:192.168.1.10": {"on": True}}
+
+
+def test_cached_state_for_returns_copy(client):
+    update_state_cache("kasa:192.168.1.10", {"on": True})
+
+    state = cached_state_for("kasa:192.168.1.10")
+    assert state == {"on": True}
+    state["on"] = False
+
+    assert _state_cache["kasa:192.168.1.10"] == {"on": True}
 
 
 def test_send_command_unknown_device_returns_200_immediately(client):
