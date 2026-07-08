@@ -125,23 +125,32 @@ using IMStatus = chip::Protocols::InteractionModel::Status;
 using namespace chip::app::Clusters;
 
 // ── OnOff command dispatch ────────────────────────────────────────────────────
-// We do NOT define emberAfOnOffCluster{On,Off,Toggle}CommandCallback here.
-// The CHIP SDK provides weak no-op defaults (returning false) so the ZCL
-// on-off cluster server handles every InvokeCommand internally:
-//   On     → writes OnOff=1
-//   Off    → writes OnOff=0
-//   Toggle → reads current value, writes NOT(current value)
-// Each write goes through emberAfExternalAttributeWriteCallback below, which is
-// the single place we update local state and dispatch the HTTP command.
+// The ZCL on-off cluster server plugin is NOT part of this build: the ZAP
+// pruning in build-matter-bridge.sh removes the last static OnOff cluster
+// instance, so codegen drops the on-off-server (that's also why main.cpp stubs
+// MatterOnOffPluginServerInitCallback).  InvokeCommands for OnOff are therefore
+// handled by DynamicOnOffCommandHandler below, registered with the Interaction
+// Model engine.  Because the handler marks commands handled,
+// DispatchSingleClusterCommand/emAfWriteAttribute never run for commands — the
+// handler itself must update state AND notify the reporting engine
+// (HandleOnOffCommand with notify_subscribers=true).
 //
-// Reason: if we handle the command in emberAfOnOffCluster*Callback AND the ZCL
-// server also writes the attribute, Toggle breaks — our callback updates
-// last_on_value_ first, then the ZCL server reads the already-updated value
-// and writes the *opposite* toggle result, firing a second spurious HTTP call
-// that immediately reverses the command.  Apple Home sees the ON→OFF bounce and
-// shows the device as "not available".
+// Direct WriteAttribute requests still go through
+// emberAfExternalAttributeWriteCallback, where the SDK fires the reporting
+// callback for us (notify_subscribers=false on that path).
 
-static void HandleOnOffCommand(EndpointId endpoint, bool new_on) {
+// notify_subscribers: pass false ONLY from emberAfExternalAttributeWriteCallback
+// — there the SDK's emAfWriteAttribute() fires MatterReportingAttributeChangeCallback
+// itself right after the callback returns, so notifying here too would double-bump
+// the cluster DataVersion and double-queue the same report (confirmed by reading
+// src/app/util/attribute-table.cpp's emAfWriteAttribute()).
+// Pass true from DynamicOnOffCommandHandler::InvokeCommand — that path marks the
+// command handled, so DispatchSingleClusterCommand/emAfWriteAttribute never run
+// (see InteractionModelEngine::DispatchCommand) and nothing else bumps the
+// DataVersion or queues the report. Without it, Apple Home never receives a
+// subscription report confirming its own On/Off command: the tile reverts after
+// a few seconds and the accessory eventually shows "No Response".
+static void HandleOnOffCommand(EndpointId endpoint, bool new_on, bool notify_subscribers) {
     BridgeDevice* dev = BridgeDeviceLookup(endpoint);
     if (!dev) return;
     const std::string device_id = dev->GetDeviceId();
@@ -150,13 +159,7 @@ static void HandleOnOffCommand(EndpointId endpoint, bool new_on) {
 
     // Returns false when the value didn't change (e.g. "On" sent to a device
     // that is already on).  Skip the HTTP call in that case.
-    // notify=false: we're inside emberAfExternalAttributeWriteCallback, called
-    // from the SDK's emAfWriteAttribute() — it calls
-    // MatterReportingAttributeChangeCallback itself right after this returns, so
-    // notifying here too would double-bump the cluster DataVersion and double-
-    // queue the same report (confirmed by reading
-    // src/app/util/attribute-table.cpp's emAfWriteAttribute()).
-    if (!dev->UpdateOnOff(new_on, /*notify=*/false)) return;
+    if (!dev->UpdateOnOff(new_on, /*notify=*/notify_subscribers)) return;
 
     // The actual HTTP call to the Python bridge must NOT block the Matter event
     // loop — doing so prevents the InvokeResponse from being sent quickly and
@@ -191,17 +194,17 @@ public:
         switch (ctx.mRequestPath.mCommandId)
         {
         case OnOff::Commands::Off::Id:
-            HandleOnOffCommand(endpoint, false);
+            HandleOnOffCommand(endpoint, false, /*notify_subscribers=*/true);
             ctx.mCommandHandler.AddStatus(ctx.mRequestPath, IMStatus::Success);
             ctx.SetCommandHandled();
             return;
         case OnOff::Commands::On::Id:
-            HandleOnOffCommand(endpoint, true);
+            HandleOnOffCommand(endpoint, true, /*notify_subscribers=*/true);
             ctx.mCommandHandler.AddStatus(ctx.mRequestPath, IMStatus::Success);
             ctx.SetCommandHandled();
             return;
         case OnOff::Commands::Toggle::Id:
-            HandleOnOffCommand(endpoint, dev->GetLastOnValue() != 1);
+            HandleOnOffCommand(endpoint, dev->GetLastOnValue() != 1, /*notify_subscribers=*/true);
             ctx.mCommandHandler.AddStatus(ctx.mRequestPath, IMStatus::Success);
             ctx.SetCommandHandled();
             return;
@@ -314,7 +317,9 @@ IMStatus emberAfExternalAttributeWriteCallback(EndpointId endpoint,
     if (clusterId == OnOff::Id &&
         am->attributeId == OnOff::Attributes::OnOff::Id) {
         bool on = (*buffer != 0);
-        HandleOnOffCommand(endpoint, on);
+        // notify_subscribers=false: emAfWriteAttribute() fires the reporting
+        // callback itself after this returns (see HandleOnOffCommand comment).
+        HandleOnOffCommand(endpoint, on, /*notify_subscribers=*/false);
     }
     return IMStatus::Success;
 }
