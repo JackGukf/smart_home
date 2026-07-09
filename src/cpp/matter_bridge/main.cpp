@@ -261,6 +261,27 @@ static DynamicOnOffCommandHandler gDynamicOnOffCommandHandler;
 // value from emberAfExternalAttributeReadCallback, so it always computes the
 // right toggle without any race with our local state).
 
+// Cluster revisions must match the spec revision implemented (0 is invalid —
+// Apple Home's post-add conformance pass rejects it and marks every bridged
+// accessory unavailable). Values mirror the SDK reference bridge-app example.
+static constexpr uint16_t kOnOffClusterRevision        = 4;
+static constexpr uint16_t kBridgedBasicClusterRevision = 2;
+static constexpr uint32_t kBridgedBasicFeatureMap      = 0;
+static constexpr uint16_t kTempClusterRevision         = 1;
+static constexpr uint32_t kTempFeatureMap              = 0;
+
+static IMStatus WriteUint16Attr(uint16_t value, uint8_t* buffer, uint16_t maxReadLength) {
+    if (maxReadLength < sizeof(value)) return IMStatus::ResourceExhausted;
+    memcpy(buffer, &value, sizeof(value));
+    return IMStatus::Success;
+}
+
+static IMStatus WriteUint32Attr(uint32_t value, uint8_t* buffer, uint16_t maxReadLength) {
+    if (maxReadLength < sizeof(value)) return IMStatus::ResourceExhausted;
+    memcpy(buffer, &value, sizeof(value));
+    return IMStatus::Success;
+}
+
 IMStatus emberAfExternalAttributeReadCallback(EndpointId endpoint,
                                               ClusterId  clusterId,
                                               const EmberAfAttributeMetadata* am,
@@ -278,7 +299,23 @@ IMStatus emberAfExternalAttributeReadCallback(EndpointId endpoint,
             *buffer = (dev->GetLastOnValue() == 1) ? 1 : 0;
             return IMStatus::Success;
         }
+        if (am->attributeId == OnOff::Attributes::ClusterRevision::Id) {
+            return WriteUint16Attr(kOnOffClusterRevision, buffer, maxReadLength);
+        }
+    } else if (clusterId == TemperatureMeasurement::Id) {
+        if (am->attributeId == TemperatureMeasurement::Attributes::ClusterRevision::Id) {
+            return WriteUint16Attr(kTempClusterRevision, buffer, maxReadLength);
+        }
+        if (am->attributeId == TemperatureMeasurement::Attributes::FeatureMap::Id) {
+            return WriteUint32Attr(kTempFeatureMap, buffer, maxReadLength);
+        }
     } else if (clusterId == BridgedDeviceBasicInformation::Id) {
+        if (am->attributeId == BridgedDeviceBasicInformation::Attributes::ClusterRevision::Id) {
+            return WriteUint16Attr(kBridgedBasicClusterRevision, buffer, maxReadLength);
+        }
+        if (am->attributeId == BridgedDeviceBasicInformation::Attributes::FeatureMap::Id) {
+            return WriteUint32Attr(kBridgedBasicFeatureMap, buffer, maxReadLength);
+        }
         if (am->attributeId == BridgedDeviceBasicInformation::Attributes::ProductName::Id ||
             am->attributeId == BridgedDeviceBasicInformation::Attributes::NodeLabel::Id ||
             am->attributeId == BridgedDeviceBasicInformation::Attributes::UniqueID::Id) {

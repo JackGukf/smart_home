@@ -28,6 +28,9 @@ namespace _bdns = chip::app::Clusters;
     _bdns::BridgedDeviceBasicInformation::Attributes::Reachable::Id
 #define ZCL_UNIQUE_ID_ATTRIBUTE_ID \
     _bdns::BridgedDeviceBasicInformation::Attributes::UniqueID::Id
+// FeatureMap is a global attribute — same ID (0xFFFC) on every cluster.
+#define ZCL_FEATURE_MAP_ATTRIBUTE_ID \
+    _bdns::BridgedDeviceBasicInformation::Attributes::FeatureMap::Id
 #define ZCL_DEVICE_LIST_ATTRIBUTE_ID \
     _bdns::Descriptor::Attributes::DeviceTypeList::Id
 #define ZCL_SERVER_LIST_ATTRIBUTE_ID \
@@ -87,6 +90,9 @@ DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sBridgedBasicAttribs)
                               ZAP_ATTRIBUTE_MASK(WRITABLE)),
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_REACHABLE_ATTRIBUTE_ID, BOOLEAN, 1, 0),
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_UNIQUE_ID_ATTRIBUTE_ID, CHAR_STRING, 32, 0),
+    // FeatureMap is mandatory on every cluster; without it Apple Home's
+    // post-add conformance pass marks all bridged accessories unavailable.
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_FEATURE_MAP_ATTRIBUTE_ID, BITMAP32, 4, 0),
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sDescriptorAttribs)
@@ -100,6 +106,7 @@ DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sTempAttribs)
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_TEMP_MEASURED_VALUE_ATTRIBUTE_ID,     INT16S, 2, 0),
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_TEMP_MIN_MEASURED_VALUE_ATTRIBUTE_ID, INT16S, 2, 0),
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_TEMP_MAX_MEASURED_VALUE_ATTRIBUTE_ID, INT16S, 2, 0),
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_FEATURE_MAP_ATTRIBUTE_ID, BITMAP32, 4, 0),
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Cluster list: OnOff Light / virtual switch / plug-in unit (all share same clusters)
