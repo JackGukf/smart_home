@@ -119,16 +119,14 @@ data = json.loads(p.read_text())
 
 ROOT_CLUSTERS = {29, 31, 40, 48, 49, 60, 62, 63}
 AGGREGATOR_CLUSTERS = {3, 29}
-BASIC_ATTRS = {
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-    65528, 65529, 65531, 65532, 65533,
-}
-OPCREDS_ATTRS = {
-    # Exclude NOCs, Fabrics, and TrustedRootCertificates from wildcard reports;
-    # Apple Home can otherwise exceed the packet buffer once multiple fabrics exist.
-    2, 3, 5,
-    65528, 65529, 65531, 65532, 65533,
-}
+
+# NOTE: do NOT prune individual attributes (previously NOCs/Fabrics/
+# TrustedRootCertificates were dropped from OperationalCredentials to keep
+# wildcard reports small).  Apple Home reads the Fabrics list (0x3E/0x0001)
+# immediately after CommissioningComplete to verify its own fabric entry;
+# with the attribute pruned the read returns UnsupportedAttribute and the
+# iPhone aborts with "Pairing failed" and sends RemoveFabric.  Oversized
+# wildcard reports are handled by the report-chunking patch below instead.
 
 for endpoint_type in data.get("endpointTypes", []):
     device_type = endpoint_type.get("deviceTypeCode")
@@ -139,18 +137,6 @@ for endpoint_type in data.get("endpointTypes", []):
         if device_type == 22:
             if code not in ROOT_CLUSTERS or side != "server":
                 continue
-            if code == 40:
-                cluster = dict(cluster)
-                cluster["attributes"] = [
-                    attr for attr in cluster.get("attributes", [])
-                    if not attr.get("included") or attr.get("code") in BASIC_ATTRS
-                ]
-            if code == 62:
-                cluster = dict(cluster)
-                cluster["attributes"] = [
-                    attr for attr in cluster.get("attributes", [])
-                    if not attr.get("included") or attr.get("code") in OPCREDS_ATTRS
-                ]
         elif device_type == 14:
             if code not in AGGREGATOR_CLUSTERS or side != "server":
                 continue
