@@ -1,0 +1,19 @@
+# systemd *user* unit — install to ~/.config/systemd/user/ on the Pi
+# (deployed by scripts/deploy-matter-bridge.sh; requires loginctl enable-linger smarthome)
+[Unit]
+Description=Matter Bridge (chip-bridge-app)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smarthome/smart-home-rpi4
+Environment=BRIDGE_SYNC_URL=http://localhost:8000
+ExecStart=/home/smarthome/smart-home-rpi4/build/matter-bridge/chip-bridge-app --KVS /home/smarthome/matter-bridge-kvs/kvs --interface wlan0 --discriminator 2861 --passcode 56123489
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/smarthome/matter-bridge.log
+StandardError=append:/home/smarthome/matter-bridge.log
+
+[Install]
+WantedBy=default.target

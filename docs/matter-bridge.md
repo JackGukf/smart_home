@@ -1,6 +1,7 @@
 # Matter Bridge — Implementation Status
 
 **Status:** Working. Apple Home commissioning confirmed on 2026-06-27.
+**Deployment:** systemd user unit since 2026-07-08 (the original Docker deployment was retired — the published image was amd64 and failed on the Pi with `exec format error`).
 
 ---
 
@@ -9,7 +10,7 @@
 A C++ daemon (`chip-bridge-app`) running on the Raspberry Pi 4 that bridges all dashboard devices (TP-Link switches, Tuya sensors) into Apple Home via the Matter protocol.
 
 ```
-Apple Home ──Matter/mDNS──► C++ chip-bridge-app  (Docker, host network)
+Apple Home ──Matter/mDNS──► C++ chip-bridge-app  (systemd user unit, host network)
                                      │  HTTP localhost:8000
                                      ▼
                            Python /bridge/* API  (bridge_sync.py)
@@ -26,9 +27,9 @@ Apple Home ──Matter/mDNS──► C++ chip-bridge-app  (Docker, host network
 | `src/cpp/matter_bridge/DeviceMapper.h/.cpp` | Maps dashboard category → Matter device type |
 | `src/cpp/matter_bridge/SyncClient.h/.cpp` | HTTP client for `localhost:8000/bridge/*` |
 | `src/python/bridge_sync.py` | FastAPI router mounted at `/bridge` on web_app |
-| `Dockerfile.matter-bridge` | Copies pre-built aarch64 binary; installs runtime deps |
+| `configs/matter-bridge.service` | systemd user unit installed on the Pi by the deploy script |
 | `scripts/build-matter-bridge.sh` | Cross-compiles for arm64 inside Docker dev container |
-| `scripts/deploy-matter-bridge.sh` | rsyncs binary to Pi |
+| `scripts/deploy-matter-bridge.sh` | rsyncs binary + unit to Pi, restarts the user unit |
 | `scripts/build-matter-bridge-native.sh` | Builds x86_64 binary for integration tests |
 | `scripts/test-matter-commissioning.sh` | Full chip-tool commissioning smoke test |
 | `tests/python/test_bridge_sync.py` | Unit tests for `/bridge/*` Python endpoints |
@@ -36,73 +37,67 @@ Apple Home ──Matter/mDNS──► C++ chip-bridge-app  (Docker, host network
 | `tests/python/test_matter_bridge_integration.py` | Integration tests (need native binary) |
 | `third_party/connectedhomeip` | Git submodule pinned to v1.3.0.0 |
 
-**Modified files:** `docker-compose.pi.yml`, `src/python/web_app.py`, `pyproject.toml`
+**Modified files:** `src/python/web_app.py`, `pyproject.toml`
 
 ---
 
-## Docker Compose Service (`docker-compose.pi.yml`)
+## Deployment (systemd user unit)
 
-```yaml
-matter-bridge:
-  build:
-    context: .
-    dockerfile: Dockerfile.matter-bridge
-  container_name: matter-bridge
-  network_mode: host
-  restart: unless-stopped
-  cap_add:
-    - NET_ADMIN          # needed to bring docker0 down at startup
-  volumes:
-    - matter-data:/data
-    - ./build/matter-bridge/chip-bridge-app:/usr/local/bin/chip-bridge:ro
-  environment:
-    - BRIDGE_SYNC_URL=http://localhost:8000
-    - MATTER_IFACE=wlan0
-  entrypoint:
-    - "/bin/sh"
-    - "-c"
-    - "ip link set docker0 down 2>/dev/null || true; exec /usr/local/bin/entrypoint.sh \"$@\""
-    - "--"
-  command:
-    - "--KVS"
-    - "/data/bridge/kvs"
-    - "--interface"
-    - "wlan0"
+The bridge runs on the Pi as the systemd **user** service `matter-bridge.service` under the `smarthome` user (linger enabled via `loginctl enable-linger smarthome`, matching the other Pi services: `matter-server`, `go2rtc`, `smart-home-dashboard`).
+
+Key facts (see `configs/matter-bridge.service`):
+
+- ExecStart: `chip-bridge-app --KVS /home/smarthome/matter-bridge-kvs/kvs --interface wlan0 --discriminator 2861 --passcode 56123489`
+- Logs append to `~/matter-bridge.log` on the Pi
+- `Restart=always`, `BRIDGE_SYNC_URL=http://localhost:8000`
+
+Deploy (build + rsync + restart) from WSL:
+
+```bash
+PI_HOST=192.168.0.176 bash scripts/deploy-matter-bridge.sh
+# already built? skip the build step:
+PI_HOST=192.168.0.176 SKIP_BUILD=1 bash scripts/deploy-matter-bridge.sh
 ```
 
-The `ip link set docker0 down` in the entrypoint is critical — see Bug #1 below.
+Useful commands on the Pi:
+
+```bash
+systemctl --user status matter-bridge.service
+systemctl --user restart matter-bridge.service
+tail -f ~/matter-bridge.log
+```
 
 ---
 
 ## Commissioning the Bridge (iPhone / Apple Home)
 
-1. Start the bridge: `docker compose -f docker-compose.pi.yml up matter-bridge`
-2. Read the 11-digit manual pairing code from logs:
+1. Make sure the service is running: `systemctl --user status matter-bridge.service`
+2. Read the 11-digit manual pairing code from `~/matter-bridge.log`:
    ```
    CHIP:SVR: Manual pairing code: [34970112332]
    ```
    **Always read this from the logs — do not calculate it manually.**
 3. In Apple Home on iPhone: Add Accessory → "More options" → enter the 11-digit code.
-4. Default passcode: `20202021`, discriminator: `3840` (set in `command:` or hardcoded default).
+4. Passcode `56123489`, discriminator `2861` (set in the unit's ExecStart).
 
-To re-commission (e.g. after wiping the KVS volume):
+To re-commission from scratch (wipe the KVS):
 ```bash
-docker compose -f docker-compose.pi.yml down matter-bridge
-docker volume rm smart-home-rpi4_matter-data   # or just /data/bridge/ inside
-docker compose -f docker-compose.pi.yml up matter-bridge
+systemctl --user stop matter-bridge.service
+mv ~/matter-bridge-kvs/kvs ~/matter-bridge-kvs/kvs.bak-$(date +%m%d-%H%M)
+systemctl --user start matter-bridge.service   # opens the commissioning window
 ```
 
 ---
 
 ## Bugs Found and Fixed During Implementation
 
-### Bug 1 — mDNS advertising the docker0 IP
+### Bug 1 — mDNS advertising the docker0 IP (historical, Docker era)
 
 **Symptom:** iPhone showed "Unable to connect to accessory" after entering the pairing code.
 
 **Root cause:** CHIP's minimal mDNS stack sends multicast announcements on **all** network interfaces, including docker0 (172.17.0.1). `--interface wlan0` only selects which IP is used for some A records; it does not restrict which interfaces multicast is sent on. iPhone received the 172.x A record last, cached it, and tried to connect to an unreachable address.
 
-**Fix:** Bring docker0 down at container startup (`ip link set docker0 down`). Requires `cap_add: [NET_ADMIN]`. The entrypoint wraps the real entrypoint.sh with this command.
+**Fix (at the time):** Bring docker0 down at container startup (`ip link set docker0 down`) via the container entrypoint with `cap_add: [NET_ADMIN]`. Note: the bridge now runs directly on the host via systemd, and docker0 still exists on the Pi (Home Assistant runs in Docker) — if the 172.x A-record problem resurfaces, the longer-term fix is building the bridge with `chip_mdns="platform"` and running avahi-daemon.
 
 **Regression test:** `test_bridge_mdns_no_docker_bridge_ip` in `test_matter_bridge_integration.py`
 
@@ -158,9 +153,9 @@ This uses the example test DAC (VID=0xFFF1) which Apple Home accepts for develop
 bash scripts/build-matter-bridge.sh
 # Output: build/matter-bridge/chip-bridge-app  (~10 MB stripped)
 
-bash scripts/deploy-matter-bridge.sh
+PI_HOST=192.168.0.176 SKIP_BUILD=1 bash scripts/deploy-matter-bridge.sh
 ```
-The bind mount in `docker-compose.pi.yml` picks up the new binary on next `docker compose up --force-recreate matter-bridge`.
+The deploy script rsyncs the binary to the Pi and restarts `matter-bridge.service`, which picks up the new binary immediately.
 
 ### Native x86_64 (for integration tests)
 ```bash
