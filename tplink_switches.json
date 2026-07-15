@@ -1,5 +1,5 @@
 {
-  "count": 7,
+  "count": 8,
   "switches": [
     {
       "alias": "Kitchen light switch",
@@ -10,28 +10,36 @@
       "name": "Kitchen light switch"
     },
     {
-      "alias": "Master bedroom light switch",
+      "alias": "Master bedroom light",
       "device_type": "DeviceType.WallSwitch",
       "host": "192.168.0.143",
-      "is_on": true,
+      "is_on": false,
       "model": "HS200",
-      "name": "Master bedroom light switch"
+      "name": "Master bedroom light"
     },
     {
-      "alias": null,
+      "alias": "Raspberry PI",
       "device_type": "DeviceType.Plug",
       "host": "192.168.0.161",
       "is_on": null,
       "model": "HS103",
-      "name": "192.168.0.161"
+      "name": "Raspberry PI"
     },
     {
-      "alias": null,
+      "alias": "Living room light",
       "device_type": "DeviceType.Plug",
       "host": "192.168.0.165",
       "is_on": null,
       "model": "HS103",
-      "name": "192.168.0.165"
+      "name": "Living room light"
+    },
+    {
+      "alias": "North bedroom night light",
+      "device_type": "DeviceType.Plug",
+      "host": "192.168.0.208",
+      "is_on": null,
+      "model": "HS103",
+      "name": "North bedroom night light"
     },
     {
       "alias": "Office switch",
@@ -42,20 +50,20 @@
       "name": "Office switch"
     },
     {
-      "alias": "Family room light switch",
+      "alias": "Family room switch",
       "device_type": "DeviceType.Dimmer",
       "host": "192.168.0.61",
       "is_on": false,
       "model": "HS220",
-      "name": "Family room light switch"
+      "name": "Family room switch"
     },
     {
-      "alias": "Living room light switch 2",
+      "alias": "Living room switch 2",
       "device_type": "DeviceType.WallSwitch",
       "host": "192.168.0.73",
-      "is_on": false,
+      "is_on": true,
       "model": "HS200",
-      "name": "Living room light switch 2"
+      "name": "Living room switch 2"
     }
   ]
 }

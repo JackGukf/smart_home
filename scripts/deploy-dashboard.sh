@@ -58,7 +58,14 @@ rsync --checksum -av \
     "${PROJECT_ROOT}/scripts/generate-go2rtc-config.py" \
     "${PROJECT_ROOT}/scripts/install-dashboard-service.sh" \
     "${PROJECT_ROOT}/scripts/discover-govee-ble.py" \
+    "${PROJECT_ROOT}/scripts/discover_tplink_switches.py" \
     "${PI_TARGET}:${REMOTE_PATH}/scripts/"
+
+# The dashboard reads the TP-Link device list from the project root on every
+# request, so ship it with the dashboard deploy.
+rsync --checksum -av \
+    "${PROJECT_ROOT}/tplink_switches.json" \
+    "${PI_TARGET}:${REMOTE_PATH}/tplink_switches.json"
 
 echo "==> Syncing Python dependencies..."
 ssh "${PI_TARGET}" "cd ${REMOTE_PATH} && [ -x .venv/bin/pip ] && .venv/bin/pip install -q -r src/python/requirements.txt || true"

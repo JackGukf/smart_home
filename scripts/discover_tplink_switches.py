@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,15 @@ def _safe_getattr(device: Any, name: str, default: Any = None) -> Any:
 
 
 async def discover_switches(timeout: int) -> list[DiscoveredSwitch]:
-    devices = await Discover.discover(timeout=timeout)
+    # Newer Kasa firmware (KLAP protocol, e.g. recent HS103) only reveals the
+    # alias after authenticating with the TP-Link cloud account credentials.
+    kwargs: dict[str, Any] = {}
+    username = os.getenv("TPLINK_USERNAME")
+    password = os.getenv("TPLINK_PASSWORD")
+    if username and password:
+        kwargs["username"] = username
+        kwargs["password"] = password
+    devices = await Discover.discover(timeout=timeout, **kwargs)
     switches: list[DiscoveredSwitch] = []
 
     try:
@@ -69,6 +78,25 @@ async def discover_switches(timeout: int) -> list[DiscoveredSwitch]:
     return switches
 
 
+def merge_previous_aliases(
+    switches: list[dict[str, Any]], previous: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Keep a previously known alias when a re-discovery could not read one.
+
+    KLAP devices report no alias without credentials; without this, re-running
+    discovery would replace manually assigned names with bare IP addresses.
+    """
+    previous_by_host = {item.get("host"): item for item in previous}
+    merged = []
+    for item in switches:
+        if not item.get("alias"):
+            old = previous_by_host.get(item.get("host"))
+            if old and old.get("alias"):
+                item = {**item, "alias": old["alias"], "name": old["alias"]}
+        merged.append(item)
+    return merged
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Discover TP-Link/Kasa light switches on the LAN.")
     parser.add_argument("--output", type=Path, default=Path("tplink_switches.json"))
@@ -78,10 +106,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    switches = asyncio.run(discover_switches(args.timeout))
+    switches = [asdict(switch) for switch in asyncio.run(discover_switches(args.timeout))]
+    if args.output.exists():
+        try:
+            previous = json.loads(args.output.read_text(encoding="utf-8")).get("switches", [])
+        except Exception:
+            previous = []
+        switches = merge_previous_aliases(switches, previous)
     payload = {
         "count": len(switches),
-        "switches": [asdict(switch) for switch in switches],
+        "switches": switches,
     }
     args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"count": len(switches), "output": str(args.output)}, indent=2, sort_keys=True))
