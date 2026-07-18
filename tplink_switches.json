@@ -1,5 +1,5 @@
 {
-  "count": 9,
+  "count": 8,
   "switches": [
     {
       "alias": "Kitchen light switch",
@@ -24,14 +24,6 @@
       "is_on": true,
       "model": "HS103",
       "name": "Raspberry PI"
-    },
-    {
-      "alias": "North bedroom",
-      "device_type": "DeviceType.WallSwitch",
-      "host": "192.168.0.163",
-      "is_on": false,
-      "model": "S505",
-      "name": "North bedroom"
     },
     {
       "alias": "Living room cabinet LED",

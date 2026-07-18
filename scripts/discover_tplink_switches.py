@@ -21,6 +21,18 @@ class DiscoveredSwitch:
     is_on: bool | None
 
 
+def _is_tapo_device(device: Any) -> bool:
+    """Tapo-family devices (e.g. S505) are Matter devices managed elsewhere;
+    listing them here would duplicate their Matter/Home Assistant card."""
+    family = ""
+    config = _safe_getattr(device, "config")
+    connection = _safe_getattr(config, "connection_type") if config else None
+    if connection is not None:
+        family = str(_safe_getattr(connection, "device_family") or "")
+    model = str(_safe_getattr(device, "model") or "")
+    return "tapo" in family.lower() or model.upper().startswith("S5")
+
+
 def _looks_like_light_switch(device: Any) -> bool:
     device_type = str(_safe_getattr(device, "device_type") or _safe_getattr(device, "type") or "")
     model = str(_safe_getattr(device, "model") or "")
@@ -55,7 +67,7 @@ async def discover_switches(timeout: int) -> list[DiscoveredSwitch]:
             except Exception:
                 pass
 
-            if not _looks_like_light_switch(device):
+            if _is_tapo_device(device) or not _looks_like_light_switch(device):
                 continue
 
             alias = _safe_getattr(device, "alias")

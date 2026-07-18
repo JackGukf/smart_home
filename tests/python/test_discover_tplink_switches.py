@@ -34,6 +34,25 @@ def test_fresh_alias_wins_over_previous() -> None:
     assert merged[0]["alias"] == "Office switch renamed"
 
 
+def test_tapo_devices_are_excluded_from_discovery() -> None:
+    class FakeConnection:
+        device_family = "SMART.TAPOSWITCH"
+
+    class FakeConfig:
+        connection_type = FakeConnection()
+
+    class FakeTapoSwitch:
+        config = FakeConfig()
+        model = "S505"
+
+    class FakeKasaPlug:
+        config = None
+        model = "HS103"
+
+    assert discover_tplink_switches._is_tapo_device(FakeTapoSwitch()) is True
+    assert discover_tplink_switches._is_tapo_device(FakeKasaPlug()) is False
+
+
 def test_unknown_host_passes_through() -> None:
     fresh = [{"host": "192.168.0.99", "alias": None, "name": "192.168.0.99"}]
 
