@@ -531,14 +531,19 @@ def create_app(
         switch = _find_switch(_load_switches(app.state.discovery_path), host)
         controller = app.state.controller
 
-        if command == "on":
-            state = await controller.turn_on(switch)
-        elif command == "off":
-            state = await controller.turn_off(switch)
-        elif command == "toggle":
-            state = await controller.toggle(switch)
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported command: {command}")
+        try:
+            if command == "on":
+                state = await controller.turn_on(switch)
+            elif command == "off":
+                state = await controller.turn_off(switch)
+            elif command == "toggle":
+                state = await controller.toggle(switch)
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported command: {command}")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise _switch_command_error(switch.host, exc)
 
         return asdict(state)
 
@@ -546,7 +551,10 @@ def create_app(
     async def set_brightness(host: str, body: dict[str, Any]) -> dict[str, Any]:
         level = int(body.get("level", 50))
         switch = _find_switch(_load_switches(app.state.discovery_path), host)
-        state = await app.state.controller.set_brightness(switch, level)
+        try:
+            state = await app.state.controller.set_brightness(switch, level)
+        except Exception as exc:
+            raise _switch_command_error(switch.host, exc)
         return asdict(state)
 
     @app.get("/api/matter/devices")
@@ -672,6 +680,32 @@ def _load_switches(path: Path) -> list[DashboardDevice]:
             )
         )
     return devices
+
+
+def _switch_command_error(host: str, exc: Exception) -> HTTPException:
+    """Turn a Kasa control failure into an actionable HTTP error.
+
+    Newer Kasa firmware (KLAP) rejects unauthenticated local control; without
+    this the dashboard surfaces a bare 500 with no hint about credentials.
+    """
+    try:
+        from kasa.exceptions import AuthenticationError
+    except ImportError:
+        AuthenticationError = ()  # type: ignore[assignment]
+
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, AuthenticationError):
+            return HTTPException(
+                status_code=503,
+                detail=(
+                    f"Device {host} requires TP-Link account credentials (newer Kasa "
+                    "firmware). Set TPLINK_USERNAME and TPLINK_PASSWORD in the "
+                    "dashboard environment (.env) and restart the service."
+                ),
+            )
+        cause = cause.__cause__ or cause.__context__
+    return HTTPException(status_code=502, detail=f"Device {host} command failed: {exc}")
 
 
 def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:

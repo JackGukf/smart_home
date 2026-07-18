@@ -251,6 +251,15 @@ async function requestJson(url, options = {}) {
   return response.json();
 }
 
+/* Extract the human-readable detail from an API error (FastAPI returns {"detail": "..."}) */
+function apiErrorDetail(error) {
+  try {
+    const parsed = JSON.parse(error.message);
+    if (parsed && parsed.detail) return String(parsed.detail);
+  } catch {}
+  return error.message || "request failed";
+}
+
 /* ── Utilities ── */
 function stateLabel(value) {
   if (value === true)  return "on";
@@ -4178,7 +4187,7 @@ document.addEventListener("click", (event) => {
     /* Revert optimistic update on failure */
     updateDeviceCardSwitchState(card, !isNowOn);
     apiStatus.textContent = "Error";
-    logActivity("Error toggling device", "error");
+    logActivity(`Error toggling device: ${apiErrorDetail(error)}`, "error");
     console.error(error);
   });
 });

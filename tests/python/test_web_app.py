@@ -319,6 +319,42 @@ def test_command_endpoint_controls_switch_by_host(tmp_path: Path) -> None:
     assert controller.commands == [("on", "192.168.0.61")]
 
 
+def test_command_endpoint_reports_missing_tplink_credentials(tmp_path: Path) -> None:
+    from kasa.exceptions import AuthenticationError, KasaException
+
+    discovery = tmp_path / "tplink_switches.json"
+    _write_discovery(discovery)
+
+    class AuthFailingController(FakeController):
+        async def turn_on(self, switch):
+            raise KasaException("Communication error") from AuthenticationError(
+                "Device response did not match our challenge"
+            )
+
+    client = TestClient(create_app(discovery_path=discovery, controller=AuthFailingController()))
+
+    response = client.post("/api/devices/192.168.0.61/commands/on")
+
+    assert response.status_code == 503
+    assert "TPLINK_USERNAME" in response.json()["detail"]
+
+
+def test_command_endpoint_maps_device_error_to_502(tmp_path: Path) -> None:
+    discovery = tmp_path / "tplink_switches.json"
+    _write_discovery(discovery)
+
+    class FailingController(FakeController):
+        async def turn_on(self, switch):
+            raise RuntimeError("device unreachable")
+
+    client = TestClient(create_app(discovery_path=discovery, controller=FailingController()))
+
+    response = client.post("/api/devices/192.168.0.61/commands/on")
+
+    assert response.status_code == 502
+    assert "device unreachable" in response.json()["detail"]
+
+
 def test_cameras_endpoint_loads_configured_tplink_cameras(tmp_path: Path) -> None:
     discovery = tmp_path / "tplink_switches.json"
     config = tmp_path / "devices.local.yaml"

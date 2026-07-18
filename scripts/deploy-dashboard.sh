@@ -59,6 +59,7 @@ rsync --checksum -av \
     "${PROJECT_ROOT}/scripts/install-dashboard-service.sh" \
     "${PROJECT_ROOT}/scripts/discover-govee-ble.py" \
     "${PROJECT_ROOT}/scripts/discover_tplink_switches.py" \
+    "${PROJECT_ROOT}/scripts/check-tplink-credentials.py" \
     "${PI_TARGET}:${REMOTE_PATH}/scripts/"
 
 # The dashboard reads the TP-Link device list from the project root on every
