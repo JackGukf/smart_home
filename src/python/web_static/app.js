@@ -869,6 +869,56 @@ function ambientLightCard(light) {
   ].join("");
 }
 
+/* ── Humidifiers (Govee cloud) ── */
+async function loadHumidifiers() {
+  const payload = await requestJson("/api/humidifiers");
+  renderHumidifiers(payload);
+}
+
+function renderHumidifiers(payload) {
+  const humidifiers = payload.humidifiers || [];
+  const grid = document.querySelector("#humidifierGrid");
+  const badge = document.querySelector("#humidifierCount");
+  if (badge) badge.textContent = String(humidifiers.length);
+  if (!grid) return;
+  if (humidifiers.length === 0) {
+    grid.innerHTML = '<div class="empty">No humidifiers configured yet. Add a humidifiers: section to configs/devices.local.yaml.</div>';
+    return;
+  }
+  grid.innerHTML = humidifiers.map(humidifierCard).join("");
+}
+
+function humidifierCard(humidifier) {
+  const isOn = humidifier.is_on === true;
+  const statusClass = humidifier.status === "configured" ? (isOn ? "on" : "") : "setup";
+  const onActive = isOn ? " active" : "";
+  const offActive = humidifier.is_on === false ? " active" : "";
+  const mist = humidifier.capabilities && humidifier.capabilities.mist_level;
+  const level = humidifier.mist_level ?? (mist ? mist.min : 1);
+  const actions = humidifier.controllable
+    ? '<div class="ambient-actions"><button class="command primary' + onActive + '" data-humidifier-command="on" data-humidifier-id="' + escapeHtml(humidifier.id) + '">On</button><button class="command' + offActive + '" data-humidifier-command="off" data-humidifier-id="' + escapeHtml(humidifier.id) + '">Off</button></div>'
+    : '<div class="ambient-actions"><button class="command" disabled>Setup needed</button></div>';
+  const mistRow = humidifier.controllable && mist
+    ? '<div class="ambient-control-row"><i class="ti ti-droplet"></i><input type="range" min="' + mist.min + '" max="' + mist.max + '" value="' + level + '" data-humidifier-mist data-humidifier-id="' + escapeHtml(humidifier.id) + '"><span>' + level + "/" + mist.max + '</span></div>'
+    : "";
+  const humidityRow = humidifier.humidity != null
+    ? '<div class="ambient-control-row"><i class="ti ti-cloud-rain"></i><span>Humidity ' + escapeHtml(String(humidifier.humidity)) + '%</span></div>'
+    : "";
+  return [
+    '<article class="ambient-card ' + statusClass + '">',
+    '<div class="ambient-glow"></div>',
+    '<div class="ambient-top">',
+    '<div class="ambient-name-row"><h3>' + escapeHtml(humidifier.name) + "</h3></div>",
+    '<span class="ambient-status">' + escapeHtml(humidifier.status === "configured" ? (isOn ? "On" : humidifier.is_on === false ? "Off" : "Ready") : humidifier.note) + "</span>",
+    "</div>",
+    '<p class="ambient-meta">' + escapeHtml([humidifier.model, humidifier.room].filter(Boolean).join(" · ")) + "</p>",
+    actions,
+    mistRow,
+    humidityRow,
+    "</article>",
+  ].join("");
+}
+
 function renderPlugSection(devices) {
   devices = applyDeviceOrder(devices, "smart_plug");
   const plugActionsEl = document.querySelector("#plugActions");
@@ -4076,6 +4126,9 @@ function activateView(viewName) {
   if (viewName === "ambient") {
     loadAmbientLights().catch((error) => console.error(error));
   }
+  if (viewName === "humidifier") {
+    loadHumidifiers().catch((error) => console.error(error));
+  }
   if (viewName === "discovery") {
     requestJson("/api/matter/devices")
       .then((data) => {
@@ -4550,6 +4603,7 @@ function getDefaultView() {
   }
   activateView(getDefaultView());
   loadAmbientLights().catch((error) => console.error(error));
+  loadHumidifiers().catch((error) => console.error(error));
 })();
 
 /* Light drag lock */
@@ -4706,6 +4760,55 @@ document.addEventListener("click", (event) => {
     else if (e.key === "Escape") { e.preventDefault(); cancel(); }
   });
   input.addEventListener("blur", commit);
+});
+
+/* ── Humidifier actions ── */
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-humidifier-command]");
+  if (!btn) return;
+  const humidifierId = btn.dataset.humidifierId;
+  const command = btn.dataset.humidifierCommand;
+  const card = btn.closest(".ambient-card");
+  const buttons = card ? [...card.querySelectorAll("button[data-humidifier-command]")] : [btn];
+  const status = card?.querySelector(".ambient-status");
+  buttons.forEach((item) => { item.disabled = true; item.classList.remove("active"); });
+  btn.classList.add("active");
+  if (status) status.textContent = command === "on" ? "Turning on..." : "Turning off...";
+  apiStatus.textContent = "Sending";
+  try {
+    await requestJson("/api/humidifiers/" + encodeURIComponent(humidifierId) + "/commands/" + command, { method: "POST" });
+    await loadHumidifiers();
+    apiStatus.textContent = "Online";
+    logActivity("Humidifier turned " + command);
+  } catch (error) {
+    buttons.forEach((item) => { item.disabled = false; });
+    if (status) status.textContent = "Command failed";
+    apiStatus.textContent = "Error";
+    logActivity("Humidifier command unavailable", "warn");
+    console.error(error);
+  }
+});
+
+document.addEventListener("change", async (event) => {
+  const slider = event.target.closest("input[data-humidifier-mist]");
+  if (!slider) return;
+  const humidifierId = slider.dataset.humidifierId;
+  const level = Number(slider.value);
+  apiStatus.textContent = "Sending";
+  try {
+    await requestJson("/api/humidifiers/" + encodeURIComponent(humidifierId) + "/commands/mist_level", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ level }),
+    });
+    await loadHumidifiers();
+    apiStatus.textContent = "Online";
+    logActivity("Humidifier mist level → " + level);
+  } catch (error) {
+    apiStatus.textContent = "Error";
+    logActivity("Humidifier command unavailable", "warn");
+    console.error(error);
+  }
 });
 
 /* ── All On / All Off (Plugs) ── */

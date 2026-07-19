@@ -375,3 +375,26 @@ def test_humidifier_command_error_paths(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.delenv("GOVEE_API_KEY")
     assert client.post("/api/humidifiers/Bedroom%20Humidifier/commands/on").status_code == 503
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
+APP_JS = PROJECT_ROOT / "src" / "python" / "web_static" / "app.js"
+
+
+def test_humidifier_view_exists_in_sidebar_and_panels() -> None:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'data-view="humidifier"' in html
+    assert 'id="humidifierCount"' in html
+    assert 'data-view-panel="humidifier"' in html
+    assert 'id="humidifierGrid"' in html
+
+
+def test_app_js_wires_humidifier_api() -> None:
+    js = APP_JS.read_text(encoding="utf-8")
+
+    assert '"/api/humidifiers"' in js
+    assert "data-humidifier-command" in js
+    assert "data-humidifier-mist" in js
+    assert "loadHumidifiers()" in js
