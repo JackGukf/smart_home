@@ -309,3 +309,69 @@ def test_cached_state_survives_cloud_outage_after_successful_poll(tmp_path: Path
     assert second["status"] == "cloud_unreachable"
     assert second["is_on"] is True  # last known state survives the outage
     assert second["mist_level"] == 2
+
+
+def _healthy_cloud(monkeypatch, control_log):
+    monkeypatch.setenv("GOVEE_API_KEY", "test-key")
+
+    def fake_request(path, payload=None):
+        if path == "/router/api/v1/user/devices":
+            return {"code": 200, "data": FAKE_DEVICE_LIST}
+        if path == "/router/api/v1/device/control":
+            control_log.append(payload["payload"]["capability"])
+            return {"code": 200}
+        if path == "/router/api/v1/device/state":
+            return {"payload": {"capabilities": []}}
+        raise AssertionError(f"unexpected path {path}")
+
+    monkeypatch.setattr(web_app, "_govee_cloud_request", fake_request)
+
+
+def test_humidifier_on_off_commands(tmp_path: Path, monkeypatch) -> None:
+    control_log = []
+    _healthy_cloud(monkeypatch, control_log)
+    client = _client(tmp_path)
+
+    assert client.post("/api/humidifiers/Bedroom%20Humidifier/commands/on").status_code == 200
+    assert client.post("/api/humidifiers/Bedroom%20Humidifier/commands/off").status_code == 200
+
+    assert control_log == [
+        {"type": "devices.capabilities.on_off", "instance": "powerSwitch", "value": 1},
+        {"type": "devices.capabilities.on_off", "instance": "powerSwitch", "value": 0},
+    ]
+
+
+def test_humidifier_mist_level_clamped_to_reported_range(tmp_path: Path, monkeypatch) -> None:
+    control_log = []
+    _healthy_cloud(monkeypatch, control_log)
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/humidifiers/Bedroom%20Humidifier/commands/mist_level", json={"level": 99}
+    )
+
+    assert response.status_code == 200
+    # FAKE_DEVICE_LIST reports gearMode range 1-3; workMode value 1 is gearMode.
+    assert control_log == [
+        {
+            "type": "devices.capabilities.work_mode",
+            "instance": "workMode",
+            "value": {"workMode": 1, "modeValue": 3},
+        }
+    ]
+
+
+def test_humidifier_command_error_paths(tmp_path: Path, monkeypatch) -> None:
+    control_log = []
+    _healthy_cloud(monkeypatch, control_log)
+    client = _client(tmp_path)
+
+    assert client.post("/api/humidifiers/Nope/commands/on").status_code == 404
+    assert client.post("/api/humidifiers/Bedroom%20Humidifier/commands/dance").status_code == 400
+    assert (
+        client.post("/api/humidifiers/Bedroom%20Humidifier/commands/mist_level", json={}).status_code
+        == 400
+    )
+
+    monkeypatch.delenv("GOVEE_API_KEY")
+    assert client.post("/api/humidifiers/Bedroom%20Humidifier/commands/on").status_code == 503

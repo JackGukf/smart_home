@@ -480,6 +480,14 @@ def create_app(
     async def humidifiers() -> dict[str, Any]:
         return await asyncio.to_thread(_humidifier_cards, app.state.config_path)
 
+    @app.post("/api/humidifiers/{humidifier_id}/commands/{command}")
+    async def humidifier_command(
+        humidifier_id: str, command: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            _humidifier_command_payload, app.state.config_path, humidifier_id, command, body or {}
+        )
+
     @app.get("/api/weather")
     async def weather() -> dict[str, Any]:
         config = _load_weather_config(app.state.config_path)
@@ -1753,6 +1761,58 @@ def _humidifier_card(humidifier: HumidifierDefinition) -> dict[str, Any]:
 
 def _humidifier_cards(path: Path) -> dict[str, Any]:
     return {"humidifiers": [_humidifier_card(h) for h in _load_humidifiers(path)]}
+
+
+def _humidifier_command_payload(
+    config_path: Path, humidifier_id: str, command: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    humidifier = _find_humidifier(_load_humidifiers(config_path), humidifier_id)
+    if humidifier.provider != "govee_cloud":
+        raise HTTPException(status_code=501, detail="Only govee_cloud humidifiers are controllable.")
+    if not _govee_api_key():
+        raise HTTPException(status_code=503, detail="GOVEE_API_KEY is not configured")
+    try:
+        devices = _govee_cloud_devices()
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"Govee cloud unavailable: {error}")
+    entry = _match_govee_cloud_device(humidifier, devices)
+    if entry is None:
+        raise HTTPException(
+            status_code=404, detail="No matching device on the Govee account; set device_id."
+        )
+    runtime_key = _humidifier_runtime_key(humidifier, entry)
+    if command in ("on", "off"):
+        value = 1 if command == "on" else 0
+        capability: dict[str, Any] = {
+            "type": "devices.capabilities.on_off",
+            "instance": "powerSwitch",
+            "value": value,
+        }
+        state_update = {"is_on": command == "on"}
+    elif command == "mist_level":
+        raw_level = body.get("level")
+        if raw_level is None:
+            raise HTTPException(status_code=400, detail="mist_level requires a JSON body with 'level'.")
+        low, high = _govee_mist_range(entry)
+        level = max(low, min(high, int(raw_level)))
+        capability = {
+            "type": "devices.capabilities.work_mode",
+            "instance": "workMode",
+            "value": {"workMode": _govee_gear_mode_value(entry), "modeValue": level},
+        }
+        state_update = {"mist_level": level}
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported humidifier command: {command}")
+    try:
+        _govee_cloud_control(entry, capability["type"], capability["instance"], capability["value"])
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"Govee command failed: {error}")
+    cached = dict(HUMIDIFIER_RUNTIME_STATE.get(runtime_key, {}))
+    cached.update(state_update)
+    HUMIDIFIER_RUNTIME_STATE[runtime_key] = cached
+    return {"ok": True, "command": command, **state_update}
 
 
 GOVEE_BLE_WRITE_UUIDS = (
