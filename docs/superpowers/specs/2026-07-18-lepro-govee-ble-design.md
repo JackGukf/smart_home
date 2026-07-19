@@ -103,7 +103,38 @@ encrypted or handshake-gated), stop; the Lepro stays display-only on the
 
 ## Open questions resolved during probing
 
-- Which packet family the S1 speaks (or none → failure exit).
-- Whether brightness/color are attainable or power-only.
-- Whether the second `LP` device (`10:20:BA:30:2A:7A`) is the same product;
-  it refused connection during the initial probe.
+### Probe result (2026-07-18): protocol is encrypted — Lepro stays display-only
+
+Ran `scripts/probe-lepro-ble.py` against the S1 (`B8:F8:62:DB:79:46`). The lamp
+connected and accepted writes to `1e2aa502-…`, but **none** of the eight
+candidate command families (Govee-style checksummed, Triones `CC 23/24 33`,
+generic `7E` RGB, ASCII) produced any visible reaction.
+
+Decisive evidence of encryption: the first write returned a single 70-byte
+high-entropy notification on `1e2aa503-…`:
+
+```
+88415a50009e21000040482795580c9522e8dc9db9b2a7b3ea515892bff72c7a
+19e73fc78ac9331d9eb655bd09031157f828f0ebb39d08014b2978ce3cd32ea3
+4621ca615f588450447c
+```
+
+A plaintext status/ack frame would be short and mostly structured (zeros +
+small fields); this is near-random, characteristic of an AES-encrypted,
+session-keyed protocol. The lamp expects an authenticated handshake before it
+acts on commands, which the plaintext families cannot satisfy.
+
+**Decision:** invoke the plan's failure exit. The Lepro S1 stays on the
+display-only `alexa` provider; no `lepro_ble` provider is built. Decoding the
+handshake would require capturing the Lepro iOS app's BLE traffic (needs a Mac
++ PacketLogger, unavailable) or decompiling the app to recover its key
+derivation — both out of scope for this plan.
+
+### Govee scope still proceeds
+
+The Govee H6076 floor lamp (`E8:6E:80:C6:2F:18`) addition and the verification
+of the existing Govee lights through the UB500 are independent of the Lepro
+outcome and continue (plan Tasks 5 partial + 6).
+
+- Second `LP` device (`10:20:BA:30:2A:7A`): refused connection during probing;
+  left out of scope.
