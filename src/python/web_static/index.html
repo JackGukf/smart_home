@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build31">
+  <link rel="stylesheet" href="/static/styles.css?v=build33">
 </head>
 <body>
 
@@ -60,6 +60,12 @@
         <span class="room-icon"><i class="ti ti-plug"></i></span>
         Plugs
         <span class="room-badge" id="plugCount">–</span>
+      </li>
+
+      <li class="room-item" data-view="ambient">
+        <span class="room-icon"><i class="ti ti-lamp-2"></i></span>
+        Ambient
+        <span class="room-badge" id="ambientCount">–</span>
       </li>
 
       <li class="room-item" data-view="tuya">
@@ -207,6 +213,17 @@
       </div>
       <div id="plugActions" class="quick-action-row"></div>
       <div class="device-grid" id="plugGrid">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── AMBIENT LIGHTS VIEW ── -->
+    <div class="view-panel" data-view-panel="ambient">
+      <div class="section-header">
+        <span class="section-title">Ambient Lights</span>
+        <span class="section-meta">Govee · Bluetooth (local control)</span>
+      </div>
+      <div class="ambient-grid" id="ambientGrid">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
       </div>
     </div>
@@ -676,6 +693,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build31"></script>
+<script src="/static/app.js?v=build33"></script>
 </body>
 </html>

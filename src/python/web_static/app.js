@@ -4073,6 +4073,9 @@ function activateView(viewName) {
     panel.classList.toggle("active", panel.dataset.viewPanel === viewName);
   });
   document.body.classList.toggle("home-assistant-mode", viewName === "homeassistant");
+  if (viewName === "ambient") {
+    loadAmbientLights().catch((error) => console.error(error));
+  }
   if (viewName === "discovery") {
     requestJson("/api/matter/devices")
       .then((data) => {
@@ -4546,6 +4549,7 @@ function getDefaultView() {
     select.addEventListener("click", (event) => event.stopPropagation());
   }
   activateView(getDefaultView());
+  loadAmbientLights().catch((error) => console.error(error));
 })();
 
 /* Light drag lock */
