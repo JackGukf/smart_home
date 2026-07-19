@@ -1378,6 +1378,86 @@ def test_ambient_light_command_sends_govee_ble_command(tmp_path: Path, monkeypat
     assert sent == [("AA:BB:CC:DD:EE:FF", "on", {})]
 
 
+def test_govee_lan_command_json_builds_messages() -> None:
+    build = web_app_module._govee_lan_command_json
+    assert build("on") == {"msg": {"cmd": "turn", "data": {"value": 1}}}
+    assert build("off") == {"msg": {"cmd": "turn", "data": {"value": 0}}}
+    assert build("brightness", {"brightness": 50}) == {"msg": {"cmd": "brightness", "data": {"value": 50}}}
+    assert build("color", {"red": 255, "green": 128, "blue": 64}) == {
+        "msg": {"cmd": "colorwc", "data": {"color": {"r": 255, "g": 128, "b": 64}, "colorTemInKelvin": 0}}
+    }
+
+
+def test_govee_lan_command_json_rejects_unknown() -> None:
+    import pytest
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        web_app_module._govee_lan_command_json("nope")
+    assert exc.value.status_code == 400
+
+
+def _write_ambient_lan_config(path: Path) -> None:
+    path.write_text(
+        """
+ambient_lights:
+  devices:
+    - name: Govee H6076 Floor Lamp
+      provider: govee_lan
+      model: H6076
+      room: Living Room
+      address: E8:6E:80:C6:2F:18
+""",
+        encoding="utf-8",
+    )
+
+
+def test_govee_lan_card_is_controllable_with_capabilities(tmp_path: Path) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_lan_config(config)
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+    lights = client.get("/api/ambient-lights").json()["lights"]
+    lan = next(light for light in lights if light["provider"] == "govee_lan")
+
+    assert lan["controllable"] is True
+    assert lan["capabilities"] == {"power": True, "brightness": True, "color": True}
+
+
+def test_govee_lan_command_dispatches_udp_message(tmp_path: Path, monkeypatch) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_lan_config(config)
+
+    sent: dict[str, object] = {}
+    monkeypatch.setattr(web_app_module, "_govee_lan_resolve_ip", lambda light, force=False: "192.168.0.153")
+    monkeypatch.setattr(web_app_module, "_govee_lan_send", lambda ip, message: sent.update({"ip": ip, "message": message}))
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+    response = client.post("/api/ambient-lights/Govee%20H6076%20Floor%20Lamp/commands/on")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert sent["ip"] == "192.168.0.153"
+    assert sent["message"] == {"msg": {"cmd": "turn", "data": {"value": 1}}}
+
+
+def test_govee_lan_command_reports_offline_device(tmp_path: Path, monkeypatch) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_lan_config(config)
+
+    monkeypatch.setattr(web_app_module, "_govee_lan_resolve_ip", lambda light, force=False: None)
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+    response = client.post("/api/ambient-lights/Govee%20H6076%20Floor%20Lamp/commands/on")
+
+    assert response.status_code == 502
+
+
 def test_ambient_runtime_state_tracks_power_commands() -> None:
     light = web_app_module.AmbientLightDefinition(
         name="Test Govee",

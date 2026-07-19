@@ -137,8 +137,12 @@ ambient_lights:
       model: H6054
       room: Bedroom
       address: replace_me
+    # Newer Govee models (e.g. H6076 Lyra) ignore the legacy BLE protocol; control
+    # them over Wi-Fi instead. Enable "LAN Control" in the Govee app (2.4GHz Wi-Fi,
+    # firmware 1.04.06+). The Pi finds the device by LAN scan and matches on the
+    # address (device id suffix) or model, so no static IP is needed.
     - name: Govee H6076 Floor Lamp
-      provider: govee_ble
+      provider: govee_lan
       model: H6076
       room: Living Room
       address: replace_me

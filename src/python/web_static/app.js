@@ -834,7 +834,7 @@ function renderAmbientLights(payload) {
 }
 
 function ambientLightCard(light) {
-  const providerLabel = light.provider === "govee_ble" ? "Govee Bluetooth" : light.provider === "alexa" ? "Alexa bridge" : light.provider;
+  const providerLabel = light.provider === "govee_ble" ? "Govee Bluetooth" : light.provider === "govee_lan" ? "Govee Wi-Fi" : light.provider === "alexa" ? "Alexa bridge" : light.provider;
   const statusClass = light.controllable ? "online" : "setup";
   const powerLabel = light.is_on === true ? "On" : light.is_on === false ? "Off" : "Unknown";
   const onActive = light.is_on === true ? " active" : "";

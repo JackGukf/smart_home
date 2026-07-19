@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import threading
+import time
 import asyncio
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -410,6 +411,8 @@ def create_app(
             raise HTTPException(status_code=400, detail=f"Unsupported command: {command}")
         if light.provider == "alexa":
             raise HTTPException(status_code=501, detail="Lepro via Alexa needs an Alexa routine or bridge before dashboard commands can be sent.")
+        if light.provider == "govee_lan":
+            return await asyncio.to_thread(_govee_lan_command_payload, light, command, body or {})
         if light.provider != "govee_ble":
             raise HTTPException(status_code=400, detail=f"Unsupported ambient provider: {light.provider}")
         if not light.address:
@@ -1200,6 +1203,15 @@ def _ambient_light_card(light: AmbientLightDefinition) -> dict[str, Any]:
         status = "configured" if has_address else "needs_ble_address"
         note = "BLE address configured" if has_address else "Run Govee BLE discovery on the Raspberry Pi and add the address."
         controllable = has_address
+    elif light.provider == "govee_lan":
+        has_id = _is_real_ble_address(light.address) or bool(light.model)
+        status = "configured" if has_id else "needs_lan_setup"
+        note = (
+            "Govee LAN control over Wi-Fi."
+            if has_id
+            else "Enable LAN Control in the Govee app and set the device model/address."
+        )
+        controllable = has_id
     elif light.provider == "alexa":
         status = "needs_alexa_bridge"
         note = "Lepro is reachable from Alexa, but dashboard control needs an Alexa routine/bridge path."
@@ -1208,6 +1220,7 @@ def _ambient_light_card(light: AmbientLightDefinition) -> dict[str, Any]:
         status = "unsupported"
         note = "Unsupported ambient light provider."
         controllable = False
+    supports_full = controllable and light.provider in ("govee_ble", "govee_lan")
     return {
         "id": light.name,
         "name": light.name,
@@ -1223,15 +1236,123 @@ def _ambient_light_card(light: AmbientLightDefinition) -> dict[str, Any]:
         "brightness": runtime_state.get("brightness"),
         "color": runtime_state.get("color"),
         "capabilities": {
-            "power": light.provider == "govee_ble" and controllable,
-            "brightness": light.provider == "govee_ble" and controllable,
-            "color": light.provider == "govee_ble" and controllable,
+            "power": supports_full,
+            "brightness": supports_full,
+            "color": supports_full,
         },
     }
 
 
 def _ambient_light_cards(path: Path) -> list[dict[str, Any]]:
     return [_ambient_light_card(light) for light in _load_ambient_lights(path)]
+
+
+# ── Govee LAN (Wi-Fi) control ──
+# Newer Govee models (e.g. H6076) ignore the legacy BLE 0x33 protocol but expose
+# Govee's documented LAN API: a multicast scan on :4001 (replies on :4002) and
+# JSON commands sent by unicast UDP to the device on :4003.
+GOVEE_LAN_MCAST = "239.255.255.250"
+GOVEE_LAN_SCAN_PORT = 4001
+GOVEE_LAN_RECV_PORT = 4002
+GOVEE_LAN_CMD_PORT = 4003
+_GOVEE_LAN_IP_CACHE: dict[str, str] = {}
+
+
+def _govee_lan_command_json(command: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = body or {}
+    if command == "on":
+        return {"msg": {"cmd": "turn", "data": {"value": 1}}}
+    if command == "off":
+        return {"msg": {"cmd": "turn", "data": {"value": 0}}}
+    if command == "brightness":
+        value = _bounded_byte(body.get("brightness", body.get("value", 100)), minimum=1, maximum=100)
+        return {"msg": {"cmd": "brightness", "data": {"value": value}}}
+    if command == "color":
+        red = _bounded_byte(body.get("red", body.get("r", 255)))
+        green = _bounded_byte(body.get("green", body.get("g", 255)))
+        blue = _bounded_byte(body.get("blue", body.get("b", 255)))
+        return {"msg": {"cmd": "colorwc", "data": {"color": {"r": red, "g": green, "b": blue}, "colorTemInKelvin": 0}}}
+    raise HTTPException(status_code=400, detail=f"Unsupported Govee LAN command: {command}")
+
+
+def _govee_lan_scan(timeout: float = 3.0) -> dict[str, dict[str, Any]]:
+    """Return {ip: scan_data} for Govee devices with LAN Control enabled."""
+    devices: dict[str, dict[str, Any]] = {}
+    recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        recv.bind(("0.0.0.0", GOVEE_LAN_RECV_PORT))
+        recv.settimeout(timeout)
+        sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sender.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+        try:
+            request = json.dumps({"msg": {"cmd": "scan", "data": {"account_topic": "reserve"}}}).encode()
+            sender.sendto(request, (GOVEE_LAN_MCAST, GOVEE_LAN_SCAN_PORT))
+        finally:
+            sender.close()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                data, addr = recv.recvfrom(2048)
+            except socket.timeout:
+                break
+            try:
+                payload = json.loads(data).get("msg", {}).get("data", {})
+            except (ValueError, AttributeError):
+                continue
+            if payload.get("sku"):
+                devices[addr[0]] = payload
+    finally:
+        recv.close()
+    return devices
+
+
+def _govee_lan_resolve_ip(light: AmbientLightDefinition, force: bool = False) -> str | None:
+    """Find the device's current LAN IP by scanning, matching on device id or model."""
+    key = light.address or light.name
+    if not force and key in _GOVEE_LAN_IP_CACHE:
+        return _GOVEE_LAN_IP_CACHE[key]
+    target = (light.address or "").replace(":", "").lower()
+    model = str(light.model or "").upper()
+    for ip, data in _govee_lan_scan().items():
+        device_id = str(data.get("device", "")).replace(":", "").lower()
+        sku = str(data.get("sku", "")).upper()
+        if target and device_id.endswith(target):
+            _GOVEE_LAN_IP_CACHE[key] = ip
+            return ip
+        if not target and model and sku == model:
+            _GOVEE_LAN_IP_CACHE[key] = ip
+            return ip
+    return None
+
+
+def _govee_lan_send(ip: str, message: dict[str, Any]) -> None:
+    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sender.sendto(json.dumps(message).encode(), (ip, GOVEE_LAN_CMD_PORT))
+    finally:
+        sender.close()
+
+
+def _govee_lan_command_payload(light: AmbientLightDefinition, command: str, body: dict[str, Any]) -> dict[str, Any]:
+    if command == "toggle":
+        raise HTTPException(status_code=400, detail="Govee LAN toggle needs device state support; use on or off.")
+    message = _govee_lan_command_json(command, body)
+    ip = _govee_lan_resolve_ip(light)
+    if not ip:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Govee LAN device '{light.name}' was not found on the network. "
+                "Confirm it is on 2.4GHz Wi-Fi and that LAN Control is enabled in the Govee app."
+            ),
+        )
+    try:
+        _govee_lan_send(ip, message)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Govee LAN command failed for {light.name}: {exc}") from exc
+    _remember_ambient_light_command(light, command, body)
+    return {"status": "ok", "name": light.name, "ip": ip, "command": command, "light": _ambient_light_card(light)}
 
 
 def _find_ambient_light(lights: list[AmbientLightDefinition], light_id: str) -> AmbientLightDefinition:
