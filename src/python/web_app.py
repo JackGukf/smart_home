@@ -1538,7 +1538,8 @@ def _govee_ble_discovery_payload() -> dict[str, Any]:
 GOVEE_CLOUD_BASE = "https://openapi.api.govee.com"
 GOVEE_CLOUD_DEVICE_CACHE_TTL = 600.0
 _GOVEE_CLOUD_CACHE: dict[str, Any] = {"devices": None, "fetched": 0.0}
-# Last-known state per Govee device id, served when the cloud is unreachable.
+# Last-known state keyed by configured device_id (or humidifier name if device_id is unset),
+# served when the cloud is unreachable.
 HUMIDIFIER_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
 
 
@@ -1681,9 +1682,9 @@ def _find_humidifier(
     raise HTTPException(status_code=404, detail=f"Humidifier not found: {humidifier_id}")
 
 
-def _humidifier_runtime_key(humidifier: HumidifierDefinition, entry: dict[str, Any] | None) -> str:
-    if entry and entry.get("device"):
-        return str(entry["device"])
+def _humidifier_runtime_key(humidifier: HumidifierDefinition, entry: dict[str, Any] | None = None) -> str:
+    if _is_real_ble_address(humidifier.device_id):
+        return humidifier.device_id
     return humidifier.name
 
 

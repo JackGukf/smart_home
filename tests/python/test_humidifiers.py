@@ -273,3 +273,39 @@ def test_humidifiers_endpoint_serves_cache_when_cloud_unreachable(tmp_path: Path
     assert card["status"] == "cloud_unreachable"
     assert card["controllable"] is False
     assert card["is_on"] is True  # served from cache
+
+
+def test_cached_state_survives_cloud_outage_after_successful_poll(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GOVEE_API_KEY", "test-key")
+    healthy = True
+
+    def fake_request(path, payload=None):
+        if not healthy:
+            raise OSError("rate limited")
+        if path == "/router/api/v1/user/devices":
+            return {"code": 200, "data": FAKE_DEVICE_LIST}
+        if path == "/router/api/v1/device/state":
+            return {
+                "payload": {
+                    "capabilities": [
+                        {"instance": "powerSwitch", "state": {"value": 1}},
+                        {"instance": "workMode", "state": {"value": {"workMode": 1, "modeValue": 2}}},
+                    ]
+                }
+            }
+        raise AssertionError(f"unexpected path {path}")
+
+    monkeypatch.setattr(web_app, "_govee_cloud_request", fake_request)
+    client = _client(tmp_path)
+
+    first = client.get("/api/humidifiers").json()["humidifiers"][0]
+    assert first["status"] == "configured"
+    assert first["is_on"] is True
+
+    healthy = False
+    web_app._GOVEE_CLOUD_CACHE.update({"devices": None, "fetched": 0.0})  # expire device-list cache
+
+    second = client.get("/api/humidifiers").json()["humidifiers"][0]
+    assert second["status"] == "cloud_unreachable"
+    assert second["is_on"] is True  # last known state survives the outage
+    assert second["mist_level"] == 2
