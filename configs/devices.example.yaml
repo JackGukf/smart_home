@@ -170,6 +170,19 @@ ambient_lights:
       room: Studio
       alexa_name: Lepro S1 AI LED
 
+humidifiers:
+  devices:
+    # Govee humidifiers are controlled through the Govee Developer API v2.
+    # Apply for a key in the Govee app (Settings -> Apply for API Key) and set
+    # it as the GOVEE_API_KEY environment variable on the Pi — never here.
+    # device_id is the "device" value from the Govee API device list. Leave
+    # replace_me and the app matches by model when the account has exactly
+    # one device of that model.
+    - name: Bedroom Humidifier
+      provider: govee_cloud
+      model: H7140
+      room: Bedroom
+      device_id: replace_me
 
 mqtt:
   broker_host: 127.0.0.1

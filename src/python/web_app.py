@@ -152,6 +152,15 @@ class AmbientLightDefinition:
 
 
 @dataclass(frozen=True)
+class HumidifierDefinition:
+    name: str
+    provider: str
+    model: str | None
+    room: str | None
+    device_id: str | None
+
+
+@dataclass(frozen=True)
 class WeatherConfig:
     name: str
     latitude: float
@@ -1228,6 +1237,28 @@ def _load_ambient_lights(path: Path) -> list[AmbientLightDefinition]:
                 room=item.get("room"),
                 address=str(item.get("address") or item.get("mac") or "") or None,
                 alexa_name=str(item.get("alexa_name") or item.get("alexa_device") or "") or None,
+            )
+        )
+    return devices
+
+
+def _load_humidifiers(path: Path) -> list[HumidifierDefinition]:
+    if not path.exists():
+        return []
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    devices = []
+    for item in payload.get("humidifiers", {}).get("devices", []):
+        if item.get("enabled") is False:
+            continue
+        name = str(item.get("name") or item.get("id") or item.get("model") or "Humidifier")
+        provider = str(item.get("provider") or "govee_cloud").lower()
+        devices.append(
+            HumidifierDefinition(
+                name=name,
+                provider=provider,
+                model=str(item.get("model")) if item.get("model") else None,
+                room=item.get("room"),
+                device_id=str(item.get("device_id") or "") or None,
             )
         )
     return devices
