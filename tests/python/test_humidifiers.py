@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -172,3 +173,21 @@ def test_humidifier_state_returns_none_on_cloud_error(monkeypatch) -> None:
 
     monkeypatch.setattr(web_app, "_govee_cloud_request", fake_request)
     assert _govee_humidifier_state(FAKE_DEVICE_LIST[0]) is None
+
+
+def test_govee_cloud_request_raises_on_api_error_code(monkeypatch) -> None:
+    class FakeResponse:
+        def read(self):
+            return json.dumps({"code": 429, "message": "rate limited"}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setenv("GOVEE_API_KEY", "test-key")
+    monkeypatch.setattr(web_app, "urlopen", lambda request, timeout: FakeResponse())
+
+    with pytest.raises(RuntimeError, match="429"):
+        web_app._govee_cloud_request("/router/api/v1/user/devices")

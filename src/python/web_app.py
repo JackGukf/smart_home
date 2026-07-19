@@ -1554,7 +1554,11 @@ def _govee_cloud_request(path: str, payload: dict[str, Any] | None = None) -> di
         method="POST" if body is not None else "GET",
     )
     with urlopen(request, timeout=12) as response:
-        return json.loads(response.read().decode("utf-8"))
+        payload = json.loads(response.read().decode("utf-8"))
+    code = payload.get("code")
+    if code is not None and int(code) != 200:
+        raise RuntimeError(f"Govee API error {code}: {payload.get('message') or 'unknown error'}")
+    return payload
 
 
 def _govee_cloud_devices(force: bool = False) -> list[dict[str, Any]]:
