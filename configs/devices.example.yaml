@@ -34,6 +34,21 @@ tplink:
       mjpeg_fps: 10
       mjpeg_width: 640
       mjpeg_quality: 7
+    # Additional Tapo cameras follow the same pattern. Reuse the shared
+    # TAPO_CAMERA_USERNAME / TAPO_CAMERA_PASSWORD env vars (the camera-account
+    # credentials set in the Tapo app) unless the camera has its own account.
+    - name: bedroom_camera
+      host: 192.168.0.25
+      model: Tapo C210
+      room: Bedroom
+      stream_name: bedroom_camera
+      go2rtc_url: http://192.168.0.176:1984
+      username_env: TAPO_CAMERA_USERNAME
+      password_env: TAPO_CAMERA_PASSWORD
+      stream_path: /stream2
+      mjpeg_fps: 10
+      mjpeg_width: 640
+      mjpeg_quality: 7
 
 media_gateway:
   go2rtc_url: http://192.168.0.176:1984
