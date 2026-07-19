@@ -594,6 +594,10 @@ aside {
 .ambient-top { display: flex; align-items: center; gap: 12px; position: relative; z-index: 1; }
 .ambient-icon { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: rgba(var(--t-accent-rgb),0.14); color: var(--t-accent); font-size: 22px; }
 .ambient-top h3 { font-size: 15px; font-weight: 700; color: var(--text); }
+.ambient-name-row { display: flex; align-items: center; gap: 6px; }
+.ambient-edit-btn { background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px; font-size: 14px; line-height: 1; opacity: 0.65; }
+.ambient-edit-btn:hover { color: var(--t-accent); opacity: 1; }
+.ambient-name-input { font-size: 15px; font-weight: 700; color: var(--text); background: var(--card); border: 1px solid var(--t-accent); border-radius: 6px; padding: 2px 6px; width: 100%; max-width: 180px; }
 .ambient-top p, .ambient-note { color: var(--muted); font-size: 12px; }
 .ambient-meta { display: flex; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 11px; }
 .ambient-meta span { border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; }

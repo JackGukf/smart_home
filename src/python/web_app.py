@@ -151,6 +151,10 @@ class CameraUpdateRequest(BaseModel):
     name: str
 
 
+class AmbientLightUpdateRequest(BaseModel):
+    name: str
+
+
 class ClimateUpdateRequest(BaseModel):
     hvac_mode: str | None = None
     preset_mode: str | None = None
@@ -418,6 +422,16 @@ def create_app(
         if not light.address:
             raise HTTPException(status_code=400, detail="Govee BLE light needs a Bluetooth address from Pi discovery before it can be controlled.")
         return await asyncio.to_thread(_govee_ble_command_payload, light, command, body or {})
+
+    @app.patch("/api/ambient-lights/{light_id}")
+    async def update_ambient_light(light_id: str, update: AmbientLightUpdateRequest) -> dict[str, Any]:
+        name = update.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Ambient light name cannot be empty")
+        if len(name) > 80:
+            raise HTTPException(status_code=400, detail="Ambient light name is too long")
+        light = _rename_ambient_light(app.state.config_path, light_id, name)
+        return _ambient_light_card(light)
 
     @app.get("/api/weather")
     async def weather() -> dict[str, Any]:
@@ -1247,6 +1261,19 @@ def _ambient_light_cards(path: Path) -> list[dict[str, Any]]:
     return [_ambient_light_card(light) for light in _load_ambient_lights(path)]
 
 
+def _rename_ambient_light(path: Path, light_id: str, name: str) -> AmbientLightDefinition:
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Ambient light not found: {light_id}")
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    for item in payload.get("ambient_lights", {}).get("devices", []):
+        item_name = str(item.get("name") or item.get("id") or item.get("model") or "")
+        if item_name == light_id or quote(item_name, safe="") == light_id:
+            item["name"] = name
+            path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+            return _find_ambient_light(_load_ambient_lights(path), quote(name, safe=""))
+    raise HTTPException(status_code=404, detail=f"Ambient light not found: {light_id}")
+
+
 # ── Govee LAN (Wi-Fi) control ──
 # Newer Govee models (e.g. H6076) ignore the legacy BLE 0x33 protocol but expose
 # Govee's documented LAN API: a multicast scan on :4001 (replies on :4002) and
@@ -1477,9 +1504,9 @@ class _GoveeBleManager:
         client = self._clients.get(light.address)
         reused_connection = client is not None and client.is_connected
         if not reused_connection:
-            for other_address in list(self._clients):
-                if other_address != light.address:
-                    await self._drop_client(other_address)
+            # The UB500 (BT 5.0) handles multiple simultaneous connections, so we keep
+            # every lamp's connection warm instead of dropping the others. After the
+            # first connect per lamp, subsequent commands reuse the link (~0.1s vs ~7s).
             await asyncio.to_thread(_govee_ble_forget_cached_device, light.address)
             initial_delay = 5 if (light.model or "").upper() == "H613A" else 1
             await asyncio.sleep(initial_delay)

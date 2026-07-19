@@ -856,7 +856,7 @@ function ambientLightCard(light) {
     '<div class="ambient-glow"></div>',
     '<div class="ambient-top">',
     '<div class="ambient-icon"><i class="ti ti-lamp-2"></i></div>',
-    '<div><h3>' + escapeHtml(light.name) + '</h3><p>' + escapeHtml(light.room || light.model || "Ambient") + '</p></div>',
+    '<div class="ambient-title"><div class="ambient-name-row"><h3>' + escapeHtml(light.name) + '</h3><button class="ambient-edit-btn" data-ambient-edit="' + escapeHtml(light.id) + '" type="button" title="Rename light" aria-label="Rename light"><i class="ti ti-pencil"></i></button></div><p>' + escapeHtml(light.room || light.model || "Ambient") + '</p></div>',
     '</div>',
     '<div class="ambient-meta"><span>' + escapeHtml(providerLabel) + '</span><span>' + escapeHtml(light.model || "") + '</span></div>',
     '<div class="ambient-status ' + statusClass + '">' + escapeHtml(light.controllable ? powerLabel : (light.status || "unknown")) + '</div>',
@@ -4650,6 +4650,62 @@ document.addEventListener("click", (event) => {
       logActivity("Govee BLE discovery unavailable", "error");
       console.error(error);
     });
+});
+
+/* ── Ambient light rename (inline) ── */
+document.addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-ambient-edit]");
+  if (!btn) return;
+  event.preventDefault();
+  const lightId = btn.dataset.ambientEdit;
+  const nameRow = btn.closest(".ambient-name-row");
+  if (!nameRow || nameRow.querySelector("input")) return;
+  const heading = nameRow.querySelector("h3");
+  const current = heading.textContent;
+  const input = document.createElement("input");
+  input.className = "ambient-name-input";
+  input.maxLength = 80;
+  input.value = current;
+  input.setAttribute("aria-label", "Light name");
+  heading.replaceWith(input);
+  btn.style.display = "none";
+  input.focus();
+  input.select();
+  let done = false;
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    input.replaceWith(heading);
+    btn.style.display = "";
+  };
+  const commit = async () => {
+    if (done) return;
+    const name = input.value.trim();
+    if (!name || name === current) { cancel(); return; }
+    done = true;
+    apiStatus.textContent = "Saving";
+    try {
+      await requestJson("/api/ambient-lights/" + encodeURIComponent(lightId), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      await loadAmbientLights();
+      apiStatus.textContent = "Online";
+      logActivity("Ambient light renamed to " + name);
+    } catch (error) {
+      apiStatus.textContent = "Error";
+      logActivity("Rename failed", "warn");
+      console.error(error);
+      done = false;
+      cancel();
+    }
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener("blur", commit);
 });
 
 /* ── All On / All Off (Plugs) ── */

@@ -1458,6 +1458,40 @@ def test_govee_lan_command_reports_offline_device(tmp_path: Path, monkeypatch) -
     assert response.status_code == 502
 
 
+def test_rename_ambient_light_persists_to_config(tmp_path: Path) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_lan_config(config)
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+    response = client.patch("/api/ambient-lights/Govee%20H6076%20Floor%20Lamp", json={"name": "Reading Lamp"})
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Reading Lamp"
+
+    import yaml
+
+    saved = yaml.safe_load(config.read_text(encoding="utf-8"))
+    names = [d["name"] for d in saved["ambient_lights"]["devices"]]
+    assert "Reading Lamp" in names
+
+    lights = client.get("/api/ambient-lights").json()["lights"]
+    assert any(light["name"] == "Reading Lamp" for light in lights)
+
+
+def test_rename_ambient_light_rejects_empty_name(tmp_path: Path) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_lan_config(config)
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+    response = client.patch("/api/ambient-lights/Govee%20H6076%20Floor%20Lamp", json={"name": "   "})
+
+    assert response.status_code == 400
+
+
 def test_ambient_runtime_state_tracks_power_commands() -> None:
     light = web_app_module.AmbientLightDefinition(
         name="Test Govee",
