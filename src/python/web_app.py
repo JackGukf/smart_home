@@ -476,6 +476,10 @@ def create_app(
         light = _rename_ambient_light(app.state.config_path, light_id, name)
         return _ambient_light_card(light)
 
+    @app.get("/api/humidifiers")
+    async def humidifiers() -> dict[str, Any]:
+        return await asyncio.to_thread(_humidifier_cards, app.state.config_path)
+
     @app.get("/api/weather")
     async def weather() -> dict[str, Any]:
         config = _load_weather_config(app.state.config_path)
@@ -1662,6 +1666,92 @@ def _govee_cloud_control(
             },
         },
     )
+
+
+def _humidifier_id(humidifier: HumidifierDefinition) -> str:
+    return quote(humidifier.name, safe="")
+
+
+def _find_humidifier(
+    humidifiers: list[HumidifierDefinition], humidifier_id: str
+) -> HumidifierDefinition:
+    for humidifier in humidifiers:
+        if humidifier.name == humidifier_id or _humidifier_id(humidifier) == humidifier_id:
+            return humidifier
+    raise HTTPException(status_code=404, detail=f"Humidifier not found: {humidifier_id}")
+
+
+def _humidifier_runtime_key(humidifier: HumidifierDefinition, entry: dict[str, Any] | None) -> str:
+    if entry and entry.get("device"):
+        return str(entry["device"])
+    return humidifier.name
+
+
+def _humidifier_card(humidifier: HumidifierDefinition) -> dict[str, Any]:
+    entry: dict[str, Any] | None = None
+    mist_range: tuple[int, int] | None = None
+    if humidifier.provider != "govee_cloud":
+        status, note, controllable = (
+            "unsupported",
+            "Unsupported humidifier provider.",
+            False,
+        )
+    elif not _govee_api_key():
+        status = "needs_api_key"
+        note = (
+            "Set the GOVEE_API_KEY environment variable on the Pi. Apply for a key in "
+            "the Govee app: Settings -> Apply for API Key."
+        )
+        controllable = False
+    else:
+        try:
+            devices = _govee_cloud_devices()
+        except Exception:
+            devices = None
+        if devices is None:
+            status, note, controllable = (
+                "cloud_unreachable",
+                "Govee cloud temporarily unavailable; showing last known state.",
+                False,
+            )
+        else:
+            entry = _match_govee_cloud_device(humidifier, devices)
+            if entry is None:
+                status = "not_found"
+                note = (
+                    "No matching device on the Govee account. Set device_id in "
+                    "configs/devices.local.yaml to the API device id."
+                )
+                controllable = False
+            else:
+                status, note, controllable = "configured", "Govee cloud control.", True
+                mist_range = _govee_mist_range(entry)
+                state = _govee_humidifier_state(entry)
+                if state is not None:
+                    HUMIDIFIER_RUNTIME_STATE[_humidifier_runtime_key(humidifier, entry)] = state
+    runtime = HUMIDIFIER_RUNTIME_STATE.get(_humidifier_runtime_key(humidifier, entry), {})
+    return {
+        "id": humidifier.name,
+        "name": humidifier.name,
+        "provider": humidifier.provider,
+        "model": humidifier.model,
+        "room": humidifier.room,
+        "status": status,
+        "note": note,
+        "controllable": controllable,
+        "is_on": runtime.get("is_on"),
+        "mist_level": runtime.get("mist_level"),
+        "humidity": runtime.get("humidity"),
+        "online": runtime.get("online"),
+        "capabilities": {
+            "power": controllable,
+            "mist_level": {"min": mist_range[0], "max": mist_range[1]} if mist_range else None,
+        },
+    }
+
+
+def _humidifier_cards(path: Path) -> dict[str, Any]:
+    return {"humidifiers": [_humidifier_card(h) for h in _load_humidifiers(path)]}
 
 
 GOVEE_BLE_WRITE_UUIDS = (

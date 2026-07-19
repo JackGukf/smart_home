@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from src.python.web_app import (
     _govee_cloud_devices,
@@ -10,6 +11,7 @@ from src.python.web_app import (
     _govee_mist_range,
     _load_humidifiers,
     _match_govee_cloud_device,
+    create_app,
     HumidifierDefinition,
 )
 from src.python import web_app
@@ -191,3 +193,83 @@ def test_govee_cloud_request_raises_on_api_error_code(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="429"):
         web_app._govee_cloud_request("/router/api/v1/user/devices")
+
+
+class FakeController:
+    async def statuses(self, definitions):
+        return []
+
+
+def _write_discovery(path: Path) -> None:
+    path.write_text(json.dumps({"switches": []}), encoding="utf-8")
+
+
+def _client(tmp_path: Path) -> TestClient:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_humidifier_config(config)
+    return TestClient(
+        create_app(discovery_path=discovery, config_path=config, controller=FakeController())
+    )
+
+
+def test_humidifiers_endpoint_without_api_key(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("GOVEE_API_KEY", raising=False)
+    client = _client(tmp_path)
+
+    payload = client.get("/api/humidifiers").json()
+
+    card = payload["humidifiers"][0]
+    assert card["status"] == "needs_api_key"
+    assert card["controllable"] is False
+    assert "GOVEE_API_KEY" in card["note"]
+
+
+def test_humidifiers_endpoint_healthy(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GOVEE_API_KEY", "test-key")
+
+    def fake_request(path, payload=None):
+        if path == "/router/api/v1/user/devices":
+            return {"code": 200, "data": FAKE_DEVICE_LIST}
+        if path == "/router/api/v1/device/state":
+            return {
+                "payload": {
+                    "capabilities": [
+                        {"instance": "online", "state": {"value": True}},
+                        {"instance": "powerSwitch", "state": {"value": 1}},
+                        {"instance": "workMode", "state": {"value": {"workMode": 1, "modeValue": 2}}},
+                    ]
+                }
+            }
+        raise AssertionError(f"unexpected path {path}")
+
+    monkeypatch.setattr(web_app, "_govee_cloud_request", fake_request)
+    client = _client(tmp_path)
+
+    card = client.get("/api/humidifiers").json()["humidifiers"][0]
+
+    assert card["status"] == "configured"
+    assert card["controllable"] is True
+    assert card["is_on"] is True
+    assert card["mist_level"] == 2
+    assert card["capabilities"] == {"power": True, "mist_level": {"min": 1, "max": 3}}
+
+
+def test_humidifiers_endpoint_serves_cache_when_cloud_unreachable(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GOVEE_API_KEY", "test-key")
+    # With the cloud down no device entry can be matched, so the runtime-state
+    # key falls back to the humidifier name (see _humidifier_runtime_key).
+    web_app.HUMIDIFIER_RUNTIME_STATE["Bedroom Humidifier"] = {"is_on": True, "mist_level": 1}
+
+    def fake_request(path, payload=None):
+        raise OSError("rate limited")
+
+    monkeypatch.setattr(web_app, "_govee_cloud_request", fake_request)
+    client = _client(tmp_path)
+
+    card = client.get("/api/humidifiers").json()["humidifiers"][0]
+
+    assert card["status"] == "cloud_unreachable"
+    assert card["controllable"] is False
+    assert card["is_on"] is True  # served from cache
