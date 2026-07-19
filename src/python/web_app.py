@@ -1527,6 +1527,139 @@ def _govee_ble_discovery_payload() -> dict[str, Any]:
     return {"status": "ok", "devices": asyncio.run(_scan())}
 
 
+# ── Govee Cloud (Developer API v2) — humidifiers ──
+# Govee humidifiers (e.g. H7140) do not speak the LAN or BLE light protocols;
+# control goes through the cloud API with a per-account key (GOVEE_API_KEY).
+# Capabilities are discovered from the device list at runtime, not hardcoded.
+GOVEE_CLOUD_BASE = "https://openapi.api.govee.com"
+GOVEE_CLOUD_DEVICE_CACHE_TTL = 600.0
+_GOVEE_CLOUD_CACHE: dict[str, Any] = {"devices": None, "fetched": 0.0}
+# Last-known state per Govee device id, served when the cloud is unreachable.
+HUMIDIFIER_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
+
+
+def _govee_api_key() -> str | None:
+    return os.getenv("GOVEE_API_KEY") or None
+
+
+def _govee_cloud_request(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    key = _govee_api_key()
+    if not key:
+        raise RuntimeError("GOVEE_API_KEY is not configured")
+    body = json.dumps(payload).encode() if payload is not None else None
+    request = _URLRequest(
+        f"{GOVEE_CLOUD_BASE}{path}",
+        data=body,
+        headers={"Govee-API-Key": key, "Content-Type": "application/json"},
+        method="POST" if body is not None else "GET",
+    )
+    with urlopen(request, timeout=12) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _govee_cloud_devices(force: bool = False) -> list[dict[str, Any]]:
+    now = time.time()
+    cached = _GOVEE_CLOUD_CACHE.get("devices")
+    if not force and cached is not None and now - _GOVEE_CLOUD_CACHE["fetched"] < GOVEE_CLOUD_DEVICE_CACHE_TTL:
+        return cached
+    payload = _govee_cloud_request("/router/api/v1/user/devices")
+    devices = payload.get("data") or []
+    _GOVEE_CLOUD_CACHE["devices"] = devices
+    _GOVEE_CLOUD_CACHE["fetched"] = now
+    return devices
+
+
+def _match_govee_cloud_device(
+    humidifier: HumidifierDefinition, devices: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    if _is_real_ble_address(humidifier.device_id):
+        for entry in devices:
+            if str(entry.get("device") or "").lower() == humidifier.device_id.lower():
+                return entry
+        return None
+    if humidifier.model:
+        matches = [e for e in devices if str(e.get("sku") or "").upper() == humidifier.model.upper()]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
+def _govee_work_mode_fields(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    for cap in entry.get("capabilities") or []:
+        if cap.get("instance") == "workMode":
+            return (cap.get("parameters") or {}).get("fields") or []
+    return []
+
+
+def _govee_gear_mode_value(entry: dict[str, Any]) -> int:
+    for field in _govee_work_mode_fields(entry):
+        if field.get("fieldName") != "workMode":
+            continue
+        for option in field.get("options") or []:
+            if option.get("name") == "gearMode" and option.get("value") is not None:
+                return int(option["value"])
+    return 1
+
+
+def _govee_mist_range(entry: dict[str, Any]) -> tuple[int, int]:
+    for field in _govee_work_mode_fields(entry):
+        if field.get("fieldName") != "modeValue":
+            continue
+        for option in field.get("options") or []:
+            if option.get("name") != "gearMode":
+                continue
+            nested = option.get("options") or []
+            values = [int(o["value"]) for o in nested if isinstance(o, dict) and o.get("value") is not None]
+            if values:
+                return min(values), max(values)
+            rng = option.get("range")
+            if isinstance(rng, dict) and rng.get("min") is not None and rng.get("max") is not None:
+                return int(rng["min"]), int(rng["max"])
+    return 1, 8
+
+
+def _govee_humidifier_state(entry: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        payload = _govee_cloud_request(
+            "/router/api/v1/device/state",
+            {
+                "requestId": "smart-home-rpi4",
+                "payload": {"sku": entry.get("sku"), "device": entry.get("device")},
+            },
+        )
+    except Exception:
+        return None
+    state: dict[str, Any] = {}
+    for cap in (payload.get("payload") or {}).get("capabilities") or []:
+        instance = cap.get("instance")
+        value = (cap.get("state") or {}).get("value")
+        if instance == "online":
+            state["online"] = bool(value)
+        elif instance == "powerSwitch":
+            state["is_on"] = value == 1
+        elif instance == "humidity" and isinstance(value, (int, float)):
+            state["humidity"] = value
+        elif instance == "workMode" and isinstance(value, dict) and value.get("modeValue") is not None:
+            state["mist_level"] = value["modeValue"]
+    return state
+
+
+def _govee_cloud_control(
+    entry: dict[str, Any], capability_type: str, instance: str, value: Any
+) -> dict[str, Any]:
+    return _govee_cloud_request(
+        "/router/api/v1/device/control",
+        {
+            "requestId": "smart-home-rpi4",
+            "payload": {
+                "sku": entry.get("sku"),
+                "device": entry.get("device"),
+                "capability": {"type": capability_type, "instance": instance, "value": value},
+            },
+        },
+    )
+
+
 GOVEE_BLE_WRITE_UUIDS = (
     "00010203-0405-0607-0809-0a0b0c0d2b11",
     "02f00000-0000-0000-0000-00000000ff01",
