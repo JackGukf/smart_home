@@ -1412,11 +1412,12 @@ ambient_lights:
     )
 
 
-def test_govee_lan_card_is_controllable_with_capabilities(tmp_path: Path) -> None:
+def test_govee_lan_card_is_controllable_with_capabilities(tmp_path: Path, monkeypatch) -> None:
     discovery = tmp_path / "tplink.json"
     config = tmp_path / "devices.local.yaml"
     _write_discovery(discovery)
     _write_ambient_lan_config(config)
+    monkeypatch.setattr(web_app_module, "_govee_lan_status", lambda light, timeout=1.0: None)
 
     client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
     lights = client.get("/api/ambient-lights").json()["lights"]
@@ -1424,6 +1425,54 @@ def test_govee_lan_card_is_controllable_with_capabilities(tmp_path: Path) -> Non
 
     assert lan["controllable"] is True
     assert lan["capabilities"] == {"power": True, "brightness": True, "color": True}
+
+
+def test_govee_lan_card_reflects_live_status(tmp_path: Path, monkeypatch) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_lan_config(config)
+    web_app_module.AMBIENT_LIGHT_RUNTIME_STATE.clear()
+    monkeypatch.setattr(
+        web_app_module,
+        "_govee_lan_status",
+        lambda light, timeout=1.0: {"is_on": True, "brightness": 42, "color": {"r": 1, "g": 2, "b": 3}},
+    )
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+    lights = client.get("/api/ambient-lights").json()["lights"]
+    lan = next(light for light in lights if light["provider"] == "govee_lan")
+
+    assert lan["is_on"] is True
+    assert lan["brightness"] == 42
+
+
+def test_govee_lan_card_unknown_when_status_unavailable(tmp_path: Path, monkeypatch) -> None:
+    discovery = tmp_path / "tplink.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_ambient_lan_config(config)
+    web_app_module.AMBIENT_LIGHT_RUNTIME_STATE.clear()
+    monkeypatch.setattr(web_app_module, "_govee_lan_status", lambda light, timeout=1.0: None)
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+    lights = client.get("/api/ambient-lights").json()["lights"]
+    lan = next(light for light in lights if light["provider"] == "govee_lan")
+
+    assert lan["is_on"] is None
+    assert lan["controllable"] is True
+
+
+def test_ambient_runtime_state_persists_and_reloads(tmp_path: Path) -> None:
+    config = tmp_path / "devices.local.yaml"
+    web_app_module.AMBIENT_LIGHT_RUNTIME_STATE.clear()
+    web_app_module.AMBIENT_LIGHT_RUNTIME_STATE["AA:BB:CC:DD:EE:FF"] = {"is_on": True}
+
+    web_app_module._save_ambient_runtime_state(config)
+    web_app_module.AMBIENT_LIGHT_RUNTIME_STATE.clear()
+    web_app_module._load_ambient_runtime_state(config)
+
+    assert web_app_module.AMBIENT_LIGHT_RUNTIME_STATE.get("AA:BB:CC:DD:EE:FF") == {"is_on": True}
 
 
 def test_govee_lan_command_dispatches_udp_message(tmp_path: Path, monkeypatch) -> None:
@@ -1458,11 +1507,12 @@ def test_govee_lan_command_reports_offline_device(tmp_path: Path, monkeypatch) -
     assert response.status_code == 502
 
 
-def test_rename_ambient_light_persists_to_config(tmp_path: Path) -> None:
+def test_rename_ambient_light_persists_to_config(tmp_path: Path, monkeypatch) -> None:
     discovery = tmp_path / "tplink.json"
     config = tmp_path / "devices.local.yaml"
     _write_discovery(discovery)
     _write_ambient_lan_config(config)
+    monkeypatch.setattr(web_app_module, "_govee_lan_status", lambda light, timeout=1.0: None)
 
     client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
     response = client.patch("/api/ambient-lights/Govee%20H6076%20Floor%20Lamp", json={"name": "Reading Lamp"})

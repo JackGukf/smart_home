@@ -49,7 +49,35 @@ DEFAULT_AREAS = [
     {"id": "utility-room", "name": "Utility Room", "icon": "tools"},
 ]
 STATIC_DIR = PROJECT_ROOT / "src" / "python" / "web_static"
+# Last-known ambient-light state, keyed by BLE address or name. Live-readable
+# providers (govee_lan) overwrite this with real device status; write-only BLE
+# lamps rely on it, so it is persisted to disk to survive service restarts.
 AMBIENT_LIGHT_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
+
+
+def _ambient_state_file(config_path: Path) -> Path:
+    return config_path.parent / "ambient_light_state.json"
+
+
+def _load_ambient_runtime_state(config_path: Path) -> None:
+    path = _ambient_state_file(config_path)
+    if not path.exists():
+        return
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return
+    if isinstance(stored, dict):
+        AMBIENT_LIGHT_RUNTIME_STATE.update(stored)
+
+
+def _save_ambient_runtime_state(config_path: Path) -> None:
+    try:
+        _ambient_state_file(config_path).write_text(
+            json.dumps(AMBIENT_LIGHT_RUNTIME_STATE), encoding="utf-8"
+        )
+    except OSError:
+        pass
 
 _raw_cfg: dict = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
 _matter_cfg: dict = _raw_cfg.get("matter") or {}
@@ -192,6 +220,7 @@ def create_app(
     app.state.controller = controller or KasaLightSwitchController()
     app.state.check_camera_ports = check_camera_ports
     app.state.areas_path = areas_path
+    _load_ambient_runtime_state(config_path)
 
     _raw_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else None
     _raw_cfg = _raw_cfg or {}
@@ -402,7 +431,9 @@ def create_app(
 
     @app.get("/api/ambient-lights")
     async def ambient_lights() -> dict[str, Any]:
-        return {"lights": _ambient_light_cards(app.state.config_path)}
+        lights = _load_ambient_lights(app.state.config_path)
+        await asyncio.to_thread(_refresh_ambient_live_state, lights)
+        return {"lights": [_ambient_light_card(light) for light in lights]}
 
     @app.get("/api/ambient-lights/govee-ble/discover")
     async def ambient_govee_ble_discover() -> dict[str, Any]:
@@ -416,12 +447,15 @@ def create_app(
         if light.provider == "alexa":
             raise HTTPException(status_code=501, detail="Lepro via Alexa needs an Alexa routine or bridge before dashboard commands can be sent.")
         if light.provider == "govee_lan":
-            return await asyncio.to_thread(_govee_lan_command_payload, light, command, body or {})
-        if light.provider != "govee_ble":
+            result = await asyncio.to_thread(_govee_lan_command_payload, light, command, body or {})
+        elif light.provider != "govee_ble":
             raise HTTPException(status_code=400, detail=f"Unsupported ambient provider: {light.provider}")
-        if not light.address:
+        elif not light.address:
             raise HTTPException(status_code=400, detail="Govee BLE light needs a Bluetooth address from Pi discovery before it can be controlled.")
-        return await asyncio.to_thread(_govee_ble_command_payload, light, command, body or {})
+        else:
+            result = await asyncio.to_thread(_govee_ble_command_payload, light, command, body or {})
+        _save_ambient_runtime_state(app.state.config_path)
+        return result
 
     @app.patch("/api/ambient-lights/{light_id}")
     async def update_ambient_light(light_id: str, update: AmbientLightUpdateRequest) -> dict[str, Any]:
@@ -1261,6 +1295,15 @@ def _ambient_light_cards(path: Path) -> list[dict[str, Any]]:
     return [_ambient_light_card(light) for light in _load_ambient_lights(path)]
 
 
+def _refresh_ambient_live_state(lights: list[AmbientLightDefinition]) -> None:
+    """Update the runtime-state cache with real status from live-readable providers."""
+    for light in lights:
+        if light.provider == "govee_lan":
+            status = _govee_lan_status(light)
+            if status is not None:
+                AMBIENT_LIGHT_RUNTIME_STATE[light.address or light.name] = status
+
+
 def _rename_ambient_light(path: Path, light_id: str, name: str) -> AmbientLightDefinition:
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Ambient light not found: {light_id}")
@@ -1380,6 +1423,44 @@ def _govee_lan_command_payload(light: AmbientLightDefinition, command: str, body
         raise HTTPException(status_code=502, detail=f"Govee LAN command failed for {light.name}: {exc}") from exc
     _remember_ambient_light_command(light, command, body)
     return {"status": "ok", "name": light.name, "ip": ip, "command": command, "light": _ambient_light_card(light)}
+
+
+def _govee_lan_status(light: AmbientLightDefinition, timeout: float = 1.0) -> dict[str, Any] | None:
+    """Query a Govee LAN device's real state (devStatus). Returns None if unreachable."""
+    ip = _govee_lan_resolve_ip(light)
+    if not ip:
+        return None
+    recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        recv.bind(("0.0.0.0", GOVEE_LAN_RECV_PORT))
+        recv.settimeout(timeout)
+        _govee_lan_send(ip, {"msg": {"cmd": "devStatus", "data": {}}})
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                data, addr = recv.recvfrom(2048)
+            except socket.timeout:
+                break
+            if addr[0] != ip:
+                continue
+            try:
+                message = json.loads(data).get("msg", {})
+            except (ValueError, AttributeError):
+                continue
+            if message.get("cmd") != "devStatus":
+                continue
+            payload = message.get("data", {})
+            return {
+                "is_on": bool(payload.get("onOff")),
+                "brightness": payload.get("brightness"),
+                "color": payload.get("color"),
+            }
+    except OSError:
+        return None
+    finally:
+        recv.close()
+    return None
 
 
 def _find_ambient_light(lights: list[AmbientLightDefinition], light_id: str) -> AmbientLightDefinition:
