@@ -1236,7 +1236,7 @@ def _load_ambient_lights(path: Path) -> list[AmbientLightDefinition]:
         return []
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     devices = []
-    for item in payload.get("ambient_lights", {}).get("devices", []):
+    for item in (payload.get("ambient_lights") or {}).get("devices") or []:
         if item.get("enabled") is False:
             continue
         name = str(item.get("name") or item.get("id") or item.get("model") or "Ambient light")
@@ -1259,7 +1259,7 @@ def _load_humidifiers(path: Path) -> list[HumidifierDefinition]:
         return []
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     devices = []
-    for item in payload.get("humidifiers", {}).get("devices", []):
+    for item in (payload.get("humidifiers") or {}).get("devices") or []:
         if item.get("enabled") is False:
             continue
         name = str(item.get("name") or item.get("id") or item.get("model") or "Humidifier")

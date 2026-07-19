@@ -398,3 +398,13 @@ def test_app_js_wires_humidifier_api() -> None:
     assert "data-humidifier-command" in js
     assert "data-humidifier-mist" in js
     assert "loadHumidifiers()" in js
+
+
+def test_load_humidifiers_tolerates_null_sections(tmp_path: Path) -> None:
+    null_section = tmp_path / "null_section.yaml"
+    null_section.write_text("humidifiers:\n", encoding="utf-8")
+    assert _load_humidifiers(null_section) == []
+
+    null_devices = tmp_path / "null_devices.yaml"
+    null_devices.write_text("humidifiers:\n  devices:\n", encoding="utf-8")
+    assert _load_humidifiers(null_devices) == []
