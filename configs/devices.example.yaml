@@ -137,6 +137,14 @@ ambient_lights:
       model: H6054
       room: Bedroom
       address: replace_me
+    - name: Govee H6076 Floor Lamp
+      provider: govee_ble
+      model: H6076
+      room: Living Room
+      address: replace_me
+    # Lepro S1 stays display-only: its BLE protocol is encrypted (handshake-gated),
+    # so the dashboard cannot send it commands. See
+    # docs/superpowers/specs/2026-07-18-lepro-govee-ble-design.md.
     - name: Lepro S1 AI LED
       provider: alexa
       model: Lepro S1 AI LED
