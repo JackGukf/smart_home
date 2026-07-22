@@ -11,6 +11,7 @@ from src.python.web_app import (
     _govee_mist_range,
     _load_humidifiers,
     _match_govee_cloud_device,
+    _match_govee_thermometer,
     create_app,
     HumidifierDefinition,
 )
@@ -127,6 +128,53 @@ def test_mist_range_and_gear_mode_come_from_capabilities() -> None:
     # Unknown capability shape falls back to a safe default.
     assert _govee_mist_range(FAKE_DEVICE_LIST[1]) == (1, 8)
     assert _govee_gear_mode_value(FAKE_DEVICE_LIST[1]) == 1
+
+
+# A device that also advertises the built-in night light (toggle/brightness/colour).
+NIGHTLIGHT_ENTRY = {
+    "sku": "H7140",
+    "device": "AA:BB:CC:DD:EE:FF:11:22",
+    "capabilities": [
+        {"type": "devices.capabilities.on_off", "instance": "powerSwitch"},
+        {"type": "devices.capabilities.toggle", "instance": "nightlightToggle"},
+        {
+            "type": "devices.capabilities.range",
+            "instance": "brightness",
+            "parameters": {"range": {"min": 1, "max": 100}},
+        },
+        {"type": "devices.capabilities.color_setting", "instance": "colorRgb"},
+        {
+            "type": "devices.capabilities.mode",
+            "instance": "nightlightScene",
+            "parameters": {"options": [
+                {"name": "Forest", "value": 1},
+                {"name": "Ocean", "value": 2},
+                {"name": "Sleep", "value": 5},
+            ]},
+        },
+    ],
+}
+
+
+def test_nightlight_caps_detected_from_device() -> None:
+    caps = web_app._govee_nightlight_caps(NIGHTLIGHT_ENTRY)
+    assert caps["toggle"]["instance"] == "nightlightToggle"
+    assert caps["color"]["instance"] == "colorRgb"
+    assert caps["brightness"] == {
+        "type": "devices.capabilities.range",
+        "instance": "brightness",
+        "min": 1,
+        "max": 100,
+    }
+    # A device without a night light reports nothing.
+    assert web_app._govee_nightlight_caps(FAKE_DEVICE_LIST[0]) == {}
+
+
+def test_rgb_int_from_body() -> None:
+    assert web_app._rgb_int_from_body({"red": 255, "green": 0, "blue": 0}) == 0xFF0000
+    assert web_app._rgb_int_from_body({"r": 0, "g": 255, "b": 0}) == 0x00FF00
+    assert web_app._rgb_int_from_body({"value": 0x123456}) == 0x123456
+    assert web_app._rgb_int_from_body({"value": 99999999}) == 0xFFFFFF
 
 
 def test_device_list_is_cached(monkeypatch) -> None:
@@ -253,7 +301,11 @@ def test_humidifiers_endpoint_healthy(tmp_path: Path, monkeypatch) -> None:
     assert card["controllable"] is True
     assert card["is_on"] is True
     assert card["mist_level"] == 2
-    assert card["capabilities"] == {"power": True, "mist_level": {"min": 1, "max": 3}}
+    assert card["capabilities"] == {
+        "power": True,
+        "mist_level": {"min": 1, "max": 3},
+        "nightlight": None,
+    }
 
 
 def test_humidifiers_endpoint_serves_cache_when_cloud_unreachable(tmp_path: Path, monkeypatch) -> None:
@@ -359,6 +411,149 @@ def test_humidifier_mist_level_clamped_to_reported_range(tmp_path: Path, monkeyp
             "value": {"workMode": 1, "modeValue": 3},
         }
     ]
+
+
+def _nightlight_cloud(monkeypatch, control_log):
+    monkeypatch.setenv("GOVEE_API_KEY", "test-key")
+
+    def fake_request(path, payload=None):
+        if path == "/router/api/v1/user/devices":
+            return {"code": 200, "data": [NIGHTLIGHT_ENTRY]}
+        if path == "/router/api/v1/device/control":
+            control_log.append(payload["payload"]["capability"])
+            return {"code": 200}
+        if path == "/router/api/v1/device/state":
+            return {"payload": {"capabilities": []}}
+        raise AssertionError(f"unexpected path {path}")
+
+    monkeypatch.setattr(web_app, "_govee_cloud_request", fake_request)
+
+
+def test_humidifier_nightlight_commands(tmp_path: Path, monkeypatch) -> None:
+    control_log = []
+    _nightlight_cloud(monkeypatch, control_log)
+    client = _client(tmp_path)
+
+    base = "/api/humidifiers/Bedroom%20Humidifier/commands/"
+    assert client.post(base + "nightlight_on").status_code == 200
+    assert client.post(base + "nightlight_off").status_code == 200
+    assert client.post(base + "nightlight_brightness", json={"level": 250}).status_code == 200
+    assert client.post(base + "nightlight_color", json={"red": 255, "green": 0, "blue": 128}).status_code == 200
+    assert client.post(base + "nightlight_scene", json={"value": 2}).status_code == 200
+
+    assert control_log == [
+        {"type": "devices.capabilities.toggle", "instance": "nightlightToggle", "value": 1},
+        {"type": "devices.capabilities.toggle", "instance": "nightlightToggle", "value": 0},
+        {"type": "devices.capabilities.range", "instance": "brightness", "value": 100},
+        {"type": "devices.capabilities.color_setting", "instance": "colorRgb", "value": 0xFF0080},
+        {"type": "devices.capabilities.mode", "instance": "nightlightScene", "value": 2},
+    ]
+
+    # An unknown scene value is rejected before reaching the cloud.
+    assert client.post(base + "nightlight_scene", json={"value": 99}).status_code == 400
+
+    # The card surfaces the night-light capabilities so the dashboard renders controls.
+    card = client.get("/api/humidifiers").json()["humidifiers"][0]
+    assert card["capabilities"]["nightlight"] == {
+        "toggle": True,
+        "color": True,
+        "brightness": {"min": 1, "max": 100},
+        "scene": [
+            {"name": "Forest", "value": 1},
+            {"name": "Ocean", "value": 2},
+            {"name": "Sleep", "value": 5},
+        ],
+    }
+
+
+def test_humidifier_nightlight_rejected_without_capability(tmp_path: Path, monkeypatch) -> None:
+    control_log = []
+    _healthy_cloud(monkeypatch, control_log)  # FAKE_DEVICE_LIST has no night light
+    client = _client(tmp_path)
+
+    resp = client.post("/api/humidifiers/Bedroom%20Humidifier/commands/nightlight_on")
+    assert resp.status_code == 400
+    assert control_log == []
+
+
+# A linked Govee thermometer (H5179) supplies ambient humidity + temperature.
+THERMOMETER_ENTRY = {
+    "sku": "H5179",
+    "device": "31:9E:E7:76:46:06:6C:49",
+    "deviceName": "Govee Thermometer",
+    "capabilities": [
+        {"type": "devices.capabilities.property", "instance": "sensorHumidity"},
+        {"type": "devices.capabilities.property", "instance": "sensorTemperature"},
+    ],
+}
+
+
+CO2_MONITOR_ENTRY = {
+    "sku": "H5140",
+    "device": "AA:00:11:22:33:44:55:66",
+    "deviceName": "Smart CO2 Monitor",
+    "capabilities": [
+        {"type": "devices.capabilities.property", "instance": "carbonDioxideConcentration"},
+        {"type": "devices.capabilities.property", "instance": "sensorTemperature"},
+        {"type": "devices.capabilities.property", "instance": "sensorHumidity"},
+    ],
+}
+
+
+def test_match_thermometer_prefers_unique_sensor() -> None:
+    devices = [FAKE_DEVICE_LIST[0], THERMOMETER_ENTRY]
+    match = _match_govee_thermometer(_definition(device_id="replace_me"), devices)
+    assert match["sku"] == "H5179"
+    # No ambient-humidity sensor on the account -> no link.
+    assert _match_govee_thermometer(_definition(), [FAKE_DEVICE_LIST[0]]) is None
+
+
+def test_match_thermometer_prefers_thermo_hygrometer_over_co2_monitor() -> None:
+    # Both the thermometer and the CO2 monitor report sensorHumidity; the plain
+    # thermo-hygrometer wins so the humidifier links to the right device.
+    devices = [FAKE_DEVICE_LIST[0], CO2_MONITOR_ENTRY, THERMOMETER_ENTRY]
+    match = _match_govee_thermometer(_definition(), devices)
+    assert match["sku"] == "H5179"
+
+
+def test_match_thermometer_explicit_model_wins() -> None:
+    devices = [FAKE_DEVICE_LIST[0], CO2_MONITOR_ENTRY, THERMOMETER_ENTRY]
+    # An explicit thermometer_model overrides the auto-detect heuristic.
+    explicit = HumidifierDefinition(
+        name="Bedroom Humidifier", provider="govee_cloud", model="H7140", room="Bedroom",
+        device_id=None, thermometer_model="H5140",
+    )
+    assert _match_govee_thermometer(explicit, devices)["sku"] == "H5140"
+
+
+def test_humidifier_card_merges_linked_thermometer(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GOVEE_API_KEY", "test-key")
+    devices = [FAKE_DEVICE_LIST[0], THERMOMETER_ENTRY]
+
+    def fake_request(path, payload=None):
+        if path == "/router/api/v1/user/devices":
+            return {"code": 200, "data": devices}
+        if path == "/router/api/v1/device/state":
+            device = payload["payload"]["device"]
+            if device == THERMOMETER_ENTRY["device"]:
+                return {"payload": {"capabilities": [
+                    {"instance": "sensorHumidity", "state": {"value": 56.7}},
+                    {"instance": "sensorTemperature", "state": {"value": 84.2}},  # °F
+                ]}}
+            return {"payload": {"capabilities": [
+                {"instance": "powerSwitch", "state": {"value": 1}},
+                {"instance": "workMode", "state": {"value": {"workMode": 1, "modeValue": 2}}},
+            ]}}
+        raise AssertionError(f"unexpected path {path}")
+
+    monkeypatch.setattr(web_app, "_govee_cloud_request", fake_request)
+    client = _client(tmp_path)
+
+    card = client.get("/api/humidifiers").json()["humidifiers"][0]
+    assert card["humidity"] == 57  # round(56.7)
+    assert card["temperature"] == 29.0  # (84.2 - 32) * 5/9, defaults to Celsius
+    assert card["temperature_unit"] == "C"
+    assert card["thermometer"] == "Govee Thermometer"
 
 
 def test_humidifier_command_error_paths(tmp_path: Path, monkeypatch) -> None:

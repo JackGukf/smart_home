@@ -158,6 +158,11 @@ class HumidifierDefinition:
     model: str | None
     room: str | None
     device_id: str | None
+    # Optional linked Govee thermometer (e.g. H5179) whose ambient humidity and
+    # temperature are shown on the card. Falls back to a unique account sensor.
+    thermometer_device_id: str | None = None
+    thermometer_model: str | None = None
+    temperature_unit: str = "C"
 
 
 @dataclass(frozen=True)
@@ -1264,6 +1269,7 @@ def _load_humidifiers(path: Path) -> list[HumidifierDefinition]:
             continue
         name = str(item.get("name") or item.get("id") or item.get("model") or "Humidifier")
         provider = str(item.get("provider") or "govee_cloud").lower()
+        unit = str(item.get("temperature_unit") or "C").strip().upper()
         devices.append(
             HumidifierDefinition(
                 name=name,
@@ -1271,6 +1277,9 @@ def _load_humidifiers(path: Path) -> list[HumidifierDefinition]:
                 model=str(item.get("model")) if item.get("model") else None,
                 room=item.get("room"),
                 device_id=str(item.get("device_id") or "") or None,
+                thermometer_device_id=str(item.get("thermometer_device_id") or "") or None,
+                thermometer_model=str(item.get("thermometer_model") or "") or None,
+                temperature_unit="F" if unit.startswith("F") else "C",
             )
         )
     return devices
@@ -1658,7 +1667,103 @@ def _govee_humidifier_state(entry: dict[str, Any]) -> dict[str, Any] | None:
             state["humidity"] = value
         elif instance == "workMode" and isinstance(value, dict) and value.get("modeValue") is not None:
             state["mist_level"] = value["modeValue"]
+        elif instance == "nightlightToggle":
+            state["nightlight_on"] = value == 1
+        elif instance == "brightness" and isinstance(value, (int, float)):
+            state["nightlight_brightness"] = int(value)
+        elif instance == "colorRgb" and isinstance(value, (int, float)):
+            state["nightlight_color"] = int(value)
+        elif instance == "nightlightScene" and isinstance(value, (int, float)):
+            state["nightlight_scene"] = int(value)
     return state
+
+
+def _device_has_instance(entry: dict[str, Any], instance: str) -> bool:
+    return any(cap.get("instance") == instance for cap in entry.get("capabilities") or [])
+
+
+def _match_govee_thermometer(
+    humidifier: HumidifierDefinition, devices: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Resolve the linked thermometer: explicit id, then model, then the account's
+    sole ambient-humidity sensor."""
+    if _is_real_ble_address(humidifier.thermometer_device_id):
+        for entry in devices:
+            if str(entry.get("device") or "").lower() == humidifier.thermometer_device_id.lower():
+                return entry
+    if humidifier.thermometer_model:
+        matches = [e for e in devices if str(e.get("sku") or "").upper() == humidifier.thermometer_model.upper()]
+        if len(matches) == 1:
+            return matches[0]
+    sensors = [e for e in devices if _device_has_instance(e, "sensorHumidity")]
+    if len(sensors) > 1:
+        # Multiple humidity sensors (e.g. a thermo-hygrometer and a CO2 monitor):
+        # prefer the plain thermo-hygrometer that doesn't also measure CO2.
+        pure = [e for e in sensors if not _device_has_instance(e, "carbonDioxideConcentration")]
+        sensors = pure or sensors
+    if len(sensors) == 1:
+        return sensors[0]
+    return None
+
+
+def _govee_thermometer_reading(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Ambient humidity (%) and temperature (°F, as Govee reports it) from a sensor."""
+    try:
+        payload = _govee_cloud_request(
+            "/router/api/v1/device/state",
+            {"requestId": "smart-home-rpi4", "payload": {"sku": entry.get("sku"), "device": entry.get("device")}},
+        )
+    except Exception:
+        return None
+    reading: dict[str, Any] = {}
+    for cap in (payload.get("payload") or {}).get("capabilities") or []:
+        instance = cap.get("instance")
+        value = (cap.get("state") or {}).get("value")
+        if instance == "sensorHumidity" and isinstance(value, (int, float)):
+            reading["humidity"] = float(value)
+        elif instance == "sensorTemperature" and isinstance(value, (int, float)):
+            reading["temperature_f"] = float(value)
+    return reading or None
+
+
+def _govee_nightlight_caps(entry: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Night-light control instances this device advertises (toggle/color/brightness)."""
+    caps: dict[str, dict[str, Any]] = {}
+    for cap in entry.get("capabilities") or []:
+        instance = cap.get("instance")
+        ctype = cap.get("type")
+        if instance == "nightlightToggle":
+            caps["toggle"] = {"type": ctype, "instance": instance}
+        elif instance == "colorRgb":
+            caps["color"] = {"type": ctype, "instance": instance}
+        elif instance == "brightness":
+            rng = (cap.get("parameters") or {}).get("range") or {}
+            caps["brightness"] = {
+                "type": ctype,
+                "instance": instance,
+                "min": int(rng.get("min", 1)),
+                "max": int(rng.get("max", 100)),
+            }
+        elif instance == "nightlightScene":
+            options = (cap.get("parameters") or {}).get("options") or []
+            scenes = [
+                {"name": o.get("name"), "value": int(o["value"])}
+                for o in options
+                if isinstance(o, dict) and o.get("value") is not None
+            ]
+            if scenes:
+                caps["scene"] = {"type": ctype, "instance": instance, "options": scenes}
+    return caps
+
+
+def _rgb_int_from_body(body: dict[str, Any]) -> int:
+    """Coerce a request body into a Govee colorRgb integer (0..0xFFFFFF)."""
+    if body.get("value") is not None:
+        return max(0, min(0xFFFFFF, int(body["value"])))
+    red = _bounded_byte(body.get("red", body.get("r", 255)))
+    green = _bounded_byte(body.get("green", body.get("g", 255)))
+    blue = _bounded_byte(body.get("blue", body.get("b", 255)))
+    return (red << 16) | (green << 8) | blue
 
 
 def _govee_cloud_control(
@@ -1738,7 +1843,37 @@ def _humidifier_card(humidifier: HumidifierDefinition) -> dict[str, Any]:
                 state = _govee_humidifier_state(entry)
                 if state is not None:
                     HUMIDIFIER_RUNTIME_STATE[_humidifier_runtime_key(humidifier, entry)] = state
+                # Merge in the linked thermometer's ambient humidity + temperature.
+                thermometer = _match_govee_thermometer(humidifier, devices)
+                if thermometer is not None:
+                    reading = _govee_thermometer_reading(thermometer)
+                    if reading:
+                        cached = HUMIDIFIER_RUNTIME_STATE.setdefault(
+                            _humidifier_runtime_key(humidifier, entry), {}
+                        )
+                        if reading.get("humidity") is not None:
+                            cached["humidity"] = round(reading["humidity"])
+                        if reading.get("temperature_f") is not None:
+                            temp_f = reading["temperature_f"]
+                            temp = temp_f if humidifier.temperature_unit == "F" else (temp_f - 32) * 5 / 9
+                            cached["temperature"] = round(temp, 1)
+                            cached["temperature_unit"] = humidifier.temperature_unit
+                        cached["thermometer"] = thermometer.get("deviceName") or "Govee Thermometer"
     runtime = HUMIDIFIER_RUNTIME_STATE.get(_humidifier_runtime_key(humidifier, entry), {})
+    nightlight_caps = _govee_nightlight_caps(entry) if entry else {}
+    nightlight = {
+        "toggle": "toggle" in nightlight_caps,
+        "color": "color" in nightlight_caps,
+        "brightness": (
+            {
+                "min": nightlight_caps["brightness"]["min"],
+                "max": nightlight_caps["brightness"]["max"],
+            }
+            if "brightness" in nightlight_caps
+            else None
+        ),
+        "scene": nightlight_caps["scene"]["options"] if "scene" in nightlight_caps else None,
+    } if nightlight_caps else None
     return {
         "id": humidifier.name,
         "name": humidifier.name,
@@ -1751,10 +1886,18 @@ def _humidifier_card(humidifier: HumidifierDefinition) -> dict[str, Any]:
         "is_on": runtime.get("is_on"),
         "mist_level": runtime.get("mist_level"),
         "humidity": runtime.get("humidity"),
+        "temperature": runtime.get("temperature"),
+        "temperature_unit": runtime.get("temperature_unit"),
+        "thermometer": runtime.get("thermometer"),
         "online": runtime.get("online"),
+        "nightlight_on": runtime.get("nightlight_on"),
+        "nightlight_brightness": runtime.get("nightlight_brightness"),
+        "nightlight_color": runtime.get("nightlight_color"),
+        "nightlight_scene": runtime.get("nightlight_scene"),
         "capabilities": {
             "power": controllable,
             "mist_level": {"min": mist_range[0], "max": mist_range[1]} if mist_range else None,
+            "nightlight": nightlight,
         },
     }
 
@@ -1801,6 +1944,48 @@ def _humidifier_command_payload(
             "value": {"workMode": _govee_gear_mode_value(entry), "modeValue": level},
         }
         state_update = {"mist_level": level}
+    elif command in ("nightlight_on", "nightlight_off"):
+        nl = _govee_nightlight_caps(entry)
+        if "toggle" not in nl:
+            raise HTTPException(status_code=400, detail="This humidifier has no controllable night light.")
+        turn_on = command == "nightlight_on"
+        capability = {
+            "type": nl["toggle"]["type"],
+            "instance": nl["toggle"]["instance"],
+            "value": 1 if turn_on else 0,
+        }
+        state_update = {"nightlight_on": turn_on}
+    elif command == "nightlight_brightness":
+        nl = _govee_nightlight_caps(entry)
+        if "brightness" not in nl:
+            raise HTTPException(status_code=400, detail="This night light has no brightness control.")
+        raw = body.get("level", body.get("value", body.get("brightness")))
+        if raw is None:
+            raise HTTPException(status_code=400, detail="nightlight_brightness requires 'level'.")
+        low, high = nl["brightness"]["min"], nl["brightness"]["max"]
+        value = max(low, min(high, int(raw)))
+        capability = {"type": nl["brightness"]["type"], "instance": nl["brightness"]["instance"], "value": value}
+        state_update = {"nightlight_brightness": value}
+    elif command == "nightlight_color":
+        nl = _govee_nightlight_caps(entry)
+        if "color" not in nl:
+            raise HTTPException(status_code=400, detail="This night light has no color control.")
+        value = _rgb_int_from_body(body)
+        capability = {"type": nl["color"]["type"], "instance": nl["color"]["instance"], "value": value}
+        state_update = {"nightlight_color": value}
+    elif command == "nightlight_scene":
+        nl = _govee_nightlight_caps(entry)
+        if "scene" not in nl:
+            raise HTTPException(status_code=400, detail="This night light has no scene control.")
+        raw = body.get("value", body.get("scene"))
+        if raw is None:
+            raise HTTPException(status_code=400, detail="nightlight_scene requires 'value'.")
+        valid = {opt["value"] for opt in nl["scene"]["options"]}
+        value = int(raw)
+        if value not in valid:
+            raise HTTPException(status_code=400, detail=f"Unknown night-light scene: {value}")
+        capability = {"type": nl["scene"]["type"], "instance": nl["scene"]["instance"], "value": value}
+        state_update = {"nightlight_scene": value}
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported humidifier command: {command}")
     try:

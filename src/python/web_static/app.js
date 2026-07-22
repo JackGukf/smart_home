@@ -179,6 +179,8 @@ let latestAlarmData     = null;
 let latestSwitchDevices = [];
 let latestMatterDevices = [];
 let latestThermostats   = [];
+let latestAmbientLights = [];
+let latestHumidifiers   = [];
 let areasDoc            = { areas: [], assignments: {} };
 let currentAreaId       = null;
 let doorbellEventsReady = false;
@@ -824,6 +826,7 @@ async function loadAmbientLights() {
 
 function renderAmbientLights(payload) {
   const lights = payload?.lights || [];
+  latestAmbientLights = lights;
   if (ambientCount) ambientCount.textContent = String(lights.length);
   if (!ambientGrid) return;
   if (lights.length === 0) {
@@ -877,6 +880,7 @@ async function loadHumidifiers() {
 
 function renderHumidifiers(payload) {
   const humidifiers = payload.humidifiers || [];
+  latestHumidifiers = humidifiers;
   const grid = document.querySelector("#humidifierGrid");
   const badge = document.querySelector("#humidifierCount");
   if (badge) badge.textContent = String(humidifiers.length);
@@ -888,34 +892,176 @@ function renderHumidifiers(payload) {
   grid.innerHTML = humidifiers.map(humidifierCard).join("");
 }
 
+/* Night-light colour presets (RGB) offered on the humidifier card palette. */
+const HUMIDIFIER_NIGHTLIGHT_COLORS = [
+  { name: "Warm", r: 255, g: 176, b: 96 },
+  { name: "White", r: 255, g: 255, b: 255 },
+  { name: "Red", r: 255, g: 64, b: 64 },
+  { name: "Orange", r: 255, g: 138, b: 0 },
+  { name: "Yellow", r: 255, g: 214, b: 64 },
+  { name: "Green", r: 64, g: 220, b: 120 },
+  { name: "Cyan", r: 0, g: 229, b: 255 },
+  { name: "Blue", r: 77, g: 163, b: 255 },
+  { name: "Purple", r: 177, g: 92, b: 255 },
+  { name: "Pink", r: 255, g: 105, b: 180 },
+];
+
+/* Radial Dial design: a conic-gradient dial encodes the mist level, the dial
+   centre powers the unit on/off, +/- step the mist, and a night-light panel
+   exposes on/off, a colour palette, and brightness when the device supports it. */
 function humidifierCard(humidifier) {
   const isOn = humidifier.is_on === true;
-  const statusClass = humidifier.status === "configured" ? (isOn ? "on" : "") : "setup";
-  const onActive = isOn ? " active" : "";
-  const offActive = humidifier.is_on === false ? " active" : "";
+  const configured = humidifier.status === "configured";
+  const statusClass = configured ? (isOn ? "on" : "off") : "setup";
+  const id = escapeHtml(humidifier.id);
   const mist = humidifier.capabilities && humidifier.capabilities.mist_level;
-  const level = humidifier.mist_level ?? (mist ? mist.min : 1);
-  const actions = humidifier.controllable
-    ? '<div class="ambient-actions"><button class="command primary' + onActive + '" data-humidifier-command="on" data-humidifier-id="' + escapeHtml(humidifier.id) + '">On</button><button class="command' + offActive + '" data-humidifier-command="off" data-humidifier-id="' + escapeHtml(humidifier.id) + '">Off</button></div>'
-    : '<div class="ambient-actions"><button class="command" disabled>Setup needed</button></div>';
-  const mistRow = humidifier.controllable && mist
-    ? '<div class="ambient-control-row"><i class="ti ti-droplet"></i><input type="range" min="' + mist.min + '" max="' + mist.max + '" value="' + level + '" data-humidifier-mist data-humidifier-id="' + escapeHtml(humidifier.id) + '"><span>' + level + "/" + mist.max + '</span></div>'
+  const mistMax = mist ? mist.max : 8;
+  const mistMin = mist ? mist.min : 1;
+  const level = humidifier.mist_level ?? mistMin;
+
+  const stateLabel = configured
+    ? (isOn ? "On" : humidifier.is_on === false ? "Off" : "Ready")
+    : "Setup";
+  const pillText = configured ? stateLabel : (humidifier.note || "Setup needed");
+
+  const head = [
+    '<div class="humid-head">',
+    '<span class="humid-ico"><i class="ti ti-droplet"></i></span>',
+    '<div class="humid-title"><h3>' + escapeHtml(humidifier.name) + '</h3>',
+    '<p>' + escapeHtml([humidifier.model, humidifier.room].filter(Boolean).join(" · ")) + '</p></div>',
+    '<span class="humid-pill ' + statusClass + '">' + escapeHtml(pillText) + '</span>',
+    '</div>',
+  ].join("");
+
+  if (!humidifier.controllable) {
+    return [
+      '<article class="humid-card ' + statusClass + '">',
+      head,
+      '<div class="humid-setup"><i class="ti ti-cloud-off"></i><span>' + escapeHtml(humidifier.note || "Setup needed") + '</span></div>',
+      '</article>',
+    ].join("");
+  }
+
+  const powerCmd = isOn ? "off" : "on";
+
+  // Orb centre: the linked thermometer's humidity is the hero, with temperature
+  // beneath it; if no reading is available, fall back to the mist level.
+  const hasHumidity = humidifier.humidity != null;
+  const tempUnit = humidifier.temperature_unit || "C";
+  const heroValue = hasHumidity
+    ? escapeHtml(String(humidifier.humidity)) + '<small>%</small>'
+    : level + '<small>/' + mistMax + '</small>';
+  const tempLine = humidifier.temperature != null
+    ? '<div class="humid-orb-temp"><i class="ti ti-temperature"></i>' + escapeHtml(String(humidifier.temperature)) + '°' + escapeHtml(tempUnit) + '</div>'
     : "";
-  const humidityRow = humidifier.humidity != null
-    ? '<div class="ambient-control-row"><i class="ti ti-cloud-rain"></i><span>Humidity ' + escapeHtml(String(humidifier.humidity)) + '%</span></div>'
+  const sourceLine = hasHumidity && humidifier.thermometer
+    ? '<div class="humid-orb-src"><i class="ti ti-link"></i>' + escapeHtml(humidifier.thermometer) + '</div>'
     : "";
+  const orbLabel = hasHumidity ? "Mist · Level " + level : "Mist level";
+
+  const particles =
+    '<span class="humid-dot d1"></span><span class="humid-dot d2"></span><span class="humid-dot d3"></span>'
+    + '<span class="humid-dot d4"></span><span class="humid-dot d5"></span><span class="humid-dot d6"></span>'
+    + '<span class="humid-plume p1"></span><span class="humid-plume p2"></span><span class="humid-plume p3"></span>'
+    + '<span class="humid-bubble b1"></span><span class="humid-bubble b2"></span><span class="humid-bubble b3"></span>'
+    + '<span class="humid-bubble b4"></span><span class="humid-bubble b5"></span><span class="humid-bubble b6"></span>'
+    + '<span class="humid-bubble b7"></span><span class="humid-bubble b8"></span><span class="humid-bubble b9"></span>'
+    + '<span class="humid-bubble b10"></span><span class="humid-bubble b11"></span><span class="humid-bubble b12"></span>';
+
+  const orb = [
+    '<div class="humid-orb-stage">',
+    '<div class="humid-orb">',
+    '<div class="humid-orb-surface"></div>',
+    particles,
+    '<div class="humid-orb-read">',
+    '<div class="humid-orb-pct">' + heroValue + '</div>',
+    tempLine,
+    '<span class="humid-orb-lvl">' + escapeHtml(orbLabel) + '</span>',
+    sourceLine,
+    '</div>',
+    '</div>',
+    '<div class="humid-controls">',
+    '<button class="humid-step" data-humidifier-mist-step="-1" data-humidifier-id="' + id + '" data-current="' + level + '" data-min="' + mistMin + '" data-max="' + mistMax + '"' + (level <= mistMin ? " disabled" : "") + ' title="Lower mist"><i class="ti ti-minus"></i></button>',
+    '<button class="humid-power ' + (isOn ? "on" : "") + '" data-humidifier-command="' + powerCmd + '" data-humidifier-id="' + id + '" title="Turn ' + powerCmd + '"><i class="ti ti-power"></i></button>',
+    '<button class="humid-step" data-humidifier-mist-step="1" data-humidifier-id="' + id + '" data-current="' + level + '" data-min="' + mistMin + '" data-max="' + mistMax + '"' + (level >= mistMax ? " disabled" : "") + ' title="Raise mist"><i class="ti ti-plus"></i></button>',
+    '</div>',
+    '<div class="humid-mist-caption mono">Mist Level ' + level + ' / ' + mistMax + '</div>',
+    '</div>',
+  ].join("");
+
+  const nl = humidifier.capabilities && humidifier.capabilities.nightlight;
+  let nightlight = "";
+  if (nl) {
+    const nlOn = humidifier.nightlight_on === true;
+    const nlCmd = nlOn ? "off" : "on";
+    const curColor = humidifier.nightlight_color;
+    const toHex = (n) => "#" + (n & 0xffffff).toString(16).padStart(6, "0");
+    const currentHex = curColor != null ? toHex(curColor) : "#8ab4ff";
+
+    // Colour: show only the current swatch; the full palette expands on click.
+    const colorRow = nl.color
+      ? [
+          '<div class="humid-night-row">',
+          '<span class="humid-night-lbl">Colour</span>',
+          '<div class="humid-color-picker">',
+          '<button class="humid-color-current" style="--sw:' + currentHex + '" data-humidifier-color-toggle title="Current colour — click to change"></button>',
+          '<div class="humid-swatches" hidden>',
+          HUMIDIFIER_NIGHTLIGHT_COLORS.map((c) => {
+            const intVal = (c.r << 16) | (c.g << 8) | c.b;
+            const active = curColor === intVal ? " active" : "";
+            const hex = "#" + [c.r, c.g, c.b].map((v) => v.toString(16).padStart(2, "0")).join("");
+            return '<button class="humid-swatch' + active + '" style="--sw:' + hex + '" title="' + escapeHtml(c.name) + '"'
+              + ' data-humidifier-color data-humidifier-id="' + id + '" data-red="' + c.r + '" data-green="' + c.g + '" data-blue="' + c.b + '"></button>';
+          }).join(""),
+          '</div></div></div>',
+        ].join("")
+      : "";
+
+    // Scene: named presets from the device (Forest/Ocean/…).
+    const curScene = humidifier.nightlight_scene;
+    const sceneRow = nl.scene && nl.scene.length
+      ? [
+          '<div class="humid-night-row">',
+          '<span class="humid-night-lbl">Scene</span>',
+          '<div class="humid-scenes">',
+          nl.scene.map((s) =>
+            '<button class="humid-scene' + (curScene === s.value ? " active" : "") + '" data-humidifier-scene="' + s.value + '" data-humidifier-id="' + id + '">' + escapeHtml(s.name) + '</button>'
+          ).join(""),
+          '</div></div>',
+        ].join("")
+      : "";
+
+    const bright = nl.brightness
+      ? (() => {
+          const bval = humidifier.nightlight_brightness ?? nl.brightness.max;
+          return '<div class="humid-night-row"><span class="humid-night-lbl">Brightness</span>'
+            + '<div class="humid-bright"><i class="ti ti-sun"></i>'
+            + '<input type="range" min="' + nl.brightness.min + '" max="' + nl.brightness.max + '" value="' + bval + '" data-humidifier-brightness data-humidifier-id="' + id + '">'
+            + '<span class="humid-bright-val mono">' + bval + '%</span></div></div>';
+        })()
+      : "";
+
+    nightlight = [
+      '<div class="humid-night ' + (nlOn ? "on" : "") + '">',
+      '<div class="humid-night-head">',
+      '<span class="humid-night-title"><i class="ti ti-bulb"></i> Night Light</span>',
+      '<button class="humid-switch ' + (nlOn ? "on" : "") + '" role="switch" aria-checked="' + (nlOn ? "true" : "false") + '" data-humidifier-nightlight="' + nlCmd + '" data-humidifier-id="' + id + '" title="Toggle night light"><span class="humid-switch-knob"></span></button>',
+      '</div>',
+      '<div class="humid-night-body">',
+      colorRow,
+      sceneRow,
+      bright,
+      '</div>',
+      '</div>',
+    ].join("");
+  }
+
   return [
-    '<article class="ambient-card ' + statusClass + '">',
-    '<div class="ambient-glow"></div>',
-    '<div class="ambient-top">',
-    '<div class="ambient-name-row"><h3>' + escapeHtml(humidifier.name) + "</h3></div>",
-    '<span class="ambient-status">' + escapeHtml(humidifier.status === "configured" ? (isOn ? "On" : humidifier.is_on === false ? "Off" : "Ready") : humidifier.note) + "</span>",
-    "</div>",
-    '<p class="ambient-meta">' + escapeHtml([humidifier.model, humidifier.room].filter(Boolean).join(" · ")) + "</p>",
-    actions,
-    mistRow,
-    humidityRow,
-    "</article>",
+    '<article class="humid-card ' + statusClass + '">',
+    head,
+    orb,
+    nightlight,
+    '</article>',
   ].join("");
 }
 
@@ -2695,6 +2841,8 @@ const AREA_KIND_ICONS = {
   sensor: "ti-radar-2",
   camera: "ti-video",
   thermostat: "ti-temperature",
+  ambient: "ti-lamp-2",
+  humidifier: "ti-droplet",
 };
 
 function areaSlug(name) {
@@ -2745,6 +2893,26 @@ function collectHomeInventory() {
       name: thermostat.name,
       room: thermostat.room || "",
       data: thermostat,
+    });
+  }
+
+  for (const light of latestAmbientLights) {
+    inventory.push({
+      key: `ambient:${light.id}`,
+      kind: "ambient",
+      name: light.name,
+      room: light.room || "",
+      data: light,
+    });
+  }
+
+  for (const humidifier of latestHumidifiers) {
+    inventory.push({
+      key: `humidifier:${humidifier.id}`,
+      kind: "humidifier",
+      name: humidifier.name,
+      room: humidifier.room || "",
+      data: humidifier,
     });
   }
 
@@ -2811,6 +2979,8 @@ function areaCardHtml(area) {
   const lightsOn = switches.filter((d) => d.data.is_on === true).length;
   const cameras  = area.devices.filter((d) => d.kind === "camera").length;
   const sensors  = area.devices.filter((d) => d.kind === "sensor").length;
+  const ambient  = area.devices.filter((d) => d.kind === "ambient").length;
+  const humidifiers = area.devices.filter((d) => d.kind === "humidifier").length;
   const temp     = areaTemperature(area);
   const lit      = lightsOn > 0;
 
@@ -2821,6 +2991,8 @@ function areaCardHtml(area) {
   if (temp)    chips.push(`<span class="area-chip warm"><i class="ti ti-temperature"></i>${temp}</span>`);
   if (cameras) chips.push(`<span class="area-chip"><i class="ti ti-video"></i>${cameras}</span>`);
   if (sensors) chips.push(`<span class="area-chip"><i class="ti ti-radar-2"></i>${sensors}</span>`);
+  if (ambient) chips.push(`<span class="area-chip"><i class="ti ti-lamp-2"></i>${ambient}</span>`);
+  if (humidifiers) chips.push(`<span class="area-chip"><i class="ti ti-droplet"></i>${humidifiers}</span>`);
 
   const count = area.devices.length;
   return `
@@ -3715,6 +3887,8 @@ function renderAreaDetail(area) {
   const sensors     = area.devices.filter((d) => d.kind === "sensor").map((d) => d.data);
   const cameras     = area.devices.filter((d) => d.kind === "camera").map((d) => d.data);
   const thermostats = area.devices.filter((d) => d.kind === "thermostat").map((d) => d.data);
+  const ambient     = area.devices.filter((d) => d.kind === "ambient").map((d) => d.data);
+  const humidifiers = area.devices.filter((d) => d.kind === "humidifier").map((d) => d.data);
 
   const sections = [];
   if (switches.length) {
@@ -3743,6 +3917,20 @@ function renderAreaDetail(area) {
       <div class="area-subsection">
         <div class="area-subsection-title"><i class="ti ti-video"></i> Cameras</div>
         <div class="camera-grid">${cameras.map((camera) => cameraCardHtml(camera)).join("")}</div>
+      </div>`);
+  }
+  if (ambient.length) {
+    sections.push(`
+      <div class="area-subsection">
+        <div class="area-subsection-title"><i class="ti ti-lamp-2"></i> Ambient Lights</div>
+        <div class="ambient-grid">${ambient.map(ambientLightCard).join("")}</div>
+      </div>`);
+  }
+  if (humidifiers.length) {
+    sections.push(`
+      <div class="area-subsection">
+        <div class="area-subsection-title"><i class="ti ti-droplet"></i> Humidifiers</div>
+        <div class="ambient-grid">${humidifiers.map(humidifierCard).join("")}</div>
       </div>`);
   }
   body.innerHTML = sections.join("");
@@ -4763,52 +4951,94 @@ document.addEventListener("click", (event) => {
 });
 
 /* ── Humidifier actions ── */
-document.addEventListener("click", async (event) => {
-  const btn = event.target.closest("button[data-humidifier-command]");
-  if (!btn) return;
-  const humidifierId = btn.dataset.humidifierId;
-  const command = btn.dataset.humidifierCommand;
-  const card = btn.closest(".ambient-card");
-  const buttons = card ? [...card.querySelectorAll("button[data-humidifier-command]")] : [btn];
-  const status = card?.querySelector(".ambient-status");
-  buttons.forEach((item) => { item.disabled = true; item.classList.remove("active"); });
-  btn.classList.add("active");
-  if (status) status.textContent = command === "on" ? "Turning on..." : "Turning off...";
+async function sendHumidifierCommand(humidifierId, command, body, logMsg) {
   apiStatus.textContent = "Sending";
   try {
-    await requestJson("/api/humidifiers/" + encodeURIComponent(humidifierId) + "/commands/" + command, { method: "POST" });
-    await loadHumidifiers();
-    apiStatus.textContent = "Online";
-    logActivity("Humidifier turned " + command);
-  } catch (error) {
-    buttons.forEach((item) => { item.disabled = false; });
-    if (status) status.textContent = "Command failed";
-    apiStatus.textContent = "Error";
-    logActivity("Humidifier command unavailable", "warn");
-    console.error(error);
-  }
-});
-
-document.addEventListener("change", async (event) => {
-  const slider = event.target.closest("input[data-humidifier-mist]");
-  if (!slider) return;
-  const humidifierId = slider.dataset.humidifierId;
-  const level = Number(slider.value);
-  apiStatus.textContent = "Sending";
-  try {
-    await requestJson("/api/humidifiers/" + encodeURIComponent(humidifierId) + "/commands/mist_level", {
+    await requestJson("/api/humidifiers/" + encodeURIComponent(humidifierId) + "/commands/" + command, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ level }),
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
     });
     await loadHumidifiers();
     apiStatus.textContent = "Online";
-    logActivity("Humidifier mist level → " + level);
+    if (logMsg) logActivity(logMsg);
+    return true;
   } catch (error) {
     apiStatus.textContent = "Error";
     logActivity("Humidifier command unavailable", "warn");
     console.error(error);
+    return false;
   }
+}
+
+// Power (dial centre toggle).
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-humidifier-command]");
+  if (!btn) return;
+  const command = btn.dataset.humidifierCommand;
+  btn.disabled = true;
+  await sendHumidifierCommand(btn.dataset.humidifierId, command, null, "Humidifier turned " + command);
+});
+
+// Mist level +/- stepper.
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-humidifier-mist-step]");
+  if (!btn) return;
+  const step = Number(btn.dataset.humidifierMistStep);
+  const min = Number(btn.dataset.min);
+  const max = Number(btn.dataset.max);
+  const level = Math.max(min, Math.min(max, Number(btn.dataset.current) + step));
+  if (level === Number(btn.dataset.current)) return;
+  btn.disabled = true;
+  await sendHumidifierCommand(btn.dataset.humidifierId, "mist_level", { level }, "Humidifier mist level → " + level);
+});
+
+// Night light on/off.
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-humidifier-nightlight]");
+  if (!btn) return;
+  const state = btn.dataset.humidifierNightlight;
+  btn.disabled = true;
+  await sendHumidifierCommand(btn.dataset.humidifierId, "nightlight_" + state, null, "Night light " + state);
+});
+
+// Night light colour picker — reveal the full palette on click of the current swatch.
+document.addEventListener("click", (event) => {
+  const toggle = event.target.closest("button[data-humidifier-color-toggle]");
+  if (!toggle) return;
+  const palette = toggle.parentElement?.querySelector(".humid-swatches");
+  if (palette) palette.hidden = !palette.hidden;
+});
+
+// Night light colour selection.
+document.addEventListener("click", async (event) => {
+  const sw = event.target.closest("button[data-humidifier-color]");
+  if (!sw) return;
+  const body = { red: Number(sw.dataset.red), green: Number(sw.dataset.green), blue: Number(sw.dataset.blue) };
+  await sendHumidifierCommand(sw.dataset.humidifierId, "nightlight_color", body, "Night light colour set");
+});
+
+// Night light scene.
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-humidifier-scene]");
+  if (!btn) return;
+  const value = Number(btn.dataset.humidifierScene);
+  btn.disabled = true;
+  await sendHumidifierCommand(btn.dataset.humidifierId, "nightlight_scene", { value }, "Night light scene set");
+});
+
+// Night light brightness — reflect the value live, send on release.
+document.addEventListener("input", (event) => {
+  const slider = event.target.closest("input[data-humidifier-brightness]");
+  if (!slider) return;
+  const label = slider.parentElement?.querySelector(".humid-bright-val");
+  if (label) label.textContent = slider.value + "%";
+});
+document.addEventListener("change", async (event) => {
+  const slider = event.target.closest("input[data-humidifier-brightness]");
+  if (!slider) return;
+  const level = Number(slider.value);
+  await sendHumidifierCommand(slider.dataset.humidifierId, "nightlight_brightness", { level }, "Night light brightness → " + level + "%");
 });
 
 /* ── All On / All Off (Plugs) ── */
