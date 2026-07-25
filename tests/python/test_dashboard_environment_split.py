@@ -42,3 +42,14 @@ def test_card_renderer_takes_a_mode() -> None:
     assert "function renderSensorDeviceCard(group, mode)" in javascript
     assert 'renderSensorDeviceCard(group, "sensors")' in javascript or \
            'renderSensorDeviceCard(g, "sensors")' in javascript
+
+
+def test_environment_sensors_are_loaded_and_rendered() -> None:
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    assert "latestEnvironmentSensors" in javascript
+    assert 'requestJson("/api/environment-sensors")' in javascript
+    assert "function environmentSensorCard(sensor)" in javascript
+    # Loaded on startup like ambient lights and humidifiers, not only on view switch.
+    init = javascript[javascript.index("function initDefaultView"):]
+    assert "loadEnvironmentSensors()" in init[:600]

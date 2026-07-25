@@ -181,6 +181,7 @@ let latestMatterDevices = [];
 let latestThermostats   = [];
 let latestAmbientLights = [];
 let latestHumidifiers   = [];
+let latestEnvironmentSensors = [];
 let areasDoc            = { areas: [], assignments: {} };
 let currentAreaId       = null;
 let doorbellEventsReady = false;
@@ -289,7 +290,7 @@ function deviceGroupTileData() {
     { view: "plugs",      label: "Plugs",       icon: "ti-plug",       count: plugs.length,                  summary: onOf(plugs) },
     { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: latestAmbientLights.length,    summary: onlineOf(latestAmbientLights) },
     { view: "humidifier", label: "Humidifiers", icon: "ti-droplet",    count: latestHumidifiers.length,      summary: onlineOf(latestHumidifiers) },
-    { view: "environment", label: "Environment", icon: "ti-temperature-celsius", count: sensorGroupCount("environment"), summary: environmentSummary() },
+    { view: "environment", label: "Environment", icon: "ti-temperature-celsius", count: sensorGroupCount("environment") + latestEnvironmentSensors.length, summary: environmentSummary() },
     { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(latestTuyaDevices) },
     { view: "climate",    label: "Climate",     icon: "ti-temperature",count: latestThermostats.length,      summary: onlineOf(latestThermostats) },
   ];
@@ -971,6 +972,37 @@ function ambientLightCard(light) {
 async function loadHumidifiers() {
   const payload = await requestJson("/api/humidifiers");
   renderHumidifiers(payload);
+}
+
+/* ── Environment sensors (Govee cloud thermo-hygrometers) ── */
+async function loadEnvironmentSensors() {
+  const payload = await requestJson("/api/environment-sensors");
+  latestEnvironmentSensors = payload.sensors || [];
+  renderEnvironmentSensors();
+  renderDevicesOverview();
+}
+
+function environmentSensorCard(sensor) {
+  const temp = sensor.temperature != null ? `${sensor.temperature}<small>°C</small>` : "–";
+  const hum  = sensor.humidity != null ? `${sensor.humidity}<small>%</small>` : "–";
+  const note = sensor.note
+    ? `<p class="sdc-sub">${escapeHtml(sensor.note)}</p>`
+    : "";
+
+  return `<article class="sdc-card" data-device-id="${escapeHtml(sensor.name)}">
+    <div class="sdc-header">
+      <div>
+        <h3 class="sdc-name">${escapeHtml(sensor.name)}</h3>
+        <p class="sdc-sub">${escapeHtml([sensor.room, sensor.model].filter(Boolean).join(" · ") || "Govee")}</p>
+      </div>
+      <span class="sdc-badge">${sensor.online ? "ONLINE" : "OFFLINE"}</span>
+    </div>
+    <div class="sdc-gauges-row">
+      <div class="sdc-gauge"><i class="ti ti-temperature"></i><span class="gauge-value">${temp}</span></div>
+      <div class="sdc-gauge"><i class="ti ti-droplet"></i><span class="gauge-value">${hum}</span></div>
+    </div>
+    ${note}
+  </article>`;
 }
 
 function renderHumidifiers(payload) {
@@ -1710,13 +1742,16 @@ function renderEnvironmentSensors() {
   const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
   const groups = groupSensorDevices(visible).filter((g) => groupHasViewContent(g, "environment"));
 
-  if (badge) badge.textContent = String(groups.length);
+  const total = groups.length + latestEnvironmentSensors.length;
+  if (badge) badge.textContent = String(total);
   if (!grid) return;
-  if (groups.length === 0) {
+  if (total === 0) {
     grid.innerHTML = '<div class="empty">No temperature or humidity sensors reporting yet.</div>';
     return;
   }
-  grid.innerHTML = groups.map((g) => renderSensorDeviceCard(g, "environment")).join("");
+  grid.innerHTML =
+    latestEnvironmentSensors.map(environmentSensorCard).join("") +
+    groups.map((g) => renderSensorDeviceCard(g, "environment")).join("");
 }
 
 function primaryTuyaState(device) {
@@ -4484,6 +4519,9 @@ function activateView(viewName) {
   if (viewName === "humidifier") {
     loadHumidifiers().catch((error) => console.error(error));
   }
+  if (viewName === "environment") {
+    loadEnvironmentSensors().catch((error) => console.error(error));
+  }
   if (viewName === "discovery") {
     requestJson("/api/matter/devices")
       .then((data) => {
@@ -4966,6 +5004,7 @@ function getDefaultView() {
   activateView(getDefaultView());
   loadAmbientLights().catch((error) => console.error(error));
   loadHumidifiers().catch((error) => console.error(error));
+  loadEnvironmentSensors().catch((error) => console.error(error));
 })();
 
 /* Light drag lock */
