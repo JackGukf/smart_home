@@ -59,3 +59,140 @@ def test_four_in_one_splits_across_both_views(tmp_path: Path) -> None:
 
     assert result["env"] == ["Hub Temperature", "Hub Humidity", "Hub Battery"]
     assert result["sen"] == ["Hub Smoke", "Hub Battery"]
+
+
+# groupHasViewContent depends on expandSensorReadings, which in turn depends
+# on sensorBaseName / directSensorValue / syntheticSensorReading, plus the
+# KNOWN_SENSOR_CAPABILITIES const. Pull all of it out the same way the
+# harness above pulls out sensorCapabilityKey/filterReadingsForView.
+GROUP_HARNESS = """
+const src = require('fs').readFileSync(process.argv[2], 'utf8');
+const pick = (name) => {
+  const at = src.indexOf(`function ${name}`);
+  if (at < 0) throw new Error(`missing ${name}`);
+  let depth = 0, i = src.indexOf('{', at);
+  const start = at;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(start, i + 1); }
+  }
+  throw new Error(`unbalanced ${name}`);
+};
+const pickConst = (name) => {
+  const m = src.match(new RegExp(`const ${name}[^;]+;`));
+  if (!m) throw new Error(`missing const ${name}`);
+  return m[0];
+};
+// Safe: evaluates only trusted first-party source extracted from this repo's
+// own app.js (no external/user input), as a deliberate substitute for a JS
+// test toolchain the project intentionally does not have.
+eval(
+  pickConst('ENVIRONMENT_CAPABILITIES') +
+  pickConst('KNOWN_SENSOR_CAPABILITIES') +
+  pickConst('SENSOR_SUFFIXES') +
+  pick('sensorCapabilityKey') +
+  pick('filterReadingsForView') +
+  pick('sensorBaseName') +
+  pick('directSensorValue') +
+  pick('syntheticSensorReading') +
+  pick('expandSensorReadings') +
+  pick('groupHasViewContent')
+);
+
+const results = {};
+
+// (a) _tuya_card()-shaped device: no device_class, a generic category, and a
+// combined `values` DPS map carrying temperature + humidity. The raw
+// reading's capability key falls back to id/name (unrecognised); only the
+// readings expandSensorReadings synthesises from `values` should give it a
+// home, and only in Environment.
+const tuyaCombined = {
+  id: 'tuya-living-room',
+  name: 'Living Room Sensor',
+  category: 'tuya_sensor',
+  values: { temp_current: 21.5, humidity: 47 },
+};
+results.tuyaCombined = {
+  environment: groupHasViewContent({ name: 'Living Room Sensor', readings: [tuyaCombined] }, 'environment'),
+  sensors: groupHasViewContent({ name: 'Living Room Sensor', readings: [tuyaCombined] }, 'sensors'),
+};
+
+// (b) Battery-only device: must not conjure a card into either view.
+const batteryOnly = {
+  id: 'batt-hallway',
+  name: 'Hallway Battery',
+  device_class: 'battery',
+  category: 'battery',
+  state: 88,
+};
+results.batteryOnly = {
+  environment: groupHasViewContent({ name: 'Hallway Sensor', readings: [batteryOnly] }, 'environment'),
+  sensors: groupHasViewContent({ name: 'Hallway Sensor', readings: [batteryOnly] }, 'sensors'),
+};
+
+// (c) Battery + temperature: Environment only (battery rides along as
+// context but must not itself grant a Sensors card).
+const battery = {
+  id: 'batt-bedroom',
+  name: 'Bedroom Battery',
+  device_class: 'battery',
+  category: 'battery',
+  state: 91,
+};
+const temperature = {
+  id: 'temp-bedroom',
+  name: 'Bedroom Temperature',
+  device_class: 'temperature',
+  category: 'tuya_temperature',
+  state: 22,
+};
+results.batteryPlusTemperature = {
+  environment: groupHasViewContent({ name: 'Bedroom Sensor', readings: [battery, temperature] }, 'environment'),
+  sensors: groupHasViewContent({ name: 'Bedroom Sensor', readings: [battery, temperature] }, 'sensors'),
+};
+
+// (d) Unrecognised-only capability (the fallback/regression guard): no
+// device_class, a category that matches none of the known kinds, and no
+// `values` entries expandSensorReadings could synthesise anything from.
+// This must still surface in Sensors -- never Environment -- so it doesn't
+// vanish from the dashboard entirely.
+const unknownDevice = {
+  id: 'widget-garage',
+  name: 'Garage Widget',
+  category: 'tuya_unknown_widget',
+  values: { raw_state: 'x' },
+};
+results.unknownOnly = {
+  environment: groupHasViewContent({ name: 'Garage Widget', readings: [unknownDevice] }, 'environment'),
+  sensors: groupHasViewContent({ name: 'Garage Widget', readings: [unknownDevice] }, 'sensors'),
+};
+
+console.log(JSON.stringify(results));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_group_has_view_content_handles_unclassified_tuya_readings(tmp_path: Path) -> None:
+    harness = tmp_path / "harness_group.js"
+    harness.write_text(GROUP_HARNESS, encoding="utf-8")
+
+    out = subprocess.run(
+        ["node", str(harness), str(APP_JS)],
+        capture_output=True, text=True, check=True,
+    ).stdout
+
+    import json
+    result = json.loads(out)
+
+    # (a) Combined Tuya reading with no device_class: qualifies for
+    # Environment (via the synthesised temperature/humidity readings) and
+    # must NOT qualify for Sensors just because the raw reading's key is
+    # unrecognised.
+    assert result["tuyaCombined"] == {"environment": True, "sensors": False}
+    # (b) Battery-only device: qualifies for neither view.
+    assert result["batteryOnly"] == {"environment": False, "sensors": False}
+    # (c) Battery + temperature: Environment only.
+    assert result["batteryPlusTemperature"] == {"environment": True, "sensors": False}
+    # (d) Unrecognised-only capability: the fallback rule keeps it visible in
+    # Sensors (never Environment) so it doesn't vanish from the dashboard.
+    assert result["unknownOnly"] == {"environment": False, "sensors": True}

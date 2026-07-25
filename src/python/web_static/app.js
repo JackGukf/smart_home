@@ -1329,6 +1329,14 @@ function countUniqueSensorCapabilities(readings) {
    so nothing is hidden. Battery rides along in both as context. */
 const ENVIRONMENT_CAPABILITIES = new Set(["temperature", "humidity"]);
 
+/* The eight capability keys sensorCapabilityKey() can actually classify a
+   reading into. Anything else means it fell through to the id/name
+   fallback -- i.e. an unrecognised capability, not a "sensors" capability. */
+const KNOWN_SENSOR_CAPABILITIES = new Set([
+  "temperature", "humidity", "illuminance", "motion",
+  "battery", "water", "smoke", "door",
+]);
+
 function filterReadingsForView(readings, mode) {
   if (mode !== "environment" && mode !== "sensors") return readings;
   return readings.filter((reading) => {
@@ -1340,10 +1348,27 @@ function filterReadingsForView(readings, mode) {
   });
 }
 
-/* A battery reading alone must not conjure a card into either view. */
+/* A battery reading alone must not conjure a card into either view, and
+   neither may a reading whose capability key isn't one of the eight known
+   kinds (e.g. a direct/local Tuya device with no device_class, whose raw
+   reading falls back to its id/name). The one exception: if a device has
+   NO recognised capability at all -- not even battery -- it still needs a
+   home so it doesn't vanish from the dashboard entirely, and Sensors is
+   that home (Environment stays reserved for genuine temperature/humidity). */
 function groupHasViewContent(group, mode) {
-  return filterReadingsForView(expandSensorReadings(group.readings), mode)
-    .some((reading) => sensorCapabilityKey(reading) !== "battery");
+  const expanded = expandSensorReadings(group.readings);
+
+  const viewReadings = filterReadingsForView(expanded, mode);
+  const hasOwnedCapability = viewReadings.some((reading) => {
+    const key = sensorCapabilityKey(reading);
+    return key !== "battery" && KNOWN_SENSOR_CAPABILITIES.has(key);
+  });
+  if (hasOwnedCapability) return true;
+
+  const hasAnyKnownCapability = expanded.some((reading) =>
+    KNOWN_SENSOR_CAPABILITIES.has(sensorCapabilityKey(reading))
+  );
+  return mode === "sensors" && !hasAnyKnownCapability;
 }
 
 function sensorGroupCount(mode) {
