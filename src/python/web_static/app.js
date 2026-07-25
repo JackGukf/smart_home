@@ -280,8 +280,9 @@ function setDevicesGroupOpen(open) {
 
 /* Devices overview tiles. Renders from arrays already in memory — no fetches. */
 function deviceGroupTileData() {
-  const lights = latestSwitchDevices.filter((d) => d.category === "light_switch");
-  const plugs  = latestSwitchDevices.filter((d) => d.category === "smart_plug");
+  const allSwitchLike = [...latestSwitchDevices, ...latestMatterDevices];
+  const lights = allSwitchLike.filter((d) => d.category === "light_switch");
+  const plugs  = allSwitchLike.filter((d) => d.category === "smart_plug");
   const onOf = (list) => `${list.filter((d) => d.is_on).length} of ${list.length} on`;
   const onlineOf = (list) => `${list.filter((d) => d.online !== false).length} online`;
 
@@ -291,17 +292,25 @@ function deviceGroupTileData() {
     { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: latestAmbientLights.length,    summary: onlineOf(latestAmbientLights) },
     { view: "humidifier", label: "Humidifiers", icon: "ti-droplet",    count: latestHumidifiers.length,      summary: onlineOf(latestHumidifiers) },
     { view: "environment", label: "Environment", icon: "ti-temperature-celsius", count: sensorGroupCount("environment") + latestEnvironmentSensors.length, summary: environmentSummary() },
-    { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(latestTuyaDevices) },
+    { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(sensorsTileGroups()) },
     { view: "climate",    label: "Climate",     icon: "ti-temperature",count: latestThermostats.length,      summary: onlineOf(latestThermostats) },
   ];
 }
 
 /* Average temperature across environment groups, for the overview tile. */
 function environmentSummary() {
-  const temps = latestTuyaDevices
+  const tuyaTemps = latestTuyaDevices
     .filter((d) => sensorCapabilityKey(d) === "temperature")
     .map(readingMetricNumber)
     .filter(Number.isFinite);
+  // Already in Celsius -- the backend converts from Fahrenheit before this
+  // reaches the client. Use != null so a legitimate 0°C reading is kept.
+  const goveeTemps = latestEnvironmentSensors
+    .map((s) => s.temperature)
+    .filter((t) => t != null)
+    .map(Number)
+    .filter(Number.isFinite);
+  const temps = [...tuyaTemps, ...goveeTemps];
   if (temps.length === 0) return "No readings";
   const avg = temps.reduce((a, b) => a + b, 0) / temps.length;
   return `avg ${avg.toFixed(1)} °C`;
@@ -331,10 +340,14 @@ function distinctDeviceCount() {
   const ids = new Set();
   const add = (list, prefix) => list.forEach((d, i) => ids.add(`${prefix}:${d.id ?? d.name ?? i}`));
   add(latestSwitchDevices, "switch");
+  add(latestMatterDevices, "matter");
   add(latestAmbientLights, "ambient");
   add(latestHumidifiers, "humidifier");
   add(latestThermostats, "climate");
-  latestTuyaDevices.forEach((d) => ids.add(`tuya:${sensorBaseName(String(d.name || d.id || ""))}`));
+  add(latestEnvironmentSensors, "environment");
+  latestTuyaDevices
+    .filter((d) => !isTuyaCamera(d))
+    .forEach((d) => ids.add(`tuya:${sensorBaseName(String(d.name || d.id || ""))}`));
   return ids.size;
 }
 
@@ -1406,6 +1419,16 @@ function groupHasViewContent(group, mode) {
 function sensorGroupCount(mode) {
   const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
   return groupSensorDevices(visible).filter((g) => groupHasViewContent(g, mode)).length;
+}
+
+/* Device groups backing the Sensors tile, collapsed to one online flag per
+   group so onlineOf() can summarize groups instead of raw readings -- the
+   same universe sensorGroupCount("sensors") counts. */
+function sensorsTileGroups() {
+  const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  return groupSensorDevices(visible)
+    .filter((g) => groupHasViewContent(g, "sensors"))
+    .map((g) => ({ online: g.readings.some((d) => d.online !== false) }));
 }
 
 /* ── Sensor device grouping ── */
@@ -4111,7 +4134,7 @@ function renderAreaDetail(area) {
     sections.push(`
       <div class="area-subsection">
         <div class="area-subsection-title"><i class="ti ti-radar-2"></i> Sensors</div>
-        <div class="device-grid">${sensors.map(renderSensorDeviceCard).join("")}</div>
+        <div class="device-grid">${sensors.map((g) => renderSensorDeviceCard(g, "sensors")).join("")}</div>
       </div>`);
   }
   if (cameras.length) {

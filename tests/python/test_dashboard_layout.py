@@ -4,7 +4,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
-APP_JS = PROJECT_ROOT / "src" / "python" / "web_static" / "app.js"
 WEB_APP = PROJECT_ROOT / "src" / "python" / "web_app.py"
 
 
