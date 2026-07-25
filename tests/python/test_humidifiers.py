@@ -603,3 +603,83 @@ def test_load_humidifiers_tolerates_null_sections(tmp_path: Path) -> None:
     null_devices = tmp_path / "null_devices.yaml"
     null_devices.write_text("humidifiers:\n  devices:\n", encoding="utf-8")
     assert _load_humidifiers(null_devices) == []
+
+
+def _humidity_sensor(sku: str, device: str, instances: list[str] | None = None) -> dict:
+    """Minimal Govee device entry reporting the given capability instances.
+
+    Defaults to a plain thermo-hygrometer (humidity + temperature, no CO2).
+    Pass an explicit instances list (e.g. including "carbonDioxideConcentration")
+    to build a CO2 combo monitor like the real H5140.
+    """
+    if instances is None:
+        instances = ["sensorHumidity", "sensorTemperature"]
+    return {
+        "sku": sku,
+        "device": device,
+        "capabilities": [{"type": "devices.capabilities.property", "instance": i} for i in instances],
+    }
+
+
+def test_thermometer_fallback_is_ambiguous_with_two_non_co2_sensors() -> None:
+    """Hypothetical configuration, NOT the current account state: two humidity
+    sensors where NEITHER reports carbonDioxideConcentration. The real account
+    only has one plain thermo-hygrometer (H5179) plus one CO2 combo monitor
+    (H5140) — see test_co2_tiebreak_resolves_real_account_pair, which proves
+    that real pair resolves fine. But if a second *plain* humidity sensor
+    were ever added, the CO2 tie-break has nothing to exclude, both sensors
+    stay in the running, and the 'sole sensor' fallback returns None. This
+    documents why pinning thermometer_device_id is the robust choice."""
+    devices = [_humidity_sensor("H5179", "AA:BB"), _humidity_sensor("H5100", "CC:DD")]
+    unpinned = HumidifierDefinition(
+        name="Bedroom Humidifier", provider="govee_cloud", model="H7140",
+        room="Bedroom", device_id="replace_me",
+    )
+
+    assert _match_govee_thermometer(unpinned, devices) is None
+
+
+def test_pinned_thermometer_device_id_is_unambiguous() -> None:
+    devices = [_humidity_sensor("H5179", "AA:BB"), _humidity_sensor("H5100", "CC:DD")]
+    pinned = HumidifierDefinition(
+        name="Bedroom Humidifier", provider="govee_cloud", model="H7140",
+        room="Bedroom", device_id="replace_me", thermometer_device_id="AA:BB",
+    )
+
+    assert _match_govee_thermometer(pinned, devices)["device"] == "AA:BB"
+
+
+def test_pinned_thermometer_model_is_unambiguous() -> None:
+    devices = [_humidity_sensor("H5179", "AA:BB"), _humidity_sensor("H5100", "CC:DD")]
+    pinned = HumidifierDefinition(
+        name="Bedroom Humidifier", provider="govee_cloud", model="H7140",
+        room="Bedroom", device_id="replace_me", thermometer_model="H5179",
+    )
+
+    assert _match_govee_thermometer(pinned, devices)["device"] == "AA:BB"
+
+
+def test_co2_tiebreak_resolves_real_account_pair() -> None:
+    """This is the shape the real account actually has: one plain
+    thermo-hygrometer (H5179) and one H5140 -- Govee's "Smart CO2 Monitor",
+    which is a combo device reporting sensorHumidity AND sensorTemperature
+    AND carbonDioxideConcentration. The existing tie-break in
+    _match_govee_thermometer excludes sensors that report CO2 from the
+    ambiguous set, so an UNPINNED humidifier still resolves correctly to the
+    H5179 even with the H5140 present on the account. There is no live
+    regression for this configuration; this test guards the tie-break that
+    prevents one against future removal."""
+    h5179 = _humidity_sensor("H5179", "AA:BB")
+    h5140 = _humidity_sensor(
+        "H5140", "CC:DD", ["sensorHumidity", "sensorTemperature", "carbonDioxideConcentration"]
+    )
+    devices = [h5179, h5140]
+    unpinned = HumidifierDefinition(
+        name="Bedroom Humidifier", provider="govee_cloud", model="H7140",
+        room="Bedroom", device_id="replace_me",
+    )
+
+    match = _match_govee_thermometer(unpinned, devices)
+
+    assert match is not None
+    assert match["device"] == "AA:BB"

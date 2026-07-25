@@ -183,6 +183,19 @@ humidifiers:
       model: H7140
       room: Bedroom
       device_id: replace_me
+      # The card shows ambient temperature/humidity from a linked Govee
+      # thermometer. Without an explicit id the app falls back to "the only
+      # humidity sensor on the account". That fallback resolves cleanly when
+      # there is exactly one humidity sensor, OR when every extra one also
+      # reports carbonDioxideConcentration (e.g. an H5140 CO2 combo monitor,
+      # like the one in the environment: section below) — the app's tie-break
+      # excludes CO2-reporting sensors from the ambiguous set. It does NOT
+      # resolve if you add a second plain (non-CO2) humidity sensor. Don't
+      # depend on that tie-break holding — pin the thermometer explicitly.
+      # Find the id with:
+      #   GOVEE_API_KEY=... python3 scripts/probe-govee-cloud-device.py H5179
+      thermometer_device_id: replace_me
+      thermometer_model: H5179
 
 environment:
   # Standalone temperature/humidity sensors read through the Govee Developer

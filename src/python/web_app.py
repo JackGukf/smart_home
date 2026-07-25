@@ -1719,8 +1719,30 @@ def _device_has_instance(entry: dict[str, Any], instance: str) -> bool:
 def _match_govee_thermometer(
     humidifier: HumidifierDefinition, devices: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
-    """Resolve the linked thermometer: explicit id, then model, then the account's
-    sole ambient-humidity sensor."""
+    """Resolve the linked thermometer, trying three stages in order:
+
+    1. humidifier.thermometer_device_id, if it's a real (non-placeholder) id.
+    2. humidifier.thermometer_model, if exactly one device on the account has
+       that sku.
+    3. Fallback: the account's sole ambient-humidity sensor. When more than
+       one humidity sensor exists, sensors that also report
+       carbonDioxideConcentration are excluded first (a CO2 combo monitor,
+       e.g. the H5140, shouldn't out-compete a plain thermo-hygrometer for
+       this fallback).
+
+    That fallback only resolves unambiguously when the account has exactly
+    one humidity sensor, or when every *extra* humidity sensor also reports
+    CO2. Two plain (non-CO2) humidity sensors on the same account defeat it
+    and the linked temperature/humidity readout silently disappears from the
+    card — see
+    test_humidifiers.py::test_thermometer_fallback_is_ambiguous_with_two_non_co2_sensors.
+    Pin thermometer_device_id (or thermometer_model) so the lookup does not
+    depend on that tie-break holding; see
+    test_humidifiers.py::test_pinned_thermometer_device_id_is_unambiguous,
+    test_humidifiers.py::test_pinned_thermometer_model_is_unambiguous, and
+    test_humidifiers.py::test_co2_tiebreak_resolves_real_account_pair (which
+    guards the CO2 tie-break itself against future regression).
+    """
     if _is_real_ble_address(humidifier.thermometer_device_id):
         for entry in devices:
             if str(entry.get("device") or "").lower() == humidifier.thermometer_device_id.lower():
