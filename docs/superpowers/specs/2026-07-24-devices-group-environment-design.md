@@ -273,17 +273,30 @@ value matches the rest of the dashboard.
 
 `_match_govee_thermometer()` (`web_app.py:1685`) resolves the humidifier's
 linked thermometer by explicit id, then model, then a fallback to *the
-account's sole ambient-humidity sensor*. The example config ships
-`device_id: replace_me`, so the H7140 currently depends on that fallback.
+account's sole ambient-humidity sensor*, preferring whichever candidate lacks
+`carbonDioxideConcentration` when more than one is present. The example config
+ships `device_id: replace_me`, so the H7140 currently depends on that
+fallback.
 
-Adding the H5140 puts two humidity sensors on the account. Neither reports CO2,
-so the `pure` filter does not disambiguate them, `len(sensors) == 1` fails, the
-function returns `None`, and **the humidifier orb silently loses its humidity
-and temperature readout**.
+Adding the H5140 puts a second humidity sensor on the account, but per the
+"Verified 2026-07-25" findings above it also reports
+`carbonDioxideConcentration`. The existing CO2-exclusion tie-break therefore
+still isolates the H5179 ("Govee Thermometer") as the sole *plain* humidity
+sensor, and the humidifier orb's readout is unaffected — there is no live
+regression here.
+
+The fallback only fails to resolve when the account has **two or more plain
+(non-CO2) humidity sensors**, since the tie-break has nothing left to
+disambiguate between them. That is not today's state, but it is a real
+latent gap: any future account change (a second plain humidity sensor added,
+or the H5140 losing its CO2 capability) would silently break it again.
 
 Fix: pin `thermometer_device_id` explicitly for the H7140 in config, and
-document in `devices.example.yaml` that the fallback is only safe with exactly
-one humidity sensor on the account.
+document in `devices.example.yaml` that the fallback resolves whenever the
+account has exactly one humidity sensor, or when the extra ones also report
+CO2 (excluded by the tie-break) — and only fails to resolve with two or more
+plain humidity sensors. This is hardening that removes the dependency on that
+tie-break, not a fix for a live break.
 
 ## Testing
 
