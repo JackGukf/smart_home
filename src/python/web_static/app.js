@@ -243,6 +243,93 @@ function logActivity(text, type = "normal") {
   });
 })();
 
+/* ── Devices sidebar group ── */
+const DEVICES_GROUP_KEY = "devices_group_open_v1";
+const DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "tuya", "climate"];
+
+function isDevicesGroupOpen() {
+  try {
+    return localStorage.getItem(DEVICES_GROUP_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function setDevicesGroupOpen(open) {
+  const toggle = document.querySelector("#devicesGroupToggle");
+  toggle?.classList.toggle("open", open);
+  document.querySelectorAll(".device-group-item").forEach((item) => {
+    item.hidden = !open;
+  });
+  try { localStorage.setItem(DEVICES_GROUP_KEY, open ? "1" : "0"); } catch {}
+}
+
+(function initDevicesGroup() {
+  const toggle = document.querySelector("#devicesGroupToggle");
+  if (!toggle) return;
+  setDevicesGroupOpen(isDevicesGroupOpen());
+
+  // Chevron toggles collapse without changing the active view; the row itself
+  // opens the overview and always expands.
+  toggle.querySelector(".settings-chevron")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setDevicesGroupOpen(!isDevicesGroupOpen());
+  });
+})();
+
+/* Replaced in Task 3 by the capability-aware version. */
+function sensorGroupCount(_mode) {
+  return groupSensorDevices(latestTuyaDevices.filter((d) => !isTuyaCamera(d))).length;
+}
+
+/* Devices overview tiles. Renders from arrays already in memory — no fetches. */
+function deviceGroupTileData() {
+  const lights = latestSwitchDevices.filter((d) => d.category === "light_switch");
+  const plugs  = latestSwitchDevices.filter((d) => d.category === "smart_plug");
+  const onOf = (list) => `${list.filter((d) => d.is_on).length} of ${list.length} on`;
+  const onlineOf = (list) => `${list.filter((d) => d.online !== false).length} online`;
+
+  return [
+    { view: "lights",     label: "Lights",      icon: "ti-bulb",       count: lights.length,                 summary: onOf(lights) },
+    { view: "plugs",      label: "Plugs",       icon: "ti-plug",       count: plugs.length,                  summary: onOf(plugs) },
+    { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: latestAmbientLights.length,    summary: onlineOf(latestAmbientLights) },
+    { view: "humidifier", label: "Humidifiers", icon: "ti-droplet",    count: latestHumidifiers.length,      summary: onlineOf(latestHumidifiers) },
+    { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(latestTuyaDevices) },
+    { view: "climate",    label: "Climate",     icon: "ti-temperature",count: latestThermostats.length,      summary: onlineOf(latestThermostats) },
+  ];
+}
+
+function renderDevicesOverview() {
+  const grid = document.querySelector("#devicesOverviewGrid");
+  const badge = document.querySelector("#deviceGroupCount");
+
+  if (badge) badge.textContent = String(distinctDeviceCount());
+
+  if (!grid) return;
+  grid.innerHTML = deviceGroupTileData().map((tile) => `
+    <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}">
+      <div class="device-group-tile-head">
+        <i class="ti ${tile.icon}" aria-hidden="true"></i>${escapeHtml(tile.label)}
+      </div>
+      <div class="device-group-tile-count">${tile.count}</div>
+      <div class="device-group-tile-summary">${escapeHtml(tile.summary)}</div>
+    </article>
+  `).join("");
+}
+
+/* Distinct physical devices. A multi-capability sensor appears in more than
+   one child view, so summing the child badges would over-count. */
+function distinctDeviceCount() {
+  const ids = new Set();
+  const add = (list, prefix) => list.forEach((d, i) => ids.add(`${prefix}:${d.id ?? d.name ?? i}`));
+  add(latestSwitchDevices, "switch");
+  add(latestAmbientLights, "ambient");
+  add(latestHumidifiers, "humidifier");
+  add(latestThermostats, "climate");
+  latestTuyaDevices.forEach((d) => ids.add(`tuya:${sensorBaseName(String(d.name || d.id || ""))}`));
+  return ids.size;
+}
+
 /* ── API helper ── */
 async function requestJson(url, options = {}) {
   const response = await fetch(url, options);
@@ -834,6 +921,7 @@ function renderAmbientLights(payload) {
     return;
   }
   ambientGrid.innerHTML = lights.map(ambientLightCard).join("");
+  renderDevicesOverview();
 }
 
 function ambientLightCard(light) {
@@ -890,6 +978,7 @@ function renderHumidifiers(payload) {
     return;
   }
   grid.innerHTML = humidifiers.map(humidifierCard).join("");
+  renderDevicesOverview();
 }
 
 /* Night-light colour presets (RGB) offered on the humidifier card palette. */
@@ -1550,6 +1639,7 @@ function renderTuyaDevices(devices) {
     : "";
 
   tuyaGrid.innerHTML = banner + groups.map(renderSensorDeviceCard).join("");
+  renderDevicesOverview();
 }
 
 function primaryTuyaState(device) {
@@ -4324,6 +4414,13 @@ function activateView(viewName) {
         _renderMatterDeviceList(data.devices || []);
       })
       .catch(() => _updateMatterServerStatus(false));
+  }
+  if (viewName === "devices") {
+    setDevicesGroupOpen(true);
+    renderDevicesOverview();
+  }
+  if (DEVICE_GROUP_VIEWS.includes(viewName)) {
+    setDevicesGroupOpen(true);
   }
 }
 

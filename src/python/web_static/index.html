@@ -51,35 +51,41 @@
         Cameras
         <span class="room-badge" id="cameraTabCount">–</span>
       </li>
-      <li class="room-item" data-view="lights">
+      <li class="room-item" id="devicesGroupToggle" data-view="devices">
+        <span class="room-icon"><i class="ti ti-devices"></i></span>
+        Devices
+        <span class="room-badge" id="deviceGroupCount">–</span>
+        <i class="ti ti-chevron-right settings-chevron" aria-hidden="true"></i>
+      </li>
+      <li class="room-item device-group-item" data-view="lights">
         <span class="room-icon"><i class="ti ti-bulb"></i></span>
         Lights
         <span class="room-badge" id="lightCount">–</span>
       </li>
-      <li class="room-item" data-view="plugs">
+      <li class="room-item device-group-item" data-view="plugs">
         <span class="room-icon"><i class="ti ti-plug"></i></span>
         Plugs
         <span class="room-badge" id="plugCount">–</span>
       </li>
 
-      <li class="room-item" data-view="ambient">
+      <li class="room-item device-group-item" data-view="ambient">
         <span class="room-icon"><i class="ti ti-lamp-2"></i></span>
         Ambient
         <span class="room-badge" id="ambientCount">–</span>
       </li>
 
-      <li class="room-item" data-view="humidifier">
+      <li class="room-item device-group-item" data-view="humidifier">
         <span class="room-icon"><i class="ti ti-droplet"></i></span>
         Humidifiers
         <span class="room-badge" id="humidifierCount">–</span>
       </li>
 
-      <li class="room-item" data-view="tuya">
+      <li class="room-item device-group-item" data-view="tuya">
         <span class="room-icon"><i class="ti ti-radar-2"></i></span>
         Sensors
         <span class="room-badge" id="tuyaCount">–</span>
       </li>
-      <li class="room-item" data-view="climate">
+      <li class="room-item device-group-item" data-view="climate">
         <span class="room-icon"><i class="ti ti-temperature"></i></span>
         Climate
         <span class="room-badge" id="thermostatCount">–</span>
@@ -283,6 +289,15 @@
       <div class="home-assistant-embed">
         <iframe id="homeAssistantFrame" title="Home Assistant" allow="autoplay; fullscreen; microphone" src="about:blank"></iframe>
       </div>
+    </div>
+
+    <!-- ── DEVICES OVERVIEW VIEW ── -->
+    <div class="view-panel" data-view-panel="devices">
+      <div class="section-header">
+        <span class="section-title">Devices</span>
+        <span class="section-meta">All device groups</span>
+      </div>
+      <div class="devices-overview-grid" id="devicesOverviewGrid"></div>
     </div>
 
     <!-- ── HOME (AREAS) VIEW ── -->
