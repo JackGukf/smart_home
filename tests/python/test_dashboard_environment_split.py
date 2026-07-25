@@ -51,5 +51,12 @@ def test_environment_sensors_are_loaded_and_rendered() -> None:
     assert 'requestJson("/api/environment-sensors")' in javascript
     assert "function environmentSensorCard(sensor)" in javascript
     # Loaded on startup like ambient lights and humidifiers, not only on view switch.
-    init = javascript[javascript.index("function initDefaultView"):]
-    assert "loadEnvironmentSensors()" in init[:600]
+    # Scope to the initDefaultView IIFE body rather than a fixed character window:
+    # the function grew, and a byte-count assertion would fail on placement that is
+    # actually correct.
+    start = javascript.index("function initDefaultView")
+    init = javascript[start:javascript.index("})();", start)]
+    assert "loadEnvironmentSensors()" in init
+    # Sits with its sibling loaders, so startup wiring stays in one place.
+    assert "loadAmbientLights()" in init
+    assert "loadHumidifiers()" in init
