@@ -7,7 +7,7 @@ INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
 APP_JS = PROJECT_ROOT / "src" / "python" / "web_static" / "app.js"
 STYLES_CSS = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 
-DEVICE_CHILD_VIEWS = ["lights", "plugs", "ambient", "humidifier", "tuya", "climate"]
+DEVICE_CHILD_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
 
 
 def test_devices_parent_exists_with_badge_and_chevron() -> None:

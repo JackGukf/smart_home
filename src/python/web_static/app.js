@@ -245,7 +245,7 @@ function logActivity(text, type = "normal") {
 
 /* ── Devices sidebar group ── */
 const DEVICES_GROUP_KEY = "devices_group_open_v1";
-const DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "tuya", "climate"];
+const DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
 
 function isDevicesGroupOpen() {
   try {
@@ -277,11 +277,6 @@ function setDevicesGroupOpen(open) {
   });
 })();
 
-/* Replaced in Task 3 by the capability-aware version. */
-function sensorGroupCount(_mode) {
-  return groupSensorDevices(latestTuyaDevices.filter((d) => !isTuyaCamera(d))).length;
-}
-
 /* Devices overview tiles. Renders from arrays already in memory — no fetches. */
 function deviceGroupTileData() {
   const lights = latestSwitchDevices.filter((d) => d.category === "light_switch");
@@ -294,9 +289,21 @@ function deviceGroupTileData() {
     { view: "plugs",      label: "Plugs",       icon: "ti-plug",       count: plugs.length,                  summary: onOf(plugs) },
     { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: latestAmbientLights.length,    summary: onlineOf(latestAmbientLights) },
     { view: "humidifier", label: "Humidifiers", icon: "ti-droplet",    count: latestHumidifiers.length,      summary: onlineOf(latestHumidifiers) },
+    { view: "environment", label: "Environment", icon: "ti-temperature-celsius", count: sensorGroupCount("environment"), summary: environmentSummary() },
     { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(latestTuyaDevices) },
     { view: "climate",    label: "Climate",     icon: "ti-temperature",count: latestThermostats.length,      summary: onlineOf(latestThermostats) },
   ];
+}
+
+/* Average temperature across environment groups, for the overview tile. */
+function environmentSummary() {
+  const temps = latestTuyaDevices
+    .filter((d) => sensorCapabilityKey(d) === "temperature")
+    .map(readingMetricNumber)
+    .filter(Number.isFinite);
+  if (temps.length === 0) return "No readings";
+  const avg = temps.reduce((a, b) => a + b, 0) / temps.length;
+  return `avg ${avg.toFixed(1)} °C`;
 }
 
 function renderDevicesOverview() {
@@ -1316,6 +1323,34 @@ function countUniqueSensorCapabilities(readings) {
   return Math.max(new Set(readings.map(sensorCapabilityKey)).size, 1);
 }
 
+/* ── Environment / Sensors split ──
+   One physical device can report temperature, humidity, leak and smoke at
+   once. It appears in both views, filtered to the readings each view owns,
+   so nothing is hidden. Battery rides along in both as context. */
+const ENVIRONMENT_CAPABILITIES = new Set(["temperature", "humidity"]);
+
+function filterReadingsForView(readings, mode) {
+  if (mode !== "environment" && mode !== "sensors") return readings;
+  return readings.filter((reading) => {
+    const key = sensorCapabilityKey(reading);
+    if (key === "battery") return true;
+    return mode === "environment"
+      ? ENVIRONMENT_CAPABILITIES.has(key)
+      : !ENVIRONMENT_CAPABILITIES.has(key);
+  });
+}
+
+/* A battery reading alone must not conjure a card into either view. */
+function groupHasViewContent(group, mode) {
+  return filterReadingsForView(expandSensorReadings(group.readings), mode)
+    .some((reading) => sensorCapabilityKey(reading) !== "battery");
+}
+
+function sensorGroupCount(mode) {
+  const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  return groupSensorDevices(visible).filter((g) => groupHasViewContent(g, mode)).length;
+}
+
 /* ── Sensor device grouping ── */
 const SENSOR_SUFFIXES = [
   ' Temperature', ' Humidity', ' Illuminance',
@@ -1454,9 +1489,9 @@ function expandSensorReadings(readings) {
   return expanded;
 }
 
-function renderSensorDeviceCard(group) {
+function renderSensorDeviceCard(group, mode) {
   const { name } = group;
-  const readings = expandSensorReadings(group.readings);
+  const readings = filterReadingsForView(expandSensorReadings(group.readings), mode);
   const capN = countUniqueSensorCapabilities(readings);
 
   const findCat = (kw) => readings.find((d) => String(d.category || "").includes(kw));
@@ -1612,7 +1647,7 @@ function renderSensorDeviceCard(group) {
 /* ── Tuya sensors ── */
 function renderTuyaDevices(devices) {
   const visibleDevices = devices.filter((d) => !isTuyaCamera(d));
-  tuyaCount.textContent = String(visibleDevices.length);
+  tuyaCount.textContent = String(sensorGroupCount("sensors"));
 
   if (visibleDevices.length === 0) {
     tuyaGrid.innerHTML = '<div class="empty">No Tuya devices found from Home Assistant yet.</div>';
@@ -1628,7 +1663,7 @@ function renderTuyaDevices(devices) {
     }
   });
 
-  const groups = groupSensorDevices(visibleDevices);
+  const groups = groupSensorDevices(visibleDevices).filter((g) => groupHasViewContent(g, "sensors"));
 
   const alertGroupCount = groups.filter((g) =>
     g.readings.some((d) => isAlertDetected(d) && !String(d.category || "").includes("battery"))
@@ -1638,8 +1673,25 @@ function renderTuyaDevices(devices) {
     ? `<div class="sdc-alert-banner"><i class="ti ti-alert-triangle"></i> ${alertGroupCount} device${alertGroupCount > 1 ? "s" : ""} need${alertGroupCount > 1 ? "" : "s"} attention</div>`
     : "";
 
-  tuyaGrid.innerHTML = banner + groups.map(renderSensorDeviceCard).join("");
+  tuyaGrid.innerHTML = banner + groups.map((g) => renderSensorDeviceCard(g, "sensors")).join("");
   renderDevicesOverview();
+  renderEnvironmentSensors();
+}
+
+/* ── Environment (temperature & humidity) ── */
+function renderEnvironmentSensors() {
+  const grid = document.querySelector("#environmentGrid");
+  const badge = document.querySelector("#environmentCount");
+  const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  const groups = groupSensorDevices(visible).filter((g) => groupHasViewContent(g, "environment"));
+
+  if (badge) badge.textContent = String(groups.length);
+  if (!grid) return;
+  if (groups.length === 0) {
+    grid.innerHTML = '<div class="empty">No temperature or humidity sensors reporting yet.</div>';
+    return;
+  }
+  grid.innerHTML = groups.map((g) => renderSensorDeviceCard(g, "environment")).join("");
 }
 
 function primaryTuyaState(device) {

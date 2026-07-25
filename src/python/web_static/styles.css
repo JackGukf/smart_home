@@ -380,6 +380,7 @@ aside {
 /* Per-view icon colours */
 .room-item[data-view="lights"]        .room-icon { color: var(--amber); }
 .room-item[data-view="plugs"]         .room-icon { color: var(--accent); }
+.room-item[data-view="environment"]   .room-icon { color: var(--cyan); }
 .room-item[data-view="tuya"]          .room-icon { color: var(--cyan); }
 .room-item[data-view="climate"]       .room-icon { color: var(--orange); }
 .room-item[data-view="homeassistant"] .room-icon { color: var(--purple); }
