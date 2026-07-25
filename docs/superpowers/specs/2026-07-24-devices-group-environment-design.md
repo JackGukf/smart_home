@@ -195,6 +195,31 @@ H7140. This design assumes `sensorTemperature` and `sensorHumidity`; if the
 device reports different instances, the endpoint adapts to what was observed.
 Do not infer the capability set from the model number.
 
+#### Verified 2026-07-25
+
+Ran `scripts/probe-govee-cloud-device.py` on the Pi against the live account.
+
+The H5140 reports exactly the assumed capability instances, confirming
+`_govee_thermometer_reading()` needs no changes for Task 5:
+
+- `sensorTemperature` (type `devices.capabilities.property`)
+- `sensorHumidity` (type `devices.capabilities.property`)
+- `carbonDioxideConcentration` (type `devices.capabilities.property`) — extra;
+  the device is Govee-labeled a "Smart CO₂ Monitor" that also reports ambient
+  temperature/humidity. Its `device` id was obtained and is stored in
+  `devices.local.yaml` on the Pi.
+
+Running the probe with no SKU filter across the whole account found **2
+devices exposing a `sensorHumidity` capability** (H5179 "Govee Thermometer"
+and the H5140 above). This confirms the concern about
+`_match_govee_thermometer()`'s final fallback in `web_app.py` ("the account's
+sole ambient-humidity sensor") — with two humidity-capable devices now
+present, that fallback can no longer assume uniqueness. The existing
+CO2-exclusion tie-break in that function (preferring the sensor that lacks
+`carbonDioxideConcentration`) already resolves this specific pair correctly,
+but the underlying assumption of at-most-one sensor is confirmed false and
+should be kept in mind for Task 7's regression work.
+
 ### Config schema
 
 New top-level section in `configs/devices.example.yaml`:
