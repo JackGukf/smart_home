@@ -1,0 +1,106 @@
+"""The seeded device groups must reproduce today's sidebar exactly.
+
+This cycle's whole promise is "zero visible change". These assertions pin the
+seeded document to the values currently hardcoded in index.html and styles.css,
+so a drift is a test failure rather than something noticed on the dashboard.
+"""
+
+import re
+from pathlib import Path
+
+from src.python.web_app import DEFAULT_DEVICE_GROUPS
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
+STYLES_CSS = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
+
+EXPECTED_ORDER = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
+
+
+def _sidebar_children() -> list[tuple[str, str, str]]:
+    """(data-view, icon, label) for each device-group child, in source order."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    views = html[
+        html.index('<div class="sidebar-section">Views'):
+        html.index('<div class="sidebar-section">Discovery')
+    ]
+    found = []
+    for match in re.finditer(
+        r'<li[^>]*device-group-item[^>]*data-view="([^"]+)"[^>]*>(.*?)</li>', views, re.S
+    ):
+        body = match.group(2)
+        icon = re.search(r"ti ti-([a-z0-9-]+)", body)
+        label = next(
+            line.strip() for line in body.split("\n")
+            if line.strip() and "<" not in line
+        )
+        found.append((match.group(1), icon.group(1), label))
+    return found
+
+
+def _css_group_colors() -> dict[str, str]:
+    """view -> bare palette name, from the --group-color declarations."""
+    css = re.sub(r"/\*.*?\*/", "", STYLES_CSS.read_text(encoding="utf-8"), flags=re.S)
+    colors = {}
+    for block in re.finditer(
+        r"([^{}]+)\{([^{}]*--group-color\s*:\s*var\(--([a-z]+)\)[^{}]*)\}", css
+    ):
+        for view in re.findall(r'data-view="([^"]+)"', block.group(1)):
+            colors[view] = block.group(3)
+    return colors
+
+
+def test_seeded_ids_and_order_match_the_sidebar() -> None:
+    seeded = [g["id"] for g in DEFAULT_DEVICE_GROUPS]
+
+    assert seeded == EXPECTED_ORDER
+    assert [view for view, _icon, _label in _sidebar_children()] == EXPECTED_ORDER
+
+
+def test_sensors_group_keeps_the_tuya_id() -> None:
+    """data-view="tuya" may already be persisted as a user's default_view.
+    Renaming the id to "sensors" would silently break that saved setting."""
+    sensors = next(g for g in DEFAULT_DEVICE_GROUPS if g["name"] == "Sensors")
+
+    assert sensors["id"] == "tuya"
+
+
+def test_seeded_icons_and_labels_match_the_sidebar() -> None:
+    by_id = {g["id"]: g for g in DEFAULT_DEVICE_GROUPS}
+
+    for view, icon, label in _sidebar_children():
+        assert by_id[view]["icon"] == icon, f"{view} icon drifted"
+        assert by_id[view]["name"] == label, f"{view} label drifted"
+
+
+def test_seeded_colors_match_the_stylesheet() -> None:
+    by_id = {g["id"]: g for g in DEFAULT_DEVICE_GROUPS}
+    css_colors = _css_group_colors()
+
+    for group_id in EXPECTED_ORDER:
+        assert by_id[group_id]["color"] == css_colors[group_id], f"{group_id} colour drifted"
+
+
+def test_split_groups_carry_the_right_reading_filters() -> None:
+    by_id = {g["id"]: g for g in DEFAULT_DEVICE_GROUPS}
+
+    assert by_id["environment"]["readingFilter"] == "environment"
+    assert by_id["tuya"]["readingFilter"] == "sensors"
+    # Environment also collects the standalone Govee cloud sensors, which are a
+    # separate inventory kind; readingFilter applies only to sensor-kind members.
+    assert by_id["environment"]["kinds"] == ["sensor", "environment"]
+    assert by_id["tuya"]["kinds"] == ["sensor"]
+
+
+def test_only_lights_and_plugs_declare_chrome() -> None:
+    with_chrome = {g["id"]: g["chrome"] for g in DEFAULT_DEVICE_GROUPS if g.get("chrome")}
+
+    assert with_chrome == {
+        "lights": ["lightScenes", "lightDragLock"],
+        "plugs": ["plugActions"],
+    }
+
+
+def test_every_seeded_group_is_builtin() -> None:
+    assert all(g["builtin"] for g in DEFAULT_DEVICE_GROUPS)

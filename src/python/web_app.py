@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -48,6 +49,38 @@ DEFAULT_AREAS = [
     {"id": "office", "name": "Office", "icon": "desk"},
     {"id": "utility-room", "name": "Utility Room", "icon": "tools"},
 ]
+DEFAULT_DEVICE_GROUPS_PATH = PROJECT_ROOT / "dashboard_device_groups.json"
+
+# Seeded to reproduce the sidebar exactly as it was before device groups became
+# data. Sensors keeps the id "tuya" because data-view="tuya" may already be
+# persisted as a user's default_view.
+DEFAULT_DEVICE_GROUPS = [
+    {"id": "lights", "name": "Lights", "icon": "bulb", "color": "amber",
+     "kinds": ["light"], "chrome": ["lightScenes", "lightDragLock"], "builtin": True},
+    {"id": "plugs", "name": "Plugs", "icon": "plug", "color": "accent",
+     "kinds": ["plug"], "chrome": ["plugActions"], "builtin": True},
+    {"id": "ambient", "name": "Ambient", "icon": "lamp-2", "color": "purple",
+     "kinds": ["ambient"], "chrome": [], "builtin": True},
+    {"id": "humidifier", "name": "Humidifiers", "icon": "droplet", "color": "cyan",
+     "kinds": ["humidifier"], "chrome": [], "builtin": True},
+    {"id": "environment", "name": "Environment", "icon": "temperature-celsius",
+     "color": "teal", "kinds": ["sensor", "environment"],
+     "readingFilter": "environment", "chrome": [], "builtin": True},
+    {"id": "tuya", "name": "Sensors", "icon": "radar-2", "color": "indigo",
+     "kinds": ["sensor"], "readingFilter": "sensors", "chrome": [], "builtin": True},
+    {"id": "climate", "name": "Climate", "icon": "temperature", "color": "orange",
+     "kinds": ["thermostat"], "chrome": [], "builtin": True},
+]
+
+DEVICE_GROUP_COLORS = frozenset(
+    {"accent", "amber", "cyan", "green", "indigo", "orange", "pink", "purple", "red", "slate", "teal"}
+)
+DEVICE_GROUP_KINDS = frozenset(
+    {"light", "plug", "sensor", "camera", "thermostat", "ambient", "humidifier", "environment"}
+)
+DEVICE_GROUP_READING_FILTERS = frozenset({"environment", "sensors"})
+DEVICE_GROUP_CHROME = frozenset({"lightScenes", "lightDragLock", "plugActions"})
+DEVICE_GROUP_ICON_PATTERN = re.compile(r"^[a-z0-9-]{1,32}$")
 STATIC_DIR = PROJECT_ROOT / "src" / "python" / "web_static"
 # Last-known ambient-light state, keyed by BLE address or name. Live-readable
 # providers (govee_lan) overwrite this with real device status; write-only BLE
@@ -2964,6 +2997,79 @@ def _load_areas(path: Path) -> dict[str, Any]:
 
 
 def _save_areas(path: Path, doc: dict[str, Any]) -> None:
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def _coerce_group_color(value: Any) -> str:
+    """Palette name, or slate. A hand-edited file must not break the dashboard,
+    and the value reaches a CSS custom property, so it is never trusted raw."""
+    text = str(value or "").strip().lower()
+    return text if text in DEVICE_GROUP_COLORS else "slate"
+
+
+def _coerce_group_icon(value: Any) -> str:
+    """Tabler icon suffix, or a neutral default. Reaches a class attribute."""
+    text = str(value or "").strip().lower()
+    return text if DEVICE_GROUP_ICON_PATTERN.match(text) else "device-desktop"
+
+
+def _default_device_groups_doc() -> dict[str, Any]:
+    # Normalize so every group carries a "readingFilter" key (None when unset),
+    # matching the shape _load_device_groups produces on a save/reload round
+    # trip -- DEFAULT_DEVICE_GROUPS itself omits the key where it doesn't apply.
+    return {
+        "groups": [dict({"readingFilter": None}, **g) for g in DEFAULT_DEVICE_GROUPS],
+        "overrides": {},
+    }
+
+
+def _load_device_groups(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return _default_device_groups_doc()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return _default_device_groups_doc()
+    if not isinstance(payload, dict):
+        return _default_device_groups_doc()
+
+    groups = []
+    for raw in payload.get("groups") or []:
+        if not isinstance(raw, dict) or not raw.get("id") or not raw.get("name"):
+            continue
+        groups.append(
+            {
+                "id": str(raw["id"]),
+                "name": str(raw["name"]),
+                "icon": _coerce_group_icon(raw.get("icon")),
+                "color": _coerce_group_color(raw.get("color")),
+                "kinds": [k for k in (raw.get("kinds") or []) if k in DEVICE_GROUP_KINDS],
+                "chrome": [c for c in (raw.get("chrome") or []) if c in DEVICE_GROUP_CHROME],
+                "readingFilter": (
+                    raw["readingFilter"]
+                    if raw.get("readingFilter") in DEVICE_GROUP_READING_FILTERS
+                    else None
+                ),
+                "builtin": bool(raw.get("builtin")),
+            }
+        )
+    if not groups:
+        return _default_device_groups_doc()
+
+    known = {g["id"] for g in groups}
+    overrides = {}
+    for key, rule in (payload.get("overrides") or {}).items():
+        if not isinstance(rule, dict):
+            continue
+        include = [g for g in (rule.get("include") or []) if g in known]
+        exclude = [g for g in (rule.get("exclude") or []) if g in known]
+        if include or exclude:
+            overrides[str(key)] = {"include": include, "exclude": exclude}
+
+    return {"groups": groups, "overrides": overrides}
+
+
+def _save_device_groups(path: Path, doc: dict[str, Any]) -> None:
     path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
 
 
