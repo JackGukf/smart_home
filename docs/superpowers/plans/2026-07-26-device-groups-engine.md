@@ -475,12 +475,17 @@ def test_create_rejects_duplicate_name_case_insensitively(tmp_path: Path) -> Non
 
 
 def test_create_rejects_client_supplied_chrome_or_reading_filter(tmp_path: Path) -> None:
-    """chrome and readingFilter exist only on seeded built-ins."""
+    """chrome and readingFilter exist only on seeded built-ins.
+
+    These are schema violations caught by extra="forbid", so FastAPI's standard
+    422 is correct. The routes' own semantic checks (bad colour, duplicate name)
+    raise 400 explicitly.
+    """
     client = _client(tmp_path)
 
-    assert client.post("/api/device-groups", json={"name": "A", "chrome": ["lightScenes"]}).status_code == 400
-    assert client.post("/api/device-groups", json={"name": "B", "readingFilter": "sensors"}).status_code == 400
-    assert client.post("/api/device-groups", json={"name": "C", "builtin": True}).status_code == 400
+    assert client.post("/api/device-groups", json={"name": "A", "chrome": ["lightScenes"]}).status_code == 422
+    assert client.post("/api/device-groups", json={"name": "B", "readingFilter": "sensors"}).status_code == 422
+    assert client.post("/api/device-groups", json={"name": "C", "builtin": True}).status_code == 422
 
 
 def test_create_rejects_bad_colour_and_icon(tmp_path: Path) -> None:
@@ -607,20 +612,12 @@ class DeviceGroupOverrideRequest(BaseModel):
 client. The import at `web_app.py:26` is currently `from pydantic import BaseModel`
 — change it to `from pydantic import BaseModel, ConfigDict`.
 
-FastAPI returns 422 for a Pydantic validation error, but the tests expect 400.
-Add an exception handler inside `create_app`, immediately after the `app` is
-constructed, so a malformed body reads as a bad request:
-
-```python
-    @app.exception_handler(RequestValidationError)
-    async def _validation_error(request: Request, exc: RequestValidationError):
-        if request.url.path.startswith("/api/device-groups"):
-            return JSONResponse(status_code=400, content={"detail": exc.errors()[0]["msg"]})
-        return JSONResponse(status_code=422, content={"detail": exc.errors()})
-```
-
-Add `from fastapi.exceptions import RequestValidationError`, `from fastapi import Request`
-and `from fastapi.responses import JSONResponse` to the imports if not present.
+**Do not add an exception handler.** Schema violations surface as FastAPI's
+standard 422; the routes' own semantic checks (empty or duplicate name, unknown
+colour, invalid icon, non-permutation order, unknown group id) raise `HTTPException`
+with 400/404/409 explicitly. An app-wide handler branching on a URL prefix was
+considered and rejected: it couples every future route under that path to this
+feature's error contract.
 
 - [ ] **Step 4: Wire the path into `create_app`**
 
