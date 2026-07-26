@@ -259,3 +259,32 @@ console.log(JSON.stringify(deviceGroupNavPlan(groups)));
     plan = _run_node(script, tmp_path)
 
     assert plan[0]["color"] == "var(--slate)"
+
+
+def test_device_group_views_is_derived_not_hardcoded(tmp_path: Path) -> None:
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    assert "let DEVICE_GROUP_VIEWS" in javascript, "must be reassignable once groups load"
+    assert 'requestJson("/api/device-groups")' in javascript
+    assert "function syncDeviceGroupNav" in javascript
+
+
+def test_nav_sync_uses_the_dom_api_not_markup_strings(tmp_path: Path) -> None:
+    """color and icon originate in a hand-editable JSON file and reach a CSS
+    custom property and a class attribute. Neither may be interpolated into
+    markup."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+    at = javascript.index("function syncDeviceGroupNav")
+    depth, i, body = 0, javascript.index("{", at), None
+    for j in range(i, len(javascript)):
+        if javascript[j] == "{":
+            depth += 1
+        elif javascript[j] == "}":
+            depth -= 1
+            if depth == 0:
+                body = javascript[at:j + 1]
+                break
+
+    assert "setProperty(\"--group-color\"" in body
+    assert "classList.add" in body
+    assert "innerHTML" not in body, "nav sync must not build markup strings"

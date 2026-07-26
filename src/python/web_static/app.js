@@ -246,7 +246,10 @@ function logActivity(text, type = "normal") {
 
 /* ── Devices sidebar group ── */
 const DEVICES_GROUP_KEY = "devices_group_open_v1";
-const DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
+/* Seeded to the built-in groups so the sidebar works before the group document
+   loads; replaced by the loaded ids once it arrives. */
+let DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
+let latestDeviceGroups = [];
 
 /* Tracks whether the current view was reached from the Devices overview, so the
    back button only appears when there is somewhere to go back to. Deliberately
@@ -3205,6 +3208,65 @@ function deviceGroupNavPlan(groups) {
   }));
 }
 
+/* ── Device group navigation ── */
+async function loadDeviceGroups() {
+  const payload = await requestJson("/api/device-groups");
+  latestDeviceGroups = payload.groups || [];
+  if (latestDeviceGroups.length) {
+    DEVICE_GROUP_VIEWS = latestDeviceGroups.map((group) => group.id);
+  }
+  syncDeviceGroupNav();
+}
+
+/* The seven <li> elements ship in index.html as the seeded baseline, so the
+   sidebar is correct before any JavaScript runs. This reconciles them with the
+   loaded document rather than rebuilding the list, which keeps that fallback
+   intact. Values reach the DOM through the API, never through markup strings. */
+function syncDeviceGroupNav() {
+  const parent = document.querySelector("#devicesGroupToggle");
+  const list = parent?.parentElement;
+  if (!list) return;
+
+  const existing = new Map(
+    [...list.querySelectorAll(".device-group-item")].map((el) => [el.dataset.view, el])
+  );
+  let anchor = parent;
+
+  deviceGroupNavPlan(latestDeviceGroups).forEach((entry) => {
+    let item = existing.get(entry.id);
+    if (!item) {
+      item = document.createElement("li");
+      item.className = "room-item device-group-item";
+      item.dataset.view = entry.id;
+      const icon = document.createElement("span");
+      icon.className = "room-icon";
+      icon.appendChild(document.createElement("i"));
+      item.appendChild(icon);
+      item.appendChild(document.createTextNode(""));
+      item.addEventListener("click", () => {
+        arrivedFromDevices = false;
+        activateView(entry.id);
+      });
+    }
+    existing.delete(entry.id);
+
+    const glyph = item.querySelector(".room-icon i");
+    if (glyph) {
+      glyph.className = "";
+      glyph.classList.add("ti", `ti-${entry.icon}`);
+    }
+    const label = [...item.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+    if (label) label.textContent = ` ${entry.name} `;
+    item.style.setProperty("--group-color", entry.color);
+
+    anchor.after(item);
+    anchor = item;
+  });
+
+  // Any child left in the map is no longer a group; drop it.
+  existing.forEach((el) => el.remove());
+}
+
 /* Resolve every device into an area: explicit assignment wins, then a room
    name that exactly matches a defined area. Everything else lands in the
    catch-all "Unassigned" bucket — room names never spawn areas on their own,
@@ -5118,6 +5180,7 @@ function getDefaultView() {
   loadAmbientLights().catch((error) => console.error(error));
   loadHumidifiers().catch((error) => console.error(error));
   loadEnvironmentSensors().catch((error) => console.error(error));
+  loadDeviceGroups().catch((error) => console.error(error));
 })();
 
 /* Light drag lock */
