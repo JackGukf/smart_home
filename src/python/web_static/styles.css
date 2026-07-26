@@ -19,6 +19,8 @@
   --cyan:         #22d3ee;
   --purple:       #a78bfa;
   --pink:         #f472b6;
+  --teal:         #2dd4bf;
+  --indigo:       #818cf8;
   --text:         #dde3f0;
   --muted:        #4e5470;
   --font:         'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -377,15 +379,31 @@ aside {
   transition: background 0.15s, color 0.15s;
 }
 
-/* Per-view icon colours */
-.room-item[data-view="lights"]        .room-icon { color: var(--amber); }
-.room-item[data-view="plugs"]         .room-icon { color: var(--accent); }
-.room-item[data-view="environment"]   .room-icon { color: var(--cyan); }
-.room-item[data-view="tuya"]          .room-icon { color: var(--cyan); }
-.room-item[data-view="climate"]       .room-icon { color: var(--orange); }
-.room-item[data-view="homeassistant"] .room-icon { color: var(--purple); }
-.room-item[data-view="cameras"]       .room-icon { color: var(--green); }
-.room-item[data-view="devices"]     .room-icon { color: var(--accent); }
+/* ── Per-group colour, defined once and consumed by BOTH the sidebar item and
+   the Devices overview tile. Defining it twice is what let devices/plugs and
+   environment/tuya silently collide before. ── */
+.room-item[data-view="lights"],
+.device-group-tile[data-goto-view="lights"]      { --group-color: var(--amber); }
+.room-item[data-view="plugs"],
+.device-group-tile[data-goto-view="plugs"]       { --group-color: var(--accent); }
+.room-item[data-view="ambient"],
+.device-group-tile[data-goto-view="ambient"]     { --group-color: var(--purple); }
+.room-item[data-view="humidifier"],
+.device-group-tile[data-goto-view="humidifier"]  { --group-color: var(--cyan); }
+.room-item[data-view="environment"],
+.device-group-tile[data-goto-view="environment"] { --group-color: var(--teal); }
+.room-item[data-view="tuya"],
+.device-group-tile[data-goto-view="tuya"]        { --group-color: var(--indigo); }
+.room-item[data-view="climate"],
+.device-group-tile[data-goto-view="climate"]     { --group-color: var(--orange); }
+
+/* Top-level views outside the Devices group. Sharing a colour across sections
+   is fine; sharing between siblings is not. */
+.room-item[data-view="devices"]       { --group-color: var(--accent); }
+.room-item[data-view="homeassistant"] { --group-color: var(--purple); }
+.room-item[data-view="cameras"]       { --group-color: var(--green); }
+
+.room-icon { color: var(--group-color, currentColor); }
 
 .room-item.active .room-icon {
   background: var(--accent-dim);
@@ -2869,7 +2887,7 @@ aside {
 }
 
 /* sidebar icon colour for alarm */
-.room-item[data-view="alarm"] .room-icon { color: var(--red); }
+.room-item[data-view="alarm"] { --group-color: var(--red); }
 
 .doorbell-live-media,
 .doorbell-live-placeholder {
@@ -3263,7 +3281,7 @@ aside {
    HOME (AREAS) VIEW
    ═══════════════════════════════════════════════ */
 
-.room-item[data-view="home"] .room-icon { color: var(--pink); }
+.room-item[data-view="home"] { --group-color: var(--pink); }
 
 .area-add-btn,
 .area-manage-btn {
