@@ -207,6 +207,22 @@ console.log(JSON.stringify({{ lights: members('lights', ov) }}));
     assert _run_node(script, tmp_path)["lights"] == ["dev:1", "thermo:1"]
 
 
+def test_exclude_wins_when_a_device_is_both_included_and_excluded(tmp_path: Path) -> None:
+    """Pins the tie-break for a device whose override names the same group in
+    both lists. Exclude winning is the safer default, but without this test
+    someone could invert the two checks and every other test would still pass.
+    """
+    script = f"""
+eval(pick('resolveDeviceGroupMembers'));
+{GROUPS_JS}
+// dev:1 is auto-collected by the lights kind rule AND force-included, yet the
+// exclude must still take precedence.
+const ov = {{ 'dev:1': {{ include: ['lights'], exclude: ['lights'] }} }};
+console.log(JSON.stringify({{ lights: members('lights', ov) }}));
+"""
+    assert _run_node(script, tmp_path)["lights"] == []
+
+
 def test_overrides_for_unknown_devices_and_groups_are_harmless(tmp_path: Path) -> None:
     script = f"""
 eval(pick('resolveDeviceGroupMembers'));
