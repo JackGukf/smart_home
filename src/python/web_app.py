@@ -166,6 +166,16 @@ class HumidifierDefinition:
 
 
 @dataclass(frozen=True)
+class EnvironmentSensorDefinition:
+    """A standalone temperature/humidity sensor (e.g. Govee H5140)."""
+    name: str
+    provider: str
+    model: str | None
+    room: str | None
+    device_id: str | None
+
+
+@dataclass(frozen=True)
 class WeatherConfig:
     name: str
     latitude: float
@@ -484,6 +494,10 @@ def create_app(
     @app.get("/api/humidifiers")
     async def humidifiers() -> dict[str, Any]:
         return await asyncio.to_thread(_humidifier_cards, app.state.config_path)
+
+    @app.get("/api/environment-sensors")
+    async def environment_sensors() -> dict[str, Any]:
+        return await asyncio.to_thread(_environment_sensor_cards, app.state.config_path)
 
     @app.post("/api/humidifiers/{humidifier_id}/commands/{command}")
     async def humidifier_command(
@@ -1285,6 +1299,26 @@ def _load_humidifiers(path: Path) -> list[HumidifierDefinition]:
     return devices
 
 
+def _load_environment_sensors(path: Path) -> list[EnvironmentSensorDefinition]:
+    if not path.exists():
+        return []
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    sensors = []
+    for item in (payload.get("environment") or {}).get("sensors") or []:
+        if item.get("enabled") is False:
+            continue
+        sensors.append(
+            EnvironmentSensorDefinition(
+                name=str(item.get("name") or item.get("model") or "Environment sensor"),
+                provider=str(item.get("provider") or "govee_cloud").lower(),
+                model=str(item.get("model")) if item.get("model") else None,
+                room=item.get("room"),
+                device_id=str(item.get("device_id") or "") or None,
+            )
+        )
+    return sensors
+
+
 def _ambient_light_id(light: AmbientLightDefinition) -> str:
     return quote(light.name, safe="")
 
@@ -1685,8 +1719,30 @@ def _device_has_instance(entry: dict[str, Any], instance: str) -> bool:
 def _match_govee_thermometer(
     humidifier: HumidifierDefinition, devices: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
-    """Resolve the linked thermometer: explicit id, then model, then the account's
-    sole ambient-humidity sensor."""
+    """Resolve the linked thermometer, trying three stages in order:
+
+    1. humidifier.thermometer_device_id, if it's a real (non-placeholder) id.
+    2. humidifier.thermometer_model, if exactly one device on the account has
+       that sku.
+    3. Fallback: the account's sole ambient-humidity sensor. When more than
+       one humidity sensor exists, sensors that also report
+       carbonDioxideConcentration are excluded first (a CO2 combo monitor,
+       e.g. the H5140, shouldn't out-compete a plain thermo-hygrometer for
+       this fallback).
+
+    That fallback only resolves unambiguously when the account has exactly
+    one humidity sensor, or when every *extra* humidity sensor also reports
+    CO2. Two plain (non-CO2) humidity sensors on the same account defeat it
+    and the linked temperature/humidity readout silently disappears from the
+    card — see
+    test_humidifiers.py::test_thermometer_fallback_is_ambiguous_with_two_non_co2_sensors.
+    Pin thermometer_device_id (or thermometer_model) so the lookup does not
+    depend on that tie-break holding; see
+    test_humidifiers.py::test_pinned_thermometer_device_id_is_unambiguous,
+    test_humidifiers.py::test_pinned_thermometer_model_is_unambiguous, and
+    test_humidifiers.py::test_co2_tiebreak_resolves_real_account_pair (which
+    guards the CO2 tie-break itself against future regression).
+    """
     if _is_real_ble_address(humidifier.thermometer_device_id):
         for entry in devices:
             if str(entry.get("device") or "").lower() == humidifier.thermometer_device_id.lower():
@@ -1724,6 +1780,95 @@ def _govee_thermometer_reading(entry: dict[str, Any]) -> dict[str, Any] | None:
         elif instance == "sensorTemperature" and isinstance(value, (int, float)):
             reading["temperature_f"] = float(value)
     return reading or None
+
+
+ENVIRONMENT_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
+
+
+def _match_environment_sensor(
+    sensor: EnvironmentSensorDefinition, devices: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Explicit device id wins; otherwise match a unique model. No account-wide
+    fallback — that ambiguity is what breaks the humidifier's linked thermometer."""
+    if _is_real_ble_address(sensor.device_id):
+        for entry in devices:
+            if str(entry.get("device") or "").lower() == sensor.device_id.lower():
+                return entry
+        return None
+    if sensor.model:
+        matches = [e for e in devices if str(e.get("sku") or "").upper() == sensor.model.upper()]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
+def _fahrenheit_to_celsius(value: float) -> float:
+    return round((value - 32.0) * 5.0 / 9.0, 1)
+
+
+def _environment_sensor_card(sensor: EnvironmentSensorDefinition) -> dict[str, Any]:
+    card = {
+        "name": sensor.name,
+        "room": sensor.room,
+        "model": sensor.model,
+        "temperature": None,
+        "humidity": None,
+        "online": False,
+        "status": "ok",
+        "note": None,
+    }
+
+    if sensor.provider != "govee_cloud":
+        card["status"] = "unsupported"
+        card["note"] = "Unsupported environment sensor provider."
+        return card
+
+    if not _govee_api_key():
+        card["status"] = "needs_api_key"
+        card["note"] = "Set GOVEE_API_KEY on the Pi to read this sensor."
+        return card
+
+    runtime_key = sensor.device_id if _is_real_ble_address(sensor.device_id) else sensor.name
+
+    try:
+        entry = _match_environment_sensor(sensor, _govee_cloud_devices())
+    except Exception:
+        entry = None
+
+    if entry is None:
+        cached = ENVIRONMENT_RUNTIME_STATE.get(runtime_key)
+        if cached:
+            card.update(cached)
+            card["online"] = False
+            card["note"] = "Showing last known reading; sensor unreachable."
+        else:
+            card["status"] = "not_found"
+            card["note"] = "Sensor not found in the Govee account."
+        return card
+
+    reading = _govee_thermometer_reading(entry)
+    if reading is None:
+        cached = ENVIRONMENT_RUNTIME_STATE.get(runtime_key)
+        if cached:
+            card.update(cached)
+        card["online"] = False
+        card["note"] = "Sensor did not report a reading."
+        return card
+
+    values: dict[str, Any] = {}
+    if reading.get("temperature_f") is not None:
+        values["temperature"] = _fahrenheit_to_celsius(float(reading["temperature_f"]))
+    if reading.get("humidity") is not None:
+        values["humidity"] = reading["humidity"]
+
+    ENVIRONMENT_RUNTIME_STATE[runtime_key] = values
+    card.update(values)
+    card["online"] = True
+    return card
+
+
+def _environment_sensor_cards(path: Path) -> dict[str, Any]:
+    return {"sensors": [_environment_sensor_card(s) for s in _load_environment_sensors(path)]}
 
 
 def _govee_nightlight_caps(entry: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -181,6 +181,7 @@ let latestMatterDevices = [];
 let latestThermostats   = [];
 let latestAmbientLights = [];
 let latestHumidifiers   = [];
+let latestEnvironmentSensors = [];
 let areasDoc            = { areas: [], assignments: {} };
 let currentAreaId       = null;
 let doorbellEventsReady = false;
@@ -242,6 +243,113 @@ function logActivity(text, type = "normal") {
     }
   });
 })();
+
+/* ── Devices sidebar group ── */
+const DEVICES_GROUP_KEY = "devices_group_open_v1";
+const DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
+
+function isDevicesGroupOpen() {
+  try {
+    return localStorage.getItem(DEVICES_GROUP_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function setDevicesGroupOpen(open) {
+  const toggle = document.querySelector("#devicesGroupToggle");
+  toggle?.classList.toggle("open", open);
+  document.querySelectorAll(".device-group-item").forEach((item) => {
+    item.hidden = !open;
+  });
+  try { localStorage.setItem(DEVICES_GROUP_KEY, open ? "1" : "0"); } catch {}
+}
+
+(function initDevicesGroup() {
+  const toggle = document.querySelector("#devicesGroupToggle");
+  if (!toggle) return;
+  setDevicesGroupOpen(isDevicesGroupOpen());
+
+  // Chevron toggles collapse without changing the active view; the row itself
+  // opens the overview and always expands.
+  toggle.querySelector(".settings-chevron")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setDevicesGroupOpen(!isDevicesGroupOpen());
+  });
+})();
+
+/* Devices overview tiles. Renders from arrays already in memory — no fetches. */
+function deviceGroupTileData() {
+  const allSwitchLike = [...latestSwitchDevices, ...latestMatterDevices];
+  const lights = allSwitchLike.filter((d) => d.category === "light_switch");
+  const plugs  = allSwitchLike.filter((d) => d.category === "smart_plug");
+  const onOf = (list) => `${list.filter((d) => d.is_on).length} of ${list.length} on`;
+  const onlineOf = (list) => `${list.filter((d) => d.online !== false).length} online`;
+
+  return [
+    { view: "lights",     label: "Lights",      icon: "ti-bulb",       count: lights.length,                 summary: onOf(lights) },
+    { view: "plugs",      label: "Plugs",       icon: "ti-plug",       count: plugs.length,                  summary: onOf(plugs) },
+    { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: latestAmbientLights.length,    summary: onlineOf(latestAmbientLights) },
+    { view: "humidifier", label: "Humidifiers", icon: "ti-droplet",    count: latestHumidifiers.length,      summary: onlineOf(latestHumidifiers) },
+    { view: "environment", label: "Environment", icon: "ti-temperature-celsius", count: sensorGroupCount("environment") + latestEnvironmentSensors.length, summary: environmentSummary() },
+    { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(sensorsTileGroups()) },
+    { view: "climate",    label: "Climate",     icon: "ti-temperature",count: latestThermostats.length,      summary: onlineOf(latestThermostats) },
+  ];
+}
+
+/* Average temperature across environment groups, for the overview tile. */
+function environmentSummary() {
+  const tuyaTemps = latestTuyaDevices
+    .filter((d) => sensorCapabilityKey(d) === "temperature")
+    .map(readingMetricNumber)
+    .filter(Number.isFinite);
+  // Already in Celsius -- the backend converts from Fahrenheit before this
+  // reaches the client. Use != null so a legitimate 0°C reading is kept.
+  const goveeTemps = latestEnvironmentSensors
+    .map((s) => s.temperature)
+    .filter((t) => t != null)
+    .map(Number)
+    .filter(Number.isFinite);
+  const temps = [...tuyaTemps, ...goveeTemps];
+  if (temps.length === 0) return "No readings";
+  const avg = temps.reduce((a, b) => a + b, 0) / temps.length;
+  return `avg ${avg.toFixed(1)} °C`;
+}
+
+function renderDevicesOverview() {
+  const grid = document.querySelector("#devicesOverviewGrid");
+  const badge = document.querySelector("#deviceGroupCount");
+
+  if (badge) badge.textContent = String(distinctDeviceCount());
+
+  if (!grid) return;
+  grid.innerHTML = deviceGroupTileData().map((tile) => `
+    <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}">
+      <div class="device-group-tile-head">
+        <i class="ti ${tile.icon}" aria-hidden="true"></i>${escapeHtml(tile.label)}
+      </div>
+      <div class="device-group-tile-count">${tile.count}</div>
+      <div class="device-group-tile-summary">${escapeHtml(tile.summary)}</div>
+    </article>
+  `).join("");
+}
+
+/* Distinct physical devices. A multi-capability sensor appears in more than
+   one child view, so summing the child badges would over-count. */
+function distinctDeviceCount() {
+  const ids = new Set();
+  const add = (list, prefix) => list.forEach((d, i) => ids.add(`${prefix}:${d.id ?? d.name ?? i}`));
+  add(latestSwitchDevices, "switch");
+  add(latestMatterDevices, "matter");
+  add(latestAmbientLights, "ambient");
+  add(latestHumidifiers, "humidifier");
+  add(latestThermostats, "climate");
+  add(latestEnvironmentSensors, "environment");
+  latestTuyaDevices
+    .filter((d) => !isTuyaCamera(d))
+    .forEach((d) => ids.add(`tuya:${sensorBaseName(String(d.name || d.id || ""))}`));
+  return ids.size;
+}
 
 /* ── API helper ── */
 async function requestJson(url, options = {}) {
@@ -834,6 +942,7 @@ function renderAmbientLights(payload) {
     return;
   }
   ambientGrid.innerHTML = lights.map(ambientLightCard).join("");
+  renderDevicesOverview();
 }
 
 function ambientLightCard(light) {
@@ -878,6 +987,37 @@ async function loadHumidifiers() {
   renderHumidifiers(payload);
 }
 
+/* ── Environment sensors (Govee cloud thermo-hygrometers) ── */
+async function loadEnvironmentSensors() {
+  const payload = await requestJson("/api/environment-sensors");
+  latestEnvironmentSensors = payload.sensors || [];
+  renderEnvironmentSensors();
+  renderDevicesOverview();
+}
+
+function environmentSensorCard(sensor) {
+  const temp = sensor.temperature != null ? `${sensor.temperature}<small>°C</small>` : "–";
+  const hum  = sensor.humidity != null ? `${sensor.humidity}<small>%</small>` : "–";
+  const note = sensor.note
+    ? `<p class="sdc-sub">${escapeHtml(sensor.note)}</p>`
+    : "";
+
+  return `<article class="sdc-card" data-device-id="${escapeHtml(sensor.name)}">
+    <div class="sdc-header">
+      <div>
+        <h3 class="sdc-name">${escapeHtml(sensor.name)}</h3>
+        <p class="sdc-sub">${escapeHtml([sensor.room, sensor.model].filter(Boolean).join(" · ") || "Govee")}</p>
+      </div>
+      <span class="sdc-badge">${sensor.online ? "ONLINE" : "OFFLINE"}</span>
+    </div>
+    <div class="sdc-gauges-row">
+      <div class="sdc-gauge"><i class="ti ti-temperature"></i><span class="gauge-value">${temp}</span></div>
+      <div class="sdc-gauge"><i class="ti ti-droplet"></i><span class="gauge-value">${hum}</span></div>
+    </div>
+    ${note}
+  </article>`;
+}
+
 function renderHumidifiers(payload) {
   const humidifiers = payload.humidifiers || [];
   latestHumidifiers = humidifiers;
@@ -890,6 +1030,7 @@ function renderHumidifiers(payload) {
     return;
   }
   grid.innerHTML = humidifiers.map(humidifierCard).join("");
+  renderDevicesOverview();
 }
 
 /* Night-light colour presets (RGB) offered on the humidifier card palette. */
@@ -1227,6 +1368,69 @@ function countUniqueSensorCapabilities(readings) {
   return Math.max(new Set(readings.map(sensorCapabilityKey)).size, 1);
 }
 
+/* ── Environment / Sensors split ──
+   One physical device can report temperature, humidity, leak and smoke at
+   once. It appears in both views, filtered to the readings each view owns,
+   so nothing is hidden. Battery rides along in both as context. */
+const ENVIRONMENT_CAPABILITIES = new Set(["temperature", "humidity"]);
+
+/* The eight capability keys sensorCapabilityKey() can actually classify a
+   reading into. Anything else means it fell through to the id/name
+   fallback -- i.e. an unrecognised capability, not a "sensors" capability. */
+const KNOWN_SENSOR_CAPABILITIES = new Set([
+  "temperature", "humidity", "illuminance", "motion",
+  "battery", "water", "smoke", "door",
+]);
+
+function filterReadingsForView(readings, mode) {
+  if (mode !== "environment" && mode !== "sensors") return readings;
+  return readings.filter((reading) => {
+    const key = sensorCapabilityKey(reading);
+    if (key === "battery") return true;
+    return mode === "environment"
+      ? ENVIRONMENT_CAPABILITIES.has(key)
+      : !ENVIRONMENT_CAPABILITIES.has(key);
+  });
+}
+
+/* A battery reading alone must not conjure a card into either view, and
+   neither may a reading whose capability key isn't one of the eight known
+   kinds (e.g. a direct/local Tuya device with no device_class, whose raw
+   reading falls back to its id/name). The one exception: if a device has
+   NO recognised capability at all -- not even battery -- it still needs a
+   home so it doesn't vanish from the dashboard entirely, and Sensors is
+   that home (Environment stays reserved for genuine temperature/humidity). */
+function groupHasViewContent(group, mode) {
+  const expanded = expandSensorReadings(group.readings);
+
+  const viewReadings = filterReadingsForView(expanded, mode);
+  const hasOwnedCapability = viewReadings.some((reading) => {
+    const key = sensorCapabilityKey(reading);
+    return key !== "battery" && KNOWN_SENSOR_CAPABILITIES.has(key);
+  });
+  if (hasOwnedCapability) return true;
+
+  const hasAnyKnownCapability = expanded.some((reading) =>
+    KNOWN_SENSOR_CAPABILITIES.has(sensorCapabilityKey(reading))
+  );
+  return mode === "sensors" && !hasAnyKnownCapability;
+}
+
+function sensorGroupCount(mode) {
+  const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  return groupSensorDevices(visible).filter((g) => groupHasViewContent(g, mode)).length;
+}
+
+/* Device groups backing the Sensors tile, collapsed to one online flag per
+   group so onlineOf() can summarize groups instead of raw readings -- the
+   same universe sensorGroupCount("sensors") counts. */
+function sensorsTileGroups() {
+  const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  return groupSensorDevices(visible)
+    .filter((g) => groupHasViewContent(g, "sensors"))
+    .map((g) => ({ online: g.readings.some((d) => d.online !== false) }));
+}
+
 /* ── Sensor device grouping ── */
 const SENSOR_SUFFIXES = [
   ' Temperature', ' Humidity', ' Illuminance',
@@ -1365,9 +1569,9 @@ function expandSensorReadings(readings) {
   return expanded;
 }
 
-function renderSensorDeviceCard(group) {
+function renderSensorDeviceCard(group, mode) {
   const { name } = group;
-  const readings = expandSensorReadings(group.readings);
+  const readings = filterReadingsForView(expandSensorReadings(group.readings), mode);
   const capN = countUniqueSensorCapabilities(readings);
 
   const findCat = (kw) => readings.find((d) => String(d.category || "").includes(kw));
@@ -1523,7 +1727,7 @@ function renderSensorDeviceCard(group) {
 /* ── Tuya sensors ── */
 function renderTuyaDevices(devices) {
   const visibleDevices = devices.filter((d) => !isTuyaCamera(d));
-  tuyaCount.textContent = String(visibleDevices.length);
+  tuyaCount.textContent = String(sensorGroupCount("sensors"));
 
   if (visibleDevices.length === 0) {
     tuyaGrid.innerHTML = '<div class="empty">No Tuya devices found from Home Assistant yet.</div>';
@@ -1539,7 +1743,7 @@ function renderTuyaDevices(devices) {
     }
   });
 
-  const groups = groupSensorDevices(visibleDevices);
+  const groups = groupSensorDevices(visibleDevices).filter((g) => groupHasViewContent(g, "sensors"));
 
   const alertGroupCount = groups.filter((g) =>
     g.readings.some((d) => isAlertDetected(d) && !String(d.category || "").includes("battery"))
@@ -1549,7 +1753,28 @@ function renderTuyaDevices(devices) {
     ? `<div class="sdc-alert-banner"><i class="ti ti-alert-triangle"></i> ${alertGroupCount} device${alertGroupCount > 1 ? "s" : ""} need${alertGroupCount > 1 ? "" : "s"} attention</div>`
     : "";
 
-  tuyaGrid.innerHTML = banner + groups.map(renderSensorDeviceCard).join("");
+  tuyaGrid.innerHTML = banner + groups.map((g) => renderSensorDeviceCard(g, "sensors")).join("");
+  renderDevicesOverview();
+  renderEnvironmentSensors();
+}
+
+/* ── Environment (temperature & humidity) ── */
+function renderEnvironmentSensors() {
+  const grid = document.querySelector("#environmentGrid");
+  const badge = document.querySelector("#environmentCount");
+  const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  const groups = groupSensorDevices(visible).filter((g) => groupHasViewContent(g, "environment"));
+
+  const total = groups.length + latestEnvironmentSensors.length;
+  if (badge) badge.textContent = String(total);
+  if (!grid) return;
+  if (total === 0) {
+    grid.innerHTML = '<div class="empty">No temperature or humidity sensors reporting yet.</div>';
+    return;
+  }
+  grid.innerHTML =
+    latestEnvironmentSensors.map(environmentSensorCard).join("") +
+    groups.map((g) => renderSensorDeviceCard(g, "environment")).join("");
 }
 
 function primaryTuyaState(device) {
@@ -3909,7 +4134,7 @@ function renderAreaDetail(area) {
     sections.push(`
       <div class="area-subsection">
         <div class="area-subsection-title"><i class="ti ti-radar-2"></i> Sensors</div>
-        <div class="device-grid">${sensors.map(renderSensorDeviceCard).join("")}</div>
+        <div class="device-grid">${sensors.map((g) => renderSensorDeviceCard(g, "sensors")).join("")}</div>
       </div>`);
   }
   if (cameras.length) {
@@ -4317,6 +4542,9 @@ function activateView(viewName) {
   if (viewName === "humidifier") {
     loadHumidifiers().catch((error) => console.error(error));
   }
+  if (viewName === "environment") {
+    loadEnvironmentSensors().catch((error) => console.error(error));
+  }
   if (viewName === "discovery") {
     requestJson("/api/matter/devices")
       .then((data) => {
@@ -4324,6 +4552,13 @@ function activateView(viewName) {
         _renderMatterDeviceList(data.devices || []);
       })
       .catch(() => _updateMatterServerStatus(false));
+  }
+  if (viewName === "devices") {
+    setDevicesGroupOpen(true);
+    renderDevicesOverview();
+  }
+  if (DEVICE_GROUP_VIEWS.includes(viewName)) {
+    setDevicesGroupOpen(true);
   }
 }
 
@@ -4792,6 +5027,7 @@ function getDefaultView() {
   activateView(getDefaultView());
   loadAmbientLights().catch((error) => console.error(error));
   loadHumidifiers().catch((error) => console.error(error));
+  loadEnvironmentSensors().catch((error) => console.error(error));
 })();
 
 /* Light drag lock */

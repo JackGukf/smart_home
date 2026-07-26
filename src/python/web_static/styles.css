@@ -329,6 +329,10 @@ aside {
 
 .system-settings-item { padding-left: 24px; }
 
+.device-group-item { padding-left: 24px; }
+
+#devicesGroupToggle.open .settings-chevron { transform: rotate(90deg); }
+
 .sidebar-section-toggle {
   display: flex;
   align-items: center;
@@ -376,10 +380,12 @@ aside {
 /* Per-view icon colours */
 .room-item[data-view="lights"]        .room-icon { color: var(--amber); }
 .room-item[data-view="plugs"]         .room-icon { color: var(--accent); }
+.room-item[data-view="environment"]   .room-icon { color: var(--cyan); }
 .room-item[data-view="tuya"]          .room-icon { color: var(--cyan); }
 .room-item[data-view="climate"]       .room-icon { color: var(--orange); }
 .room-item[data-view="homeassistant"] .room-icon { color: var(--purple); }
 .room-item[data-view="cameras"]       .room-icon { color: var(--green); }
+.room-item[data-view="devices"]     .room-icon { color: var(--accent); }
 
 .room-item.active .room-icon {
   background: var(--accent-dim);
@@ -405,6 +411,50 @@ aside {
 .sidebar-footer {
   margin-top: auto;
   padding: 14px 20px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── Devices overview tiles ── */
+.devices-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.device-group-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.device-group-tile:hover {
+  background: var(--card-2);
+  border-color: var(--border-hover);
+}
+
+.device-group-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.device-group-tile-count {
+  font-family: var(--mono);
+  font-size: 26px;
+  color: var(--text);
+}
+
+.device-group-tile-summary {
   font-size: 11px;
   color: var(--muted);
 }
@@ -2247,6 +2297,11 @@ aside {
   .weather-card { grid-template-columns: 1fr; }
   .thermo-mode-grid { grid-template-columns: repeat(2, 1fr); }
   .thermo-presets { flex-wrap: wrap; }
+
+  /* Rail has no room for indentation or chevrons: flatten the Devices group. */
+  #devicesGroupToggle { display: none; }
+  .device-group-item[hidden] { display: flex; }
+  .devices-overview-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* ── RESPONSIVE: phone (≤ 480 px) ── */
