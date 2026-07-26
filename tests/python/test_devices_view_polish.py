@@ -38,6 +38,16 @@ def _balanced_block(source: str, start: int) -> str:
     raise AssertionError("unbalanced braces from offset %d" % start)
 
 
+def _strip_css_comments(css: str) -> str:
+    """Drop /* ... */ comments before parsing.
+
+    A commented-out rule for a view placed after the real one would otherwise be
+    parsed too and silently overwrite the real value (masking a genuine
+    collision); placed before, it would fabricate a false one.
+    """
+    return re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+
+
 def _group_colors(css: str) -> dict[str, str]:
     """Map each device-group view to the --group-color variable it resolves to.
 
@@ -45,6 +55,7 @@ def _group_colors(css: str) -> dict[str, str]:
         .room-item[data-view="lights"],
         .device-group-tile[data-goto-view="lights"] { --group-color: var(--amber); }
     """
+    css = _strip_css_comments(css)
     colors: dict[str, str] = {}
     for block in re.finditer(r"([^{}]+)\{([^{}]*--group-color\s*:\s*([^;}]+)[;}][^{}]*)\}", css):
         selector, _body, value = block.group(1), block.group(2), block.group(3).strip()
@@ -52,6 +63,26 @@ def _group_colors(css: str) -> dict[str, str]:
             colors[view] = value
         for view in re.findall(r'data-goto-view="([^"]+)"', selector):
             colors[view] = value
+    return colors
+
+
+def _group_colors_by_context(css: str) -> dict[tuple[str, str], str]:
+    """Like _group_colors, but keyed by (view, "sidebar"|"tile") separately.
+
+    _group_colors keys by view name only, so if the sidebar declaration
+    (.room-item[data-view=X]) and the tile declaration
+    (.device-group-tile[data-goto-view=X]) are split into two rules with
+    different colours, the later rule silently wins in that dict and nothing
+    notices. Keeping the two contexts apart lets a test compare them directly.
+    """
+    css = _strip_css_comments(css)
+    colors: dict[tuple[str, str], str] = {}
+    for block in re.finditer(r"([^{}]+)\{([^{}]*--group-color\s*:\s*([^;}]+)[;}][^{}]*)\}", css):
+        selector, _body, value = block.group(1), block.group(2), block.group(3).strip()
+        for view in re.findall(r'data-view="([^"]+)"', selector):
+            colors[(view, "sidebar")] = value
+        for view in re.findall(r'data-goto-view="([^"]+)"', selector):
+            colors[(view, "tile")] = value
     return colors
 
 
@@ -82,6 +113,25 @@ def test_no_two_device_groups_share_a_colour() -> None:
 
     duplicates = {c for c in used.values() if list(used.values()).count(c) > 1}
     assert not duplicates, f"colour reused across sibling groups: {duplicates} in {used}"
+
+
+def test_sidebar_and_tile_group_colors_match_for_every_group() -> None:
+    """The entire reason --group-color is a single shared declaration is to keep
+    the sidebar item and the Devices overview tile from drifting apart. If
+    someone splits a group's rule into two declarations (one per selector) with
+    different colours, the plain view->colour map silently picks whichever rule
+    parses last and nothing notices. Compare the two contexts directly."""
+    colors = _group_colors_by_context(STYLES_CSS.read_text(encoding="utf-8"))
+
+    mismatches = {}
+    for view in DEVICE_GROUP_VIEWS:
+        sidebar = colors.get((view, "sidebar"))
+        tile = colors.get((view, "tile"))
+        assert sidebar is not None, f"no sidebar --group-color for {view}"
+        assert tile is not None, f"no tile --group-color for {view}"
+        if sidebar != tile:
+            mismatches[view] = (sidebar, tile)
+    assert not mismatches, f"sidebar/tile colour drift: {mismatches}"
 
 
 def test_sidebar_icon_reads_the_group_color_variable() -> None:
@@ -122,16 +172,66 @@ def test_tile_has_a_group_colour_fallback() -> None:
 
 def test_all_seven_device_panels_have_a_hidden_back_button() -> None:
     html = INDEX_HTML.read_text(encoding="utf-8")
+    panel_starts = _find_all(html, "data-view-panel=")
 
     for view in DEVICE_GROUP_VIEWS:
         start = html.index(f'data-view-panel="{view}"')
-        panel = html[start:start + 700]
+        # Bound the slice at the next panel's start (or EOF for the last panel)
+        # instead of a fixed-size window, which the reviewer showed overruns
+        # into the neighbouring panel for five of the seven groups.
+        later_starts = [p for p in panel_starts if p > start]
+        end = min(later_starts) if later_starts else len(html)
+        panel = html[start:end]
         assert "data-back-to-devices" in panel, f"{view} panel has no back button"
         button = re.search(r"<button[^>]*data-back-to-devices[^>]*>", panel)
         assert button, f"{view} back button is not a <button>"
         assert "hidden" in button.group(0), (
             f"{view} back button must ship hidden so it cannot flash before JS runs"
         )
+
+
+def test_activate_view_sets_back_button_visibility_for_both_branches() -> None:
+    """Covers mutation (a): deleting setDevicesBackVisible(arrivedFromDevices)
+    and the else branch from activateView must be caught here."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    fn_at = javascript.index("function activateView")
+    body = _balanced_block(javascript, fn_at)
+    assert "setDevicesBackVisible(arrivedFromDevices)" in body, (
+        "activateView must arm the back button using the arrival flag for device-group views"
+    )
+    assert "setDevicesBackVisible(false)" in body, (
+        "activateView must hide the back button for non-device-group views"
+    )
+
+
+def test_back_to_devices_click_handler_activates_devices_view() -> None:
+    """Covers mutation (b): deleting the [data-back-to-devices] click handler
+    must be caught here (the button would render but do nothing)."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    handler_starts = _find_all(javascript, 'document.addEventListener("click"')
+    blocks = [_balanced_block(javascript, at) for at in handler_starts]
+    matches = [b for b in blocks if "data-back-to-devices" in b]
+    assert len(matches) == 1, (
+        f"expected exactly one click handler referencing data-back-to-devices, found {len(matches)}"
+    )
+    assert 'activateView("devices")' in matches[0], (
+        "the data-back-to-devices click handler must navigate back to the devices view"
+    )
+
+
+def test_set_devices_back_visible_actually_toggles_hidden() -> None:
+    """Covers mutation (c): replacing the body of setDevicesBackVisible with a
+    bare `return;` must be caught here (a no-op that still matches the loose
+    string-presence checks)."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    fn_at = javascript.index("function setDevicesBackVisible")
+    body = _balanced_block(javascript, fn_at)
+    assert re.search(r"\.hidden\s*=", body), (
+        "setDevicesBackVisible must actually assign to .hidden, not just return"
+    )
 
 
 def test_back_button_visibility_is_tracked_by_a_flag() -> None:
@@ -147,8 +247,8 @@ def test_flag_is_only_set_for_clicks_inside_the_devices_panel() -> None:
     may set the flag, or those other jumps would show a false back button."""
     javascript = APP_JS.read_text(encoding="utf-8")
 
-    handler_at = javascript.index('closest("[data-goto-view]")')
-    handler = javascript[handler_at:handler_at + 500]
+    if_at = javascript.index("if (gotoCard)")
+    handler = _balanced_block(javascript, if_at)
     assert 'data-view-panel="devices"' in handler, (
         "the goto handler must scope the flag to the Devices panel"
     )
