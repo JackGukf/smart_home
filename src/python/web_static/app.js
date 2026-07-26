@@ -248,6 +248,17 @@ function logActivity(text, type = "normal") {
 const DEVICES_GROUP_KEY = "devices_group_open_v1";
 const DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
 
+/* Tracks whether the current view was reached from the Devices overview, so the
+   back button only appears when there is somewhere to go back to. Deliberately
+   not persisted: it describes one navigation step, not a preference. */
+let arrivedFromDevices = false;
+
+function setDevicesBackVisible(show) {
+  document.querySelectorAll("[data-back-to-devices]").forEach((btn) => {
+    btn.hidden = !show;
+  });
+}
+
 function isDevicesGroupOpen() {
   try {
     return localStorage.getItem(DEVICES_GROUP_KEY) !== "0";
@@ -325,11 +336,14 @@ function renderDevicesOverview() {
   if (!grid) return;
   grid.innerHTML = deviceGroupTileData().map((tile) => `
     <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}">
-      <div class="device-group-tile-head">
-        <i class="ti ${tile.icon}" aria-hidden="true"></i>${escapeHtml(tile.label)}
+      <div class="device-group-tile-accent" aria-hidden="true"></div>
+      <div class="device-group-tile-body">
+        <div class="device-group-tile-head">
+          <i class="ti ${tile.icon}" aria-hidden="true"></i>${escapeHtml(tile.label)}
+        </div>
+        <div class="device-group-tile-count">${tile.count}</div>
+        <div class="device-group-tile-summary">${escapeHtml(tile.summary)}</div>
       </div>
-      <div class="device-group-tile-count">${tile.count}</div>
-      <div class="device-group-tile-summary">${escapeHtml(tile.summary)}</div>
     </article>
   `).join("");
 }
@@ -4343,7 +4357,13 @@ document.addEventListener("click", (event) => {
     return;
   }
   const gotoCard = event.target.closest("[data-goto-view]");
-  if (gotoCard) activateView(gotoCard.dataset.gotoView);
+  if (gotoCard) {
+    // data-goto-view is also used by the Home view's thermostat dial, camera
+    // frame and device rows, and by Area detail cards. Only a jump from the
+    // Devices overview should arm the back button.
+    arrivedFromDevices = Boolean(gotoCard.closest('[data-view-panel="devices"]'));
+    activateView(gotoCard.dataset.gotoView);
+  }
 });
 
 document.addEventListener("keydown", (event) => {
@@ -4559,6 +4579,9 @@ function activateView(viewName) {
   }
   if (DEVICE_GROUP_VIEWS.includes(viewName)) {
     setDevicesGroupOpen(true);
+    setDevicesBackVisible(arrivedFromDevices);
+  } else {
+    setDevicesBackVisible(false);
   }
 }
 
@@ -4992,7 +5015,17 @@ document.addEventListener("click", (event) => {
 
 /* Sidebar navigation */
 railButtons.forEach((btn) => {
-  btn.addEventListener("click", () => activateView(btn.dataset.view));
+  btn.addEventListener("click", () => {
+    arrivedFromDevices = false;
+    activateView(btn.dataset.view);
+  });
+});
+
+/* Back to the Devices overview */
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-back-to-devices]")) return;
+  arrivedFromDevices = false;
+  activateView("devices");
 });
 
 /* ── Startup (default) view ── */
