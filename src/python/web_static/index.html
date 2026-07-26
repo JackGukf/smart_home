@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build67">
+  <link rel="stylesheet" href="/static/styles.css?v=build69">
 </head>
 <body>
 
@@ -209,6 +209,9 @@
       <div class="section-header">
         <span class="section-title">Light Switches</span>
         <div class="section-actions">
+          <button class="command device-back-btn" type="button" data-back-to-devices hidden>
+            <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
           <span class="section-meta">TP-Link · local control</span>
           <button class="light-drag-lock locked" id="lightDragLock" type="button" aria-pressed="false" title="Unlock light switch arrangement">
             <i class="ti ti-lock" aria-hidden="true"></i>
@@ -226,7 +229,12 @@
     <div class="view-panel" data-view-panel="plugs">
       <div class="section-header">
         <span class="section-title">Smart Plugs</span>
-        <span class="section-meta">TP-Link · local control</span>
+        <div class="section-actions">
+          <button class="command device-back-btn" type="button" data-back-to-devices hidden>
+            <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <span class="section-meta">TP-Link · local control</span>
+        </div>
       </div>
       <div id="plugActions" class="quick-action-row"></div>
       <div class="device-grid" id="plugGrid">
@@ -238,7 +246,12 @@
     <div class="view-panel" data-view-panel="ambient">
       <div class="section-header">
         <span class="section-title">Ambient Lights</span>
-        <span class="section-meta">Govee · Bluetooth (local control)</span>
+        <div class="section-actions">
+          <button class="command device-back-btn" type="button" data-back-to-devices hidden>
+            <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <span class="section-meta">Govee · Bluetooth (local control)</span>
+        </div>
       </div>
       <div class="ambient-grid" id="ambientGrid">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
@@ -249,7 +262,12 @@
     <div class="view-panel" data-view-panel="humidifier">
       <div class="section-header">
         <span class="section-title">Humidifiers</span>
-        <span class="section-meta">Govee · Cloud API</span>
+        <div class="section-actions">
+          <button class="command device-back-btn" type="button" data-back-to-devices hidden>
+            <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <span class="section-meta">Govee · Cloud API</span>
+        </div>
       </div>
       <div class="ambient-grid" id="humidifierGrid">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
@@ -260,7 +278,12 @@
     <div class="view-panel" data-view-panel="environment">
       <div class="section-header">
         <span class="section-title">Environment</span>
-        <span class="section-meta">Temperature &amp; humidity</span>
+        <div class="section-actions">
+          <button class="command device-back-btn" type="button" data-back-to-devices hidden>
+            <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <span class="section-meta">Temperature &amp; humidity</span>
+        </div>
       </div>
       <div class="device-grid" id="environmentGrid">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
@@ -271,7 +294,12 @@
     <div class="view-panel" data-view-panel="tuya">
       <div class="section-header">
         <span class="section-title">Sensors</span>
-        <span class="section-meta">Tuya / Home Assistant</span>
+        <div class="section-actions">
+          <button class="command device-back-btn" type="button" data-back-to-devices hidden>
+            <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <span class="section-meta">Tuya / Home Assistant</span>
+        </div>
       </div>
       <div class="device-grid" id="tuyaGrid">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
@@ -282,7 +310,12 @@
     <div class="view-panel" data-view-panel="climate">
       <div class="section-header">
         <span class="section-title">Climate</span>
-        <span class="section-meta">Ecobee thermostats</span>
+        <div class="section-actions">
+          <button class="command device-back-btn" type="button" data-back-to-devices hidden>
+            <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <span class="section-meta">Ecobee thermostats</span>
+        </div>
       </div>
       <div class="device-grid thermostat-grid" id="thermostatGrid">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
@@ -741,6 +774,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build67"></script>
+<script src="/static/app.js?v=build69"></script>
 </body>
 </html>

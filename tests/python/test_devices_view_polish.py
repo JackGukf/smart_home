@@ -90,3 +90,48 @@ def test_tile_has_a_group_colour_fallback() -> None:
     tile = re.search(r"\.device-group-tile\s*\{([^}]*)\}", css)
     assert tile, "no .device-group-tile rule"
     assert "--group-color:" in tile.group(1), "tile needs a default --group-color"
+
+
+def test_all_seven_device_panels_have_a_hidden_back_button() -> None:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    for view in DEVICE_GROUP_VIEWS:
+        start = html.index(f'data-view-panel="{view}"')
+        panel = html[start:start + 700]
+        assert "data-back-to-devices" in panel, f"{view} panel has no back button"
+        button = re.search(r"<button[^>]*data-back-to-devices[^>]*>", panel)
+        assert button, f"{view} back button is not a <button>"
+        assert "hidden" in button.group(0), (
+            f"{view} back button must ship hidden so it cannot flash before JS runs"
+        )
+
+
+def test_back_button_visibility_is_tracked_by_a_flag() -> None:
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    assert "arrivedFromDevices" in javascript
+    assert "function setDevicesBackVisible" in javascript
+
+
+def test_flag_is_only_set_for_clicks_inside_the_devices_panel() -> None:
+    """data-goto-view is also used by the Home view's thermostat dial, camera
+    frame and device rows, and by Area detail cards. Only the Devices overview
+    may set the flag, or those other jumps would show a false back button."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    handler_at = javascript.index('closest("[data-goto-view]")')
+    handler = javascript[handler_at:handler_at + 500]
+    assert 'data-view-panel="devices"' in handler, (
+        "the goto handler must scope the flag to the Devices panel"
+    )
+
+
+def test_sidebar_click_clears_the_flag() -> None:
+    """"railButtons.forEach" also appears earlier in activateView (toggling the
+    active class); rindex targets the sidebar click-handler registration that
+    Step 8 actually modifies, not that unrelated internal loop."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    at = javascript.rindex("railButtons.forEach")
+    handler = javascript[at:at + 300]
+    assert "arrivedFromDevices = false" in handler
