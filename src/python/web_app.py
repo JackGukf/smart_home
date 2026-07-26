@@ -3034,7 +3034,10 @@ def _load_device_groups(path: Path) -> dict[str, Any]:
         return _default_device_groups_doc()
 
     groups = []
-    for raw in payload.get("groups") or []:
+    # `or []` alone only catches falsy values -- a truthy non-list "groups"
+    # (e.g. an int or bool) is not iterable and would raise TypeError here.
+    raw_groups = payload.get("groups")
+    for raw in raw_groups if isinstance(raw_groups, list) else []:
         if not isinstance(raw, dict) or not raw.get("id") or not raw.get("name"):
             continue
         groups.append(
@@ -3058,7 +3061,11 @@ def _load_device_groups(path: Path) -> dict[str, Any]:
 
     known = {g["id"] for g in groups}
     overrides = {}
-    for key, rule in (payload.get("overrides") or {}).items():
+    # `or {}` alone only catches falsy values -- a truthy non-dict "overrides"
+    # (e.g. a list, string, int, or bool) has no `.items()` and would raise
+    # AttributeError here. Treat anything that isn't actually a dict as absent.
+    raw_overrides = payload.get("overrides")
+    for key, rule in (raw_overrides if isinstance(raw_overrides, dict) else {}).items():
         if not isinstance(rule, dict):
             continue
         include = [g for g in (rule.get("include") or []) if g in known]
