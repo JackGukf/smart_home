@@ -213,7 +213,7 @@ DEVICE_GROUP_CHROME = frozenset({"lightScenes", "lightDragLock", "plugActions"})
 DEVICE_GROUP_ICON_PATTERN = re.compile(r"^[a-z0-9-]{1,32}$")
 ```
 
-Confirm `re` is already imported at the top of `web_app.py`; add `import re` if not.
+**`re` is not currently imported in `web_app.py`** (only `json`, at line 3). Add `import re` to the imports at the top of the file — `DEVICE_GROUP_ICON_PATTERN` needs it.
 
 - [ ] **Step 4: Add the coercion helpers and loader**
 
@@ -604,7 +604,8 @@ class DeviceGroupOverrideRequest(BaseModel):
 ```
 
 `extra="forbid"` is what rejects `chrome`, `readingFilter` and `builtin` from a
-client. Add `ConfigDict` to the existing pydantic import line.
+client. The import at `web_app.py:26` is currently `from pydantic import BaseModel`
+— change it to `from pydantic import BaseModel, ConfigDict`.
 
 FastAPI returns 422 for a Pydantic validation error, but the tests expect 400.
 Add an exception handler inside `create_app`, immediately after the `app` is
