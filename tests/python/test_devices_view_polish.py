@@ -10,6 +10,34 @@ STYLES_CSS = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
 
 
+def _find_all(haystack: str, needle: str) -> list[int]:
+    """Every start offset of needle, so a test can pick by content not position."""
+    offsets, at = [], haystack.find(needle)
+    while at != -1:
+        offsets.append(at)
+        at = haystack.find(needle, at + 1)
+    return offsets
+
+
+def _balanced_block(source: str, start: int) -> str:
+    """The statement beginning at start, ending at its matching close brace.
+
+    A fixed-size window would spill into whatever follows, so an assertion could
+    pass on a neighbouring block's contents even after the code under test was
+    deleted. Brace-matching keeps each assertion inside its own block.
+    """
+    open_at = source.index("{", start)
+    depth = 0
+    for i in range(open_at, len(source)):
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:i + 1]
+    raise AssertionError("unbalanced braces from offset %d" % start)
+
+
 def _group_colors(css: str) -> dict[str, str]:
     """Map each device-group view to the --group-color variable it resolves to.
 
@@ -127,11 +155,18 @@ def test_flag_is_only_set_for_clicks_inside_the_devices_panel() -> None:
 
 
 def test_sidebar_click_clears_the_flag() -> None:
-    """"railButtons.forEach" also appears earlier in activateView (toggling the
-    active class); rindex targets the sidebar click-handler registration that
-    Step 8 actually modifies, not that unrelated internal loop."""
+    """"railButtons.forEach" appears twice: once inside activateView toggling the
+    active class, once registering the sidebar click handler. Anchor on the
+    registration's own content rather than on file position, so the test survives
+    the two being reordered or a third occurrence being added."""
     javascript = APP_JS.read_text(encoding="utf-8")
 
-    at = javascript.rindex("railButtons.forEach")
-    handler = javascript[at:at + 300]
-    assert "arrivedFromDevices = false" in handler
+    blocks = [
+        _balanced_block(javascript, at)
+        for at in _find_all(javascript, "railButtons.forEach")
+    ]
+    handlers = [b for b in blocks if "addEventListener" in b]
+    assert len(handlers) == 1, (
+        f"expected exactly one railButtons click-handler registration, found {len(handlers)}"
+    )
+    assert "arrivedFromDevices = false" in handlers[0]
