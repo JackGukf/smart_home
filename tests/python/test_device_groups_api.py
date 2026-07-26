@@ -145,3 +145,146 @@ def test_truthy_non_iterable_groups_is_tolerated(tmp_path: Path) -> None:
             f"failed for: {bad_groups!r}"
         )
         assert doc["overrides"] == {}
+
+
+from fastapi.testclient import TestClient
+
+from src.python.web_app import create_app
+
+
+def _client(tmp_path: Path) -> TestClient:
+    discovery = tmp_path / "switches.json"
+    discovery.write_text(json.dumps({"count": 0, "switches": []}), encoding="utf-8")
+    return TestClient(
+        create_app(
+            discovery_path=discovery,
+            config_path=tmp_path / "missing.yaml",
+            check_camera_ports=False,
+            areas_path=tmp_path / "areas.json",
+            device_groups_path=tmp_path / "groups.json",
+        )
+    )
+
+
+def test_get_returns_the_seeded_document(tmp_path: Path) -> None:
+    payload = _client(tmp_path).get("/api/device-groups").json()
+
+    assert [g["id"] for g in payload["groups"]] == [g["id"] for g in DEFAULT_DEVICE_GROUPS]
+    assert payload["overrides"] == {}
+
+
+def test_create_accepts_name_icon_colour(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post("/api/device-groups", json={"name": "Movie Night", "icon": "movie", "color": "pink"})
+
+    assert response.status_code == 200
+    group = response.json()["group"]
+    assert group["id"] == "movie-night"
+    assert group["builtin"] is False
+    # A user group starts with no rule; it gains members in Cycle 2.
+    assert group["kinds"] == []
+
+
+def test_create_rejects_duplicate_name_case_insensitively(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    assert client.post("/api/device-groups", json={"name": "LIGHTS"}).status_code == 409
+
+
+def test_create_rejects_client_supplied_chrome_or_reading_filter(tmp_path: Path) -> None:
+    """chrome and readingFilter exist only on seeded built-ins.
+
+    These are schema violations caught by extra="forbid", so FastAPI's standard
+    422 is correct. The routes' own semantic checks (bad colour, duplicate name)
+    raise 400 explicitly.
+    """
+    client = _client(tmp_path)
+
+    assert client.post("/api/device-groups", json={"name": "A", "chrome": ["lightScenes"]}).status_code == 422
+    assert client.post("/api/device-groups", json={"name": "B", "readingFilter": "sensors"}).status_code == 422
+    assert client.post("/api/device-groups", json={"name": "C", "builtin": True}).status_code == 422
+
+
+def test_create_rejects_bad_colour_and_icon(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    assert client.post("/api/device-groups", json={"name": "D", "color": "red; background:url(x)"}).status_code == 400
+    assert client.post("/api/device-groups", json={"name": "E", "icon": 'x" onload="y'}).status_code == 400
+    # The bare palette name is fine.
+    assert client.post("/api/device-groups", json={"name": "F", "color": "red"}).status_code == 200
+
+
+def test_create_rejects_empty_and_overlong_names(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    assert client.post("/api/device-groups", json={"name": "   "}).status_code == 400
+    assert client.post("/api/device-groups", json={"name": "x" * 41}).status_code == 400
+    assert client.post("/api/device-groups", json={"name": "!!!"}).status_code == 400
+
+
+def test_patch_renames_and_recolours(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.patch("/api/device-groups/lights", json={"name": "Lamps", "color": "green"})
+
+    assert response.status_code == 200
+    assert response.json()["group"]["name"] == "Lamps"
+    assert response.json()["group"]["color"] == "green"
+    # The id never changes on rename, so overrides cannot be orphaned.
+    assert response.json()["group"]["id"] == "lights"
+
+
+def test_patch_rejects_bad_colour(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    assert client.patch("/api/device-groups/lights", json={"color": "octarine"}).status_code == 400
+
+
+def test_delete_refuses_builtin_but_allows_user_groups(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    client.post("/api/device-groups", json={"name": "Movie Night"})
+
+    assert client.delete("/api/device-groups/lights").status_code == 409
+    assert client.delete("/api/device-groups/movie-night").status_code == 200
+    assert client.delete("/api/device-groups/movie-night").status_code == 404
+
+
+def test_order_requires_a_permutation(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    ids = [g["id"] for g in DEFAULT_DEVICE_GROUPS]
+
+    assert client.put("/api/device-groups/order", json={"ids": list(reversed(ids))}).status_code == 200
+    assert client.put("/api/device-groups/order", json={"ids": ids[:-1]}).status_code == 400
+    assert client.put("/api/device-groups/order", json={"ids": ids + ["extra"]}).status_code == 400
+    assert client.put("/api/device-groups/order", json={"ids": [ids[0]] * len(ids)}).status_code == 400
+
+    after = client.get("/api/device-groups").json()
+    assert [g["id"] for g in after["groups"]] == list(reversed(ids))
+
+
+def test_overrides_round_trip_and_validate(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    ok = client.put(
+        "/api/device-groups/overrides",
+        json={"device_key": "dev:1.2.3.4", "include": ["climate"], "exclude": ["lights"]},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["overrides"]["dev:1.2.3.4"] == {"include": ["climate"], "exclude": ["lights"]}
+
+    # Unknown group -> 404.
+    assert client.put(
+        "/api/device-groups/overrides",
+        json={"device_key": "dev:1.2.3.4", "include": ["nope"]},
+    ).status_code == 404
+
+    # Unknown device key is fine: the device may be offline or not yet discovered.
+    assert client.put(
+        "/api/device-groups/overrides",
+        json={"device_key": "dev:never-seen", "include": ["lights"]},
+    ).status_code == 200
+
+    # Empty include and exclude clears the entry.
+    client.put("/api/device-groups/overrides", json={"device_key": "dev:1.2.3.4"})
+    assert "dev:1.2.3.4" not in client.get("/api/device-groups").json()["overrides"]

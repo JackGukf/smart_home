@@ -24,7 +24,7 @@ from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import yaml
@@ -264,12 +264,39 @@ class AreaAssignRequest(BaseModel):
     area_id: str | None = None
 
 
+class DeviceGroupCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    icon: str | None = None
+    color: str | None = None
+
+
+class DeviceGroupUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    icon: str | None = None
+    color: str | None = None
+
+
+class DeviceGroupOrderRequest(BaseModel):
+    ids: list[str]
+
+
+class DeviceGroupOverrideRequest(BaseModel):
+    device_key: str
+    include: list[str] = []
+    exclude: list[str] = []
+
+
 def create_app(
     discovery_path: Path = DEFAULT_DISCOVERY_PATH,
     config_path: Path = DEFAULT_CONFIG_PATH,
     controller: KasaLightSwitchController | None = None,
     check_camera_ports: bool = True,
     areas_path: Path = DEFAULT_AREAS_PATH,
+    device_groups_path: Path = DEFAULT_DEVICE_GROUPS_PATH,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Raspberry Pi 4 Dashboard")
     app.state.discovery_path = discovery_path
@@ -277,6 +304,7 @@ def create_app(
     app.state.controller = controller or KasaLightSwitchController()
     app.state.check_camera_ports = check_camera_ports
     app.state.areas_path = areas_path
+    app.state.device_groups_path = device_groups_path
     _load_ambient_runtime_state(config_path)
 
     _raw_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else None
@@ -442,6 +470,129 @@ def create_app(
             doc["assignments"].pop(device_key, None)
         _save_areas(app.state.areas_path, doc)
         return {"assignments": doc["assignments"]}
+
+    def _find_group(doc: dict[str, Any], group_id: str) -> dict[str, Any]:
+        group = next((g for g in doc["groups"] if g["id"] == group_id), None)
+        if group is None:
+            raise HTTPException(status_code=404, detail="Device group not found")
+        return group
+
+    def _validated_name(raw: str, doc: dict[str, Any], *, exclude_id: str | None = None) -> tuple[str, str]:
+        name = raw.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Group name cannot be empty")
+        if len(name) > 40:
+            raise HTTPException(status_code=400, detail="Group name is too long")
+        group_id = _area_slug(name)
+        if not group_id:
+            raise HTTPException(status_code=400, detail="Group name must contain letters or digits")
+        for existing in doc["groups"]:
+            if existing["id"] == exclude_id:
+                continue
+            if existing["id"] == group_id or existing["name"].lower() == name.lower():
+                raise HTTPException(status_code=409, detail="A group with this name already exists")
+        return group_id, name
+
+    def _validated_color(raw: str | None) -> str | None:
+        if raw is None:
+            return None
+        value = raw.strip().lower()
+        if value not in DEVICE_GROUP_COLORS:
+            raise HTTPException(status_code=400, detail=f"Unknown colour: {raw}")
+        return value
+
+    def _validated_icon(raw: str | None) -> str | None:
+        if raw is None:
+            return None
+        value = raw.strip().lower()
+        if not DEVICE_GROUP_ICON_PATTERN.match(value):
+            raise HTTPException(status_code=400, detail=f"Invalid icon: {raw}")
+        return value
+
+    @app.get("/api/device-groups")
+    async def device_groups_get() -> dict[str, Any]:
+        return _load_device_groups(app.state.device_groups_path)
+
+    @app.post("/api/device-groups")
+    async def device_groups_create(body: DeviceGroupCreateRequest) -> dict[str, Any]:
+        doc = _load_device_groups(app.state.device_groups_path)
+        group_id, name = _validated_name(body.name, doc)
+        group = {
+            "id": group_id,
+            "name": name,
+            "icon": _validated_icon(body.icon) or "device-desktop",
+            "color": _validated_color(body.color) or "slate",
+            "kinds": [],
+            "chrome": [],
+            "readingFilter": None,
+            "builtin": False,
+        }
+        doc["groups"].append(group)
+        _save_device_groups(app.state.device_groups_path, doc)
+        return {"group": group}
+
+    @app.put("/api/device-groups/order")
+    async def device_groups_order(body: DeviceGroupOrderRequest) -> dict[str, Any]:
+        doc = _load_device_groups(app.state.device_groups_path)
+        current = [g["id"] for g in doc["groups"]]
+        if sorted(body.ids) != sorted(current):
+            raise HTTPException(
+                status_code=400, detail="Order must be a permutation of the existing group ids"
+            )
+        by_id = {g["id"]: g for g in doc["groups"]}
+        doc["groups"] = [by_id[i] for i in body.ids]
+        _save_device_groups(app.state.device_groups_path, doc)
+        return {"groups": doc["groups"]}
+
+    @app.put("/api/device-groups/overrides")
+    async def device_groups_overrides(body: DeviceGroupOverrideRequest) -> dict[str, Any]:
+        device_key = body.device_key.strip()
+        if not device_key:
+            raise HTTPException(status_code=400, detail="device_key cannot be empty")
+        doc = _load_device_groups(app.state.device_groups_path)
+        known = {g["id"] for g in doc["groups"]}
+        for group_id in [*body.include, *body.exclude]:
+            if group_id not in known:
+                raise HTTPException(status_code=404, detail=f"Device group not found: {group_id}")
+        if body.include or body.exclude:
+            doc["overrides"][device_key] = {"include": body.include, "exclude": body.exclude}
+        else:
+            doc["overrides"].pop(device_key, None)
+        _save_device_groups(app.state.device_groups_path, doc)
+        return {"overrides": doc["overrides"]}
+
+    @app.patch("/api/device-groups/{group_id}")
+    async def device_groups_update(group_id: str, body: DeviceGroupUpdateRequest) -> dict[str, Any]:
+        doc = _load_device_groups(app.state.device_groups_path)
+        group = _find_group(doc, group_id)
+        if body.name is not None:
+            # The id is deliberately left alone so overrides cannot be orphaned.
+            _, group["name"] = _validated_name(body.name, doc, exclude_id=group_id)
+        icon = _validated_icon(body.icon)
+        if icon is not None:
+            group["icon"] = icon
+        color = _validated_color(body.color)
+        if color is not None:
+            group["color"] = color
+        _save_device_groups(app.state.device_groups_path, doc)
+        return {"group": group}
+
+    @app.delete("/api/device-groups/{group_id}")
+    async def device_groups_delete(group_id: str) -> dict[str, Any]:
+        doc = _load_device_groups(app.state.device_groups_path)
+        group = _find_group(doc, group_id)
+        if group["builtin"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Built-in groups cannot be deleted; their device kinds would have no home.",
+            )
+        doc["groups"] = [g for g in doc["groups"] if g["id"] != group_id]
+        for rule in doc["overrides"].values():
+            rule["include"] = [g for g in rule["include"] if g != group_id]
+            rule["exclude"] = [g for g in rule["exclude"] if g != group_id]
+        doc["overrides"] = {k: v for k, v in doc["overrides"].items() if v["include"] or v["exclude"]}
+        _save_device_groups(app.state.device_groups_path, doc)
+        return {"ok": True}
 
     @app.get("/api/cameras")
     async def cameras() -> dict[str, list[dict[str, Any]]]:
