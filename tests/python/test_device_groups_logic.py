@@ -67,3 +67,68 @@ console.log(JSON.stringify(inv.map((i) => ({ key: i.key, kind: i.kind, name: i.n
     assert inventory == [
         {"key": "env:govee-thermo-hygrometer", "kind": "environment", "name": "Govee Thermo-Hygrometer"}
     ]
+
+
+def test_area_kind_icons_has_environment_entry(tmp_path: Path) -> None:
+    """Without this entry, environment rows in the assign modal fall back to a
+    generic ti-cpu icon instead of matching the Environment sidebar icon."""
+    script = """
+const at = src.indexOf('const AREA_KIND_ICONS');
+if (at < 0) throw new Error('missing AREA_KIND_ICONS');
+const braceStart = src.indexOf('{', at);
+let depth = 0, i = braceStart;
+for (; i < src.length; i++) {
+  if (src[i] === '{') depth++;
+  else if (src[i] === '}') { depth--; if (depth === 0) break; }
+}
+// Eval the object literal as an expression (not a `const` statement) so the
+// binding doesn't stay trapped inside eval's own lexical scope.
+const icons = eval('(' + src.slice(braceStart, i + 1) + ')');
+console.log(JSON.stringify({ environment: icons.environment }));
+"""
+    result = _run_node(script, tmp_path)
+    assert result["environment"] == "ti-temperature-celsius"
+
+
+def test_render_area_detail_shows_environment_sensor(tmp_path: Path) -> None:
+    """Before the fix, an area holding only an environment-kind device rendered
+    zero subsections: the device was counted in the header but never drawn.
+    This drives the real renderAreaDetail() over a minimal DOM stub and checks
+    the sensor actually lands in the output, reusing environmentSensorCard."""
+    script = """
+function makeEl() {
+  return { innerHTML: '', textContent: '', hidden: false, querySelector: () => null };
+}
+const bodyEl = makeEl();
+globalThis.document = {
+  querySelector: (sel) => (sel === '#areaDetailBody' ? bodyEl : makeEl()),
+};
+
+eval(pick('escapeHtml') + pick('environmentSensorCard') + pick('renderAreaDetail'));
+
+const area = {
+  icon: 'home',
+  name: 'Bedroom',
+  custom: false,
+  devices: [
+    {
+      kind: 'environment',
+      data: { name: 'Govee Thermo-Hygrometer', room: 'Bedroom', model: 'H5140', online: true, temperature: 21.5, humidity: 44 },
+    },
+  ],
+};
+
+renderAreaDetail(area);
+console.log(JSON.stringify({ html: bodyEl.innerHTML }));
+"""
+    result = _run_node(script, tmp_path)
+    html = result["html"]
+    assert "area-subsection" in html
+    assert "Environment" in html
+    assert "device-grid" in html
+    assert "Govee Thermo-Hygrometer" in html
+    # sdc-card / sdc-gauges-row only come from environmentSensorCard's own
+    # markup, proving the bucket is rendered via that shared function and
+    # not a bespoke renderer.
+    assert "sdc-card" in html
+    assert "sdc-gauges-row" in html

@@ -3082,6 +3082,7 @@ const AREA_KIND_ICONS = {
   thermostat: "ti-temperature",
   ambient: "ti-lamp-2",
   humidifier: "ti-droplet",
+  environment: "ti-temperature-celsius",
 };
 
 function areaSlug(name) {
@@ -3230,6 +3231,7 @@ function areaCardHtml(area) {
   const sensors  = area.devices.filter((d) => d.kind === "sensor").length;
   const ambient  = area.devices.filter((d) => d.kind === "ambient").length;
   const humidifiers = area.devices.filter((d) => d.kind === "humidifier").length;
+  const environment = area.devices.filter((d) => d.kind === "environment").length;
   const temp     = areaTemperature(area);
   const lit      = lightsOn > 0;
 
@@ -3242,6 +3244,7 @@ function areaCardHtml(area) {
   if (sensors) chips.push(`<span class="area-chip"><i class="ti ti-radar-2"></i>${sensors}</span>`);
   if (ambient) chips.push(`<span class="area-chip"><i class="ti ti-lamp-2"></i>${ambient}</span>`);
   if (humidifiers) chips.push(`<span class="area-chip"><i class="ti ti-droplet"></i>${humidifiers}</span>`);
+  if (environment) chips.push(`<span class="area-chip"><i class="ti ti-temperature-celsius"></i>${environment}</span>`);
 
   const count = area.devices.length;
   return `
@@ -4138,6 +4141,7 @@ function renderAreaDetail(area) {
   const thermostats = area.devices.filter((d) => d.kind === "thermostat").map((d) => d.data);
   const ambient     = area.devices.filter((d) => d.kind === "ambient").map((d) => d.data);
   const humidifiers = area.devices.filter((d) => d.kind === "humidifier").map((d) => d.data);
+  const environment = area.devices.filter((d) => d.kind === "environment").map((d) => d.data);
 
   const sections = [];
   if (switches.length) {
@@ -4180,6 +4184,13 @@ function renderAreaDetail(area) {
       <div class="area-subsection">
         <div class="area-subsection-title"><i class="ti ti-droplet"></i> Humidifiers</div>
         <div class="ambient-grid">${humidifiers.map(humidifierCard).join("")}</div>
+      </div>`);
+  }
+  if (environment.length) {
+    sections.push(`
+      <div class="area-subsection">
+        <div class="area-subsection-title"><i class="ti ti-temperature-celsius"></i> Environment</div>
+        <div class="device-grid">${environment.map(environmentSensorCard).join("")}</div>
       </div>`);
   }
   body.innerHTML = sections.join("");
