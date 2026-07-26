@@ -115,6 +115,19 @@ def test_no_two_device_groups_share_a_colour() -> None:
     assert not duplicates, f"colour reused across sibling groups: {duplicates} in {used}"
 
 
+def test_devices_parent_colour_differs_from_all_its_children() -> None:
+    """DEVICE_GROUP_VIEWS covers only the seven children, so the parent row's
+    colour went unchecked and stayed on --accent alongside Plugs two rows below.
+    The parent is visible at the same time as every child, so it needs its own."""
+    colors = _group_colors(STYLES_CSS.read_text(encoding="utf-8"))
+
+    parent = colors.get("devices")
+    assert parent is not None, "no --group-color for the devices parent"
+
+    clashes = [v for v in DEVICE_GROUP_VIEWS if colors.get(v) == parent]
+    assert not clashes, f"Devices parent shares {parent} with child view(s): {clashes}"
+
+
 def test_sidebar_and_tile_group_colors_match_for_every_group() -> None:
     """The entire reason --group-color is a single shared declaration is to keep
     the sidebar item and the Devices overview tile from drifting apart. If

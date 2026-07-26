@@ -21,6 +21,7 @@
   --pink:         #f472b6;
   --teal:         #2dd4bf;
   --indigo:       #818cf8;
+  --slate:        #94a3b8;
   --text:         #dde3f0;
   --muted:        #4e5470;
   --font:         'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -399,7 +400,9 @@ aside {
 
 /* Top-level views outside the Devices group. Sharing a colour across sections
    is fine; sharing between siblings is not. */
-.room-item[data-view="devices"]       { --group-color: var(--accent); }
+/* The Devices parent is a container, not another device category, so it takes a
+   neutral tone rather than competing with its seven coloured children. */
+.room-item[data-view="devices"]       { --group-color: var(--slate); }
 .room-item[data-view="homeassistant"] { --group-color: var(--purple); }
 .room-item[data-view="cameras"]       { --group-color: var(--green); }
 

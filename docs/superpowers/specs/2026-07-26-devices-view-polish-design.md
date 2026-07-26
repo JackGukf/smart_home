@@ -67,9 +67,15 @@ New palette variables, following the existing naming and saturation:
 --indigo: #818cf8;
 ```
 
+The **Devices parent** takes a new `--slate: #94a3b8;`. The table above covers
+only the seven children, so the parent row would otherwise have stayed on
+`--accent` alongside Plugs two rows below it — the very collision this section
+set out to remove. A neutral tone also reads correctly: the parent is a
+container, not another device category competing with its children.
+
 Only Ambient (`--purple`) still matches a top-level view (Home Asst). Collisions
-**across** sidebar sections are acceptable; collisions between adjacent siblings
-in the same group are what read as a bug.
+**across** sidebar sections are acceptable; collisions between rows visible at
+the same time in the same section are what read as a bug.
 
 `--group-color` must have a sensible fallback so a group without an assignment
 still renders — default it to `var(--muted)` on `.device-group-tile`.
