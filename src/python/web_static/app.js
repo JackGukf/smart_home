@@ -3155,6 +3155,16 @@ function collectHomeInventory() {
     });
   }
 
+  for (const sensor of latestEnvironmentSensors) {
+    inventory.push({
+      key: `env:${areaSlug(sensor.name || "environment sensor")}`,
+      kind: "environment",
+      name: sensor.name,
+      room: sensor.room || "",
+      data: sensor,
+    });
+  }
+
   return inventory;
 }
 
