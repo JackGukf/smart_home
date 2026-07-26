@@ -3169,6 +3169,42 @@ function collectHomeInventory() {
   return inventory;
 }
 
+/* ── Device group membership ──
+   Membership is multi-valued on purpose: a 4-in-1 sensor belongs in both
+   Environment and Sensors, because those are two views of its readings rather
+   than two competing homes. A per-device override adds or removes one group
+   without disturbing the others. */
+function resolveDeviceGroupMembers(group, inventory, overrides) {
+  const kinds = new Set(group.kinds || []);
+  const rules = overrides || {};
+  return inventory.filter((item) => {
+    const rule = rules[item.key] || {};
+    if ((rule.exclude || []).includes(group.id)) return false;
+    if ((rule.include || []).includes(group.id)) return true;
+    return kinds.has(item.kind);
+  });
+}
+
+/* Palette names the sidebar and tiles may use. The value that reaches the DOM
+   is always chosen from this table, never built from the stored string. */
+const GROUP_COLOR_VARS = {
+  accent: "var(--accent)", amber: "var(--amber)", cyan: "var(--cyan)",
+  green: "var(--green)", indigo: "var(--indigo)", orange: "var(--orange)",
+  pink: "var(--pink)", purple: "var(--purple)", red: "var(--red)",
+  slate: "var(--slate)", teal: "var(--teal)",
+};
+
+const GROUP_ICON_PATTERN = /^[a-z0-9-]{1,32}$/;
+
+function deviceGroupNavPlan(groups) {
+  return (groups || []).map((group) => ({
+    id: group.id,
+    name: group.name,
+    icon: GROUP_ICON_PATTERN.test(String(group.icon || "")) ? group.icon : "device-desktop",
+    color: GROUP_COLOR_VARS[group.color] || GROUP_COLOR_VARS.slate,
+  }));
+}
+
 /* Resolve every device into an area: explicit assignment wins, then a room
    name that exactly matches a defined area. Everything else lands in the
    catch-all "Unassigned" bucket — room names never spawn areas on their own,

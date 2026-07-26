@@ -132,3 +132,114 @@ console.log(JSON.stringify({ html: bodyEl.innerHTML }));
     # not a bespoke renderer.
     assert "sdc-card" in html
     assert "sdc-gauges-row" in html
+
+
+GROUPS_JS = """
+const groups = [
+  { id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'] },
+  { id: 'climate', name: 'Climate', icon: 'temperature', color: 'orange', kinds: ['thermostat'] },
+  { id: 'environment', name: 'Environment', icon: 'temperature-celsius', color: 'teal',
+    kinds: ['sensor', 'environment'], readingFilter: 'environment' },
+  { id: 'tuya', name: 'Sensors', icon: 'radar-2', color: 'indigo',
+    kinds: ['sensor'], readingFilter: 'sensors' },
+];
+const inventory = [
+  { key: 'dev:1', kind: 'light', name: 'Hall light' },
+  { key: 'thermo:1', kind: 'thermostat', name: 'Upstairs' },
+  { key: 'sensor:hub', kind: 'sensor', name: 'Hub' },
+  { key: 'env:govee', kind: 'environment', name: 'Govee' },
+];
+const members = (id, overrides) => resolveDeviceGroupMembers(
+  groups.find((g) => g.id === id), inventory, overrides || {}
+).map((m) => m.key);
+"""
+
+
+def test_type_rule_collects_matching_devices(tmp_path: Path) -> None:
+    script = f"""
+eval(pick('resolveDeviceGroupMembers'));
+{GROUPS_JS}
+console.log(JSON.stringify({{
+  lights: members('lights'),
+  climate: members('climate'),
+}}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["lights"] == ["dev:1"]
+    assert result["climate"] == ["thermo:1"]
+
+
+def test_a_sensor_appears_in_both_split_groups(tmp_path: Path) -> None:
+    """Environment and Sensors are two views of one device's readings, not two
+    competing homes. Environment also collects the standalone Govee sensor."""
+    script = f"""
+eval(pick('resolveDeviceGroupMembers'));
+{GROUPS_JS}
+console.log(JSON.stringify({{
+  environment: members('environment'),
+  sensors: members('tuya'),
+}}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["environment"] == ["sensor:hub", "env:govee"]
+    assert result["sensors"] == ["sensor:hub"]
+
+
+def test_exclude_override_removes_an_auto_collected_device(tmp_path: Path) -> None:
+    script = f"""
+eval(pick('resolveDeviceGroupMembers'));
+{GROUPS_JS}
+const ov = {{ 'dev:1': {{ include: [], exclude: ['lights'] }} }};
+console.log(JSON.stringify({{ lights: members('lights', ov) }}));
+"""
+    assert _run_node(script, tmp_path)["lights"] == []
+
+
+def test_include_override_adds_a_device_its_kind_does_not_match(tmp_path: Path) -> None:
+    script = f"""
+eval(pick('resolveDeviceGroupMembers'));
+{GROUPS_JS}
+const ov = {{ 'thermo:1': {{ include: ['lights'], exclude: [] }} }};
+console.log(JSON.stringify({{ lights: members('lights', ov) }}));
+"""
+    assert _run_node(script, tmp_path)["lights"] == ["dev:1", "thermo:1"]
+
+
+def test_overrides_for_unknown_devices_and_groups_are_harmless(tmp_path: Path) -> None:
+    script = f"""
+eval(pick('resolveDeviceGroupMembers'));
+{GROUPS_JS}
+const ov = {{
+  'dev:never-seen': {{ include: ['lights'], exclude: [] }},
+  'dev:1': {{ include: ['deleted-group'], exclude: [] }},
+}};
+console.log(JSON.stringify({{ lights: members('lights', ov) }}));
+"""
+    assert _run_node(script, tmp_path)["lights"] == ["dev:1"]
+
+
+def test_nav_plan_preserves_order_and_maps_colours(tmp_path: Path) -> None:
+    script = f"""
+eval(src.slice(src.indexOf('const GROUP_COLOR_VARS'), src.indexOf('function deviceGroupNavPlan')) + pick('deviceGroupNavPlan') + 'const x=0;');
+{GROUPS_JS}
+console.log(JSON.stringify(deviceGroupNavPlan(groups)));
+"""
+    plan = _run_node(script, tmp_path)
+
+    assert [p["id"] for p in plan] == ["lights", "climate", "environment", "tuya"]
+    assert plan[0]["color"] == "var(--amber)"
+
+
+def test_nav_plan_neutralises_an_unknown_colour(tmp_path: Path) -> None:
+    """The colour reaches a CSS custom property, so an unexpected value must
+    resolve to a known variable rather than being passed through."""
+    script = """
+eval(src.slice(src.indexOf('const GROUP_COLOR_VARS'), src.indexOf('function deviceGroupNavPlan')) + pick('deviceGroupNavPlan') + 'const x=0;');
+const groups = [{ id: 'x', name: 'X', icon: 'bulb', color: 'red; background:url(y)', kinds: [] }];
+console.log(JSON.stringify(deviceGroupNavPlan(groups)));
+"""
+    plan = _run_node(script, tmp_path)
+
+    assert plan[0]["color"] == "var(--slate)"
