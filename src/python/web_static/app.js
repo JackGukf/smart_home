@@ -325,11 +325,14 @@ function renderDevicesOverview() {
   if (!grid) return;
   grid.innerHTML = deviceGroupTileData().map((tile) => `
     <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}">
-      <div class="device-group-tile-head">
-        <i class="ti ${tile.icon}" aria-hidden="true"></i>${escapeHtml(tile.label)}
+      <div class="device-group-tile-accent" aria-hidden="true"></div>
+      <div class="device-group-tile-body">
+        <div class="device-group-tile-head">
+          <i class="ti ${tile.icon}" aria-hidden="true"></i>${escapeHtml(tile.label)}
+        </div>
+        <div class="device-group-tile-count">${tile.count}</div>
+        <div class="device-group-tile-summary">${escapeHtml(tile.summary)}</div>
       </div>
-      <div class="device-group-tile-count">${tile.count}</div>
-      <div class="device-group-tile-summary">${escapeHtml(tile.summary)}</div>
     </article>
   `).join("");
 }

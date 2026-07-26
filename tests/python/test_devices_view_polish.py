@@ -61,3 +61,32 @@ def test_sidebar_icon_reads_the_group_color_variable() -> None:
     css = STYLES_CSS.read_text(encoding="utf-8")
 
     assert re.search(r"\.room-icon\s*\{[^}]*color:\s*var\(--group-color", css)
+
+
+def test_tile_markup_has_an_accent_strip_and_keeps_navigation() -> None:
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    assert "device-group-tile-accent" in javascript
+    # Navigation still rides the existing document-level [data-goto-view] handler.
+    assert 'data-goto-view="${escapeHtml(tile.view)}"' in javascript
+
+
+def test_tile_accent_and_icon_read_the_group_colour() -> None:
+    css = STYLES_CSS.read_text(encoding="utf-8")
+
+    accent = re.search(r"\.device-group-tile-accent\s*\{([^}]*)\}", css)
+    assert accent, "no .device-group-tile-accent rule"
+    assert "var(--group-color" in accent.group(1)
+
+    icon = re.search(r"\.device-group-tile-head\s+i\s*\{([^}]*)\}", css)
+    assert icon, "no .device-group-tile-head i rule"
+    assert "var(--group-color" in icon.group(1)
+
+
+def test_tile_has_a_group_colour_fallback() -> None:
+    """A group without an assignment must still render, not vanish."""
+    css = STYLES_CSS.read_text(encoding="utf-8")
+
+    tile = re.search(r"\.device-group-tile\s*\{([^}]*)\}", css)
+    assert tile, "no .device-group-tile rule"
+    assert "--group-color:" in tile.group(1), "tile needs a default --group-color"

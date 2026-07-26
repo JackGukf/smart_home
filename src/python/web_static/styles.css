@@ -441,34 +441,54 @@ aside {
 }
 
 .device-group-tile {
+  --group-color: var(--muted);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 18px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  overflow: hidden;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
 }
 
 .device-group-tile:hover {
   background: var(--card-2);
   border-color: var(--border-hover);
+  transform: translateY(-1px);
+}
+
+.device-group-tile-accent {
+  height: 3px;
+  background: var(--group-color);
+  flex-shrink: 0;
+}
+
+.device-group-tile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px 18px;
 }
 
 .device-group-tile-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--muted);
+  gap: 8px;
+  color: var(--text);
   font-size: 13px;
   font-weight: 500;
 }
 
+.device-group-tile-head i {
+  font-size: 20px;
+  color: var(--group-color);
+}
+
 .device-group-tile-count {
   font-family: var(--mono);
-  font-size: 26px;
+  font-size: 28px;
+  line-height: 1;
   color: var(--text);
 }
 
