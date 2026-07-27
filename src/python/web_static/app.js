@@ -1795,6 +1795,7 @@ function renderEnvironmentSensors() {
   if (!grid) return;
   if (total === 0) {
     grid.innerHTML = '<div class="empty">No temperature or humidity sensors reporting yet.</div>';
+    renderForeignKinds("environment", ["sensor", "environment"], "#environmentGrid");
     return;
   }
   grid.innerHTML =
@@ -2013,6 +2014,7 @@ function renderThermostats(payload) {
 
   if (groupThermostats.length === 0) {
     thermostatGrid.innerHTML = `<div class="empty">${escapeHtml(payload?.message || "No Ecobee thermostats configured yet. Add them to configs/devices.local.yaml.")}</div>`;
+    renderForeignKinds("climate", ["thermostat"], "#thermostatGrid");
     return;
   }
 

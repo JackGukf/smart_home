@@ -278,13 +278,15 @@ def test_foreign_kinds_render_even_when_native_list_is_empty() -> None:
     renderForeignKinds runs, or a device a user moved into that group
     vanishes silently whenever the group has no native devices of its own.
 
-    Regression coverage for renderAmbientLights, renderHumidifiers, and
-    renderTuyaDevices, each of which used to `return;` out of its
-    empty-native-list branch before reaching its renderForeignKinds() call.
+    Regression coverage for renderAmbientLights, renderHumidifiers,
+    renderTuyaDevices, renderThermostats, and renderEnvironmentSensors, each
+    of which used to `return;` out of its empty-native-list branch before
+    reaching its renderForeignKinds() call.
     """
     javascript = APP_JS.read_text(encoding="utf-8")
 
-    for fn in ["renderAmbientLights", "renderHumidifiers", "renderTuyaDevices"]:
+    for fn in ["renderAmbientLights", "renderHumidifiers", "renderTuyaDevices",
+               "renderThermostats", "renderEnvironmentSensors"]:
         body = _function_body(javascript, fn)
         foreign_at = body.index("renderForeignKinds(")
         preamble = body[:foreign_at]
@@ -308,10 +310,9 @@ def test_render_devices_has_no_early_return_before_foreign_kinds() -> None:
     unconditionally at the end of the function. Pin that shape so nobody
     "fixes" it redundantly later.
 
-    (renderThermostats and renderEnvironmentSensors were also checked by
-    hand while diagnosing this bug and found to have the identical
-    early-return defect; fixing those is out of scope for this change and
-    intentionally left untouched here.)"""
+    (renderThermostats and renderEnvironmentSensors had the identical
+    early-return defect and are now covered by
+    test_foreign_kinds_render_even_when_native_list_is_empty above.)"""
     javascript = APP_JS.read_text(encoding="utf-8")
 
     body = _function_body(javascript, "renderDevices")
