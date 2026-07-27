@@ -319,3 +319,230 @@ def test_render_devices_has_no_early_return_before_foreign_kinds() -> None:
     assert body.rstrip().endswith(
         'renderForeignKinds("plugs", ["plug"], "#plugGrid");\n}'
     )
+
+
+# ── "not configured" vs "not in this group" ──
+#
+# Moving a device out of its native group used to make the panel claim
+# nothing of that kind was configured at all -- false whenever the device
+# exists but simply lives in a different group (or no group). Each of the
+# five panels below must tell those two situations apart: an empty full list
+# keeps the original copy, a non-empty full list with an empty group gets a
+# new "not in this group" message.
+
+
+def test_render_ambient_lights_distinguishes_empty_group_from_nothing_configured(tmp_path: Path) -> None:
+    script = f"""
+{RESOLVE_JS}
+globalThis.ambientGrid = {{ innerHTML: "" }};
+globalThis.ambientCount = {{ textContent: "" }};
+globalThis.renderForeignKinds = () => {{}};
+eval(pick('findDeviceGroup') + pick('groupMemberData') + pick('renderAmbientLights'));
+
+const results = {{}};
+
+// Nothing of this kind exists anywhere.
+collectHomeInventory = () => ([]);
+globalThis.latestDeviceGroups = [
+  {{ id: 'ambient', name: 'Ambient', icon: 'lamp-2', color: 'amber', kinds: ['ambient'] }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+renderAmbientLights({{ lights: [] }});
+results.nothingConfigured = ambientGrid.innerHTML;
+
+// One light exists, but the user moved it out of the Ambient group.
+resolveDeviceGroups.cache = null;
+collectHomeInventory = () => ([
+  {{ key: 'ambient:1', kind: 'ambient', name: 'Lamp', room: 'Den', data: {{ id: '1', name: 'Lamp' }} }},
+]);
+globalThis.latestDeviceGroupOverrides = {{ 'ambient:1': {{ include: [], exclude: ['ambient'] }} }};
+renderAmbientLights({{ lights: [{{ id: '1', name: 'Lamp' }}] }});
+results.excludedFromGroup = ambientGrid.innerHTML;
+
+console.log(JSON.stringify(results));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert "No ambient lights configured yet" in result["nothingConfigured"]
+    assert "No devices in this group" in result["excludedFromGroup"]
+    assert "No ambient lights configured yet" not in result["excludedFromGroup"]
+
+
+def test_render_humidifiers_distinguishes_empty_group_from_nothing_configured(tmp_path: Path) -> None:
+    script = f"""
+{RESOLVE_JS}
+const humidifierGridEl = {{ innerHTML: "" }};
+const humidifierCountEl = {{ textContent: "" }};
+globalThis.document = {{
+  querySelector: (sel) => {{
+    if (sel === "#humidifierGrid") return humidifierGridEl;
+    if (sel === "#humidifierCount") return humidifierCountEl;
+    return null;
+  }},
+}};
+globalThis.renderForeignKinds = () => {{}};
+eval(pick('findDeviceGroup') + pick('groupMemberData') + pick('renderHumidifiers'));
+
+const results = {{}};
+
+// Nothing of this kind exists anywhere.
+collectHomeInventory = () => ([]);
+globalThis.latestDeviceGroups = [
+  {{ id: 'humidifier', name: 'Humidifiers', icon: 'droplet', color: 'cyan', kinds: ['humidifier'] }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+renderHumidifiers({{ humidifiers: [] }});
+results.nothingConfigured = humidifierGridEl.innerHTML;
+
+// One humidifier exists, but the user moved it out of the group.
+resolveDeviceGroups.cache = null;
+collectHomeInventory = () => ([
+  {{ key: 'humidifier:1', kind: 'humidifier', name: 'Bedroom Humidifier', room: 'Bedroom',
+     data: {{ id: '1', name: 'Bedroom Humidifier' }} }},
+]);
+globalThis.latestDeviceGroupOverrides = {{ 'humidifier:1': {{ include: [], exclude: ['humidifier'] }} }};
+renderHumidifiers({{ humidifiers: [{{ id: '1', name: 'Bedroom Humidifier' }}] }});
+results.excludedFromGroup = humidifierGridEl.innerHTML;
+
+console.log(JSON.stringify(results));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert "No humidifiers configured yet" in result["nothingConfigured"]
+    assert "No devices in this group" in result["excludedFromGroup"]
+    assert "No humidifiers configured yet" not in result["excludedFromGroup"]
+
+
+def test_render_tuya_devices_distinguishes_empty_group_from_nothing_configured(tmp_path: Path) -> None:
+    script = f"""
+{RESOLVE_JS}
+globalThis.tuyaGrid = {{ innerHTML: "" }};
+globalThis.tuyaCount = {{ textContent: "" }};
+globalThis.renderForeignKinds = () => {{}};
+globalThis.sensorGroupCount = () => 0;
+eval(pick('findDeviceGroup') + pick('groupMemberData') + pick('renderTuyaDevices'));
+
+const results = {{}};
+
+// Nothing of this kind exists anywhere.
+collectHomeInventory = () => ([]);
+globalThis.latestDeviceGroups = [
+  {{ id: 'tuya', name: 'Sensors', icon: 'antenna', color: 'teal', kinds: ['sensor'] }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+renderTuyaDevices([]);
+results.nothingConfigured = tuyaGrid.innerHTML;
+
+// A Tuya sensor exists on the network, but not as a member of this group.
+resolveDeviceGroups.cache = null;
+renderTuyaDevices([
+  {{ id: 's1', name: 'Living Room Temperature', category: 'tuya_temperature', device_class: 'temperature' }},
+]);
+results.excludedFromGroup = tuyaGrid.innerHTML;
+
+console.log(JSON.stringify(results));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert "No Tuya devices found from Home Assistant yet" in result["nothingConfigured"]
+    assert "No devices in this group" in result["excludedFromGroup"]
+    assert "No Tuya devices found from Home Assistant yet" not in result["excludedFromGroup"]
+
+
+def test_render_environment_sensors_distinguishes_empty_group_from_nothing_configured(tmp_path: Path) -> None:
+    """sensorGroupCount() is pre-existing, unchanged code (it already backs the
+    Environment overview tile) -- stub it directly so this test isolates the
+    new fullTotal branch the fix adds, rather than re-deriving the whole
+    expandSensorReadings/groupHasViewContent capability chain."""
+    script = f"""
+{RESOLVE_JS}
+const environmentGridEl = {{ innerHTML: "" }};
+const environmentCountEl = {{ textContent: "" }};
+globalThis.document = {{
+  querySelector: (sel) => {{
+    if (sel === "#environmentGrid") return environmentGridEl;
+    if (sel === "#environmentCount") return environmentCountEl;
+    return null;
+  }},
+}};
+globalThis.renderForeignKinds = () => {{}};
+let sensorGroupCountValue = 0;
+globalThis.sensorGroupCount = () => sensorGroupCountValue;
+eval(pick('findDeviceGroup') + pick('groupMemberData') + pick('renderEnvironmentSensors'));
+
+const results = {{}};
+
+// Nothing of this kind exists anywhere.
+collectHomeInventory = () => ([]);
+globalThis.latestDeviceGroups = [
+  {{ id: 'environment', name: 'Environment', icon: 'temperature-celsius', color: 'cyan',
+     kinds: ['sensor', 'environment'] }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+globalThis.latestEnvironmentSensors = [];
+sensorGroupCountValue = 0;
+renderEnvironmentSensors();
+results.nothingConfigured = environmentGridEl.innerHTML;
+
+// A temperature/humidity device exists, just excluded from this group.
+resolveDeviceGroups.cache = null;
+sensorGroupCountValue = 1;
+renderEnvironmentSensors();
+results.excludedFromGroup = environmentGridEl.innerHTML;
+
+console.log(JSON.stringify(results));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert "No temperature or humidity sensors reporting yet" in result["nothingConfigured"]
+    assert "No devices in this group" in result["excludedFromGroup"]
+    assert "No temperature or humidity sensors reporting yet" not in result["excludedFromGroup"]
+
+
+def test_render_thermostats_distinguishes_empty_group_from_nothing_configured(tmp_path: Path) -> None:
+    """Direct regression test for the reported bug: with one Ecobee thermostat
+    on the network moved out of the Climate group, the panel must not claim
+    nothing is configured. thermostatCount and indoorTemp were already correct
+    per the reviewer's report -- pin that they stay correct after the fix."""
+    script = f"""
+{RESOLVE_JS}
+globalThis.thermostatGrid = {{ innerHTML: "" }};
+globalThis.thermostatCount = {{ textContent: "" }};
+globalThis.indoorTemp = {{ textContent: "" }};
+globalThis.renderForeignKinds = () => {{}};
+eval(pick('escapeHtml') + pick('findDeviceGroup') + pick('groupMemberData') + pick('renderThermostats'));
+
+const results = {{}};
+
+// Nothing of this kind exists anywhere.
+collectHomeInventory = () => ([]);
+globalThis.latestDeviceGroups = [
+  {{ id: 'climate', name: 'Climate', icon: 'temperature', color: 'orange', kinds: ['thermostat'] }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+renderThermostats({{ thermostats: [] }});
+results.nothingConfigured = thermostatGrid.innerHTML;
+
+// One Ecobee thermostat exists, but the user moved it out of Climate.
+resolveDeviceGroups.cache = null;
+collectHomeInventory = () => ([
+  {{ key: 'thermo:1', kind: 'thermostat', name: 'Hallway', room: '',
+     data: {{ id: '1', name: 'Hallway', temperature: 70, temperature_unit: 'F' }} }},
+]);
+globalThis.latestDeviceGroupOverrides = {{ 'thermo:1': {{ include: [], exclude: ['climate'] }} }};
+renderThermostats({{ thermostats: [{{ id: '1', name: 'Hallway', temperature: 70, temperature_unit: 'F' }}] }});
+results.excludedFromGroup = thermostatGrid.innerHTML;
+results.thermostatCount = thermostatCount.textContent;
+results.indoorTemp = indoorTemp.textContent;
+
+console.log(JSON.stringify(results));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert "No Ecobee thermostats configured yet" in result["nothingConfigured"]
+    assert "No devices in this group" in result["excludedFromGroup"]
+    assert "No Ecobee thermostats configured yet" not in result["excludedFromGroup"]
+    # The reviewer confirmed these counters already counted the moved-out
+    # thermostat correctly -- this is a copy bug only, not a data bug.
+    assert result["thermostatCount"] == "1"
+    assert result["indoorTemp"] == "70°F"

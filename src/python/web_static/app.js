@@ -956,7 +956,10 @@ function renderAmbientLights(payload) {
   if (ambientCount) ambientCount.textContent = String(lights.length);
   if (!ambientGrid) return;
   if (lights.length === 0) {
-    ambientGrid.innerHTML = '<div class="empty">No ambient lights configured yet. Add Govee/Lepro entries to configs/devices.local.yaml.</div>';
+    const message = latestAmbientLights.length === 0
+      ? "No ambient lights configured yet. Add Govee/Lepro entries to configs/devices.local.yaml."
+      : "No devices in this group. Use Manage to add some.";
+    ambientGrid.innerHTML = `<div class="empty">${message}</div>`;
     renderForeignKinds("ambient", ["ambient"], "#ambientGrid");
     return;
   }
@@ -1046,7 +1049,10 @@ function renderHumidifiers(payload) {
   if (badge) badge.textContent = String(humidifiers.length);
   if (!grid) return;
   if (humidifiers.length === 0) {
-    grid.innerHTML = '<div class="empty">No humidifiers configured yet. Add a humidifiers: section to configs/devices.local.yaml.</div>';
+    const message = latestHumidifiers.length === 0
+      ? "No humidifiers configured yet. Add a humidifiers: section to configs/devices.local.yaml."
+      : "No devices in this group. Use Manage to add some.";
+    grid.innerHTML = `<div class="empty">${message}</div>`;
     renderForeignKinds("humidifier", ["humidifier"], "#humidifierGrid");
     return;
   }
@@ -1753,7 +1759,11 @@ function renderTuyaDevices(devices) {
   tuyaCount.textContent = String(sensorGroupCount("sensors"));
 
   if (visibleDevices.length === 0) {
-    tuyaGrid.innerHTML = '<div class="empty">No Tuya devices found from Home Assistant yet.</div>';
+    const anyTuyaDevices = latestTuyaDevices.filter((d) => !isTuyaCamera(d)).length > 0;
+    const message = anyTuyaDevices
+      ? "No devices in this group. Use Manage to add some."
+      : "No Tuya devices found from Home Assistant yet.";
+    tuyaGrid.innerHTML = `<div class="empty">${message}</div>`;
     renderForeignKinds("tuya", ["sensor"], "#tuyaGrid");
     return;
   }
@@ -1794,7 +1804,11 @@ function renderEnvironmentSensors() {
   if (badge) badge.textContent = String(total);
   if (!grid) return;
   if (total === 0) {
-    grid.innerHTML = '<div class="empty">No temperature or humidity sensors reporting yet.</div>';
+    const fullTotal = sensorGroupCount("environment") + latestEnvironmentSensors.length;
+    const message = fullTotal === 0
+      ? "No temperature or humidity sensors reporting yet."
+      : "No devices in this group. Use Manage to add some.";
+    grid.innerHTML = `<div class="empty">${message}</div>`;
     renderForeignKinds("environment", ["sensor", "environment"], "#environmentGrid");
     return;
   }
@@ -2013,7 +2027,10 @@ function renderThermostats(payload) {
   }
 
   if (groupThermostats.length === 0) {
-    thermostatGrid.innerHTML = `<div class="empty">${escapeHtml(payload?.message || "No Ecobee thermostats configured yet. Add them to configs/devices.local.yaml.")}</div>`;
+    const message = thermostats.length === 0
+      ? (payload?.message || "No Ecobee thermostats configured yet. Add them to configs/devices.local.yaml.")
+      : "No devices in this group. Use Manage to add some.";
+    thermostatGrid.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
     renderForeignKinds("climate", ["thermostat"], "#thermostatGrid");
     return;
   }
