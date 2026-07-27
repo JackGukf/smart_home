@@ -957,6 +957,7 @@ function renderAmbientLights(payload) {
   if (!ambientGrid) return;
   if (lights.length === 0) {
     ambientGrid.innerHTML = '<div class="empty">No ambient lights configured yet. Add Govee/Lepro entries to configs/devices.local.yaml.</div>';
+    renderForeignKinds("ambient", ["ambient"], "#ambientGrid");
     return;
   }
   ambientGrid.innerHTML = lights.map(ambientLightCard).join("");
@@ -1046,6 +1047,7 @@ function renderHumidifiers(payload) {
   if (!grid) return;
   if (humidifiers.length === 0) {
     grid.innerHTML = '<div class="empty">No humidifiers configured yet. Add a humidifiers: section to configs/devices.local.yaml.</div>';
+    renderForeignKinds("humidifier", ["humidifier"], "#humidifierGrid");
     return;
   }
   grid.innerHTML = humidifiers.map(humidifierCard).join("");
@@ -1752,6 +1754,7 @@ function renderTuyaDevices(devices) {
 
   if (visibleDevices.length === 0) {
     tuyaGrid.innerHTML = '<div class="empty">No Tuya devices found from Home Assistant yet.</div>';
+    renderForeignKinds("tuya", ["sensor"], "#tuyaGrid");
     return;
   }
 

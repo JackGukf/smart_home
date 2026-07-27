@@ -254,3 +254,67 @@ def test_global_stats_still_come_from_the_full_device_list(tmp_path: Path) -> No
 
     stats = body[body.index("deviceCount.textContent"):body.index("cameraTabCount.textContent")]
     assert "groupMemberData" not in stats
+
+
+def _function_body(javascript: str, name: str) -> str:
+    """Brace-match a top-level function's body, anchored on the opening paren
+    so a prefix match (e.g. renderDevices vs renderDevicesOverview) can't win."""
+    at = javascript.index(f"function {name}(")
+    depth, body = 0, None
+    for j in range(javascript.index("{", at), len(javascript)):
+        if javascript[j] == "{":
+            depth += 1
+        elif javascript[j] == "}":
+            depth -= 1
+            if depth == 0:
+                body = javascript[at:j + 1]
+                break
+    assert body is not None, f"unbalanced braces for function {name}"
+    return body
+
+
+def test_foreign_kinds_render_even_when_native_list_is_empty() -> None:
+    """A group's bespoke renderer must never early-return before
+    renderForeignKinds runs, or a device a user moved into that group
+    vanishes silently whenever the group has no native devices of its own.
+
+    Regression coverage for renderAmbientLights, renderHumidifiers, and
+    renderTuyaDevices, each of which used to `return;` out of its
+    empty-native-list branch before reaching its renderForeignKinds() call.
+    """
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    for fn in ["renderAmbientLights", "renderHumidifiers", "renderTuyaDevices"]:
+        body = _function_body(javascript, fn)
+        foreign_at = body.index("renderForeignKinds(")
+        preamble = body[:foreign_at]
+        # Ignore the `if (!x) return;` DOM-missing guards near the top of
+        # each function (e.g. `if (!ambientGrid) return;`) — those aren't the
+        # bug under test. What must not exist is a `return;` that follows an
+        # empty-native-list `.innerHTML =` assignment, i.e. the empty-state
+        # branch. So assert no bare `return;` appears anywhere after the
+        # first `.innerHTML =` assignment and before renderForeignKinds().
+        first_innerhtml = preamble.index(".innerHTML")
+        after_innerhtml = preamble[first_innerhtml:]
+        assert "return;" not in after_innerhtml, (
+            f"{fn} still returns before its renderForeignKinds() call, "
+            "so foreign devices in an otherwise-empty group would vanish"
+        )
+
+
+def test_render_devices_has_no_early_return_before_foreign_kinds() -> None:
+    """Companion check to the fix above: renderDevices has no empty-native-
+    list branch at all, so its two renderForeignKinds() calls already run
+    unconditionally at the end of the function. Pin that shape so nobody
+    "fixes" it redundantly later.
+
+    (renderThermostats and renderEnvironmentSensors were also checked by
+    hand while diagnosing this bug and found to have the identical
+    early-return defect; fixing those is out of scope for this change and
+    intentionally left untouched here.)"""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    body = _function_body(javascript, "renderDevices")
+    assert body.rstrip().endswith(
+        'renderForeignKinds("plugs", ["plug"], "#plugGrid");\n}'
+    )
