@@ -661,3 +661,79 @@ def test_manage_modal_markup_exists() -> None:
         start = html.index(f'data-view-panel="{view}"')
         end = html.index("data-view-panel=", start + 10) if "data-view-panel=" in html[start + 10:] else len(html)
         assert "data-manage-group" in html[start:end], f"{view} panel has no Manage Devices button"
+
+
+def test_manage_devices_rule_member_ignores_overrides(tmp_path: Path) -> None:
+    """renderManageDevicesList must resolve data-rule-member against an EMPTY
+    overrides map, so the attribute reflects the group's kind rule alone --
+    independent of any override the user already set. That value is read back
+    by toggleManageDevice as ruleSaysMember and decides which deviation gets
+    stored on the next toggle; resolving it against the real overrides instead
+    would silently invert membership for any device already overridden in."""
+    script = f"""
+{RESOLVE_JS}
+const list = {{ innerHTML: "" }};
+globalThis.document = {{
+  querySelector: (sel) => (sel === "#manageDevicesList" ? list : null),
+}};
+collectHomeInventory = () => ([
+  {{ key: 'dev:1', kind: 'light', name: 'Kitchen Light' }},
+  {{ key: 'dev:2', kind: 'plug', name: 'Office Plug' }},
+]);
+globalThis.latestDeviceGroups = [
+  {{ id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'] }},
+];
+// dev:2 is a plug -- it fails the group's kind rule -- and is only a member
+// because of an explicit include override, not because the rule says so.
+globalThis.latestDeviceGroupOverrides = {{ 'dev:2': {{ include: ['lights'], exclude: [] }} }};
+globalThis.manageDevicesGroupId = 'lights';
+eval(pick('escapeHtml') + constOf('AREA_KIND_ICONS') + pick('findDeviceGroup') + pick('renderManageDevicesList'));
+renderManageDevicesList();
+const rows = [...list.innerHTML.matchAll(/data-manage-key="([^"]+)"[\\s\\S]*?data-rule-member="(\\d)"/g)]
+  .map((m) => ({{ key: m[1], ruleMember: m[2] }}));
+console.log(JSON.stringify(rows));
+"""
+    result = _run_node(script, tmp_path)
+    by_key = {row["key"]: row["ruleMember"] for row in result}
+
+    assert by_key["dev:1"] == "1"  # member because its kind matches the rule
+    assert by_key["dev:2"] == "0"  # member only via override -- rule says no
+
+
+def test_toggle_manage_device_reverts_checkbox_on_failed_save(tmp_path: Path) -> None:
+    """The browser flips checkbox.checked natively before the delegated change
+    handler ever runs. If the PUT to /api/device-groups/overrides rejects, a
+    failed save must not leave that native flip in place -- the checkbox has to
+    go back to what it was before the user touched it, and the failure must
+    reach the user (not just the console)."""
+    script = """
+globalThis.latestDeviceGroupOverrides = {};
+globalThis.manageDevicesGroupId = 'lights';
+globalThis.requestJson = async () => { throw new Error('boom'); };
+globalThis.loadDeviceGroups = async () => { throw new Error('must not run when the save failed'); };
+globalThis.renderManageDevicesList = () => { throw new Error('must not run when the save failed'); };
+globalThis.loadDevices = () => Promise.resolve();
+const logCalls = [];
+globalThis.logActivity = (text, type) => { logCalls.push({ text, type }); };
+const consoleErrors = [];
+globalThis.console = {
+  log: (...args) => process.stdout.write(args.join(' ') + '\\n'),
+  error: (e) => consoleErrors.push(String(e && e.message || e)),
+};
+
+eval(pick('mergedOverrideFor') + 'async ' + pick('toggleManageDevice'));
+
+// The checkbox was unchecked; the user just ticked it, so the browser has
+// already flipped .checked to true before this handler runs.
+const checkbox = { dataset: { manageKey: 'dev:1', ruleMember: '0' }, checked: true };
+
+toggleManageDevice(checkbox)
+  .catch((error) => { consoleErrors.push('unhandled: ' + error.message); })
+  .then(() => {
+    console.log(JSON.stringify({ checked: checkbox.checked, logCalls, consoleErrors }));
+  });
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["checked"] is False, "checkbox must be reverted to its pre-toggle state on failure"
+    assert len(result["logCalls"]) == 1, "the failure must be surfaced to the user, not just logged to console"

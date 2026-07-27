@@ -3369,12 +3369,23 @@ function renderManageDevicesList() {
 async function toggleManageDevice(checkbox) {
   const deviceKey = checkbox.dataset.manageKey;
   const ruleSaysMember = checkbox.dataset.ruleMember === "1";
-  const body = mergedOverrideFor(deviceKey, manageDevicesGroupId, checkbox.checked, ruleSaysMember);
-  await requestJson("/api/device-groups/overrides", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ device_key: deviceKey, include: body.include, exclude: body.exclude }),
-  });
+  const wantsMember = checkbox.checked;
+  const body = mergedOverrideFor(deviceKey, manageDevicesGroupId, wantsMember, ruleSaysMember);
+  try {
+    await requestJson("/api/device-groups/overrides", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_key: deviceKey, include: body.include, exclude: body.exclude }),
+    });
+  } catch (error) {
+    // The browser has already flipped checkbox.checked natively before this
+    // handler runs, so a failed save must put it back or the UI shows a
+    // membership change that was never persisted.
+    checkbox.checked = !wantsMember;
+    console.error(error);
+    logActivity("Device group update failed", "warn");
+    return;
+  }
   await loadDeviceGroups();
   renderManageDevicesList();
   loadDevices().catch((error) => console.error(error));
