@@ -1050,3 +1050,208 @@ console.log(JSON.stringify({
     assert result["seen"] == ["devices", "movie-night"]
     assert result["runtimePanelActive"] is True
     assert result["staticPanelActive"] is False
+
+
+# ── Final whole-branch review fixes ──
+#
+# Fix 1: a custom group can never be the startup view, and never appears in the
+#        startup dropdown, because initDefaultView built the dropdown and called
+#        activateView(getDefaultView()) synchronously while loadDeviceGroups()
+#        -- the only thing that adds a custom group's <li> to the nav -- was
+#        fired and forgotten as the IIFE's last statement.
+# Fix 2: the Devices overview grid never showed custom groups or Unassigned.
+# Fix 3: a dynamic (custom/Unassigned) panel went stale while open, because it
+#        only re-rendered when activateView navigated to it, not on the 60s
+#        loadDevices() poll the seven built-in panels use.
+
+
+def test_saved_custom_group_default_view_resolves_once_nav_synced(tmp_path: Path) -> None:
+    """Regression test for Fix 1. Before the fix, initDefaultView built the
+    dropdown and activated getDefaultView() synchronously -- before
+    loadDeviceGroups() (fired-and-forgotten) had ever added the custom group's
+    <li> to the nav -- so a saved default_view naming that group always fell
+    back to "home", and the dropdown never listed it either. The fix must
+    still activate something immediately (so the dashboard is not blank while
+    the fetch is in flight), then correct course once the nav is synced."""
+    script = """
+globalThis.Node = { TEXT_NODE: 3 };
+const roomItems = [
+  { dataset: { view: "home" }, childNodes: [{ nodeType: 3, textContent: "Home" }] },
+  { dataset: { view: "lights" }, childNodes: [{ nodeType: 3, textContent: "Lights" }] },
+];
+const selectEl = { innerHTML: "", value: "", options: [], selectedIndex: 0, addEventListener() {} };
+globalThis.document = {
+  querySelector: (sel) => (sel === "#defaultViewSelect" ? selectEl : null),
+  querySelectorAll: (sel) => (sel === ".room-item[data-view]" ? roomItems : []),
+};
+const store = { default_view: "movie-night" };
+globalThis.localStorage = {
+  getItem: (k) => (k in store ? store[k] : null),
+  setItem: (k, v) => { store[k] = String(v); },
+};
+const activateViewCalls = [];
+globalThis.activateView = (view) => { activateViewCalls.push(view); };
+globalThis.loadAmbientLights = async () => {};
+globalThis.loadHumidifiers = async () => {};
+globalThis.loadEnvironmentSensors = async () => {};
+let loadDeviceGroupsResolve;
+globalThis.loadDeviceGroups = () => new Promise((resolve) => { loadDeviceGroupsResolve = resolve; });
+
+eval(constOf('DEFAULT_VIEW_KEY') + pick('railButtonEls') + pick('escapeHtml')
+   + pick('getDefaultView') + pick('populateDefaultViewSelect') + pick('initDefaultView'));
+
+async function run() {
+  initDefaultView();
+  const initialActivation = [...activateViewCalls];
+  const initialSelectHtml = selectEl.innerHTML;
+
+  // Simulate loadDeviceGroups()'s effect: syncDeviceGroupNav has now added
+  // the custom group's <li> to the nav.
+  roomItems.push({ dataset: { view: "movie-night" }, childNodes: [{ nodeType: 3, textContent: "Movie Night" }] });
+  loadDeviceGroupsResolve();
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+
+  console.log(JSON.stringify({
+    initialActivation,
+    initialSelectHtml,
+    activateViewCalls,
+    finalSelectHtml: selectEl.innerHTML,
+    resolvedDefault: getDefaultView(),
+  }));
+}
+run();
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["initialActivation"] == ["home"], (
+        "must activate something immediately so the dashboard is not blank while groups load"
+    )
+    assert 'value="movie-night"' not in result["initialSelectHtml"]
+    assert result["activateViewCalls"] == ["home", "movie-night"], (
+        "the saved custom-group view must be activated once the nav is synced, "
+        "and home must not be re-activated a second time"
+    )
+    assert 'value="movie-night"' in result["finalSelectHtml"], (
+        "the startup dropdown must be rebuilt to include the custom group"
+    )
+    assert result["resolvedDefault"] == "movie-night"
+
+
+def test_device_group_tile_data_includes_dynamic_groups_and_keeps_builtins(tmp_path: Path) -> None:
+    """Regression test for Fix 2. The overview grid must gain a tile for every
+    group resolveDeviceGroups() returns -- a user-created group and the
+    synthetic auto:unassigned bucket -- while the seven built-in tiles keep
+    their exact existing label/icon/count/summary."""
+    script = f"""
+{RESOLVE_JS}
+globalThis.latestDeviceGroups = [
+  {{ id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'], builtin: true }},
+  {{ id: 'climate', name: 'Climate', icon: 'temperature', color: 'orange', kinds: ['thermostat'], builtin: true }},
+  {{ id: 'movie-night', name: 'Movie Night', icon: 'device-tv', color: 'purple', kinds: [], builtin: false }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+collectHomeInventory = () => ([
+  {{ key: 'dev:1', kind: 'light', name: 'Hall light' }},
+  {{ key: 'thermo:1', kind: 'thermostat', name: 'Upstairs' }},
+  {{ key: 'plug:1', kind: 'plug', name: 'Spare plug' }},
+]);
+globalThis.latestSwitchDevices = [
+  {{ host: 'h1', category: 'light_switch', name: 'Hall light', is_on: true, online: true }},
+];
+globalThis.latestMatterDevices = [];
+globalThis.latestAmbientLights = [];
+globalThis.latestHumidifiers = [];
+globalThis.latestThermostats = [{{ id: 't1', name: 'Upstairs', online: true }}];
+globalThis.latestEnvironmentSensors = [];
+globalThis.sensorGroupCount = () => 0;
+globalThis.sensorsTileGroups = () => [];
+globalThis.environmentSummary = () => 'No readings';
+
+eval(constOf('GROUP_COLOR_VARS') + constOf('GROUP_ICON_PATTERN') + constOf('BUILTIN_TILE_VIEWS')
+   + pick('dynamicGroupTileData') + pick('deviceGroupTileData'));
+
+const tiles = deviceGroupTileData();
+console.log(JSON.stringify({{
+  views: tiles.map((t) => t.view),
+  lights: tiles.find((t) => t.view === 'lights'),
+  plugs: tiles.find((t) => t.view === 'plugs'),
+  movie: tiles.find((t) => t.view === 'movie-night'),
+  unassigned: tiles.find((t) => t.view === 'auto:unassigned'),
+}}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["views"][:7] == [
+        "lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate",
+    ]
+    assert "movie-night" in result["views"]
+    assert "auto:unassigned" in result["views"]
+
+    # The seven built-ins must keep their exact existing shape.
+    assert result["lights"] == {
+        "view": "lights", "label": "Lights", "icon": "ti-bulb", "count": 1, "summary": "1 of 1 on",
+    }
+    assert result["plugs"] == {
+        "view": "plugs", "label": "Plugs", "icon": "ti-plug", "count": 0, "summary": "0 of 0 on",
+    }
+
+    movie = result["movie"]
+    assert movie["label"] == "Movie Night"
+    assert movie["icon"] == "ti-device-tv"
+    assert movie["count"] == 0
+    assert movie["summary"] == "0 devices"
+    assert movie["color"] == "var(--purple)"
+
+    unassigned = result["unassigned"]
+    assert unassigned["label"] == "Unassigned"
+    assert unassigned["count"] == 1
+    assert unassigned["summary"] == "1 device"
+    assert unassigned["color"] == "var(--slate)"
+
+
+def test_active_dynamic_panel_refreshes_on_the_poll_path(tmp_path: Path) -> None:
+    """Regression test for Fix 3. The seven built-in panels already refresh on
+    every loadDevices() poll via their bespoke renderers; a dynamic group panel
+    has none, so it must be re-rendered explicitly -- but only when it is the
+    one currently on screen, and never when a built-in panel is active."""
+    script = f"""
+{RESOLVE_JS}
+globalThis.latestDeviceGroups = [
+  {{ id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'], builtin: true }},
+  {{ id: 'movie-night', name: 'Movie Night', icon: 'device-tv', color: 'purple', kinds: [], builtin: false }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+collectHomeInventory = () => ([]);
+
+function makePanel(view, active) {{
+  return {{ dataset: {{ viewPanel: view }}, classList: {{
+    _on: new Set(active ? ['active'] : []),
+    contains(c) {{ return this._on.has(c); }},
+  }} }};
+}}
+const panels = [makePanel('lights', true), makePanel('movie-night', false)];
+globalThis.document = {{ querySelectorAll: (sel) => (sel.includes('view-panel') ? panels : []) }};
+
+const renderCalls = [];
+globalThis.renderDynamicGroupPanel = (id) => {{ renderCalls.push(id); }};
+
+eval(pick('viewPanelEls') + pick('findDeviceGroup') + pick('refreshActiveDynamicGroupPanel'));
+
+// Case 1: the built-in Lights panel is active -- must not render anything.
+refreshActiveDynamicGroupPanel();
+const afterBuiltinActive = [...renderCalls];
+
+// Case 2: the custom Movie Night panel is active -- must render exactly it.
+panels[0].classList._on.delete('active');
+panels[1].classList._on.add('active');
+resolveDeviceGroups.cache = null;
+refreshActiveDynamicGroupPanel();
+
+console.log(JSON.stringify({{ afterBuiltinActive, afterDynamicActive: renderCalls }}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["afterBuiltinActive"] == [], "a built-in panel being active must not trigger a re-render"
+    assert result["afterDynamicActive"] == ["movie-night"], (
+        "the active dynamic panel must be re-rendered, and only that one"
+    )

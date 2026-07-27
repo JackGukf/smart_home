@@ -303,6 +303,28 @@ function setDevicesGroupOpen(open) {
   });
 })();
 
+/* The seven built-in views already covered by the hardcoded tiles below. Any
+   other id resolveDeviceGroups() returns — a user-created group, or the
+   synthetic auto:unassigned bucket — gets a dynamic tile appended instead. */
+const BUILTIN_TILE_VIEWS = new Set(["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]);
+
+/* Tile for a user-created group or auto:unassigned. name/icon/color are
+   user-supplied via the API, so the name is escaped at render time (like every
+   other tile label) and the colour is routed through the same GROUP_COLOR_VARS
+   allowlist deviceGroupNavPlan uses for the sidebar — never a raw stored value. */
+function dynamicGroupTileData(group) {
+  const icon = GROUP_ICON_PATTERN.test(String(group.icon || "")) ? group.icon : "device-desktop";
+  const count = group.devices.length;
+  return {
+    view: group.id,
+    label: group.name,
+    icon: `ti-${icon}`,
+    color: GROUP_COLOR_VARS[group.color] || GROUP_COLOR_VARS.slate,
+    count,
+    summary: `${count} device${count === 1 ? "" : "s"}`,
+  };
+}
+
 /* Devices overview tiles. Renders from arrays already in memory — no fetches. */
 function deviceGroupTileData() {
   const allSwitchLike = [...latestSwitchDevices, ...latestMatterDevices];
@@ -311,7 +333,7 @@ function deviceGroupTileData() {
   const onOf = (list) => `${list.filter((d) => d.is_on).length} of ${list.length} on`;
   const onlineOf = (list) => `${list.filter((d) => d.online !== false).length} online`;
 
-  return [
+  const builtinTiles = [
     { view: "lights",     label: "Lights",      icon: "ti-bulb",       count: lights.length,                 summary: onOf(lights) },
     { view: "plugs",      label: "Plugs",       icon: "ti-plug",       count: plugs.length,                  summary: onOf(plugs) },
     { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: latestAmbientLights.length,    summary: onlineOf(latestAmbientLights) },
@@ -320,6 +342,12 @@ function deviceGroupTileData() {
     { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(sensorsTileGroups()) },
     { view: "climate",    label: "Climate",     icon: "ti-temperature",count: latestThermostats.length,      summary: onlineOf(latestThermostats) },
   ];
+
+  const dynamicTiles = resolveDeviceGroups()
+    .filter((group) => !BUILTIN_TILE_VIEWS.has(group.id))
+    .map(dynamicGroupTileData);
+
+  return [...builtinTiles, ...dynamicTiles];
 }
 
 /* Average temperature across environment groups, for the overview tile. */
@@ -349,11 +377,11 @@ function renderDevicesOverview() {
 
   if (!grid) return;
   grid.innerHTML = deviceGroupTileData().map((tile) => `
-    <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}">
+    <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}"${tile.color ? ` style="--group-color:${tile.color}"` : ""}>
       <div class="device-group-tile-accent" aria-hidden="true"></div>
       <div class="device-group-tile-body">
         <div class="device-group-tile-head">
-          <i class="ti ${tile.icon}" aria-hidden="true"></i>${escapeHtml(tile.label)}
+          <i class="ti ${escapeHtml(tile.icon)}" aria-hidden="true"></i>${escapeHtml(tile.label)}
         </div>
         <div class="device-group-tile-count">${tile.count}</div>
         <div class="device-group-tile-summary">${escapeHtml(tile.summary)}</div>
@@ -3099,6 +3127,7 @@ async function loadDevices() {
   _updateMatterServerStatus(matterData.matter_online ?? false);
   _renderMatterDeviceList(matterData.devices || []);
   renderHomeView();
+  refreshActiveDynamicGroupPanel();
 
   if (statusDot) statusDot.classList.add("online");
   apiStatus.textContent = "Online";
@@ -3383,6 +3412,22 @@ function renderDynamicGroupPanel(groupId) {
   }
   body.innerHTML = genericGroupSectionsHtml(group.devices);
   hydrateGenericGroupBody(body, group.devices);
+}
+
+/* The seven built-in panels refresh on every loadDevices() poll because their
+   bespoke renderers (renderAmbientLights, renderThermostats, ...) are called
+   from it directly. A dynamic group panel has no bespoke renderer -- it only
+   ever repaints when activateView navigates to it -- so a user sitting on one
+   would see it go stale until they left and came back. Re-render only the
+   active dynamic panel, keyed off the group's own builtin flag rather than
+   DEVICE_GROUP_VIEWS, so this also covers the synthetic auto:unassigned view. */
+function refreshActiveDynamicGroupPanel() {
+  const activePanel = viewPanelEls().find((panel) => panel.classList.contains("active"));
+  const viewName = activePanel?.dataset.viewPanel;
+  if (!viewName) return;
+  const group = findDeviceGroup(viewName);
+  if (!group || group.builtin) return;
+  renderDynamicGroupPanel(viewName);
 }
 
 /* PUT /api/device-groups/overrides replaces a device's whole entry, so a toggle
@@ -5605,16 +5650,23 @@ function getDefaultView() {
   return "home";
 }
 
+/* Options are rebuilt from railButtonEls(), which is queried fresh -- so this
+   can be called again once loadDeviceGroups() has synced the nav and a
+   custom group's <li> exists, without duplicating the option-building logic. */
+function populateDefaultViewSelect(select) {
+  select.innerHTML = railButtonEls().map((btn) => {
+    const label = [...btn.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent.trim())
+      .join("").trim() || btn.dataset.view;
+    return `<option value="${escapeHtml(btn.dataset.view)}">${escapeHtml(label)}</option>`;
+  }).join("");
+}
+
 (function initDefaultView() {
   const select = document.querySelector("#defaultViewSelect");
   if (select) {
-    select.innerHTML = railButtonEls().map((btn) => {
-      const label = [...btn.childNodes]
-        .filter((node) => node.nodeType === Node.TEXT_NODE)
-        .map((node) => node.textContent.trim())
-        .join("").trim() || btn.dataset.view;
-      return `<option value="${escapeHtml(btn.dataset.view)}">${escapeHtml(label)}</option>`;
-    }).join("");
+    populateDefaultViewSelect(select);
     select.value = getDefaultView();
     select.addEventListener("change", () => {
       try { localStorage.setItem(DEFAULT_VIEW_KEY, select.value); } catch {}
@@ -5623,11 +5675,35 @@ function getDefaultView() {
     // Keep the row from hijacking clicks meant for the select.
     select.addEventListener("click", (event) => event.stopPropagation());
   }
-  activateView(getDefaultView());
+
+  // Activate immediately so the dashboard is never blank while the device
+  // groups document is in flight. At this instant railButtonEls() only sees
+  // the seven built-in <li>s shipped in index.html, so a saved default_view
+  // naming a custom group falls back to "home" here -- corrected below once
+  // the nav exists.
+  const initialView = getDefaultView();
+  activateView(initialView);
+
   loadAmbientLights().catch((error) => console.error(error));
   loadHumidifiers().catch((error) => console.error(error));
   loadEnvironmentSensors().catch((error) => console.error(error));
-  loadDeviceGroups().catch((error) => console.error(error));
+
+  // Once the group nav is synced, a custom group's <li> exists: rebuild the
+  // dropdown so it lists that group, and re-resolve the saved default_view --
+  // now validating against the full nav -- so a saved custom-group id is
+  // honoured instead of the "home" fallback above. Only re-activate if the
+  // resolved view actually differs, so the common case (no saved pref, or a
+  // built-in pref) never re-activates and never flickers.
+  loadDeviceGroups()
+    .then(() => {
+      if (select) {
+        populateDefaultViewSelect(select);
+        select.value = getDefaultView();
+      }
+      const resolvedView = getDefaultView();
+      if (resolvedView !== initialView) activateView(resolvedView);
+    })
+    .catch((error) => console.error(error));
 })();
 
 /* Light drag lock */
