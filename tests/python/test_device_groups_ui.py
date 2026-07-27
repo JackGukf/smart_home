@@ -1000,3 +1000,53 @@ def test_dynamic_panel_helpers_exist_and_avoid_markup_strings() -> None:
     # into markup; it is set with textContent.
     assert "textContent" in body
     assert "createElement" in body
+
+
+def test_view_panels_are_queried_fresh_not_snapshotted() -> None:
+    """Panels are created at runtime for user-made groups. A module-load
+    snapshot would never see them, so activateView's .active toggle would skip
+    the new panel — it would render its content but never become visible. Same
+    staleness class as railButtons, one line below it."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    assert "function viewPanelEls" in javascript
+    assert "const viewPanels" not in javascript
+    assert "viewPanels.forEach" not in javascript
+
+
+def test_activate_view_toggles_a_runtime_created_panel(tmp_path: Path) -> None:
+    """Behavioural proof: a panel added after module load still gets .active."""
+    script = """
+const panels = [];
+function makePanel(view) {
+  const el = { dataset: { viewPanel: view }, classList: {
+    _on: new Set(),
+    toggle(c, on) { on ? this._on.add(c) : this._on.delete(c); },
+    contains(c) { return this._on.has(c); },
+  } };
+  panels.push(el);
+  return el;
+}
+makePanel('devices');
+globalThis.document = {
+  querySelectorAll: (sel) => sel.includes('view-panel') ? panels : [],
+  querySelector: () => null,
+  body: { classList: { toggle() {} } },
+};
+eval(pick('viewPanelEls'));
+
+// A group panel created AFTER the module-load snapshot would have been taken.
+makePanel('movie-night');
+const seen = viewPanelEls().map((p) => p.dataset.viewPanel);
+viewPanelEls().forEach((p) => p.classList.toggle('active', p.dataset.viewPanel === 'movie-night'));
+console.log(JSON.stringify({
+  seen,
+  runtimePanelActive: panels[1].classList.contains('active'),
+  staticPanelActive: panels[0].classList.contains('active'),
+}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["seen"] == ["devices", "movie-night"]
+    assert result["runtimePanelActive"] is True
+    assert result["staticPanelActive"] is False

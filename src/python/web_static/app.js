@@ -139,7 +139,12 @@ const activityLog       = document.querySelector("#activityLog");
 function railButtonEls() {
   return Array.from(document.querySelectorAll(".room-item[data-view]"));
 }
-const viewPanels  = Array.from(document.querySelectorAll(".view-panel[data-view-panel]"));
+/* Queried fresh for the same reason as railButtonEls: panels are created at
+   runtime for user-made groups, and a module-load snapshot would never see
+   them — so the new panel would render its content but never get .active. */
+function viewPanelEls() {
+  return Array.from(document.querySelectorAll(".view-panel[data-view-panel]"));
+}
 
 function restoreBrandTitle() {
   if (!logoText) return;
@@ -5091,7 +5096,7 @@ function activateView(viewName) {
   railButtonEls().forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.view === viewName);
   });
-  viewPanels.forEach((panel) => {
+  viewPanelEls().forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.viewPanel === viewName);
   });
   document.body.classList.toggle("home-assistant-mode", viewName === "homeassistant");
