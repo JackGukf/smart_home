@@ -765,3 +765,216 @@ def test_colour_swatches_come_from_the_shared_allowlist(tmp_path: Path) -> None:
                 break
 
     assert "GROUP_COLOR_VARS" in body
+
+
+# ── Group create/edit modal: openGroupModal / submitGroupModal ──
+#
+# One modal, one save button, and a module-level `groupModalEditingId` decide
+# whether Save means "create" or "edit". Nothing exercised these three
+# functions before: a mutation that makes submitGroupModal always POST (an
+# edit silently creates a duplicate group instead of updating the original)
+# passed all 53 pre-existing tests. The scripts below stub `requestJson` to
+# capture the method/URL/body actually sent, and drive the real
+# openGroupModal/submitGroupModal functions extracted from app.js -- not a
+# reimplementation of their logic.
+#
+# submitGroupModal and deleteGroupFromModal are declared `async function` in
+# app.js; pick() matches on the literal text "function <name>" so the
+# extracted snippet is missing its `async` keyword (see the working
+# `'async ' + pick('toggleManageDevice')` precedent above) -- each use below
+# re-prepends it so `await` inside is legal.
+
+GROUP_MODAL_JS = """
+globalThis.latestDeviceGroups = [
+  { id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'] },
+];
+globalThis.latestDeviceGroupOverrides = {};
+
+// Minimal DOM stub for every element openGroupModal/submitGroupModal touch.
+// The icon/colour picker elements need a no-op querySelectorAll because
+// renderGroupColorPicker calls .forEach() on its result.
+const groupModalEls = {
+  '#groupModalTitle': { textContent: '' },
+  '#groupNameInput': { value: '' },
+  '#groupSave': { textContent: '' },
+  '#groupDelete': { hidden: false },
+  '#groupModalError': { hidden: false },
+  '#groupModalErrorText': { textContent: '' },
+  '#groupModal': { hidden: true },
+  '#groupIconPicker': { innerHTML: '', querySelectorAll: () => [] },
+  '#groupColorPicker': { innerHTML: '', querySelectorAll: () => [] },
+};
+globalThis.document = { querySelector: (sel) => groupModalEls[sel] || null };
+
+eval(pick('escapeHtml') + pick('findDeviceGroup') + constOf('DEVICE_GROUP_ICON_CHOICES')
+   + constOf('GROUP_COLOR_VARS') + pick('renderGroupIconPicker') + pick('renderGroupColorPicker')
+   + pick('closeGroupModal') + pick('showGroupModalError') + pick('apiErrorDetail')
+   + pick('openGroupModal') + 'async ' + pick('submitGroupModal'));
+"""
+
+
+def test_submit_group_modal_edit_sends_patch_to_the_editing_id(tmp_path: Path) -> None:
+    """With groupModalEditingId set (via a real openGroupModal('lights') call,
+    not a hand-set global), Save must PATCH /api/device-groups/lights -- not
+    POST a new group. This is the exact defect the reviewer introduced: making
+    submitGroupModal always POST turns an edit into a silent duplicate."""
+    script = f"""
+{RESOLVE_JS}
+{GROUP_MODAL_JS}
+const calls = [];
+globalThis.requestJson = async (url, options) => {{
+  calls.push({{ url, method: options.method, body: options.body }});
+  return {{}};
+}};
+globalThis.loadDeviceGroups = async () => {{}};
+globalThis.loadDevices = () => Promise.resolve();
+
+openGroupModal('lights');
+submitGroupModal().then(() => {{
+  console.log(JSON.stringify({{ calls }}));
+}});
+"""
+    result = _run_node(script, tmp_path)
+
+    assert len(result["calls"]) == 1
+    assert result["calls"][0]["method"] == "PATCH"
+    assert result["calls"][0]["url"] == "/api/device-groups/lights"
+
+
+def test_submit_group_modal_create_sends_post_with_no_group_id(tmp_path: Path) -> None:
+    """With groupModalEditingId cleared (via a real openGroupModal(null)),
+    Save must POST to the bare collection endpoint, never a per-id URL."""
+    script = f"""
+{RESOLVE_JS}
+{GROUP_MODAL_JS}
+const calls = [];
+globalThis.requestJson = async (url, options) => {{
+  calls.push({{ url, method: options.method, body: options.body }});
+  return {{}};
+}};
+globalThis.loadDeviceGroups = async () => {{}};
+globalThis.loadDevices = () => Promise.resolve();
+
+openGroupModal(null);
+groupModalEls['#groupNameInput'].value = 'New Group';
+submitGroupModal().then(() => {{
+  console.log(JSON.stringify({{ calls }}));
+}});
+"""
+    result = _run_node(script, tmp_path)
+
+    assert len(result["calls"]) == 1
+    assert result["calls"][0]["method"] == "POST"
+    assert result["calls"][0]["url"] == "/api/device-groups"
+    assert "/api/device-groups/" not in result["calls"][0]["url"]
+
+
+def test_submit_group_modal_body_carries_name_icon_and_colour(tmp_path: Path) -> None:
+    """The PATCH/POST body must reflect the modal's live state: the typed
+    name, and whichever icon/colour the user has picked (not the group's
+    original values, and not empty placeholders)."""
+    script = f"""
+{RESOLVE_JS}
+{GROUP_MODAL_JS}
+const calls = [];
+globalThis.requestJson = async (url, options) => {{
+  calls.push({{ url, method: options.method, body: JSON.parse(options.body) }});
+  return {{}};
+}};
+globalThis.loadDeviceGroups = async () => {{}};
+globalThis.loadDevices = () => Promise.resolve();
+
+openGroupModal('lights');
+groupModalEls['#groupNameInput'].value = 'Living Room Lights';
+groupModalIcon = 'sun-high';
+groupModalColor = 'teal';
+submitGroupModal().then(() => {{
+  console.log(JSON.stringify({{ body: calls[0].body }}));
+}});
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["body"] == {
+        "name": "Living Room Lights",
+        "icon": "sun-high",
+        "color": "teal",
+    }
+
+
+def test_open_group_modal_edit_then_create_fully_resets_state(tmp_path: Path) -> None:
+    """openGroupModal('lights') then openGroupModal(null) must leave no trace
+    of the edit: groupModalEditingId cleared, save label and Delete visibility
+    back to create defaults, and the name/icon/colour reset. A leaked editing
+    id is exactly what turns a subsequent create into a silent overwrite."""
+    script = f"""
+{RESOLVE_JS}
+{GROUP_MODAL_JS}
+openGroupModal('lights');
+const afterEdit = {{
+  editingId: groupModalEditingId,
+  saveLabel: groupModalEls['#groupSave'].textContent,
+  deleteHidden: groupModalEls['#groupDelete'].hidden,
+  nameValue: groupModalEls['#groupNameInput'].value,
+  icon: groupModalIcon,
+  color: groupModalColor,
+}};
+
+openGroupModal(null);
+const afterCreate = {{
+  editingId: groupModalEditingId,
+  title: groupModalEls['#groupModalTitle'].textContent,
+  saveLabel: groupModalEls['#groupSave'].textContent,
+  deleteHidden: groupModalEls['#groupDelete'].hidden,
+  nameValue: groupModalEls['#groupNameInput'].value,
+  icon: groupModalIcon,
+  color: groupModalColor,
+}};
+
+console.log(JSON.stringify({{ afterEdit, afterCreate }}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["afterEdit"]["editingId"] == "lights"
+    assert result["afterEdit"]["saveLabel"] == "Save"
+    assert result["afterEdit"]["deleteHidden"] is False
+
+    after_create = result["afterCreate"]
+    assert after_create["editingId"] is None
+    assert after_create["title"] == "New Group"
+    assert after_create["saveLabel"] == "Create Group"
+    assert after_create["deleteHidden"] is True
+    assert after_create["nameValue"] == ""
+    assert after_create["icon"] == "device-desktop"
+    assert after_create["color"] == "slate"
+
+
+def test_submit_group_modal_failed_save_shows_error_and_keeps_modal_open(tmp_path: Path) -> None:
+    """A rejected save must surface the error in the modal's own error box and
+    must NOT close the modal or refresh the group list -- the user's typed
+    name/icon/colour would otherwise vanish along with the modal, and a
+    refresh here would be indistinguishable from success."""
+    script = f"""
+{RESOLVE_JS}
+{GROUP_MODAL_JS}
+globalThis.requestJson = async () => {{ throw new Error('boom'); }};
+globalThis.loadDeviceGroups = async () => {{ throw new Error('must not run when save failed'); }};
+globalThis.loadDevices = () => {{ throw new Error('must not run when save failed'); }};
+
+openGroupModal(null);
+groupModalEls['#groupNameInput'].value = 'New Group';
+
+submitGroupModal()
+  .catch((error) => {{ throw new Error('save rejection must not propagate: ' + error.message); }})
+  .then(() => {{
+    console.log(JSON.stringify({{
+      modalHidden: groupModalEls['#groupModal'].hidden,
+      errorHidden: groupModalEls['#groupModalError'].hidden,
+      errorText: groupModalEls['#groupModalErrorText'].textContent,
+    }}));
+  }});
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["modalHidden"] is False, "a failed save must not close the modal"
+    assert result["errorHidden"] is False, "the error box must be shown"
+    assert result["errorText"] == "boom"
