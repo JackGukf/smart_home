@@ -1398,7 +1398,26 @@ document.addEventListener("click", (event) => {
 
 - [ ] **Step 7: Add the swatch styles**
 
+**`.btn-danger` does not exist in `styles.css`** — only `.btn-primary` and
+`.btn-secondary` do. The Delete button needs it, so add it here, mirroring
+`.btn-secondary` (`styles.css:3278`) and differing only in colour:
+
 ```css
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--red);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--red);
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.btn-danger:hover { background: var(--card-2); }
+
 .group-color-picker { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 
 .group-color-option {
