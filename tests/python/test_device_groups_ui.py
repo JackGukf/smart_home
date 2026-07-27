@@ -97,3 +97,99 @@ def test_render_area_detail_delegates_to_the_shared_renderer(tmp_path: Path) -> 
     assert "genericGroupSectionsHtml" in body
     # The per-kind subsection strings must live in the shared function only.
     assert "area-subsection-title" not in body
+
+
+RESOLVE_JS = """
+globalThis.latestSwitchDevices = [];
+globalThis.latestMatterDevices = [];
+globalThis.latestTuyaDevices = [];
+globalThis.latestCameras = [];
+globalThis.latestThermostats = [];
+globalThis.latestAmbientLights = [];
+globalThis.latestHumidifiers = [];
+globalThis.latestEnvironmentSensors = [];
+eval(pick('isTuyaCamera') + pick('sensorBaseName') + pick('areaSlug')
+   + pick('groupSensorDevices') + pick('isAlertDetected') + pick('cameraIdFor')
+   + pick('tuyaCameraCard') + pick('collectHomeInventory')
+   + pick('resolveDeviceGroupMembers') + constOf('UNASSIGNED_GROUP_ID')
+   + pick('resolveDeviceGroups'));
+// Stub the inventory directly so the test controls the device set exactly.
+collectHomeInventory = () => ([
+  { key: 'dev:1', kind: 'light', name: 'Hall light' },
+  { key: 'thermo:1', kind: 'thermostat', name: 'Upstairs' },
+]);
+"""
+
+
+def test_unassigned_is_absent_when_every_device_has_a_group(tmp_path: Path) -> None:
+    script = f"""
+{RESOLVE_JS}
+globalThis.latestDeviceGroups = [
+  {{ id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'] }},
+  {{ id: 'climate', name: 'Climate', icon: 'temperature', color: 'orange', kinds: ['thermostat'] }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+console.log(JSON.stringify(resolveDeviceGroups().map((g) => ({{ id: g.id, keys: g.devices.map((d) => d.key) }}))));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert [g["id"] for g in result] == ["lights", "climate"]
+    assert result[0]["keys"] == ["dev:1"]
+
+
+def test_unassigned_collects_orphans_and_sorts_last(tmp_path: Path) -> None:
+    """Built-in groups are deletable, so a device must never become invisible."""
+    script = f"""
+{RESOLVE_JS}
+globalThis.latestDeviceGroups = [
+  {{ id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'] }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+console.log(JSON.stringify(resolveDeviceGroups().map((g) => ({{ id: g.id, keys: g.devices.map((d) => d.key) }}))));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert [g["id"] for g in result] == ["lights", "auto:unassigned"]
+    assert result[-1]["keys"] == ["thermo:1"]
+
+
+def test_a_device_in_two_groups_is_not_unassigned(tmp_path: Path) -> None:
+    script = f"""
+{RESOLVE_JS}
+globalThis.latestDeviceGroups = [
+  {{ id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'] }},
+  {{ id: 'spare', name: 'Spare', icon: 'bulb', color: 'teal', kinds: ['light'] }},
+  {{ id: 'climate', name: 'Climate', icon: 'temperature', color: 'orange', kinds: ['thermostat'] }},
+];
+globalThis.latestDeviceGroupOverrides = {{}};
+const out = resolveDeviceGroups();
+console.log(JSON.stringify({{
+  ids: out.map((g) => g.id),
+  lights: out[0].devices.map((d) => d.key),
+  spare: out[1].devices.map((d) => d.key),
+}}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert "auto:unassigned" not in result["ids"]
+    assert result["lights"] == ["dev:1"]
+    assert result["spare"] == ["dev:1"]
+
+
+def test_load_stores_the_overrides_map(tmp_path: Path) -> None:
+    """Cycle 1 stored only groups; resolution needs the overrides too."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    assert "latestDeviceGroupOverrides" in javascript
+    at = javascript.index("async function loadDeviceGroups")
+    depth, body = 0, None
+    for j in range(javascript.index("{", at), len(javascript)):
+        if javascript[j] == "{":
+            depth += 1
+        elif javascript[j] == "}":
+            depth -= 1
+            if depth == 0:
+                body = javascript[at:j + 1]
+                break
+
+    assert "latestDeviceGroupOverrides" in body

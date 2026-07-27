@@ -250,6 +250,7 @@ const DEVICES_GROUP_KEY = "devices_group_open_v1";
    loads; replaced by the loaded ids once it arrives. */
 let DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
 let latestDeviceGroups = [];
+let latestDeviceGroupOverrides = {};
 
 /* Tracks whether the current view was reached from the Devices overview, so the
    back button only appears when there is somewhere to go back to. Deliberately
@@ -3188,6 +3189,43 @@ function resolveDeviceGroupMembers(group, inventory, overrides) {
   });
 }
 
+/* Devices belonging to no group at all land here, so deleting a group can never
+   make a device invisible. Mirrors the Areas feature's auto:unassigned bucket:
+   synthetic, never persisted, shown only when non-empty, always sorted last. */
+const UNASSIGNED_GROUP_ID = "auto:unassigned";
+
+function resolveDeviceGroups() {
+  const inventory = collectHomeInventory();
+  const overrides = latestDeviceGroupOverrides || {};
+  const groups = (latestDeviceGroups || []).map((group) => ({
+    ...group,
+    devices: resolveDeviceGroupMembers(group, inventory, overrides),
+  }));
+
+  const claimed = new Set();
+  groups.forEach((group) => group.devices.forEach((device) => claimed.add(device.key)));
+  const orphans = inventory.filter((item) => !claimed.has(item.key));
+  if (orphans.length) {
+    groups.push({
+      id: UNASSIGNED_GROUP_ID,
+      name: "Unassigned",
+      icon: "help-hexagon",
+      color: "slate",
+      kinds: [],
+      chrome: [],
+      readingFilter: null,
+      builtin: false,
+      synthetic: true,
+      devices: orphans,
+    });
+  }
+  return groups;
+}
+
+function findDeviceGroup(groupId) {
+  return resolveDeviceGroups().find((group) => group.id === groupId);
+}
+
 /* Palette names the sidebar and tiles may use. The value that reaches the DOM
    is always chosen from this table, never built from the stored string. */
 const GROUP_COLOR_VARS = {
@@ -3212,6 +3250,7 @@ function deviceGroupNavPlan(groups) {
 async function loadDeviceGroups() {
   const payload = await requestJson("/api/device-groups");
   latestDeviceGroups = payload.groups || [];
+  latestDeviceGroupOverrides = payload.overrides || {};
   if (latestDeviceGroups.length) {
     DEVICE_GROUP_VIEWS = latestDeviceGroups.map((group) => group.id);
   }

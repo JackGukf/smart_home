@@ -288,3 +288,17 @@ def test_overrides_round_trip_and_validate(tmp_path: Path) -> None:
     # Empty include and exclude clears the entry.
     client.put("/api/device-groups/overrides", json={"device_key": "dev:1.2.3.4"})
     assert "dev:1.2.3.4" not in client.get("/api/device-groups").json()["overrides"]
+
+
+def test_reserved_unassigned_id_is_rejected(tmp_path: Path) -> None:
+    """auto:unassigned is synthetic; a real group must never shadow it."""
+    client = _client(tmp_path)
+
+    # "Auto Unassigned" slugs to "auto-unassigned", which is fine and distinct.
+    assert client.post("/api/device-groups", json={"name": "Auto Unassigned"}).status_code == 200
+    # The reserved id itself cannot be produced by the slugger, so guard the
+    # explicit form the client could otherwise reach through the overrides API.
+    assert client.put(
+        "/api/device-groups/overrides",
+        json={"device_key": "dev:1", "include": ["auto:unassigned"]},
+    ).status_code == 404

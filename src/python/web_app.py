@@ -517,6 +517,8 @@ def create_app(
     async def device_groups_create(body: DeviceGroupCreateRequest) -> dict[str, Any]:
         doc = _load_device_groups(app.state.device_groups_path)
         group_id, name = _validated_name(body.name, doc)
+        if group_id == "auto:unassigned":
+            raise HTTPException(status_code=400, detail="That group id is reserved")
         group = {
             "id": group_id,
             "name": name,
