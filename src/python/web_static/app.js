@@ -3194,7 +3194,18 @@ function resolveDeviceGroupMembers(group, inventory, overrides) {
    synthetic, never persisted, shown only when non-empty, always sorted last. */
 const UNASSIGNED_GROUP_ID = "auto:unassigned";
 
+/* Memoised for the current synchronous turn only. A full dashboard render calls
+   this once per panel and once per foreign-kind pass — roughly a dozen times —
+   and each call otherwise rebuilds the whole inventory and re-resolves every
+   group. The microtask clear means the cache can never outlive the turn that
+   built it, so membership cannot go stale across an await.
+
+   The cache hangs off the function rather than a module-level binding so the
+   function stays self-contained: the JS test harness extracts functions by name
+   and would not carry a separate declaration along with it. */
 function resolveDeviceGroups() {
+  if (resolveDeviceGroups.cache) return resolveDeviceGroups.cache;
+
   const inventory = collectHomeInventory();
   const overrides = latestDeviceGroupOverrides || {};
   const groups = (latestDeviceGroups || []).map((group) => ({
@@ -3219,6 +3230,9 @@ function resolveDeviceGroups() {
       devices: orphans,
     });
   }
+
+  resolveDeviceGroups.cache = groups;
+  queueMicrotask(() => { resolveDeviceGroups.cache = null; });
   return groups;
 }
 
