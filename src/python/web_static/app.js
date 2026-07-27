@@ -4202,44 +4202,20 @@ function areaThermoCardHtml(thermostat) {
     </div>`;
 }
 
-function renderAreaDetail(area) {
-  const overview = document.querySelector("#homeOverview");
-  const detail   = document.querySelector("#homeAreaDetail");
-  if (!detail) return;
-  if (overview) overview.hidden = true;
-  detail.hidden = false;
-
-  const iconEl = document.querySelector("#areaDetailIcon");
-  if (iconEl) iconEl.innerHTML = `<i class="ti ti-${escapeHtml(area.icon)}"></i>`;
-  const nameEl = document.querySelector("#areaDetailName");
-  if (nameEl) nameEl.textContent = area.name;
-  const metaEl = document.querySelector("#areaDetailMeta");
-  if (metaEl) metaEl.textContent = `${area.devices.length} device${area.devices.length === 1 ? "" : "s"}`;
-  const deleteBtn = document.querySelector("#areaDeleteButton");
-  if (deleteBtn) deleteBtn.hidden = !area.custom;
-  const manageBtn = document.querySelector("#areaManageButton");
-  if (manageBtn) manageBtn.hidden = false;
-
-  const body = document.querySelector("#areaDetailBody");
-  if (!body) return;
-
-  if (area.devices.length === 0) {
-    body.innerHTML = `
-      <div class="area-empty">
-        <i class="ti ti-layout-grid-add"></i>
-        <p>No devices in this area yet.</p>
-        <button class="btn-primary" id="areaEmptyManage" type="button">Assign Devices</button>
-      </div>`;
-    return;
-  }
-
-  const switches    = area.devices.filter((d) => d.kind === "light" || d.kind === "plug").map((d) => d.data);
-  const sensors     = area.devices.filter((d) => d.kind === "sensor").map((d) => d.data);
-  const cameras     = area.devices.filter((d) => d.kind === "camera").map((d) => d.data);
-  const thermostats = area.devices.filter((d) => d.kind === "thermostat").map((d) => d.data);
-  const ambient     = area.devices.filter((d) => d.kind === "ambient").map((d) => d.data);
-  const humidifiers = area.devices.filter((d) => d.kind === "humidifier").map((d) => d.data);
-  const environment = area.devices.filter((d) => d.kind === "environment").map((d) => d.data);
+/* ── Shared mixed-device renderer ──
+   Used by both the Areas detail view and device group panels. Extracted rather
+   than copied so the two cannot drift apart as kinds are added. Takes inventory
+   entries ({key, kind, name, room, data}); returns subsection HTML. The switch
+   grid cannot be built as a string, so hydrateGenericGroupBody finishes it. */
+function genericGroupSectionsHtml(devices) {
+  const of = (kind) => devices.filter((d) => d.kind === kind).map((d) => d.data);
+  const switches    = devices.filter((d) => d.kind === "light" || d.kind === "plug").map((d) => d.data);
+  const sensors     = of("sensor");
+  const cameras     = of("camera");
+  const thermostats = of("thermostat");
+  const ambient     = of("ambient");
+  const humidifiers = of("humidifier");
+  const environment = of("environment");
 
   const sections = [];
   if (switches.length) {
@@ -4291,10 +4267,48 @@ function renderAreaDetail(area) {
         <div class="device-grid">${environment.map(environmentSensorCard).join("")}</div>
       </div>`);
   }
-  body.innerHTML = sections.join("");
+  return sections.join("");
+}
 
-  const switchGrid = body.querySelector("#areaSwitchGrid");
+function hydrateGenericGroupBody(bodyEl, devices) {
+  const switches = devices.filter((d) => d.kind === "light" || d.kind === "plug").map((d) => d.data);
+  const switchGrid = bodyEl?.querySelector("#areaSwitchGrid");
   if (switchGrid) renderDeviceGroup(switchGrid, switches, "No switches.");
+}
+
+function renderAreaDetail(area) {
+  const overview = document.querySelector("#homeOverview");
+  const detail   = document.querySelector("#homeAreaDetail");
+  if (!detail) return;
+  if (overview) overview.hidden = true;
+  detail.hidden = false;
+
+  const iconEl = document.querySelector("#areaDetailIcon");
+  if (iconEl) iconEl.innerHTML = `<i class="ti ti-${escapeHtml(area.icon)}"></i>`;
+  const nameEl = document.querySelector("#areaDetailName");
+  if (nameEl) nameEl.textContent = area.name;
+  const metaEl = document.querySelector("#areaDetailMeta");
+  if (metaEl) metaEl.textContent = `${area.devices.length} device${area.devices.length === 1 ? "" : "s"}`;
+  const deleteBtn = document.querySelector("#areaDeleteButton");
+  if (deleteBtn) deleteBtn.hidden = !area.custom;
+  const manageBtn = document.querySelector("#areaManageButton");
+  if (manageBtn) manageBtn.hidden = false;
+
+  const body = document.querySelector("#areaDetailBody");
+  if (!body) return;
+
+  if (area.devices.length === 0) {
+    body.innerHTML = `
+      <div class="area-empty">
+        <i class="ti ti-layout-grid-add"></i>
+        <p>No devices in this area yet.</p>
+        <button class="btn-primary" id="areaEmptyManage" type="button">Assign Devices</button>
+      </div>`;
+    return;
+  }
+
+  body.innerHTML = genericGroupSectionsHtml(area.devices);
+  hydrateGenericGroupBody(body, area.devices);
 }
 
 async function refreshAreas() {
