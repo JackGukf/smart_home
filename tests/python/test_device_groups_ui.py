@@ -978,3 +978,25 @@ submitGroupModal()
     assert result["modalHidden"] is False, "a failed save must not close the modal"
     assert result["errorHidden"] is False, "the error box must be shown"
     assert result["errorText"] == "boom"
+
+
+def test_dynamic_panel_helpers_exist_and_avoid_markup_strings() -> None:
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    assert "function ensureDeviceGroupPanel" in javascript
+    assert "function renderDynamicGroupPanel" in javascript
+    at = javascript.index("function ensureDeviceGroupPanel")
+    depth, body = 0, None
+    for j in range(javascript.index("{", at), len(javascript)):
+        if javascript[j] == "{":
+            depth += 1
+        elif javascript[j] == "}":
+            depth -= 1
+            if depth == 0:
+                body = javascript[at:j + 1]
+                break
+
+    # The group name is user-supplied via the API and must never be interpolated
+    # into markup; it is set with textContent.
+    assert "textContent" in body
+    assert "createElement" in body

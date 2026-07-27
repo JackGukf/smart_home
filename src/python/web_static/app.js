@@ -3307,6 +3307,79 @@ function renderForeignKinds(groupId, nativeKinds, containerId) {
   hydrateGenericGroupBody(wrap, foreign);
 }
 
+/* A group with no static panel (any user-created group, and Unassigned) gets one
+   built on demand. The name is user-supplied via the API, so it is set with
+   textContent rather than interpolated into markup. */
+function ensureDeviceGroupPanel(group) {
+  const existing = document.querySelector(`[data-view-panel="${CSS.escape(group.id)}"]`);
+  if (existing) return existing;
+
+  const host = document.querySelector('[data-view-panel="devices"]')?.parentElement;
+  if (!host) return null;
+
+  const panel = document.createElement("div");
+  panel.className = "view-panel";
+  panel.dataset.viewPanel = group.id;
+
+  const header = document.createElement("div");
+  header.className = "section-header";
+  const title = document.createElement("span");
+  title.className = "section-title";
+  title.textContent = group.name;
+  header.appendChild(title);
+
+  const actions = document.createElement("div");
+  actions.className = "section-actions";
+
+  const back = document.createElement("button");
+  back.className = "command device-back-btn";
+  back.type = "button";
+  back.setAttribute("data-back-to-devices", "");
+  back.hidden = true;
+  back.innerHTML = '<i class="ti ti-arrow-left" aria-hidden="true"></i> Devices';
+  actions.appendChild(back);
+
+  if (group.id !== UNASSIGNED_GROUP_ID) {
+    const manage = document.createElement("button");
+    manage.className = "command";
+    manage.type = "button";
+    manage.dataset.manageGroup = group.id;
+    manage.innerHTML = '<i class="ti ti-list-check" aria-hidden="true"></i> Manage';
+    actions.appendChild(manage);
+
+    const edit = document.createElement("button");
+    edit.className = "command";
+    edit.type = "button";
+    edit.dataset.editGroup = group.id;
+    edit.innerHTML = '<i class="ti ti-pencil" aria-hidden="true"></i> Edit';
+    actions.appendChild(edit);
+  }
+
+  header.appendChild(actions);
+  panel.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "device-group-body";
+  panel.appendChild(body);
+
+  host.appendChild(panel);
+  return panel;
+}
+
+function renderDynamicGroupPanel(groupId) {
+  const group = findDeviceGroup(groupId);
+  if (!group) return;
+  const panel = ensureDeviceGroupPanel(group);
+  const body = panel?.querySelector(".device-group-body");
+  if (!body) return;
+  if (!group.devices.length) {
+    body.innerHTML = '<div class="empty">No devices in this group yet. Use Manage to add some.</div>';
+    return;
+  }
+  body.innerHTML = genericGroupSectionsHtml(group.devices);
+  hydrateGenericGroupBody(body, group.devices);
+}
+
 /* PUT /api/device-groups/overrides replaces a device's whole entry, so a toggle
    must resend that device's entries for every other group. Only deviations from
    the group's kind rule are stored, so changing a rule later still flows through
@@ -3561,7 +3634,7 @@ function syncDeviceGroupNav() {
   );
   let anchor = parent;
 
-  deviceGroupNavPlan(latestDeviceGroups).forEach((entry) => {
+  deviceGroupNavPlan(resolveDeviceGroups()).forEach((entry) => {
     let item = existing.get(entry.id);
     if (!item) {
       item = document.createElement("li");
@@ -3591,6 +3664,13 @@ function syncDeviceGroupNav() {
 
   // Any child left in the map is no longer a group; drop it.
   existing.forEach((el) => el.remove());
+
+  // Groups with no static markup need a panel to navigate into.
+  resolveDeviceGroups().forEach((group) => {
+    if (!document.querySelector(`[data-view-panel="${CSS.escape(group.id)}"]`)) {
+      ensureDeviceGroupPanel(group);
+    }
+  });
 }
 
 /* Resolve every device into an area: explicit assignment wins, then a room
@@ -5039,6 +5119,9 @@ function activateView(viewName) {
   if (DEVICE_GROUP_VIEWS.includes(viewName)) {
     setDevicesGroupOpen(true);
     setDevicesBackVisible(arrivedFromDevices);
+    if (!document.querySelector(`[data-view-panel="${CSS.escape(viewName)}"] .device-grid, [data-view-panel="${CSS.escape(viewName)}"] .ambient-grid`)) {
+      renderDynamicGroupPanel(viewName);
+    }
   } else {
     setDevicesBackVisible(false);
   }
