@@ -3391,6 +3391,131 @@ async function toggleManageDevice(checkbox) {
   loadDevices().catch((error) => console.error(error));
 }
 
+const DEVICE_GROUP_ICON_CHOICES = [
+  "bulb", "plug", "lamp-2", "droplet", "temperature-celsius", "radar-2",
+  "temperature", "device-desktop", "movie", "coffee", "moon", "sun-high",
+  "shield-lock", "music", "wifi", "home",
+];
+
+let groupModalEditingId = null;
+let groupModalIcon = "device-desktop";
+let groupModalColor = "slate";
+
+function renderGroupIconPicker() {
+  const picker = document.querySelector("#groupIconPicker");
+  if (!picker) return;
+  picker.innerHTML = DEVICE_GROUP_ICON_CHOICES.map((icon) => `
+    <button class="area-icon-option${icon === groupModalIcon ? " selected" : ""}"
+            type="button" data-group-icon="${escapeHtml(icon)}">
+      <i class="ti ti-${escapeHtml(icon)}"></i>
+    </button>`).join("");
+}
+
+function renderGroupColorPicker() {
+  const picker = document.querySelector("#groupColorPicker");
+  if (!picker) return;
+  // Rendered from GROUP_COLOR_VARS so the picker cannot offer a colour the API
+  // would reject, and cannot drift from the allowlist.
+  picker.innerHTML = Object.keys(GROUP_COLOR_VARS).map((name) => `
+    <button class="group-color-option${name === groupModalColor ? " selected" : ""}"
+            type="button" data-group-color="${escapeHtml(name)}" aria-label="${escapeHtml(name)}"></button>`
+  ).join("");
+  picker.querySelectorAll("[data-group-color]").forEach((el) => {
+    el.style.setProperty("background", GROUP_COLOR_VARS[el.dataset.groupColor]);
+  });
+}
+
+function openGroupModal(groupId) {
+  const group = groupId ? findDeviceGroup(groupId) : null;
+  groupModalEditingId = group ? group.id : null;
+  groupModalIcon = group ? group.icon : "device-desktop";
+  groupModalColor = group ? group.color : "slate";
+
+  const title = document.querySelector("#groupModalTitle");
+  if (title) title.textContent = group ? `Edit ${group.name}` : "New Group";
+  const input = document.querySelector("#groupNameInput");
+  if (input) input.value = group ? group.name : "";
+  const save = document.querySelector("#groupSave");
+  if (save) save.textContent = group ? "Save" : "Create Group";
+  const del = document.querySelector("#groupDelete");
+  if (del) del.hidden = !group;
+  const error = document.querySelector("#groupModalError");
+  if (error) error.hidden = true;
+
+  renderGroupIconPicker();
+  renderGroupColorPicker();
+  const modal = document.querySelector("#groupModal");
+  if (modal) modal.hidden = false;
+}
+
+function closeGroupModal() {
+  const modal = document.querySelector("#groupModal");
+  if (modal) modal.hidden = true;
+}
+
+function showGroupModalError(message) {
+  const box = document.querySelector("#groupModalError");
+  const text = document.querySelector("#groupModalErrorText");
+  if (text) text.textContent = message;
+  if (box) box.hidden = false;
+}
+
+async function submitGroupModal() {
+  const name = (document.querySelector("#groupNameInput")?.value || "").trim();
+  const payload = { name, icon: groupModalIcon, color: groupModalColor };
+  try {
+    if (groupModalEditingId) {
+      await requestJson(`/api/device-groups/${encodeURIComponent(groupModalEditingId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      await requestJson("/api/device-groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
+  } catch (error) {
+    showGroupModalError(apiErrorDetail(error));
+    return;
+  }
+  closeGroupModal();
+  await loadDeviceGroups();
+  loadDevices().catch((err) => console.error(err));
+}
+
+async function deleteGroupFromModal() {
+  if (!groupModalEditingId) return;
+  const group = findDeviceGroup(groupModalEditingId);
+  if (!window.confirm(`Delete the "${group ? group.name : groupModalEditingId}" group? Its devices move to Unassigned.`)) return;
+  try {
+    await requestJson(`/api/device-groups/${encodeURIComponent(groupModalEditingId)}`, { method: "DELETE" });
+  } catch (error) {
+    showGroupModalError(apiErrorDetail(error));
+    return;
+  }
+  closeGroupModal();
+  await loadDeviceGroups();
+  activateView("devices");
+  loadDevices().catch((err) => console.error(err));
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#deviceGroupAdd")) { openGroupModal(null); return; }
+  const edit = event.target.closest("[data-edit-group]");
+  if (edit) { openGroupModal(edit.dataset.editGroup); return; }
+  if (event.target.closest("#closeGroupModal") || event.target.closest("#groupCancel")) { closeGroupModal(); return; }
+  if (event.target.closest("#groupSave")) { submitGroupModal().catch(console.error); return; }
+  if (event.target.closest("#groupDelete")) { deleteGroupFromModal().catch(console.error); return; }
+
+  const icon = event.target.closest("[data-group-icon]");
+  if (icon) { groupModalIcon = icon.dataset.groupIcon; renderGroupIconPicker(); return; }
+  const color = event.target.closest("[data-group-color]");
+  if (color) { groupModalColor = color.dataset.groupColor; renderGroupColorPicker(); }
+});
+
 /* Palette names the sidebar and tiles may use. The value that reaches the DOM
    is always chosen from this table, never built from the stored string. */
 const GROUP_COLOR_VARS = {

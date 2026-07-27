@@ -737,3 +737,31 @@ toggleManageDevice(checkbox)
 
     assert result["checked"] is False, "checkbox must be reverted to its pre-toggle state on failure"
     assert len(result["logCalls"]) == 1, "the failure must be surfaced to the user, not just logged to console"
+
+
+def test_group_modal_markup_and_pickers() -> None:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'id="groupModal"' in html
+    assert 'id="groupNameInput"' in html
+    assert 'id="groupIconPicker"' in html
+    assert 'id="groupColorPicker"' in html
+    assert 'id="groupDelete"' in html
+
+
+def test_colour_swatches_come_from_the_shared_allowlist(tmp_path: Path) -> None:
+    """The picker must render from GROUP_COLOR_VARS so it cannot drift from the
+    allowlist the API validates against."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+    at = javascript.index("function renderGroupColorPicker")
+    depth, body = 0, None
+    for j in range(javascript.index("{", at), len(javascript)):
+        if javascript[j] == "{":
+            depth += 1
+        elif javascript[j] == "}":
+            depth -= 1
+            if depth == 0:
+                body = javascript[at:j + 1]
+                break
+
+    assert "GROUP_COLOR_VARS" in body

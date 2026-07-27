@@ -241,11 +241,11 @@ def test_patch_rejects_bad_colour(tmp_path: Path) -> None:
     assert client.patch("/api/device-groups/lights", json={"color": "octarine"}).status_code == 400
 
 
-def test_delete_refuses_builtin_but_allows_user_groups(tmp_path: Path) -> None:
+def test_delete_allows_builtin_and_user_groups_but_404s_on_repeat(tmp_path: Path) -> None:
     client = _client(tmp_path)
     client.post("/api/device-groups", json={"name": "Movie Night"})
 
-    assert client.delete("/api/device-groups/lights").status_code == 409
+    assert client.delete("/api/device-groups/lights").status_code == 200
     assert client.delete("/api/device-groups/movie-night").status_code == 200
     assert client.delete("/api/device-groups/movie-night").status_code == 404
 
@@ -302,3 +302,24 @@ def test_reserved_unassigned_id_is_rejected(tmp_path: Path) -> None:
         "/api/device-groups/overrides",
         json={"device_key": "dev:1", "include": ["auto:unassigned"]},
     ).status_code == 404
+
+
+def test_builtin_groups_are_now_deletable(tmp_path: Path) -> None:
+    """Cycle 2 makes built-ins deletable; the synthetic Unassigned bucket is
+    what stops their devices becoming invisible."""
+    client = _client(tmp_path)
+
+    assert client.delete("/api/device-groups/lights").status_code == 200
+    remaining = [g["id"] for g in client.get("/api/device-groups").json()["groups"]]
+    assert "lights" not in remaining
+
+
+def test_deleting_a_group_cleans_up_its_overrides(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    client.put("/api/device-groups/overrides",
+               json={"device_key": "dev:1", "include": ["lights"], "exclude": ["climate"]})
+
+    client.delete("/api/device-groups/lights")
+
+    overrides = client.get("/api/device-groups").json()["overrides"]
+    assert overrides["dev:1"] == {"include": [], "exclude": ["climate"]}

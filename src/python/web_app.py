@@ -582,12 +582,7 @@ def create_app(
     @app.delete("/api/device-groups/{group_id}")
     async def device_groups_delete(group_id: str) -> dict[str, Any]:
         doc = _load_device_groups(app.state.device_groups_path)
-        group = _find_group(doc, group_id)
-        if group["builtin"]:
-            raise HTTPException(
-                status_code=409,
-                detail="Built-in groups cannot be deleted; their device kinds would have no home.",
-            )
+        _find_group(doc, group_id)
         doc["groups"] = [g for g in doc["groups"] if g["id"] != group_id]
         for rule in doc["overrides"].values():
             rule["include"] = [g for g in rule["include"] if g != group_id]
