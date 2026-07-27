@@ -847,11 +847,8 @@ function buildAlertRow(device) {
 
 /* ── TP-Link device cards ── */
 function renderDevices(devices, cameras, matterDevices = []) {
-  const matterLights = matterDevices.filter((d) => d.category === "light_switch");
-  const matterPlugs  = matterDevices.filter((d) => d.category === "smart_plug");
-
-  const lightDevices = [...devices.filter((d) => d.category === "light_switch"), ...matterLights];
-  const plugDevices  = [...devices.filter((d) => d.category === "smart_plug"),   ...matterPlugs];
+  const lightDevices = groupMemberData("lights", ["light"]);
+  const plugDevices  = groupMemberData("plugs", ["plug"]);
 
   deviceCount.textContent    = String(devices.length + matterDevices.length);
   onCount.textContent        = String([...devices, ...matterDevices].filter((d) => d.is_on === true).length);
@@ -863,6 +860,9 @@ function renderDevices(devices, cameras, matterDevices = []) {
   renderLightDragLock();
   renderDeviceGroup(lightGrid, applyDeviceOrder(lightDevices, "light_switch"), "No light switches found.");
   renderPlugSection(plugDevices);
+
+  renderForeignKinds("lights", ["light"], "#lightGrid");
+  renderForeignKinds("plugs", ["plug"], "#plugGrid");
 }
 
 function isLightDragUnlocked() {
@@ -951,8 +951,8 @@ async function loadAmbientLights() {
 }
 
 function renderAmbientLights(payload) {
-  const lights = payload?.lights || [];
-  latestAmbientLights = lights;
+  latestAmbientLights = payload?.lights || [];
+  const lights = groupMemberData("ambient", ["ambient"]);
   if (ambientCount) ambientCount.textContent = String(lights.length);
   if (!ambientGrid) return;
   if (lights.length === 0) {
@@ -961,6 +961,7 @@ function renderAmbientLights(payload) {
   }
   ambientGrid.innerHTML = lights.map(ambientLightCard).join("");
   renderDevicesOverview();
+  renderForeignKinds("ambient", ["ambient"], "#ambientGrid");
 }
 
 function ambientLightCard(light) {
@@ -1037,8 +1038,8 @@ function environmentSensorCard(sensor) {
 }
 
 function renderHumidifiers(payload) {
-  const humidifiers = payload.humidifiers || [];
-  latestHumidifiers = humidifiers;
+  latestHumidifiers = payload.humidifiers || [];
+  const humidifiers = groupMemberData("humidifier", ["humidifier"]);
   const grid = document.querySelector("#humidifierGrid");
   const badge = document.querySelector("#humidifierCount");
   if (badge) badge.textContent = String(humidifiers.length);
@@ -1049,6 +1050,7 @@ function renderHumidifiers(payload) {
   }
   grid.innerHTML = humidifiers.map(humidifierCard).join("");
   renderDevicesOverview();
+  renderForeignKinds("humidifier", ["humidifier"], "#humidifierGrid");
 }
 
 /* Night-light colour presets (RGB) offered on the humidifier card palette. */
@@ -1744,7 +1746,8 @@ function renderSensorDeviceCard(group, mode) {
 
 /* ── Tuya sensors ── */
 function renderTuyaDevices(devices) {
-  const visibleDevices = devices.filter((d) => !isTuyaCamera(d));
+  latestTuyaDevices = devices;
+  const visibleDevices = groupMemberData("tuya", ["sensor"]).flatMap((g) => g.readings).filter((d) => !isTuyaCamera(d));
   tuyaCount.textContent = String(sensorGroupCount("sensors"));
 
   if (visibleDevices.length === 0) {
@@ -1774,13 +1777,14 @@ function renderTuyaDevices(devices) {
   tuyaGrid.innerHTML = banner + groups.map((g) => renderSensorDeviceCard(g, "sensors")).join("");
   renderDevicesOverview();
   renderEnvironmentSensors();
+  renderForeignKinds("tuya", ["sensor"], "#tuyaGrid");
 }
 
 /* ── Environment (temperature & humidity) ── */
 function renderEnvironmentSensors() {
   const grid = document.querySelector("#environmentGrid");
   const badge = document.querySelector("#environmentCount");
-  const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  const visible = groupMemberData("environment", ["sensor"]).flatMap((g) => g.readings).filter((d) => !isTuyaCamera(d));
   const groups = groupSensorDevices(visible).filter((g) => groupHasViewContent(g, "environment"));
 
   const total = groups.length + latestEnvironmentSensors.length;
@@ -1793,6 +1797,7 @@ function renderEnvironmentSensors() {
   grid.innerHTML =
     latestEnvironmentSensors.map(environmentSensorCard).join("") +
     groups.map((g) => renderSensorDeviceCard(g, "environment")).join("");
+  renderForeignKinds("environment", ["sensor", "environment"], "#environmentGrid");
 }
 
 function primaryTuyaState(device) {
@@ -1991,6 +1996,8 @@ function attachThermoDrag(wrap) {
 
 function renderThermostats(payload) {
   const thermostats = payload?.thermostats || [];
+  latestThermostats = thermostats;
+  const groupThermostats = groupMemberData("climate", ["thermostat"]);
   thermostatCount.textContent = String(thermostats.length);
 
   if (thermostats.length > 0) {
@@ -2001,16 +2008,17 @@ function renderThermostats(payload) {
     }
   }
 
-  if (thermostats.length === 0) {
+  if (groupThermostats.length === 0) {
     thermostatGrid.innerHTML = `<div class="empty">${escapeHtml(payload?.message || "No Ecobee thermostats configured yet. Add them to configs/devices.local.yaml.")}</div>`;
     return;
   }
 
-  thermostatGrid.innerHTML = thermostats
+  thermostatGrid.innerHTML = groupThermostats
     .map((th) => thermoCardHtml(th, th.status || payload.status || "unknown"))
     .join("");
 
   thermostatGrid.querySelectorAll(".thermo-dial-wrap").forEach(attachThermoDrag);
+  renderForeignKinds("climate", ["thermostat"], "#thermostatGrid");
 }
 
 const THERMO_MODES_DEF = [
@@ -3238,6 +3246,38 @@ function resolveDeviceGroups() {
 
 function findDeviceGroup(groupId) {
   return resolveDeviceGroups().find((group) => group.id === groupId);
+}
+
+/* The underlying device objects for a group's members, restricted to kinds the
+   caller's renderer understands. Returns [] for an unknown group, so a deleted
+   group degrades to an empty panel rather than throwing. */
+function groupMemberData(groupId, kinds) {
+  const wanted = new Set(kinds);
+  const group = findDeviceGroup(groupId);
+  if (!group) return [];
+  return group.devices.filter((d) => wanted.has(d.kind)).map((d) => d.data);
+}
+
+/* Any device the user moved into a group whose bespoke renderer cannot display
+   it. Rendered generically below the native content so nothing silently
+   vanishes and no bespoke renderer is handed a shape it was not written for. */
+function renderForeignKinds(groupId, nativeKinds, containerId) {
+  const container = document.querySelector(containerId);
+  if (!container) return;
+  const existing = container.parentElement?.querySelector(".device-group-foreign");
+  if (existing) existing.remove();
+
+  const group = findDeviceGroup(groupId);
+  if (!group) return;
+  const native = new Set(nativeKinds);
+  const foreign = group.devices.filter((d) => !native.has(d.kind));
+  if (!foreign.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "device-group-foreign";
+  wrap.innerHTML = genericGroupSectionsHtml(foreign);
+  container.parentElement.appendChild(wrap);
+  hydrateGenericGroupBody(wrap, foreign);
 }
 
 /* Palette names the sidebar and tiles may use. The value that reaches the DOM

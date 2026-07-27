@@ -193,3 +193,64 @@ def test_load_stores_the_overrides_map(tmp_path: Path) -> None:
                 break
 
     assert "latestDeviceGroupOverrides" in body
+
+
+def test_group_member_data_filters_by_kind(tmp_path: Path) -> None:
+    script = f"""
+{RESOLVE_JS}
+globalThis.latestDeviceGroups = [
+  {{ id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'] }},
+];
+globalThis.latestDeviceGroupOverrides = {{ 'thermo:1': {{ include: ['lights'], exclude: [] }} }};
+eval(pick('findDeviceGroup') + pick('groupMemberData'));
+console.log(JSON.stringify({{
+  native: groupMemberData('lights', ['light', 'plug']).length,
+  foreign: groupMemberData('lights', ['thermostat']).length,
+}}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["native"] == 1
+    assert result["foreign"] == 1
+
+
+def test_panels_read_membership_not_type_filters(tmp_path: Path) -> None:
+    """The whole point of this cycle: an override must reach the panels."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    for fn in ["renderDevices", "renderAmbientLights", "renderHumidifiers",
+               "renderTuyaDevices", "renderThermostats"]:
+        # Anchor on the opening paren: "renderDevices" is also a prefix of
+        # "renderDevicesOverview", and an unanchored search finds that first.
+        at = javascript.index(f"function {fn}(")
+        depth, body = 0, None
+        for j in range(javascript.index("{", at), len(javascript)):
+            if javascript[j] == "{":
+                depth += 1
+            elif javascript[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    body = javascript[at:j + 1]
+                    break
+        assert "groupMemberData" in body, f"{fn} still selects devices by type"
+
+
+def test_global_stats_still_come_from_the_full_device_list(tmp_path: Path) -> None:
+    """deviceCount and onCount describe every switch, not the Lights group.
+    Sourcing them from membership would make the Status view wrong."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+    # Anchor on the opening paren: "renderDevices" is also a prefix of
+    # "renderDevicesOverview", and an unanchored search finds that first.
+    at = javascript.index("function renderDevices(")
+    depth, body = 0, None
+    for j in range(javascript.index("{", at), len(javascript)):
+        if javascript[j] == "{":
+            depth += 1
+        elif javascript[j] == "}":
+            depth -= 1
+            if depth == 0:
+                body = javascript[at:j + 1]
+                break
+
+    stats = body[body.index("deviceCount.textContent"):body.index("cameraTabCount.textContent")]
+    assert "groupMemberData" not in stats
