@@ -133,7 +133,12 @@ const cameraTabCount    = document.querySelector("#cameraTabCount");
 const weatherGrid       = document.querySelector("#weatherGrid");
 const activityLog       = document.querySelector("#activityLog");
 
-const railButtons = Array.from(document.querySelectorAll(".room-item[data-view]"));
+/* Queried fresh rather than snapshotted: groups can be created at runtime, and a
+   module-load snapshot would silently miss their nav items — losing the active
+   class, startup-view validation, and the startup dropdown entry. */
+function railButtonEls() {
+  return Array.from(document.querySelectorAll(".room-item[data-view]"));
+}
 const viewPanels  = Array.from(document.querySelectorAll(".view-panel[data-view-panel]"));
 
 function restoreBrandTitle() {
@@ -3358,10 +3363,7 @@ function syncDeviceGroupNav() {
       icon.appendChild(document.createElement("i"));
       item.appendChild(icon);
       item.appendChild(document.createTextNode(""));
-      item.addEventListener("click", () => {
-        arrivedFromDevices = false;
-        activateView(entry.id);
-      });
+      // No click listener here: the delegated sidebar handler covers created items.
     }
     existing.delete(entry.id);
 
@@ -4797,7 +4799,7 @@ function updateCachedCameraName(cameraId, name) {
 
 /* ── View navigation ── */
 function activateView(viewName) {
-  railButtons.forEach((btn) => {
+  railButtonEls().forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.view === viewName);
   });
   viewPanels.forEach((panel) => {
@@ -5261,12 +5263,14 @@ document.addEventListener("click", (event) => {
   try { localStorage.setItem("palette_theme", id); } catch {}
 });
 
-/* Sidebar navigation */
-railButtons.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    arrivedFromDevices = false;
-    activateView(btn.dataset.view);
-  });
+/* Sidebar navigation — delegated, so nav items added at runtime work without
+   registration and no item can ever be bound twice. */
+document.addEventListener("click", (event) => {
+  const item = event.target.closest(".room-item[data-view]");
+  if (!item) return;
+  if (event.target.closest(".settings-chevron")) return;
+  arrivedFromDevices = false;
+  activateView(item.dataset.view);
 });
 
 /* Back to the Devices overview */
@@ -5282,7 +5286,7 @@ const DEFAULT_VIEW_KEY = "default_view";
 function getDefaultView() {
   try {
     const saved = localStorage.getItem(DEFAULT_VIEW_KEY);
-    if (saved && railButtons.some((btn) => btn.dataset.view === saved)) return saved;
+    if (saved && railButtonEls().some((btn) => btn.dataset.view === saved)) return saved;
   } catch {}
   return "home";
 }
@@ -5290,7 +5294,7 @@ function getDefaultView() {
 (function initDefaultView() {
   const select = document.querySelector("#defaultViewSelect");
   if (select) {
-    select.innerHTML = railButtons.map((btn) => {
+    select.innerHTML = railButtonEls().map((btn) => {
       const label = [...btn.childNodes]
         .filter((node) => node.nodeType === Node.TEXT_NODE)
         .map((node) => node.textContent.trim())

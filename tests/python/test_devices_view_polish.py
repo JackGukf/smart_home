@@ -268,18 +268,19 @@ def test_flag_is_only_set_for_clicks_inside_the_devices_panel() -> None:
 
 
 def test_sidebar_click_clears_the_flag() -> None:
-    """"railButtons.forEach" appears twice: once inside activateView toggling the
-    active class, once registering the sidebar click handler. Anchor on the
-    registration's own content rather than on file position, so the test survives
-    the two being reordered or a third occurrence being added."""
+    """Sidebar clicks are handled by one delegated document listener, so nav
+    items created at runtime work without registration and none can be bound
+    twice. Identify it by the selector it matches rather than by file position,
+    and scope the assertion to its own braces so it cannot pass on a
+    neighbouring handler's contents."""
     javascript = APP_JS.read_text(encoding="utf-8")
 
-    blocks = [
+    handlers = [
         _balanced_block(javascript, at)
-        for at in _find_all(javascript, "railButtons.forEach")
+        for at in _find_all(javascript, 'document.addEventListener("click"')
     ]
-    handlers = [b for b in blocks if "addEventListener" in b]
-    assert len(handlers) == 1, (
-        f"expected exactly one railButtons click-handler registration, found {len(handlers)}"
+    sidebar = [h for h in handlers if '.room-item[data-view]' in h]
+    assert len(sidebar) == 1, (
+        f"expected exactly one delegated sidebar click handler, found {len(sidebar)}"
     )
-    assert "arrivedFromDevices = false" in handlers[0]
+    assert "arrivedFromDevices = false" in sidebar[0]

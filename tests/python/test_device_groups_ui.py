@@ -48,6 +48,29 @@ def _run_node(script: str, tmp_path: Path) -> dict:
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 
 
+def _find_all_ui(haystack: str, needle: str) -> list[int]:
+    offsets, at = [], haystack.find(needle)
+    while at != -1:
+        offsets.append(at)
+        at = haystack.find(needle, at + 1)
+    return offsets
+
+
+def _balanced_block_ui(source: str, start: int) -> str:
+    """The statement at start, extended to its matching close brace, so an
+    assertion cannot pass on a neighbouring block's contents."""
+    depth = 0
+    for i in range(source.index("{", start), len(source)):
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:i + 1]
+    raise AssertionError("unbalanced braces")
+
+
+
 def test_generic_sections_render_one_block_per_kind(tmp_path: Path) -> None:
     """One subsection per kind present, and nothing for kinds that are absent."""
     script = """
@@ -546,3 +569,44 @@ console.log(JSON.stringify(results));
     # thermostat correctly -- this is a copy bug only, not a data bug.
     assert result["thermostatCount"] == "1"
     assert result["indoorTemp"] == "70°F"
+
+
+def test_rail_buttons_are_queried_fresh_not_snapshotted() -> None:
+    """A snapshot taken at module load cannot see nav items added later, which
+    silently breaks active-class toggling and the startup-view dropdown."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+
+    assert "function railButtonEls" in javascript
+    assert "const railButtons = Array.from" not in javascript
+    assert "railButtons.forEach" not in javascript
+
+
+def test_sidebar_clicks_are_delegated_not_per_item() -> None:
+    """One delegated listener cannot double-register or miss a created item."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+    at = javascript.index("function syncDeviceGroupNav")
+    depth, body = 0, None
+    for j in range(javascript.index("{", at), len(javascript)):
+        if javascript[j] == "{":
+            depth += 1
+        elif javascript[j] == "}":
+            depth -= 1
+            if depth == 0:
+                body = javascript[at:j + 1]
+                break
+
+    assert "addEventListener" not in body, "sync must attach no listeners of its own"
+
+
+def test_delegated_sidebar_handler_ignores_the_chevron() -> None:
+    """Clicking the Devices chevron collapses the group without navigating. The
+    old per-item listeners never saw chevron clicks; a document-level one does."""
+    javascript = APP_JS.read_text(encoding="utf-8")
+    handlers = [
+        _balanced_block_ui(javascript, at)
+        for at in _find_all_ui(javascript, 'document.addEventListener("click"')
+    ]
+    sidebar = [h for h in handlers if ".room-item[data-view]" in h]
+
+    assert len(sidebar) == 1
+    assert "settings-chevron" in sidebar[0]
