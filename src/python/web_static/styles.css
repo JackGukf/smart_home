@@ -4304,6 +4304,15 @@ aside {
 .assign-device-row:hover { background: rgba(255, 255, 255, 0.04); }
 .assign-device-row.in-area { border-color: rgba(var(--t-accent-rgb), 0.3); background: rgba(var(--t-accent-rgb), 0.06); }
 
+.manage-device-why {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+  margin-right: 10px;
+}
+
+.manage-device-check { width: 16px; height: 16px; cursor: pointer; }
+
 .assign-area-select {
   flex-shrink: 0;
   max-width: 45%;

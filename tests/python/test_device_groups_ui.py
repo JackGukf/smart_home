@@ -610,3 +610,54 @@ def test_delegated_sidebar_handler_ignores_the_chevron() -> None:
 
     assert len(sidebar) == 1
     assert "settings-chevron" in sidebar[0]
+
+
+def test_override_merge_preserves_other_groups(tmp_path: Path) -> None:
+    """PUT /overrides replaces a device's entire entry, so toggling one group
+    must resend the device's entries for every other group. Getting this wrong
+    silently wipes an unrelated override."""
+    script = """
+eval(pick('mergedOverrideFor'));
+globalThis.latestDeviceGroupOverrides = {
+  'sensor:hub': { include: ['climate'], exclude: ['environment'] },
+};
+// The device is not auto-collected by 'lights', so ticking it adds an include.
+const next = mergedOverrideFor('sensor:hub', 'lights', true, false);
+console.log(JSON.stringify(next));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert sorted(result["include"]) == ["climate", "lights"]
+    assert result["exclude"] == ["environment"]
+
+
+def test_toggle_transitions_write_only_deviations(tmp_path: Path) -> None:
+    """Rule-member + wants member -> cleared. Rule-member + wants out -> exclude.
+    Not-rule-member + wants in -> include. Not-rule + wants out -> cleared."""
+    script = """
+eval(pick('mergedOverrideFor'));
+globalThis.latestDeviceGroupOverrides = {};
+console.log(JSON.stringify({
+  ruleInWantsIn:  mergedOverrideFor('dev:1', 'lights', true,  true),
+  ruleInWantsOut: mergedOverrideFor('dev:1', 'lights', false, true),
+  ruleOutWantsIn: mergedOverrideFor('dev:1', 'lights', true,  false),
+  ruleOutWantsOut:mergedOverrideFor('dev:1', 'lights', false, false),
+}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["ruleInWantsIn"] == {"include": [], "exclude": []}
+    assert result["ruleInWantsOut"] == {"include": [], "exclude": ["lights"]}
+    assert result["ruleOutWantsIn"] == {"include": ["lights"], "exclude": []}
+    assert result["ruleOutWantsOut"] == {"include": [], "exclude": []}
+
+
+def test_manage_modal_markup_exists() -> None:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'id="manageDevicesModal"' in html
+    assert 'id="manageDevicesList"' in html
+    for view in ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]:
+        start = html.index(f'data-view-panel="{view}"')
+        end = html.index("data-view-panel=", start + 10) if "data-view-panel=" in html[start + 10:] else len(html)
+        assert "data-manage-group" in html[start:end], f"{view} panel has no Manage Devices button"

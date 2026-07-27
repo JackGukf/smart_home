@@ -3307,6 +3307,79 @@ function renderForeignKinds(groupId, nativeKinds, containerId) {
   hydrateGenericGroupBody(wrap, foreign);
 }
 
+/* PUT /api/device-groups/overrides replaces a device's whole entry, so a toggle
+   must resend that device's entries for every other group. Only deviations from
+   the group's kind rule are stored, so changing a rule later still flows through
+   to devices the user never touched. */
+function mergedOverrideFor(deviceKey, groupId, shouldBeMember, ruleSaysMember) {
+  const current = (latestDeviceGroupOverrides || {})[deviceKey] || {};
+  const include = (current.include || []).filter((id) => id !== groupId);
+  const exclude = (current.exclude || []).filter((id) => id !== groupId);
+
+  if (shouldBeMember && !ruleSaysMember) include.push(groupId);
+  if (!shouldBeMember && ruleSaysMember) exclude.push(groupId);
+
+  return { include, exclude };
+}
+
+let manageDevicesGroupId = null;
+
+function openManageDevicesModal(groupId) {
+  const group = findDeviceGroup(groupId);
+  if (!group) return;
+  manageDevicesGroupId = groupId;
+  const title = document.querySelector("#manageDevicesTitle");
+  if (title) title.textContent = `Manage Devices — ${group.name}`;
+  renderManageDevicesList();
+  const modal = document.querySelector("#manageDevicesModal");
+  if (modal) modal.hidden = false;
+}
+
+function renderManageDevicesList() {
+  const list = document.querySelector("#manageDevicesList");
+  const group = findDeviceGroup(manageDevicesGroupId);
+  if (!list || !group) return;
+
+  const inventory = collectHomeInventory().sort((a, b) =>
+    a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind.localeCompare(b.kind)
+  );
+  const memberKeys = new Set(group.devices.map((d) => d.key));
+  const ruleKeys = new Set(
+    resolveDeviceGroupMembers({ ...group, kinds: group.kinds }, inventory, {}).map((d) => d.key)
+  );
+
+  list.innerHTML = inventory.map((item) => {
+    const isMember = memberKeys.has(item.key);
+    const byRule = ruleKeys.has(item.key);
+    const why = isMember ? (byRule ? "by rule" : "added") : (byRule ? "removed" : "");
+    return `
+      <div class="assign-device-row">
+        <span class="assign-device-icon"><i class="ti ${AREA_KIND_ICONS[item.kind] || "ti-cpu"}"></i></span>
+        <span class="assign-device-name">${escapeHtml(item.name)}</span>
+        <span class="manage-device-why">${escapeHtml(why)}</span>
+        <input class="manage-device-check" type="checkbox"
+               data-manage-key="${escapeHtml(item.key)}"
+               data-rule-member="${byRule ? "1" : "0"}"
+               ${isMember ? "checked" : ""}
+               aria-label="Include ${escapeHtml(item.name)} in this group">
+      </div>`;
+  }).join("");
+}
+
+async function toggleManageDevice(checkbox) {
+  const deviceKey = checkbox.dataset.manageKey;
+  const ruleSaysMember = checkbox.dataset.ruleMember === "1";
+  const body = mergedOverrideFor(deviceKey, manageDevicesGroupId, checkbox.checked, ruleSaysMember);
+  await requestJson("/api/device-groups/overrides", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device_key: deviceKey, include: body.include, exclude: body.exclude }),
+  });
+  await loadDeviceGroups();
+  renderManageDevicesList();
+  loadDevices().catch((error) => console.error(error));
+}
+
 /* Palette names the sidebar and tiles may use. The value that reaches the DOM
    is always chosen from this table, never built from the stored string. */
 const GROUP_COLOR_VARS = {
@@ -5278,6 +5351,23 @@ document.addEventListener("click", (event) => {
   if (!event.target.closest("[data-back-to-devices]")) return;
   arrivedFromDevices = false;
   activateView("devices");
+});
+
+document.addEventListener("click", (event) => {
+  const open = event.target.closest("[data-manage-group]");
+  if (open) {
+    openManageDevicesModal(open.dataset.manageGroup);
+    return;
+  }
+  if (event.target.closest("#closeManageDevices") || event.target.closest("#manageDevicesDone")) {
+    const modal = document.querySelector("#manageDevicesModal");
+    if (modal) modal.hidden = true;
+  }
+});
+
+document.addEventListener("change", (event) => {
+  const checkbox = event.target.closest(".manage-device-check");
+  if (checkbox) toggleManageDevice(checkbox).catch((error) => console.error(error));
 });
 
 /* ── Startup (default) view ── */
