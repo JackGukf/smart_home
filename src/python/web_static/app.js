@@ -246,7 +246,10 @@ function logActivity(text, type = "normal") {
 
 /* ── Devices sidebar group ── */
 const DEVICES_GROUP_KEY = "devices_group_open_v1";
-const DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
+/* Seeded to the built-in groups so the sidebar works before the group document
+   loads; replaced by the loaded ids once it arrives. */
+let DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
+let latestDeviceGroups = [];
 
 /* Tracks whether the current view was reached from the Devices overview, so the
    back button only appears when there is somewhere to go back to. Deliberately
@@ -3082,6 +3085,7 @@ const AREA_KIND_ICONS = {
   thermostat: "ti-temperature",
   ambient: "ti-lamp-2",
   humidifier: "ti-droplet",
+  environment: "ti-temperature-celsius",
 };
 
 function areaSlug(name) {
@@ -3155,7 +3159,112 @@ function collectHomeInventory() {
     });
   }
 
+  for (const sensor of latestEnvironmentSensors) {
+    inventory.push({
+      key: `env:${areaSlug(sensor.name || "environment sensor")}`,
+      kind: "environment",
+      name: sensor.name,
+      room: sensor.room || "",
+      data: sensor,
+    });
+  }
+
   return inventory;
+}
+
+/* ── Device group membership ──
+   Membership is multi-valued on purpose: a 4-in-1 sensor belongs in both
+   Environment and Sensors, because those are two views of its readings rather
+   than two competing homes. A per-device override adds or removes one group
+   without disturbing the others. */
+function resolveDeviceGroupMembers(group, inventory, overrides) {
+  const kinds = new Set(group.kinds || []);
+  const rules = overrides || {};
+  return inventory.filter((item) => {
+    const rule = rules[item.key] || {};
+    if ((rule.exclude || []).includes(group.id)) return false;
+    if ((rule.include || []).includes(group.id)) return true;
+    return kinds.has(item.kind);
+  });
+}
+
+/* Palette names the sidebar and tiles may use. The value that reaches the DOM
+   is always chosen from this table, never built from the stored string. */
+const GROUP_COLOR_VARS = {
+  accent: "var(--accent)", amber: "var(--amber)", cyan: "var(--cyan)",
+  green: "var(--green)", indigo: "var(--indigo)", orange: "var(--orange)",
+  pink: "var(--pink)", purple: "var(--purple)", red: "var(--red)",
+  slate: "var(--slate)", teal: "var(--teal)",
+};
+
+const GROUP_ICON_PATTERN = /^[a-z0-9-]{1,32}$/;
+
+function deviceGroupNavPlan(groups) {
+  return (groups || []).map((group) => ({
+    id: group.id,
+    name: group.name,
+    icon: GROUP_ICON_PATTERN.test(String(group.icon || "")) ? group.icon : "device-desktop",
+    color: GROUP_COLOR_VARS[group.color] || GROUP_COLOR_VARS.slate,
+  }));
+}
+
+/* ── Device group navigation ── */
+async function loadDeviceGroups() {
+  const payload = await requestJson("/api/device-groups");
+  latestDeviceGroups = payload.groups || [];
+  if (latestDeviceGroups.length) {
+    DEVICE_GROUP_VIEWS = latestDeviceGroups.map((group) => group.id);
+  }
+  syncDeviceGroupNav();
+}
+
+/* The seven <li> elements ship in index.html as the seeded baseline, so the
+   sidebar is correct before any JavaScript runs. This reconciles them with the
+   loaded document rather than rebuilding the list, which keeps that fallback
+   intact. Values reach the DOM through the API, never through markup strings. */
+function syncDeviceGroupNav() {
+  const parent = document.querySelector("#devicesGroupToggle");
+  const list = parent?.parentElement;
+  if (!list) return;
+
+  const existing = new Map(
+    [...list.querySelectorAll(".device-group-item")].map((el) => [el.dataset.view, el])
+  );
+  let anchor = parent;
+
+  deviceGroupNavPlan(latestDeviceGroups).forEach((entry) => {
+    let item = existing.get(entry.id);
+    if (!item) {
+      item = document.createElement("li");
+      item.className = "room-item device-group-item";
+      item.dataset.view = entry.id;
+      const icon = document.createElement("span");
+      icon.className = "room-icon";
+      icon.appendChild(document.createElement("i"));
+      item.appendChild(icon);
+      item.appendChild(document.createTextNode(""));
+      item.addEventListener("click", () => {
+        arrivedFromDevices = false;
+        activateView(entry.id);
+      });
+    }
+    existing.delete(entry.id);
+
+    const glyph = item.querySelector(".room-icon i");
+    if (glyph) {
+      glyph.className = "";
+      glyph.classList.add("ti", `ti-${entry.icon}`);
+    }
+    const label = [...item.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+    if (label) label.textContent = ` ${entry.name} `;
+    item.style.setProperty("--group-color", entry.color);
+
+    anchor.after(item);
+    anchor = item;
+  });
+
+  // Any child left in the map is no longer a group; drop it.
+  existing.forEach((el) => el.remove());
 }
 
 /* Resolve every device into an area: explicit assignment wins, then a room
@@ -3220,6 +3329,7 @@ function areaCardHtml(area) {
   const sensors  = area.devices.filter((d) => d.kind === "sensor").length;
   const ambient  = area.devices.filter((d) => d.kind === "ambient").length;
   const humidifiers = area.devices.filter((d) => d.kind === "humidifier").length;
+  const environment = area.devices.filter((d) => d.kind === "environment").length;
   const temp     = areaTemperature(area);
   const lit      = lightsOn > 0;
 
@@ -3232,6 +3342,7 @@ function areaCardHtml(area) {
   if (sensors) chips.push(`<span class="area-chip"><i class="ti ti-radar-2"></i>${sensors}</span>`);
   if (ambient) chips.push(`<span class="area-chip"><i class="ti ti-lamp-2"></i>${ambient}</span>`);
   if (humidifiers) chips.push(`<span class="area-chip"><i class="ti ti-droplet"></i>${humidifiers}</span>`);
+  if (environment) chips.push(`<span class="area-chip"><i class="ti ti-temperature-celsius"></i>${environment}</span>`);
 
   const count = area.devices.length;
   return `
@@ -4128,6 +4239,7 @@ function renderAreaDetail(area) {
   const thermostats = area.devices.filter((d) => d.kind === "thermostat").map((d) => d.data);
   const ambient     = area.devices.filter((d) => d.kind === "ambient").map((d) => d.data);
   const humidifiers = area.devices.filter((d) => d.kind === "humidifier").map((d) => d.data);
+  const environment = area.devices.filter((d) => d.kind === "environment").map((d) => d.data);
 
   const sections = [];
   if (switches.length) {
@@ -4170,6 +4282,13 @@ function renderAreaDetail(area) {
       <div class="area-subsection">
         <div class="area-subsection-title"><i class="ti ti-droplet"></i> Humidifiers</div>
         <div class="ambient-grid">${humidifiers.map(humidifierCard).join("")}</div>
+      </div>`);
+  }
+  if (environment.length) {
+    sections.push(`
+      <div class="area-subsection">
+        <div class="area-subsection-title"><i class="ti ti-temperature-celsius"></i> Environment</div>
+        <div class="device-grid">${environment.map(environmentSensorCard).join("")}</div>
       </div>`);
   }
   body.innerHTML = sections.join("");
@@ -5061,6 +5180,7 @@ function getDefaultView() {
   loadAmbientLights().catch((error) => console.error(error));
   loadHumidifiers().catch((error) => console.error(error));
   loadEnvironmentSensors().catch((error) => console.error(error));
+  loadDeviceGroups().catch((error) => console.error(error));
 })();
 
 /* Light drag lock */
