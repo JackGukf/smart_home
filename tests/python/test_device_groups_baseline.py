@@ -13,29 +13,27 @@ from src.python.web_app import DEFAULT_DEVICE_GROUPS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
+APP_JS = PROJECT_ROOT / "src" / "python" / "web_static" / "app.js"
 STYLES_CSS = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 
 EXPECTED_ORDER = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
 
 
-def _sidebar_children() -> list[tuple[str, str, str]]:
-    """(data-view, icon, label) for each device-group child, in source order."""
-    html = INDEX_HTML.read_text(encoding="utf-8")
-    views = html[
-        html.index('<div class="sidebar-section">Views'):
-        html.index('<div class="sidebar-section">Discovery')
-    ]
+def _overview_tiles() -> list[tuple[str, str, str]]:
+    """(view, icon, label) for each built-in Devices overview tile, in order.
+
+    The seven groups were removed from the sidebar, so the overview tiles are
+    now what the dashboard actually shows for them. This keeps the baseline
+    pinned to real rendered values rather than to markup that no longer exists.
+    """
+    javascript = APP_JS.read_text(encoding="utf-8")
+    at = javascript.index("const builtinTiles = [")
+    block = javascript[at:javascript.index("];", at)]
     found = []
     for match in re.finditer(
-        r'<li[^>]*device-group-item[^>]*data-view="([^"]+)"[^>]*>(.*?)</li>', views, re.S
+        r'\{\s*view:\s*"([^"]+)",\s*label:\s*"([^"]+)",\s*icon:\s*"ti-([a-z0-9-]+)"', block
     ):
-        body = match.group(2)
-        icon = re.search(r"ti ti-([a-z0-9-]+)", body)
-        label = next(
-            line.strip() for line in body.split("\n")
-            if line.strip() and "<" not in line
-        )
-        found.append((match.group(1), icon.group(1), label))
+        found.append((match.group(1), match.group(3), match.group(2)))
     return found
 
 
@@ -46,16 +44,16 @@ def _css_group_colors() -> dict[str, str]:
     for block in re.finditer(
         r"([^{}]+)\{([^{}]*--group-color\s*:\s*var\(--([a-z]+)\)[^{}]*)\}", css
     ):
-        for view in re.findall(r'data-view="([^"]+)"', block.group(1)):
+        for view in re.findall(r'data-goto-view="([^"]+)"', block.group(1)):
             colors[view] = block.group(3)
     return colors
 
 
-def test_seeded_ids_and_order_match_the_sidebar() -> None:
+def test_seeded_ids_and_order_match_the_overview_tiles() -> None:
     seeded = [g["id"] for g in DEFAULT_DEVICE_GROUPS]
 
     assert seeded == EXPECTED_ORDER
-    assert [view for view, _icon, _label in _sidebar_children()] == EXPECTED_ORDER
+    assert [view for view, _icon, _label in _overview_tiles()] == EXPECTED_ORDER
 
 
 def test_sensors_group_keeps_the_tuya_id() -> None:
@@ -66,10 +64,10 @@ def test_sensors_group_keeps_the_tuya_id() -> None:
     assert sensors["id"] == "tuya"
 
 
-def test_seeded_icons_and_labels_match_the_sidebar() -> None:
+def test_seeded_icons_and_labels_match_the_overview_tiles() -> None:
     by_id = {g["id"]: g for g in DEFAULT_DEVICE_GROUPS}
 
-    for view, icon, label in _sidebar_children():
+    for view, icon, label in _overview_tiles():
         assert by_id[view]["icon"] == icon, f"{view} icon drifted"
         assert by_id[view]["name"] == label, f"{view} label drifted"
 

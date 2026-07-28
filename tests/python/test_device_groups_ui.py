@@ -598,18 +598,17 @@ def test_sidebar_clicks_are_delegated_not_per_item() -> None:
     assert "addEventListener" not in body, "sync must attach no listeners of its own"
 
 
-def test_delegated_sidebar_handler_ignores_the_chevron() -> None:
-    """Clicking the Devices chevron collapses the group without navigating. The
-    old per-item listeners never saw chevron clicks; a document-level one does."""
-    javascript = APP_JS.read_text(encoding="utf-8")
-    handlers = [
-        _balanced_block_ui(javascript, at)
-        for at in _find_all_ui(javascript, 'document.addEventListener("click"')
-    ]
-    sidebar = [h for h in handlers if ".room-item[data-view]" in h]
+def test_settings_chevron_cannot_be_hijacked_by_the_sidebar_handler() -> None:
+    """The Devices chevron is gone with its children, so the handler no longer
+    guards against it. The Settings chevron still exists, and is only safe
+    because #systemSettingsToggle carries no data-view — give it one and every
+    click on it would start navigating."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
 
-    assert len(sidebar) == 1
-    assert "settings-chevron" in sidebar[0]
+    at = html.index('id="systemSettingsToggle"')
+    entry = html[html.rindex("<li", 0, at):html.index("</li>", at)]
+    assert "settings-chevron" in entry
+    assert "data-view=" not in entry
 
 
 def test_override_merge_preserves_other_groups(tmp_path: Path) -> None:

@@ -10,30 +10,40 @@ STYLES_CSS = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 DEVICE_CHILD_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
 
 
-def test_devices_parent_exists_with_badge_and_chevron() -> None:
+def test_devices_parent_exists_with_badge_and_no_chevron() -> None:
+    """Devices is now a plain nav item: the groups live behind its overview
+    tiles, so there are no children to collapse and no chevron."""
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     assert 'id="devicesGroupToggle"' in html
     assert 'data-view="devices"' in html
     assert 'id="deviceGroupCount"' in html
-    assert "settings-chevron" in html[html.index('id="devicesGroupToggle"'):][:400]
+    entry = html[html.index('id="devicesGroupToggle"'):]
+    assert "settings-chevron" not in entry[:entry.index("</li>")]
 
 
-def test_device_children_are_marked_and_sit_under_devices() -> None:
+def test_no_device_group_children_in_the_sidebar() -> None:
+    """The seven groups were removed from the sidebar; they are reached through
+    the Devices overview tiles instead. Their panels must still exist."""
     html = INDEX_HTML.read_text(encoding="utf-8")
     views_start = html.index('<div class="sidebar-section">Views</div>')
     discovery_start = html.index('<div class="sidebar-section">Discovery</div>')
     views = html[views_start:discovery_start]
 
-    devices_at = views.index('data-view="devices"')
-    ha_at = views.index('data-view="homeassistant"')
-
+    assert "device-group-item" not in views
     for view in DEVICE_CHILD_VIEWS:
-        at = views.index(f'data-view="{view}"')
-        assert devices_at < at < ha_at, f"{view} must sit between Devices and Home Asst"
+        assert f'data-view="{view}"' not in views, f"{view} should no longer be a nav item"
+        assert f'data-view-panel="{view}"' in html, f"{view}'s panel must still exist"
 
-    children = re.findall(r'<li[^>]*\bdevice-group-item\b[^>]*\bdata-view="([^"]+)"', views)
-    assert children == DEVICE_CHILD_VIEWS
+
+def test_sidebar_is_exactly_the_top_level_views() -> None:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    views_start = html.index('<div class="sidebar-section">Views</div>')
+    discovery_start = html.index('<div class="sidebar-section">Discovery</div>')
+    views = html[views_start:discovery_start]
+
+    found = re.findall(r'<li[^>]*\bdata-view="([^"]+)"', views)
+    assert found == ["home", "cameras", "devices", "homeassistant", "alarm", "status"]
 
 
 def test_top_level_views_are_untouched() -> None:
@@ -65,17 +75,22 @@ def test_overview_tiles_reuse_the_existing_goto_view_handler() -> None:
         assert f'"{view}"' in javascript
 
 
-def test_group_state_is_persisted() -> None:
+def test_collapse_machinery_is_gone() -> None:
+    """With no children in the sidebar there is nothing to collapse, so the
+    persisted open/closed state and its helpers were removed rather than left
+    as controls that do nothing."""
     javascript = APP_JS.read_text(encoding="utf-8")
 
-    assert "devices_group_open_v1" in javascript
-    assert "setDevicesGroupOpen" in javascript
+    assert "devices_group_open_v1" not in javascript
+    assert "setDevicesGroupOpen" not in javascript
+    assert "isDevicesGroupOpen" not in javascript
 
 
-def test_mobile_rail_flattens_the_group() -> None:
+def test_mobile_rail_shows_the_devices_icon() -> None:
+    """The rail used to hide Devices and show its seven children flat. With the
+    children gone that would have left no device navigation at all on a phone,
+    so Devices itself must now appear on the rail."""
     css = STYLES_CSS.read_text(encoding="utf-8")
 
-    assert ".device-group-item" in css
-    assert "#devicesGroupToggle { display: none; }" in css
-    # The un-hide rule must come after .room-item[hidden] to win at equal specificity.
-    assert css.index(".device-group-item[hidden]") > css.index(".room-item[hidden]")
+    assert "#devicesGroupToggle { display: none; }" not in css
+    assert ".device-group-item" not in css
