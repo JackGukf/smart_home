@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build71">
+  <link rel="stylesheet" href="/static/styles.css?v=build92">
 </head>
 <body>
 
@@ -212,6 +212,12 @@
           <button class="command device-back-btn" type="button" data-back-to-devices hidden>
             <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
           </button>
+          <button class="command" type="button" data-manage-group="lights">
+            <i class="ti ti-list-check" aria-hidden="true"></i> Manage
+          </button>
+          <button class="command" type="button" data-edit-group="lights">
+            <i class="ti ti-pencil" aria-hidden="true"></i> Edit
+          </button>
           <span class="section-meta">TP-Link · local control</span>
           <button class="light-drag-lock locked" id="lightDragLock" type="button" aria-pressed="false" title="Unlock light switch arrangement">
             <i class="ti ti-lock" aria-hidden="true"></i>
@@ -233,6 +239,12 @@
           <button class="command device-back-btn" type="button" data-back-to-devices hidden>
             <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
           </button>
+          <button class="command" type="button" data-manage-group="plugs">
+            <i class="ti ti-list-check" aria-hidden="true"></i> Manage
+          </button>
+          <button class="command" type="button" data-edit-group="plugs">
+            <i class="ti ti-pencil" aria-hidden="true"></i> Edit
+          </button>
           <span class="section-meta">TP-Link · local control</span>
         </div>
       </div>
@@ -250,6 +262,12 @@
           <button class="command device-back-btn" type="button" data-back-to-devices hidden>
             <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
           </button>
+          <button class="command" type="button" data-manage-group="ambient">
+            <i class="ti ti-list-check" aria-hidden="true"></i> Manage
+          </button>
+          <button class="command" type="button" data-edit-group="ambient">
+            <i class="ti ti-pencil" aria-hidden="true"></i> Edit
+          </button>
           <span class="section-meta">Govee · Bluetooth (local control)</span>
         </div>
       </div>
@@ -265,6 +283,12 @@
         <div class="section-actions">
           <button class="command device-back-btn" type="button" data-back-to-devices hidden>
             <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <button class="command" type="button" data-manage-group="humidifier">
+            <i class="ti ti-list-check" aria-hidden="true"></i> Manage
+          </button>
+          <button class="command" type="button" data-edit-group="humidifier">
+            <i class="ti ti-pencil" aria-hidden="true"></i> Edit
           </button>
           <span class="section-meta">Govee · Cloud API</span>
         </div>
@@ -282,6 +306,12 @@
           <button class="command device-back-btn" type="button" data-back-to-devices hidden>
             <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
           </button>
+          <button class="command" type="button" data-manage-group="environment">
+            <i class="ti ti-list-check" aria-hidden="true"></i> Manage
+          </button>
+          <button class="command" type="button" data-edit-group="environment">
+            <i class="ti ti-pencil" aria-hidden="true"></i> Edit
+          </button>
           <span class="section-meta">Temperature &amp; humidity</span>
         </div>
       </div>
@@ -298,6 +328,12 @@
           <button class="command device-back-btn" type="button" data-back-to-devices hidden>
             <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
           </button>
+          <button class="command" type="button" data-manage-group="tuya">
+            <i class="ti ti-list-check" aria-hidden="true"></i> Manage
+          </button>
+          <button class="command" type="button" data-edit-group="tuya">
+            <i class="ti ti-pencil" aria-hidden="true"></i> Edit
+          </button>
           <span class="section-meta">Tuya / Home Assistant</span>
         </div>
       </div>
@@ -313,6 +349,12 @@
         <div class="section-actions">
           <button class="command device-back-btn" type="button" data-back-to-devices hidden>
             <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <button class="command" type="button" data-manage-group="climate">
+            <i class="ti ti-list-check" aria-hidden="true"></i> Manage
+          </button>
+          <button class="command" type="button" data-edit-group="climate">
+            <i class="ti ti-pencil" aria-hidden="true"></i> Edit
           </button>
           <span class="section-meta">Ecobee thermostats</span>
         </div>
@@ -347,6 +389,9 @@
         <span class="section-meta">All device groups</span>
       </div>
       <div class="devices-overview-grid" id="devicesOverviewGrid"></div>
+      <button class="device-group-add" id="deviceGroupAdd" type="button">
+        <i class="ti ti-plus" aria-hidden="true"></i> New Group
+      </button>
     </div>
 
     <!-- ── HOME (AREAS) VIEW ── -->
@@ -699,6 +744,53 @@
   </div>
 </div>
 
+<!-- ── MANAGE DEVICES (device group) MODAL ── -->
+<div class="modal-overlay" id="manageDevicesModal" hidden aria-modal="true" role="dialog" aria-labelledby="manageDevicesTitle">
+  <div class="modal-card assign-modal-card">
+    <div class="modal-header">
+      <span class="modal-title" id="manageDevicesTitle">Manage Devices</span>
+      <button class="modal-close" id="closeManageDevices" type="button" aria-label="Close">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+    <p class="assign-modal-hint">Tick a device to include it in this group. Devices matched by the group's rule are ticked automatically; your changes are stored as exceptions.</p>
+    <div class="assign-device-list" id="manageDevicesList"></div>
+    <div class="modal-actions">
+      <button class="btn-primary" id="manageDevicesDone" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── DEVICE GROUP MODAL (create / edit) ── -->
+<div class="modal-overlay" id="groupModal" hidden aria-modal="true" role="dialog" aria-labelledby="groupModalTitle">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title" id="groupModalTitle">New Group</span>
+      <button class="modal-close" id="closeGroupModal" type="button" aria-label="Close">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+    <label class="modal-label">
+      Name
+      <input class="modal-input" id="groupNameInput" type="text" placeholder="Movie Night" maxlength="40" autocomplete="off">
+    </label>
+    <div class="modal-label">
+      Icon
+      <div class="area-icon-picker" id="groupIconPicker"></div>
+    </div>
+    <div class="modal-label">
+      Colour
+      <div class="group-color-picker" id="groupColorPicker"></div>
+    </div>
+    <div class="modal-error" id="groupModalError" hidden><span id="groupModalErrorText"></span></div>
+    <div class="modal-actions">
+      <button class="btn-danger" id="groupDelete" type="button" hidden>Delete</button>
+      <button class="btn-secondary" id="groupCancel" type="button">Cancel</button>
+      <button class="btn-primary" id="groupSave" type="button">Create Group</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── CUSTOM HOME CARD MODAL ── -->
 <div class="modal-overlay" id="customCardModal" hidden aria-modal="true" role="dialog" aria-labelledby="customCardModalTitle">
   <div class="modal-card assign-modal-card">
@@ -774,6 +866,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build71"></script>
+<script src="/static/app.js?v=build92"></script>
 </body>
 </html>

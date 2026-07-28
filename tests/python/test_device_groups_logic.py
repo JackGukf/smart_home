@@ -104,7 +104,8 @@ globalThis.document = {
   querySelector: (sel) => (sel === '#areaDetailBody' ? bodyEl : makeEl()),
 };
 
-eval(pick('escapeHtml') + pick('environmentSensorCard') + pick('renderAreaDetail'));
+eval(pick('escapeHtml') + pick('environmentSensorCard') + pick('genericGroupSectionsHtml')
+   + pick('hydrateGenericGroupBody') + pick('renderAreaDetail'));
 
 const area = {
   icon: 'home',

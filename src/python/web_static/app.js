@@ -133,8 +133,18 @@ const cameraTabCount    = document.querySelector("#cameraTabCount");
 const weatherGrid       = document.querySelector("#weatherGrid");
 const activityLog       = document.querySelector("#activityLog");
 
-const railButtons = Array.from(document.querySelectorAll(".room-item[data-view]"));
-const viewPanels  = Array.from(document.querySelectorAll(".view-panel[data-view-panel]"));
+/* Queried fresh rather than snapshotted: groups can be created at runtime, and a
+   module-load snapshot would silently miss their nav items — losing the active
+   class, startup-view validation, and the startup dropdown entry. */
+function railButtonEls() {
+  return Array.from(document.querySelectorAll(".room-item[data-view]"));
+}
+/* Queried fresh for the same reason as railButtonEls: panels are created at
+   runtime for user-made groups, and a module-load snapshot would never see
+   them — so the new panel would render its content but never get .active. */
+function viewPanelEls() {
+  return Array.from(document.querySelectorAll(".view-panel[data-view-panel]"));
+}
 
 function restoreBrandTitle() {
   if (!logoText) return;
@@ -250,6 +260,7 @@ const DEVICES_GROUP_KEY = "devices_group_open_v1";
    loads; replaced by the loaded ids once it arrives. */
 let DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
 let latestDeviceGroups = [];
+let latestDeviceGroupOverrides = {};
 
 /* Tracks whether the current view was reached from the Devices overview, so the
    back button only appears when there is somewhere to go back to. Deliberately
@@ -292,6 +303,28 @@ function setDevicesGroupOpen(open) {
   });
 })();
 
+/* The seven built-in views already covered by the hardcoded tiles below. Any
+   other id resolveDeviceGroups() returns — a user-created group, or the
+   synthetic auto:unassigned bucket — gets a dynamic tile appended instead. */
+const BUILTIN_TILE_VIEWS = new Set(["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]);
+
+/* Tile for a user-created group or auto:unassigned. name/icon/color are
+   user-supplied via the API, so the name is escaped at render time (like every
+   other tile label) and the colour is routed through the same GROUP_COLOR_VARS
+   allowlist deviceGroupNavPlan uses for the sidebar — never a raw stored value. */
+function dynamicGroupTileData(group) {
+  const icon = GROUP_ICON_PATTERN.test(String(group.icon || "")) ? group.icon : "device-desktop";
+  const count = group.devices.length;
+  return {
+    view: group.id,
+    label: group.name,
+    icon: `ti-${icon}`,
+    color: GROUP_COLOR_VARS[group.color] || GROUP_COLOR_VARS.slate,
+    count,
+    summary: `${count} device${count === 1 ? "" : "s"}`,
+  };
+}
+
 /* Devices overview tiles. Renders from arrays already in memory — no fetches. */
 function deviceGroupTileData() {
   const allSwitchLike = [...latestSwitchDevices, ...latestMatterDevices];
@@ -300,7 +333,7 @@ function deviceGroupTileData() {
   const onOf = (list) => `${list.filter((d) => d.is_on).length} of ${list.length} on`;
   const onlineOf = (list) => `${list.filter((d) => d.online !== false).length} online`;
 
-  return [
+  const builtinTiles = [
     { view: "lights",     label: "Lights",      icon: "ti-bulb",       count: lights.length,                 summary: onOf(lights) },
     { view: "plugs",      label: "Plugs",       icon: "ti-plug",       count: plugs.length,                  summary: onOf(plugs) },
     { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: latestAmbientLights.length,    summary: onlineOf(latestAmbientLights) },
@@ -309,6 +342,12 @@ function deviceGroupTileData() {
     { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(sensorsTileGroups()) },
     { view: "climate",    label: "Climate",     icon: "ti-temperature",count: latestThermostats.length,      summary: onlineOf(latestThermostats) },
   ];
+
+  const dynamicTiles = resolveDeviceGroups()
+    .filter((group) => !BUILTIN_TILE_VIEWS.has(group.id))
+    .map(dynamicGroupTileData);
+
+  return [...builtinTiles, ...dynamicTiles];
 }
 
 /* Average temperature across environment groups, for the overview tile. */
@@ -338,11 +377,11 @@ function renderDevicesOverview() {
 
   if (!grid) return;
   grid.innerHTML = deviceGroupTileData().map((tile) => `
-    <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}">
+    <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}"${tile.color ? ` style="--group-color:${tile.color}"` : ""}>
       <div class="device-group-tile-accent" aria-hidden="true"></div>
       <div class="device-group-tile-body">
         <div class="device-group-tile-head">
-          <i class="ti ${tile.icon}" aria-hidden="true"></i>${escapeHtml(tile.label)}
+          <i class="ti ${escapeHtml(tile.icon)}" aria-hidden="true"></i>${escapeHtml(tile.label)}
         </div>
         <div class="device-group-tile-count">${tile.count}</div>
         <div class="device-group-tile-summary">${escapeHtml(tile.summary)}</div>
@@ -846,11 +885,8 @@ function buildAlertRow(device) {
 
 /* ── TP-Link device cards ── */
 function renderDevices(devices, cameras, matterDevices = []) {
-  const matterLights = matterDevices.filter((d) => d.category === "light_switch");
-  const matterPlugs  = matterDevices.filter((d) => d.category === "smart_plug");
-
-  const lightDevices = [...devices.filter((d) => d.category === "light_switch"), ...matterLights];
-  const plugDevices  = [...devices.filter((d) => d.category === "smart_plug"),   ...matterPlugs];
+  const lightDevices = groupMemberData("lights", ["light"]);
+  const plugDevices  = groupMemberData("plugs", ["plug"]);
 
   deviceCount.textContent    = String(devices.length + matterDevices.length);
   onCount.textContent        = String([...devices, ...matterDevices].filter((d) => d.is_on === true).length);
@@ -862,6 +898,9 @@ function renderDevices(devices, cameras, matterDevices = []) {
   renderLightDragLock();
   renderDeviceGroup(lightGrid, applyDeviceOrder(lightDevices, "light_switch"), "No light switches found.");
   renderPlugSection(plugDevices);
+
+  renderForeignKinds("lights", ["light"], "#lightGrid");
+  renderForeignKinds("plugs", ["plug"], "#plugGrid");
 }
 
 function isLightDragUnlocked() {
@@ -950,16 +989,21 @@ async function loadAmbientLights() {
 }
 
 function renderAmbientLights(payload) {
-  const lights = payload?.lights || [];
-  latestAmbientLights = lights;
+  latestAmbientLights = payload?.lights || [];
+  const lights = groupMemberData("ambient", ["ambient"]);
   if (ambientCount) ambientCount.textContent = String(lights.length);
   if (!ambientGrid) return;
   if (lights.length === 0) {
-    ambientGrid.innerHTML = '<div class="empty">No ambient lights configured yet. Add Govee/Lepro entries to configs/devices.local.yaml.</div>';
+    const message = latestAmbientLights.length === 0
+      ? "No ambient lights configured yet. Add Govee/Lepro entries to configs/devices.local.yaml."
+      : "No devices in this group. Use Manage to add some.";
+    ambientGrid.innerHTML = `<div class="empty">${message}</div>`;
+    renderForeignKinds("ambient", ["ambient"], "#ambientGrid");
     return;
   }
   ambientGrid.innerHTML = lights.map(ambientLightCard).join("");
   renderDevicesOverview();
+  renderForeignKinds("ambient", ["ambient"], "#ambientGrid");
 }
 
 function ambientLightCard(light) {
@@ -1036,18 +1080,23 @@ function environmentSensorCard(sensor) {
 }
 
 function renderHumidifiers(payload) {
-  const humidifiers = payload.humidifiers || [];
-  latestHumidifiers = humidifiers;
+  latestHumidifiers = payload.humidifiers || [];
+  const humidifiers = groupMemberData("humidifier", ["humidifier"]);
   const grid = document.querySelector("#humidifierGrid");
   const badge = document.querySelector("#humidifierCount");
   if (badge) badge.textContent = String(humidifiers.length);
   if (!grid) return;
   if (humidifiers.length === 0) {
-    grid.innerHTML = '<div class="empty">No humidifiers configured yet. Add a humidifiers: section to configs/devices.local.yaml.</div>';
+    const message = latestHumidifiers.length === 0
+      ? "No humidifiers configured yet. Add a humidifiers: section to configs/devices.local.yaml."
+      : "No devices in this group. Use Manage to add some.";
+    grid.innerHTML = `<div class="empty">${message}</div>`;
+    renderForeignKinds("humidifier", ["humidifier"], "#humidifierGrid");
     return;
   }
   grid.innerHTML = humidifiers.map(humidifierCard).join("");
   renderDevicesOverview();
+  renderForeignKinds("humidifier", ["humidifier"], "#humidifierGrid");
 }
 
 /* Night-light colour presets (RGB) offered on the humidifier card palette. */
@@ -1743,11 +1792,17 @@ function renderSensorDeviceCard(group, mode) {
 
 /* ── Tuya sensors ── */
 function renderTuyaDevices(devices) {
-  const visibleDevices = devices.filter((d) => !isTuyaCamera(d));
+  latestTuyaDevices = devices;
+  const visibleDevices = groupMemberData("tuya", ["sensor"]).flatMap((g) => g.readings).filter((d) => !isTuyaCamera(d));
   tuyaCount.textContent = String(sensorGroupCount("sensors"));
 
   if (visibleDevices.length === 0) {
-    tuyaGrid.innerHTML = '<div class="empty">No Tuya devices found from Home Assistant yet.</div>';
+    const anyTuyaDevices = latestTuyaDevices.filter((d) => !isTuyaCamera(d)).length > 0;
+    const message = anyTuyaDevices
+      ? "No devices in this group. Use Manage to add some."
+      : "No Tuya devices found from Home Assistant yet.";
+    tuyaGrid.innerHTML = `<div class="empty">${message}</div>`;
+    renderForeignKinds("tuya", ["sensor"], "#tuyaGrid");
     return;
   }
 
@@ -1773,25 +1828,32 @@ function renderTuyaDevices(devices) {
   tuyaGrid.innerHTML = banner + groups.map((g) => renderSensorDeviceCard(g, "sensors")).join("");
   renderDevicesOverview();
   renderEnvironmentSensors();
+  renderForeignKinds("tuya", ["sensor"], "#tuyaGrid");
 }
 
 /* ── Environment (temperature & humidity) ── */
 function renderEnvironmentSensors() {
   const grid = document.querySelector("#environmentGrid");
   const badge = document.querySelector("#environmentCount");
-  const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
+  const visible = groupMemberData("environment", ["sensor"]).flatMap((g) => g.readings).filter((d) => !isTuyaCamera(d));
   const groups = groupSensorDevices(visible).filter((g) => groupHasViewContent(g, "environment"));
 
   const total = groups.length + latestEnvironmentSensors.length;
   if (badge) badge.textContent = String(total);
   if (!grid) return;
   if (total === 0) {
-    grid.innerHTML = '<div class="empty">No temperature or humidity sensors reporting yet.</div>';
+    const fullTotal = sensorGroupCount("environment") + latestEnvironmentSensors.length;
+    const message = fullTotal === 0
+      ? "No temperature or humidity sensors reporting yet."
+      : "No devices in this group. Use Manage to add some.";
+    grid.innerHTML = `<div class="empty">${message}</div>`;
+    renderForeignKinds("environment", ["sensor", "environment"], "#environmentGrid");
     return;
   }
   grid.innerHTML =
     latestEnvironmentSensors.map(environmentSensorCard).join("") +
     groups.map((g) => renderSensorDeviceCard(g, "environment")).join("");
+  renderForeignKinds("environment", ["sensor", "environment"], "#environmentGrid");
 }
 
 function primaryTuyaState(device) {
@@ -1990,6 +2052,8 @@ function attachThermoDrag(wrap) {
 
 function renderThermostats(payload) {
   const thermostats = payload?.thermostats || [];
+  latestThermostats = thermostats;
+  const groupThermostats = groupMemberData("climate", ["thermostat"]);
   thermostatCount.textContent = String(thermostats.length);
 
   if (thermostats.length > 0) {
@@ -2000,16 +2064,21 @@ function renderThermostats(payload) {
     }
   }
 
-  if (thermostats.length === 0) {
-    thermostatGrid.innerHTML = `<div class="empty">${escapeHtml(payload?.message || "No Ecobee thermostats configured yet. Add them to configs/devices.local.yaml.")}</div>`;
+  if (groupThermostats.length === 0) {
+    const message = thermostats.length === 0
+      ? (payload?.message || "No Ecobee thermostats configured yet. Add them to configs/devices.local.yaml.")
+      : "No devices in this group. Use Manage to add some.";
+    thermostatGrid.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+    renderForeignKinds("climate", ["thermostat"], "#thermostatGrid");
     return;
   }
 
-  thermostatGrid.innerHTML = thermostats
+  thermostatGrid.innerHTML = groupThermostats
     .map((th) => thermoCardHtml(th, th.status || payload.status || "unknown"))
     .join("");
 
   thermostatGrid.querySelectorAll(".thermo-dial-wrap").forEach(attachThermoDrag);
+  renderForeignKinds("climate", ["thermostat"], "#thermostatGrid");
 }
 
 const THERMO_MODES_DEF = [
@@ -3058,6 +3127,7 @@ async function loadDevices() {
   _updateMatterServerStatus(matterData.matter_online ?? false);
   _renderMatterDeviceList(matterData.devices || []);
   renderHomeView();
+  refreshActiveDynamicGroupPanel();
 
   if (statusDot) statusDot.classList.add("online");
   apiStatus.textContent = "Online";
@@ -3188,6 +3258,387 @@ function resolveDeviceGroupMembers(group, inventory, overrides) {
   });
 }
 
+/* Devices belonging to no group at all land here, so deleting a group can never
+   make a device invisible. Mirrors the Areas feature's auto:unassigned bucket:
+   synthetic, never persisted, shown only when non-empty, always sorted last. */
+const UNASSIGNED_GROUP_ID = "auto:unassigned";
+
+/* Memoised for the current synchronous turn only. A full dashboard render calls
+   this once per panel and once per foreign-kind pass — roughly a dozen times —
+   and each call otherwise rebuilds the whole inventory and re-resolves every
+   group. The microtask clear means the cache can never outlive the turn that
+   built it, so membership cannot go stale across an await.
+
+   The cache hangs off the function rather than a module-level binding so the
+   function stays self-contained: the JS test harness extracts functions by name
+   and would not carry a separate declaration along with it. */
+function resolveDeviceGroups() {
+  if (resolveDeviceGroups.cache) return resolveDeviceGroups.cache;
+
+  const inventory = collectHomeInventory();
+  const overrides = latestDeviceGroupOverrides || {};
+  const groups = (latestDeviceGroups || []).map((group) => ({
+    ...group,
+    devices: resolveDeviceGroupMembers(group, inventory, overrides),
+  }));
+
+  const claimed = new Set();
+  groups.forEach((group) => group.devices.forEach((device) => claimed.add(device.key)));
+  const orphans = inventory.filter((item) => !claimed.has(item.key));
+  if (orphans.length) {
+    groups.push({
+      id: UNASSIGNED_GROUP_ID,
+      name: "Unassigned",
+      icon: "help-hexagon",
+      color: "slate",
+      kinds: [],
+      chrome: [],
+      readingFilter: null,
+      builtin: false,
+      synthetic: true,
+      devices: orphans,
+    });
+  }
+
+  resolveDeviceGroups.cache = groups;
+  queueMicrotask(() => { resolveDeviceGroups.cache = null; });
+  return groups;
+}
+
+function findDeviceGroup(groupId) {
+  return resolveDeviceGroups().find((group) => group.id === groupId);
+}
+
+/* The underlying device objects for a group's members, restricted to kinds the
+   caller's renderer understands. Returns [] for an unknown group, so a deleted
+   group degrades to an empty panel rather than throwing. */
+function groupMemberData(groupId, kinds) {
+  const wanted = new Set(kinds);
+  const group = findDeviceGroup(groupId);
+  if (!group) return [];
+  return group.devices.filter((d) => wanted.has(d.kind)).map((d) => d.data);
+}
+
+/* Any device the user moved into a group whose bespoke renderer cannot display
+   it. Rendered generically below the native content so nothing silently
+   vanishes and no bespoke renderer is handed a shape it was not written for. */
+function renderForeignKinds(groupId, nativeKinds, containerId) {
+  const container = document.querySelector(containerId);
+  if (!container) return;
+  const existing = container.parentElement?.querySelector(".device-group-foreign");
+  if (existing) existing.remove();
+
+  const group = findDeviceGroup(groupId);
+  if (!group) return;
+  const native = new Set(nativeKinds);
+  const foreign = group.devices.filter((d) => !native.has(d.kind));
+  if (!foreign.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "device-group-foreign";
+  wrap.innerHTML = genericGroupSectionsHtml(foreign);
+  container.parentElement.appendChild(wrap);
+  hydrateGenericGroupBody(wrap, foreign);
+}
+
+/* A group with no static panel (any user-created group, and Unassigned) gets one
+   built on demand. The name is user-supplied via the API, so it is set with
+   textContent rather than interpolated into markup. */
+function ensureDeviceGroupPanel(group) {
+  const existing = document.querySelector(`[data-view-panel="${CSS.escape(group.id)}"]`);
+  if (existing) return existing;
+
+  const host = document.querySelector('[data-view-panel="devices"]')?.parentElement;
+  if (!host) return null;
+
+  const panel = document.createElement("div");
+  panel.className = "view-panel";
+  panel.dataset.viewPanel = group.id;
+
+  const header = document.createElement("div");
+  header.className = "section-header";
+  const title = document.createElement("span");
+  title.className = "section-title";
+  title.textContent = group.name;
+  header.appendChild(title);
+
+  const actions = document.createElement("div");
+  actions.className = "section-actions";
+
+  const back = document.createElement("button");
+  back.className = "command device-back-btn";
+  back.type = "button";
+  back.setAttribute("data-back-to-devices", "");
+  back.hidden = true;
+  back.innerHTML = '<i class="ti ti-arrow-left" aria-hidden="true"></i> Devices';
+  actions.appendChild(back);
+
+  if (group.id !== UNASSIGNED_GROUP_ID) {
+    const manage = document.createElement("button");
+    manage.className = "command";
+    manage.type = "button";
+    manage.dataset.manageGroup = group.id;
+    manage.innerHTML = '<i class="ti ti-list-check" aria-hidden="true"></i> Manage';
+    actions.appendChild(manage);
+
+    const edit = document.createElement("button");
+    edit.className = "command";
+    edit.type = "button";
+    edit.dataset.editGroup = group.id;
+    edit.innerHTML = '<i class="ti ti-pencil" aria-hidden="true"></i> Edit';
+    actions.appendChild(edit);
+  }
+
+  header.appendChild(actions);
+  panel.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "device-group-body";
+  panel.appendChild(body);
+
+  host.appendChild(panel);
+  return panel;
+}
+
+function renderDynamicGroupPanel(groupId) {
+  const group = findDeviceGroup(groupId);
+  if (!group) return;
+  const panel = ensureDeviceGroupPanel(group);
+  const body = panel?.querySelector(".device-group-body");
+  if (!body) return;
+  if (!group.devices.length) {
+    body.innerHTML = '<div class="empty">No devices in this group yet. Use Manage to add some.</div>';
+    return;
+  }
+  body.innerHTML = genericGroupSectionsHtml(group.devices);
+  hydrateGenericGroupBody(body, group.devices);
+}
+
+/* The seven built-in panels refresh on every loadDevices() poll because their
+   bespoke renderers (renderAmbientLights, renderThermostats, ...) are called
+   from it directly. A dynamic group panel has no bespoke renderer -- it only
+   ever repaints when activateView navigates to it -- so a user sitting on one
+   would see it go stale until they left and came back. Re-render only the
+   active dynamic panel, keyed off the group's own builtin flag rather than
+   DEVICE_GROUP_VIEWS, so this also covers the synthetic auto:unassigned view. */
+function refreshActiveDynamicGroupPanel() {
+  const activePanel = viewPanelEls().find((panel) => panel.classList.contains("active"));
+  const viewName = activePanel?.dataset.viewPanel;
+  if (!viewName) return;
+  const group = findDeviceGroup(viewName);
+  if (!group || group.builtin) return;
+  renderDynamicGroupPanel(viewName);
+}
+
+/* PUT /api/device-groups/overrides replaces a device's whole entry, so a toggle
+   must resend that device's entries for every other group. Only deviations from
+   the group's kind rule are stored, so changing a rule later still flows through
+   to devices the user never touched. */
+function mergedOverrideFor(deviceKey, groupId, shouldBeMember, ruleSaysMember) {
+  const current = (latestDeviceGroupOverrides || {})[deviceKey] || {};
+  const include = (current.include || []).filter((id) => id !== groupId);
+  const exclude = (current.exclude || []).filter((id) => id !== groupId);
+
+  if (shouldBeMember && !ruleSaysMember) include.push(groupId);
+  if (!shouldBeMember && ruleSaysMember) exclude.push(groupId);
+
+  return { include, exclude };
+}
+
+let manageDevicesGroupId = null;
+
+function openManageDevicesModal(groupId) {
+  const group = findDeviceGroup(groupId);
+  if (!group) return;
+  manageDevicesGroupId = groupId;
+  const title = document.querySelector("#manageDevicesTitle");
+  if (title) title.textContent = `Manage Devices — ${group.name}`;
+  renderManageDevicesList();
+  const modal = document.querySelector("#manageDevicesModal");
+  if (modal) modal.hidden = false;
+}
+
+function renderManageDevicesList() {
+  const list = document.querySelector("#manageDevicesList");
+  const group = findDeviceGroup(manageDevicesGroupId);
+  if (!list || !group) return;
+
+  const inventory = collectHomeInventory().sort((a, b) =>
+    a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind.localeCompare(b.kind)
+  );
+  const memberKeys = new Set(group.devices.map((d) => d.key));
+  const ruleKeys = new Set(
+    resolveDeviceGroupMembers({ ...group, kinds: group.kinds }, inventory, {}).map((d) => d.key)
+  );
+
+  list.innerHTML = inventory.map((item) => {
+    const isMember = memberKeys.has(item.key);
+    const byRule = ruleKeys.has(item.key);
+    const why = isMember ? (byRule ? "by rule" : "added") : (byRule ? "removed" : "");
+    return `
+      <div class="assign-device-row">
+        <span class="assign-device-icon"><i class="ti ${AREA_KIND_ICONS[item.kind] || "ti-cpu"}"></i></span>
+        <span class="assign-device-name">${escapeHtml(item.name)}</span>
+        <span class="manage-device-why">${escapeHtml(why)}</span>
+        <input class="manage-device-check" type="checkbox"
+               data-manage-key="${escapeHtml(item.key)}"
+               data-rule-member="${byRule ? "1" : "0"}"
+               ${isMember ? "checked" : ""}
+               aria-label="Include ${escapeHtml(item.name)} in this group">
+      </div>`;
+  }).join("");
+}
+
+async function toggleManageDevice(checkbox) {
+  const deviceKey = checkbox.dataset.manageKey;
+  const ruleSaysMember = checkbox.dataset.ruleMember === "1";
+  const wantsMember = checkbox.checked;
+  const body = mergedOverrideFor(deviceKey, manageDevicesGroupId, wantsMember, ruleSaysMember);
+  try {
+    await requestJson("/api/device-groups/overrides", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_key: deviceKey, include: body.include, exclude: body.exclude }),
+    });
+  } catch (error) {
+    // The browser has already flipped checkbox.checked natively before this
+    // handler runs, so a failed save must put it back or the UI shows a
+    // membership change that was never persisted.
+    checkbox.checked = !wantsMember;
+    console.error(error);
+    logActivity("Device group update failed", "warn");
+    return;
+  }
+  await loadDeviceGroups();
+  renderManageDevicesList();
+  loadDevices().catch((error) => console.error(error));
+}
+
+const DEVICE_GROUP_ICON_CHOICES = [
+  "bulb", "plug", "lamp-2", "droplet", "temperature-celsius", "radar-2",
+  "temperature", "device-desktop", "movie", "coffee", "moon", "sun-high",
+  "shield-lock", "music", "wifi", "home",
+];
+
+let groupModalEditingId = null;
+let groupModalIcon = "device-desktop";
+let groupModalColor = "slate";
+
+function renderGroupIconPicker() {
+  const picker = document.querySelector("#groupIconPicker");
+  if (!picker) return;
+  picker.innerHTML = DEVICE_GROUP_ICON_CHOICES.map((icon) => `
+    <button class="area-icon-option${icon === groupModalIcon ? " selected" : ""}"
+            type="button" data-group-icon="${escapeHtml(icon)}">
+      <i class="ti ti-${escapeHtml(icon)}"></i>
+    </button>`).join("");
+}
+
+function renderGroupColorPicker() {
+  const picker = document.querySelector("#groupColorPicker");
+  if (!picker) return;
+  // Rendered from GROUP_COLOR_VARS so the picker cannot offer a colour the API
+  // would reject, and cannot drift from the allowlist.
+  picker.innerHTML = Object.keys(GROUP_COLOR_VARS).map((name) => `
+    <button class="group-color-option${name === groupModalColor ? " selected" : ""}"
+            type="button" data-group-color="${escapeHtml(name)}" aria-label="${escapeHtml(name)}"></button>`
+  ).join("");
+  picker.querySelectorAll("[data-group-color]").forEach((el) => {
+    el.style.setProperty("background", GROUP_COLOR_VARS[el.dataset.groupColor]);
+  });
+}
+
+function openGroupModal(groupId) {
+  const group = groupId ? findDeviceGroup(groupId) : null;
+  groupModalEditingId = group ? group.id : null;
+  groupModalIcon = group ? group.icon : "device-desktop";
+  groupModalColor = group ? group.color : "slate";
+
+  const title = document.querySelector("#groupModalTitle");
+  if (title) title.textContent = group ? `Edit ${group.name}` : "New Group";
+  const input = document.querySelector("#groupNameInput");
+  if (input) input.value = group ? group.name : "";
+  const save = document.querySelector("#groupSave");
+  if (save) save.textContent = group ? "Save" : "Create Group";
+  const del = document.querySelector("#groupDelete");
+  if (del) del.hidden = !group;
+  const error = document.querySelector("#groupModalError");
+  if (error) error.hidden = true;
+
+  renderGroupIconPicker();
+  renderGroupColorPicker();
+  const modal = document.querySelector("#groupModal");
+  if (modal) modal.hidden = false;
+}
+
+function closeGroupModal() {
+  const modal = document.querySelector("#groupModal");
+  if (modal) modal.hidden = true;
+}
+
+function showGroupModalError(message) {
+  const box = document.querySelector("#groupModalError");
+  const text = document.querySelector("#groupModalErrorText");
+  if (text) text.textContent = message;
+  if (box) box.hidden = false;
+}
+
+async function submitGroupModal() {
+  const name = (document.querySelector("#groupNameInput")?.value || "").trim();
+  const payload = { name, icon: groupModalIcon, color: groupModalColor };
+  try {
+    if (groupModalEditingId) {
+      await requestJson(`/api/device-groups/${encodeURIComponent(groupModalEditingId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      await requestJson("/api/device-groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
+  } catch (error) {
+    showGroupModalError(apiErrorDetail(error));
+    return;
+  }
+  closeGroupModal();
+  await loadDeviceGroups();
+  loadDevices().catch((err) => console.error(err));
+}
+
+async function deleteGroupFromModal() {
+  if (!groupModalEditingId) return;
+  const group = findDeviceGroup(groupModalEditingId);
+  if (!window.confirm(`Delete the "${group ? group.name : groupModalEditingId}" group? Its devices move to Unassigned.`)) return;
+  try {
+    await requestJson(`/api/device-groups/${encodeURIComponent(groupModalEditingId)}`, { method: "DELETE" });
+  } catch (error) {
+    showGroupModalError(apiErrorDetail(error));
+    return;
+  }
+  closeGroupModal();
+  await loadDeviceGroups();
+  activateView("devices");
+  loadDevices().catch((err) => console.error(err));
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#deviceGroupAdd")) { openGroupModal(null); return; }
+  const edit = event.target.closest("[data-edit-group]");
+  if (edit) { openGroupModal(edit.dataset.editGroup); return; }
+  if (event.target.closest("#closeGroupModal") || event.target.closest("#groupCancel")) { closeGroupModal(); return; }
+  if (event.target.closest("#groupSave")) { submitGroupModal().catch(console.error); return; }
+  if (event.target.closest("#groupDelete")) { deleteGroupFromModal().catch(console.error); return; }
+
+  const icon = event.target.closest("[data-group-icon]");
+  if (icon) { groupModalIcon = icon.dataset.groupIcon; renderGroupIconPicker(); return; }
+  const color = event.target.closest("[data-group-color]");
+  if (color) { groupModalColor = color.dataset.groupColor; renderGroupColorPicker(); }
+});
+
 /* Palette names the sidebar and tiles may use. The value that reaches the DOM
    is always chosen from this table, never built from the stored string. */
 const GROUP_COLOR_VARS = {
@@ -3212,6 +3663,7 @@ function deviceGroupNavPlan(groups) {
 async function loadDeviceGroups() {
   const payload = await requestJson("/api/device-groups");
   latestDeviceGroups = payload.groups || [];
+  latestDeviceGroupOverrides = payload.overrides || {};
   if (latestDeviceGroups.length) {
     DEVICE_GROUP_VIEWS = latestDeviceGroups.map((group) => group.id);
   }
@@ -3232,7 +3684,7 @@ function syncDeviceGroupNav() {
   );
   let anchor = parent;
 
-  deviceGroupNavPlan(latestDeviceGroups).forEach((entry) => {
+  deviceGroupNavPlan(resolveDeviceGroups()).forEach((entry) => {
     let item = existing.get(entry.id);
     if (!item) {
       item = document.createElement("li");
@@ -3243,10 +3695,7 @@ function syncDeviceGroupNav() {
       icon.appendChild(document.createElement("i"));
       item.appendChild(icon);
       item.appendChild(document.createTextNode(""));
-      item.addEventListener("click", () => {
-        arrivedFromDevices = false;
-        activateView(entry.id);
-      });
+      // No click listener here: the delegated sidebar handler covers created items.
     }
     existing.delete(entry.id);
 
@@ -3265,6 +3714,13 @@ function syncDeviceGroupNav() {
 
   // Any child left in the map is no longer a group; drop it.
   existing.forEach((el) => el.remove());
+
+  // Groups with no static markup need a panel to navigate into.
+  resolveDeviceGroups().forEach((group) => {
+    if (!document.querySelector(`[data-view-panel="${CSS.escape(group.id)}"]`)) {
+      ensureDeviceGroupPanel(group);
+    }
+  });
 }
 
 /* Resolve every device into an area: explicit assignment wins, then a room
@@ -4202,44 +4658,20 @@ function areaThermoCardHtml(thermostat) {
     </div>`;
 }
 
-function renderAreaDetail(area) {
-  const overview = document.querySelector("#homeOverview");
-  const detail   = document.querySelector("#homeAreaDetail");
-  if (!detail) return;
-  if (overview) overview.hidden = true;
-  detail.hidden = false;
-
-  const iconEl = document.querySelector("#areaDetailIcon");
-  if (iconEl) iconEl.innerHTML = `<i class="ti ti-${escapeHtml(area.icon)}"></i>`;
-  const nameEl = document.querySelector("#areaDetailName");
-  if (nameEl) nameEl.textContent = area.name;
-  const metaEl = document.querySelector("#areaDetailMeta");
-  if (metaEl) metaEl.textContent = `${area.devices.length} device${area.devices.length === 1 ? "" : "s"}`;
-  const deleteBtn = document.querySelector("#areaDeleteButton");
-  if (deleteBtn) deleteBtn.hidden = !area.custom;
-  const manageBtn = document.querySelector("#areaManageButton");
-  if (manageBtn) manageBtn.hidden = false;
-
-  const body = document.querySelector("#areaDetailBody");
-  if (!body) return;
-
-  if (area.devices.length === 0) {
-    body.innerHTML = `
-      <div class="area-empty">
-        <i class="ti ti-layout-grid-add"></i>
-        <p>No devices in this area yet.</p>
-        <button class="btn-primary" id="areaEmptyManage" type="button">Assign Devices</button>
-      </div>`;
-    return;
-  }
-
-  const switches    = area.devices.filter((d) => d.kind === "light" || d.kind === "plug").map((d) => d.data);
-  const sensors     = area.devices.filter((d) => d.kind === "sensor").map((d) => d.data);
-  const cameras     = area.devices.filter((d) => d.kind === "camera").map((d) => d.data);
-  const thermostats = area.devices.filter((d) => d.kind === "thermostat").map((d) => d.data);
-  const ambient     = area.devices.filter((d) => d.kind === "ambient").map((d) => d.data);
-  const humidifiers = area.devices.filter((d) => d.kind === "humidifier").map((d) => d.data);
-  const environment = area.devices.filter((d) => d.kind === "environment").map((d) => d.data);
+/* ── Shared mixed-device renderer ──
+   Used by both the Areas detail view and device group panels. Extracted rather
+   than copied so the two cannot drift apart as kinds are added. Takes inventory
+   entries ({key, kind, name, room, data}); returns subsection HTML. The switch
+   grid cannot be built as a string, so hydrateGenericGroupBody finishes it. */
+function genericGroupSectionsHtml(devices) {
+  const of = (kind) => devices.filter((d) => d.kind === kind).map((d) => d.data);
+  const switches    = devices.filter((d) => d.kind === "light" || d.kind === "plug").map((d) => d.data);
+  const sensors     = of("sensor");
+  const cameras     = of("camera");
+  const thermostats = of("thermostat");
+  const ambient     = of("ambient");
+  const humidifiers = of("humidifier");
+  const environment = of("environment");
 
   const sections = [];
   if (switches.length) {
@@ -4291,10 +4723,48 @@ function renderAreaDetail(area) {
         <div class="device-grid">${environment.map(environmentSensorCard).join("")}</div>
       </div>`);
   }
-  body.innerHTML = sections.join("");
+  return sections.join("");
+}
 
-  const switchGrid = body.querySelector("#areaSwitchGrid");
+function hydrateGenericGroupBody(bodyEl, devices) {
+  const switches = devices.filter((d) => d.kind === "light" || d.kind === "plug").map((d) => d.data);
+  const switchGrid = bodyEl?.querySelector("#areaSwitchGrid");
   if (switchGrid) renderDeviceGroup(switchGrid, switches, "No switches.");
+}
+
+function renderAreaDetail(area) {
+  const overview = document.querySelector("#homeOverview");
+  const detail   = document.querySelector("#homeAreaDetail");
+  if (!detail) return;
+  if (overview) overview.hidden = true;
+  detail.hidden = false;
+
+  const iconEl = document.querySelector("#areaDetailIcon");
+  if (iconEl) iconEl.innerHTML = `<i class="ti ti-${escapeHtml(area.icon)}"></i>`;
+  const nameEl = document.querySelector("#areaDetailName");
+  if (nameEl) nameEl.textContent = area.name;
+  const metaEl = document.querySelector("#areaDetailMeta");
+  if (metaEl) metaEl.textContent = `${area.devices.length} device${area.devices.length === 1 ? "" : "s"}`;
+  const deleteBtn = document.querySelector("#areaDeleteButton");
+  if (deleteBtn) deleteBtn.hidden = !area.custom;
+  const manageBtn = document.querySelector("#areaManageButton");
+  if (manageBtn) manageBtn.hidden = false;
+
+  const body = document.querySelector("#areaDetailBody");
+  if (!body) return;
+
+  if (area.devices.length === 0) {
+    body.innerHTML = `
+      <div class="area-empty">
+        <i class="ti ti-layout-grid-add"></i>
+        <p>No devices in this area yet.</p>
+        <button class="btn-primary" id="areaEmptyManage" type="button">Assign Devices</button>
+      </div>`;
+    return;
+  }
+
+  body.innerHTML = genericGroupSectionsHtml(area.devices);
+  hydrateGenericGroupBody(body, area.devices);
 }
 
 async function refreshAreas() {
@@ -4668,10 +5138,10 @@ function updateCachedCameraName(cameraId, name) {
 
 /* ── View navigation ── */
 function activateView(viewName) {
-  railButtons.forEach((btn) => {
+  railButtonEls().forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.view === viewName);
   });
-  viewPanels.forEach((panel) => {
+  viewPanelEls().forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.viewPanel === viewName);
   });
   document.body.classList.toggle("home-assistant-mode", viewName === "homeassistant");
@@ -4699,6 +5169,9 @@ function activateView(viewName) {
   if (DEVICE_GROUP_VIEWS.includes(viewName)) {
     setDevicesGroupOpen(true);
     setDevicesBackVisible(arrivedFromDevices);
+    if (!document.querySelector(`[data-view-panel="${CSS.escape(viewName)}"] .device-grid, [data-view-panel="${CSS.escape(viewName)}"] .ambient-grid`)) {
+      renderDynamicGroupPanel(viewName);
+    }
   } else {
     setDevicesBackVisible(false);
   }
@@ -5132,12 +5605,14 @@ document.addEventListener("click", (event) => {
   try { localStorage.setItem("palette_theme", id); } catch {}
 });
 
-/* Sidebar navigation */
-railButtons.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    arrivedFromDevices = false;
-    activateView(btn.dataset.view);
-  });
+/* Sidebar navigation — delegated, so nav items added at runtime work without
+   registration and no item can ever be bound twice. */
+document.addEventListener("click", (event) => {
+  const item = event.target.closest(".room-item[data-view]");
+  if (!item) return;
+  if (event.target.closest(".settings-chevron")) return;
+  arrivedFromDevices = false;
+  activateView(item.dataset.view);
 });
 
 /* Back to the Devices overview */
@@ -5147,27 +5622,51 @@ document.addEventListener("click", (event) => {
   activateView("devices");
 });
 
+document.addEventListener("click", (event) => {
+  const open = event.target.closest("[data-manage-group]");
+  if (open) {
+    openManageDevicesModal(open.dataset.manageGroup);
+    return;
+  }
+  if (event.target.closest("#closeManageDevices") || event.target.closest("#manageDevicesDone")) {
+    const modal = document.querySelector("#manageDevicesModal");
+    if (modal) modal.hidden = true;
+  }
+});
+
+document.addEventListener("change", (event) => {
+  const checkbox = event.target.closest(".manage-device-check");
+  if (checkbox) toggleManageDevice(checkbox).catch((error) => console.error(error));
+});
+
 /* ── Startup (default) view ── */
 const DEFAULT_VIEW_KEY = "default_view";
 
 function getDefaultView() {
   try {
     const saved = localStorage.getItem(DEFAULT_VIEW_KEY);
-    if (saved && railButtons.some((btn) => btn.dataset.view === saved)) return saved;
+    if (saved && railButtonEls().some((btn) => btn.dataset.view === saved)) return saved;
   } catch {}
   return "home";
+}
+
+/* Options are rebuilt from railButtonEls(), which is queried fresh -- so this
+   can be called again once loadDeviceGroups() has synced the nav and a
+   custom group's <li> exists, without duplicating the option-building logic. */
+function populateDefaultViewSelect(select) {
+  select.innerHTML = railButtonEls().map((btn) => {
+    const label = [...btn.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent.trim())
+      .join("").trim() || btn.dataset.view;
+    return `<option value="${escapeHtml(btn.dataset.view)}">${escapeHtml(label)}</option>`;
+  }).join("");
 }
 
 (function initDefaultView() {
   const select = document.querySelector("#defaultViewSelect");
   if (select) {
-    select.innerHTML = railButtons.map((btn) => {
-      const label = [...btn.childNodes]
-        .filter((node) => node.nodeType === Node.TEXT_NODE)
-        .map((node) => node.textContent.trim())
-        .join("").trim() || btn.dataset.view;
-      return `<option value="${escapeHtml(btn.dataset.view)}">${escapeHtml(label)}</option>`;
-    }).join("");
+    populateDefaultViewSelect(select);
     select.value = getDefaultView();
     select.addEventListener("change", () => {
       try { localStorage.setItem(DEFAULT_VIEW_KEY, select.value); } catch {}
@@ -5176,11 +5675,35 @@ function getDefaultView() {
     // Keep the row from hijacking clicks meant for the select.
     select.addEventListener("click", (event) => event.stopPropagation());
   }
-  activateView(getDefaultView());
+
+  // Activate immediately so the dashboard is never blank while the device
+  // groups document is in flight. At this instant railButtonEls() only sees
+  // the seven built-in <li>s shipped in index.html, so a saved default_view
+  // naming a custom group falls back to "home" here -- corrected below once
+  // the nav exists.
+  const initialView = getDefaultView();
+  activateView(initialView);
+
   loadAmbientLights().catch((error) => console.error(error));
   loadHumidifiers().catch((error) => console.error(error));
   loadEnvironmentSensors().catch((error) => console.error(error));
-  loadDeviceGroups().catch((error) => console.error(error));
+
+  // Once the group nav is synced, a custom group's <li> exists: rebuild the
+  // dropdown so it lists that group, and re-resolve the saved default_view --
+  // now validating against the full nav -- so a saved custom-group id is
+  // honoured instead of the "home" fallback above. Only re-activate if the
+  // resolved view actually differs, so the common case (no saved pref, or a
+  // built-in pref) never re-activates and never flickers.
+  loadDeviceGroups()
+    .then(() => {
+      if (select) {
+        populateDefaultViewSelect(select);
+        select.value = getDefaultView();
+      }
+      const resolvedView = getDefaultView();
+      if (resolvedView !== initialView) activateView(resolvedView);
+    })
+    .catch((error) => console.error(error));
 })();
 
 /* Light drag lock */

@@ -3303,6 +3303,50 @@ aside {
 
 .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--red);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--red);
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.btn-danger:hover { background: var(--card-2); }
+
+.group-color-picker { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+
+.group-color-option {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.group-color-option.selected { border-color: var(--text); }
+
+.device-group-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 16px;
+  padding: 10px 16px;
+  background: var(--card);
+  border: 1px dashed var(--border-hover);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.device-group-add:hover { background: var(--card-2); color: var(--text); }
+
 /* ═══════════════════════════════════════════════
    HOME (AREAS) VIEW
    ═══════════════════════════════════════════════ */
@@ -4172,6 +4216,8 @@ aside {
 
 .area-subsection { margin-bottom: 26px; }
 
+.device-group-foreign { margin-top: 18px; }
+
 .area-subsection-title {
   display: flex;
   align-items: center;
@@ -4301,6 +4347,15 @@ aside {
 
 .assign-device-row:hover { background: rgba(255, 255, 255, 0.04); }
 .assign-device-row.in-area { border-color: rgba(var(--t-accent-rgb), 0.3); background: rgba(var(--t-accent-rgb), 0.06); }
+
+.manage-device-why {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+  margin-right: 10px;
+}
+
+.manage-device-check { width: 16px; height: 16px; cursor: pointer; }
 
 .assign-area-select {
   flex-shrink: 0;
