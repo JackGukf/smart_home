@@ -270,10 +270,10 @@ def test_device_group_views_is_derived_not_hardcoded(tmp_path: Path) -> None:
     assert "function syncDeviceGroupNav" in javascript
 
 
-def test_nav_sync_uses_the_dom_api_not_markup_strings(tmp_path: Path) -> None:
-    """color and icon originate in a hand-editable JSON file and reach a CSS
-    custom property and a class attribute. Neither may be interpolated into
-    markup."""
+def test_nav_sync_renders_no_items_but_still_ensures_panels(tmp_path: Path) -> None:
+    """Groups are reached from the Devices overview tiles, not the sidebar, so
+    sync renders no nav items at all. Its remaining job is clearing any left by
+    an older build and ensuring every group has a panel to navigate into."""
     javascript = APP_JS.read_text(encoding="utf-8")
     at = javascript.index("function syncDeviceGroupNav")
     depth, i, body = 0, javascript.index("{", at), None
@@ -286,6 +286,6 @@ def test_nav_sync_uses_the_dom_api_not_markup_strings(tmp_path: Path) -> None:
                 body = javascript[at:j + 1]
                 break
 
-    assert "setProperty(\"--group-color\"" in body
-    assert "classList.add" in body
+    assert 'createElement("li")' not in body, "sync must not render nav items"
+    assert "ensureDeviceGroupPanel" in body, "sync must still ensure panels exist"
     assert "innerHTML" not in body, "nav sync must not build markup strings"

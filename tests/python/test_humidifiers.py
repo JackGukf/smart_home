@@ -577,11 +577,12 @@ INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
 APP_JS = PROJECT_ROOT / "src" / "python" / "web_static" / "app.js"
 
 
-def test_humidifier_view_exists_in_sidebar_and_panels() -> None:
+def test_humidifier_view_exists_as_a_panel() -> None:
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    assert 'data-view="humidifier"' in html
-    assert 'id="humidifierCount"' in html
+    # The #humidifierCount badge lived on the sidebar item, removed with the
+    # other device groups; the panel and its grid remain.
+    assert 'id="humidifierCount"' not in html
     assert 'data-view-panel="humidifier"' in html
     assert 'id="humidifierGrid"' in html
 

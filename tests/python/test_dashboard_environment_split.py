@@ -7,15 +7,16 @@ INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
 APP_JS = PROJECT_ROOT / "src" / "python" / "web_static" / "app.js"
 
 
-def test_environment_is_a_device_group_child_before_sensors() -> None:
-    html = INDEX_HTML.read_text(encoding="utf-8")
-    views_start = html.index('<div class="sidebar-section">Views</div>')
-    discovery_start = html.index('<div class="sidebar-section">Discovery</div>')
-    views = html[views_start:discovery_start]
+def test_environment_and_sensors_are_adjacent_seeded_groups() -> None:
+    """The two halves of the reading split used to sit next to each other in the
+    sidebar. The sidebar no longer lists groups, so the ordering that matters is
+    the seeded document's, which drives the Devices overview tiles."""
+    from src.python.web_app import DEFAULT_DEVICE_GROUPS
 
-    children = re.findall(r'<li[^>]*\bdevice-group-item\b[^>]*\bdata-view="([^"]+)"', views)
+    ids = [g["id"] for g in DEFAULT_DEVICE_GROUPS]
 
-    assert children == ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
+    assert ids == ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
+    assert ids.index("tuya") == ids.index("environment") + 1
 
 
 def test_environment_panel_and_badge_exist() -> None:
@@ -23,7 +24,8 @@ def test_environment_panel_and_badge_exist() -> None:
 
     assert 'data-view-panel="environment"' in html
     assert 'id="environmentGrid"' in html
-    assert 'id="environmentCount"' in html
+    # The #environmentCount badge lived on the sidebar item, which is gone.
+    assert 'id="environmentCount"' not in html
 
 
 def test_split_filter_is_capability_driven() -> None:

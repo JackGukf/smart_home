@@ -59,11 +59,11 @@ def test_sidebar_view_order_helper_sees_multi_class_items() -> None:
 
 
 def test_ambient_view_is_present_and_backend_is_preserved() -> None:
-    """Ambient was hidden once, then restored in efeda71. Both halves must hold."""
+    """Ambient was hidden once, then restored in efeda71. Its sidebar item was
+    later removed with the other device groups, but the panel and backend stay."""
     html = INDEX_HTML.read_text(encoding="utf-8")
     backend = WEB_APP.read_text(encoding="utf-8")
 
-    assert 'data-view="ambient"' in html
     assert 'data-view-panel="ambient"' in html
     assert 'id="ambientGrid"' in html
     assert '@app.get("/api/ambient-lights")' in backend

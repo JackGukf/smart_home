@@ -255,7 +255,6 @@ function logActivity(text, type = "normal") {
 })();
 
 /* ── Devices sidebar group ── */
-const DEVICES_GROUP_KEY = "devices_group_open_v1";
 /* Seeded to the built-in groups so the sidebar works before the group document
    loads; replaced by the loaded ids once it arrives. */
 let DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
@@ -272,36 +271,6 @@ function setDevicesBackVisible(show) {
     btn.hidden = !show;
   });
 }
-
-function isDevicesGroupOpen() {
-  try {
-    return localStorage.getItem(DEVICES_GROUP_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
-function setDevicesGroupOpen(open) {
-  const toggle = document.querySelector("#devicesGroupToggle");
-  toggle?.classList.toggle("open", open);
-  document.querySelectorAll(".device-group-item").forEach((item) => {
-    item.hidden = !open;
-  });
-  try { localStorage.setItem(DEVICES_GROUP_KEY, open ? "1" : "0"); } catch {}
-}
-
-(function initDevicesGroup() {
-  const toggle = document.querySelector("#devicesGroupToggle");
-  if (!toggle) return;
-  setDevicesGroupOpen(isDevicesGroupOpen());
-
-  // Chevron toggles collapse without changing the active view; the row itself
-  // opens the overview and always expands.
-  toggle.querySelector(".settings-chevron")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    setDevicesGroupOpen(!isDevicesGroupOpen());
-  });
-})();
 
 /* The seven built-in views already covered by the hardcoded tiles below. Any
    other id resolveDeviceGroups() returns — a user-created group, or the
@@ -890,8 +859,8 @@ function renderDevices(devices, cameras, matterDevices = []) {
 
   deviceCount.textContent    = String(devices.length + matterDevices.length);
   onCount.textContent        = String([...devices, ...matterDevices].filter((d) => d.is_on === true).length);
-  lightCount.textContent     = String(lightDevices.length);
-  plugCount.textContent      = String(plugDevices.length);
+  if (lightCount) lightCount.textContent = String(lightDevices.length);
+  if (plugCount) plugCount.textContent = String(plugDevices.length);
   cameraTabCount.textContent = String(cameras.length);
 
   renderLightScenes(lightDevices);
@@ -1794,7 +1763,7 @@ function renderSensorDeviceCard(group, mode) {
 function renderTuyaDevices(devices) {
   latestTuyaDevices = devices;
   const visibleDevices = groupMemberData("tuya", ["sensor"]).flatMap((g) => g.readings).filter((d) => !isTuyaCamera(d));
-  tuyaCount.textContent = String(sensorGroupCount("sensors"));
+  if (tuyaCount) tuyaCount.textContent = String(sensorGroupCount("sensors"));
 
   if (visibleDevices.length === 0) {
     const anyTuyaDevices = latestTuyaDevices.filter((d) => !isTuyaCamera(d)).length > 0;
@@ -2054,7 +2023,7 @@ function renderThermostats(payload) {
   const thermostats = payload?.thermostats || [];
   latestThermostats = thermostats;
   const groupThermostats = groupMemberData("climate", ["thermostat"]);
-  thermostatCount.textContent = String(thermostats.length);
+  if (thermostatCount) thermostatCount.textContent = String(thermostats.length);
 
   if (thermostats.length > 0) {
     const first = thermostats[0];
@@ -3675,47 +3644,11 @@ async function loadDeviceGroups() {
    loaded document rather than rebuilding the list, which keeps that fallback
    intact. Values reach the DOM through the API, never through markup strings. */
 function syncDeviceGroupNav() {
-  const parent = document.querySelector("#devicesGroupToggle");
-  const list = parent?.parentElement;
-  if (!list) return;
+  // Device groups are reached from the Devices overview tiles, not the sidebar,
+  // so no per-group nav items are rendered. Any left over from an older build
+  // are cleared. Panels are still ensured so a tile has somewhere to navigate.
+  document.querySelectorAll(".device-group-item").forEach((el) => el.remove());
 
-  const existing = new Map(
-    [...list.querySelectorAll(".device-group-item")].map((el) => [el.dataset.view, el])
-  );
-  let anchor = parent;
-
-  deviceGroupNavPlan(resolveDeviceGroups()).forEach((entry) => {
-    let item = existing.get(entry.id);
-    if (!item) {
-      item = document.createElement("li");
-      item.className = "room-item device-group-item";
-      item.dataset.view = entry.id;
-      const icon = document.createElement("span");
-      icon.className = "room-icon";
-      icon.appendChild(document.createElement("i"));
-      item.appendChild(icon);
-      item.appendChild(document.createTextNode(""));
-      // No click listener here: the delegated sidebar handler covers created items.
-    }
-    existing.delete(entry.id);
-
-    const glyph = item.querySelector(".room-icon i");
-    if (glyph) {
-      glyph.className = "";
-      glyph.classList.add("ti", `ti-${entry.icon}`);
-    }
-    const label = [...item.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
-    if (label) label.textContent = ` ${entry.name} `;
-    item.style.setProperty("--group-color", entry.color);
-
-    anchor.after(item);
-    anchor = item;
-  });
-
-  // Any child left in the map is no longer a group; drop it.
-  existing.forEach((el) => el.remove());
-
-  // Groups with no static markup need a panel to navigate into.
   resolveDeviceGroups().forEach((group) => {
     if (!document.querySelector(`[data-view-panel="${CSS.escape(group.id)}"]`)) {
       ensureDeviceGroupPanel(group);
@@ -5163,11 +5096,9 @@ function activateView(viewName) {
       .catch(() => _updateMatterServerStatus(false));
   }
   if (viewName === "devices") {
-    setDevicesGroupOpen(true);
     renderDevicesOverview();
   }
   if (DEVICE_GROUP_VIEWS.includes(viewName)) {
-    setDevicesGroupOpen(true);
     setDevicesBackVisible(arrivedFromDevices);
     if (!document.querySelector(`[data-view-panel="${CSS.escape(viewName)}"] .device-grid, [data-view-panel="${CSS.escape(viewName)}"] .ambient-grid`)) {
       renderDynamicGroupPanel(viewName);
@@ -5610,7 +5541,6 @@ document.addEventListener("click", (event) => {
 document.addEventListener("click", (event) => {
   const item = event.target.closest(".room-item[data-view]");
   if (!item) return;
-  if (event.target.closest(".settings-chevron")) return;
   arrivedFromDevices = false;
   activateView(item.dataset.view);
 });

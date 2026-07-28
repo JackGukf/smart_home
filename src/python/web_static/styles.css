@@ -332,10 +332,6 @@ aside {
 
 .system-settings-item { padding-left: 24px; }
 
-.device-group-item { padding-left: 24px; }
-
-#devicesGroupToggle.open .settings-chevron { transform: rotate(90deg); }
-
 .sidebar-section-toggle {
   display: flex;
   align-items: center;
@@ -2342,9 +2338,6 @@ aside {
   .thermo-mode-grid { grid-template-columns: repeat(2, 1fr); }
   .thermo-presets { flex-wrap: wrap; }
 
-  /* Rail has no room for indentation or chevrons: flatten the Devices group. */
-  #devicesGroupToggle { display: none; }
-  .device-group-item[hidden] { display: flex; }
   .devices-overview-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
