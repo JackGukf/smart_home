@@ -2,6 +2,6 @@
 
 #include "controller.hpp"
 
-TEST(ControllerTest, StartupMessageNamesRaspberryPiController) {
-    EXPECT_EQ(startup_message(), "Smart Home Raspberry Pi 4 controller starting...");
+TEST(ControllerTest, StartupMessageNamesOrangePiController) {
+    EXPECT_EQ(startup_message(), "Smart Home Orange Pi 6 Plus controller starting...");
 }

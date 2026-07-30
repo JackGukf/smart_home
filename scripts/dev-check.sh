@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT="${1:-$HOME/workspace/smart-home-rpi4}"
+PROJECT_ROOT="${1:-$HOME/workspace/smart_home_AI}"
 
 echo "Checking tools..."
 command -v gcc

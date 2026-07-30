@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the Matter bridge for the native host architecture (x86_64).
 # Used by integration tests so they can run inside the dev Docker container
-# without needing a Raspberry Pi.
+# without needing the Orange Pi.
 #
 # Usage (inside dev container):
 #   bash scripts/build-matter-bridge-native.sh
@@ -16,8 +16,13 @@ CHIP_BRIDGE_DIR="$CHIP_DIR/examples/bridge-app/linux"
 OUT_DIR="$PROJECT_ROOT/build/matter-bridge-native"
 
 echo "==> Activating CHIP SDK tools..."
+# CHIP's activate.sh is a symlink to scripts/setup/bootstrap.sh and invokes
+# helpers such as scripts/setup/gen_pigweed_cipd_json.py by paths relative to
+# the connectedhomeip checkout, so it must be sourced with that as the cwd.
+pushd "$CHIP_DIR" >/dev/null
 # shellcheck source=/dev/null
-source "$CHIP_DIR/scripts/activate.sh"
+source scripts/activate.sh
+popd >/dev/null
 
 echo "==> Copying bridge source files into CHIP SDK bridge example..."
 cp "$BRIDGE_SRC/BridgeDevice.h"   "$CHIP_BRIDGE_DIR/"

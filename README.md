@@ -1,6 +1,6 @@
-# Smart Home Raspberry Pi 4 Project
+# Smart Home AI Project
 
-This project area is for controlling and monitoring smart home devices from a Raspberry Pi 4 using C/C++ and Python.
+This project area is for controlling and monitoring smart home devices from an Orange Pi 6 Plus using C/C++ and Python.
 
 Target device examples:
 
@@ -37,7 +37,7 @@ Runtime services
 
 ## First Setup Steps
 
-1. Install Raspberry Pi OS on the Pi 4.
+1. Install Ubuntu 24.04 ARM64 on the Orange Pi 6 Plus.
 2. Enable SSH.
 3. Update packages:
 
@@ -61,9 +61,9 @@ The recommended development setup is Docker running in WSL, opened with Visual S
 Quick check:
 
 ```bash
-cd ~/workspace/smart-home-rpi4
+cd ~/workspace/smart_home_AI
 docker compose build dev
-docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4
+docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart_home_AI
 ```
 
 See `docs/docker-development.md` for IDE, build, and debug setup.
@@ -75,19 +75,21 @@ docker compose run --rm dev python3 -m pytest
 docker compose run --rm dev sh -lc "cmake --preset docker-debug && cmake --build --preset docker-debug && ctest --test-dir build/docker-debug --output-on-failure"
 ```
 
-## Raspberry Pi Deployment
+## Orange Pi 6 Plus Deployment
 
-For Raspberry Pi OS 64-bit, build and deploy from WSL:
+Build and deploy from WSL:
 
 ```bash
-cd ~/workspace/smart-home-rpi4
-./scripts/build-rpi4.sh
+cd ~/workspace/smart_home_AI
+./scripts/build-orangepi6.sh
 ./scripts/deploy-to-pi.sh
 ```
 
-See `docs/rpi4-cross-compile-deploy.md`.
+See `docs/orangepi6-cross-compile-deploy.md` for the full workflow, including
+the secondary Raspberry Pi 4 target, and `docs/setup-orangepi6.md` for the
+verified board facts.
 
-Connect to the configured Raspberry Pi:
+Connect to the configured board:
 
 ```bash
 ./scripts/connect-pi.sh
@@ -115,7 +117,7 @@ Run the local smart home dashboard:
 python3 -m uvicorn src.python.web_app:app --host 0.0.0.0 --port 8000
 ```
 
-On the Raspberry Pi touch screen, open:
+On the board's touch screen, open:
 
 ```text
 http://localhost:8000
@@ -130,7 +132,7 @@ http://localhost:8000
 
 ### Ambient light configuration
 
-Govee Bluetooth strips need a BLE address discovered from the Raspberry Pi:
+Govee Bluetooth strips need a BLE address discovered from the Orange Pi:
 
     python scripts/discover-govee-ble.py
 

@@ -5,7 +5,7 @@ Matter protocol.  Tests the full path: Python → chip-tool → Matter → bridg
 
 Prerequisites:
   - build/chip-tool-x86/chip-tool must exist (build with scripts/build-chip-tool.sh)
-  - Matter bridge running on Pi at 192.168.0.176
+  - Matter bridge running on Pi at 192.168.0.234
   - Bridge pairing code: 34970112332
 
 Usage:
@@ -104,7 +104,7 @@ def commission() -> bool:
             "  (Apple Home or a previous chip-tool session).\n"
             "\n"
             "  To fix, factory-reset the bridge on the Pi:\n"
-            "    ssh pi@192.168.0.176 'sudo systemctl stop matter-bridge && "
+            "    ssh orangepi@192.168.0.234 'sudo systemctl stop matter-bridge && "
             "rm -f /home/pi/matter-bridge-data/*.ini && "
             "sudo systemctl start matter-bridge'\n"
             "  Then run:  python3 scripts/matter_control.py commission\n"

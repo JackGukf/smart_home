@@ -1,25 +1,27 @@
 ---
-name: smart-home-rpi4
+name: smart-home-ai
 description: >
-  Expert context for the smart-home-rpi4 project — a Raspberry Pi 4 smart home
+  Expert context for the smart_home_AI project — an Orange Pi 6 Plus smart home
   controller using Python (TP-Link/Kasa, Tuya, FastAPI dashboard) and C++
-  (long-running daemon). Use this skill whenever the user is working on or asking
-  about their smart-home-rpi4 project, including writing code, running tests,
-  building, deploying to the Pi, controlling devices, or debugging. Trigger on any
-  mention of: smart home, RPi4, Kasa, TP-Link, Tuya, the web dashboard, deploy to
-  Pi, smart_home_controller, tplink_switch, web_app, or the smart-home-rpi4 workspace.
+  (long-running daemon, Matter bridge). Use this skill whenever the user is working
+  on or asking about their smart_home_AI project, including writing code, running
+  tests, building, deploying to the board, controlling devices, or debugging.
+  Trigger on any mention of: smart home, Orange Pi, RPi4, Kasa, TP-Link, Tuya, the
+  web dashboard, deploy to Pi, smart_home_controller, tplink_switch, web_app, or
+  the smart_home_AI workspace (formerly smart-home-rpi4).
 ---
 
-# Smart Home RPi4 — Project Superpower
+# Smart Home AI (Orange Pi 6 Plus) — Project Superpower
 
 ## Key Paths
 
 | Context | Path |
 |---------|------|
-| WSL (preferred for all dev work) | `/home/jackgu/workspace/smart-home-rpi4` |
-| Windows (Cowork file tools) | `\\wsl.localhost\Ubuntu-22.04\home\jackgu\workspace\smart-home-rpi4` |
+| WSL (preferred for all dev work) | `/home/jackgu/workspace/smart_home_AI` |
+| Windows (Cowork file tools) | `\\wsl.localhost\Ubuntu-22.04\home\jackgu\workspace\smart_home_AI` |
 | Git remote | `git@github.com:JackGukf/smart_home.git` (SSH — already configured) |
-| Raspberry Pi | `smarthome@192.168.0.176` (default) |
+| Orange Pi 6 Plus (primary) | `orangepi@192.168.0.234`, path `/home/orangepi/smart_home_AI` |
+| Raspberry Pi 4 (secondary) | `smarthome@192.168.0.176`, path `/home/smarthome/smart-home-rpi4` |
 
 > **Important for Cowork/sandbox:** The bash sandbox cannot mount the WSL workspace
 > path. Always provide commands for the user to run in their **Ubuntu WSL terminal**
@@ -40,8 +42,8 @@ scripts/             Utility scripts (build, deploy, connect, discover)
 configs/             Device configs
   devices.example.yaml   Schema reference (committed)
   devices.local.yaml     Real devices (git-ignored — never commit)
-cmake/toolchains/    rpi4-aarch64.cmake cross-compile toolchain
-build/               CMake out-of-tree dirs: docker-debug, rpi4-release, dev-check
+cmake/toolchains/    orangepi6-aarch64.cmake (primary), rpi4-aarch64.cmake (secondary)
+build/               CMake out-of-tree dirs: docker-debug, orangepi6-release, dev-check
 docs/                Architecture notes, WSL setup, setup guides
 ```
 
@@ -60,7 +62,7 @@ docs/                Architecture notes, WSL setup, setup guides
 
 ## Python Commands
 
-Run all of these from the project root in WSL (`~/workspace/smart-home-rpi4`):
+Run all of these from the project root in WSL (`~/workspace/smart_home_AI`):
 
 ```bash
 # Run tests
@@ -88,7 +90,7 @@ python3 -m src.python.tplink_switch --name <switch-name> status|on|off|toggle
 docker compose build dev
 
 # Run dev checks (lint, build, test) inside Docker
-docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4
+docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart_home_AI
 
 # Build C++ in Docker (debug)
 docker compose run --rm dev sh -lc \
@@ -99,47 +101,65 @@ docker compose run --rm dev sh -lc \
 docker compose run --rm dev python3 -m pytest
 ```
 
-CMake presets: `docker-debug`, `rpi4-release`, `dev-check`
+CMake presets: `docker-debug`, `docker-orangepi6-release`, `docker-rpi4-release`, `dev-check`
 
 ---
 
-## Build & Deploy to Raspberry Pi
+## Build & Deploy to the Orange Pi 6 Plus
 
 ```bash
-# Cross-compile for RPi4 aarch64 (runs inside Docker automatically)
-./scripts/build-rpi4.sh
-# Output: build/rpi4-release/src/cpp/smart_home_controller
+# Cross-compile for aarch64 (runs inside Docker automatically)
+./scripts/build-orangepi6.sh
+# Output: build/orangepi6-release/src/cpp/smart_home_controller
 
-# Deploy C++ binary + Python source + configs to Pi
+# Deploy C++ binary + Python source + configs to the board
 ./scripts/deploy-to-pi.sh
 # Options:
-#   --host HOST        Override Pi IP (default: 192.168.0.176)
-#   --user USER        Override SSH user (default: smarthome)
-#   --skip-build       Skip build-rpi4.sh (use existing binary)
+#   --host HOST        Override board IP (default: 192.168.0.234)
+#   --user USER        Override SSH user (default: orangepi)
+#   --remote-path PATH Override install dir (default: /home/$USER/smart_home_AI)
+#   --board BOARD      orangepi6 (default) or rpi4
+#   --skip-build       Skip the build (use existing binary)
 
-# Check Pi connectivity
+# Deploy the dashboard + systemd user services
+./scripts/deploy-dashboard.sh
+
+# Check connectivity
 ./scripts/connect-pi.sh --check
 
-# SSH into Pi
+# SSH in
 ./scripts/connect-pi.sh
 
-# Run a command on Pi
+# Run a command on the board
 ./scripts/connect-pi.sh -- uname -a
+```
+
+The Raspberry Pi 4 is still supported as a secondary target, but never by
+default — pass every detail explicitly:
+
+```bash
+./scripts/build-orangepi6.sh --board rpi4
+./scripts/deploy-to-pi.sh --board rpi4 --host 192.168.0.176 --user smarthome \
+    --remote-path /home/smarthome/smart-home-rpi4
 ```
 
 **What deploy does:** rsync's the binary, Python source, and configs; sets up a venv; installs Python dependencies.
 
-**Run on Pi after deploy:**
+**Run on the board after deploy:**
 ```bash
 # C++ daemon
-/home/smarthome/smart-home-rpi4/bin/smart_home_controller
+/home/orangepi/smart_home_AI/bin/smart_home_controller
 
 # Python controller
-/home/smarthome/smart-home-rpi4/.venv/bin/python /home/smarthome/smart-home-rpi4/src/python/controller.py
+/home/orangepi/smart_home_AI/.venv/bin/python /home/orangepi/smart_home_AI/src/python/controller.py
 
 # Web dashboard
-cd /home/smarthome/smart-home-rpi4 && .venv/bin/python -m uvicorn src.python.web_app:app --host 0.0.0.0 --port 8000
+cd /home/orangepi/smart_home_AI && .venv/bin/python -m uvicorn src.python.web_app:app --host 0.0.0.0 --port 8000
 ```
+
+**Board gotcha:** Ubuntu uses predictable interface names (`wlp1s0` Wi-Fi,
+`enp97s0` Ethernet), not Raspberry Pi OS's `wlan0`/`eth0`. Anything passing
+`--interface` — notably the Matter bridge — must use the Ubuntu names.
 
 ---
 
@@ -202,8 +222,8 @@ python3 -m src.python.tplink_switch --host <IP> status
 
 ### Full deploy workflow
 ```bash
-cd ~/workspace/smart-home-rpi4
+cd ~/workspace/smart_home_AI
 python3 -m pytest                  # make sure tests pass
 ./scripts/deploy-to-pi.sh          # cross-compile + rsync + venv setup
-./scripts/connect-pi.sh --check    # verify Pi is reachable
+./scripts/connect-pi.sh --check    # verify the board is reachable
 ```

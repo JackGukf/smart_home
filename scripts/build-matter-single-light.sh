@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Cross-compile a minimal one-switch Matter On/Off light accessory for Raspberry Pi 4.
+# Cross-compile a minimal one-switch Matter On/Off light accessory for the
+# Orange Pi 6 Plus (generic arm64, so it also runs on the Raspberry Pi 4).
 set -e
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"

@@ -1,17 +1,17 @@
 """
-Package the smart-home-rpi4 skill into a .skill file.
+Package the smart-home-ai skill into a .skill file.
 Run from WSL:
-  cd ~/workspace/smart-home-rpi4/smart-home-rpi4-skill
+  cd ~/workspace/smart_home_AI/smart-home-ai-skill
   python3 make_skill.py
 """
 import zipfile
 from pathlib import Path
 
 here = Path(__file__).parent
-out = here / "smart-home-rpi4.skill"
+out = here / "smart-home-ai.skill"
 
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-    zf.write(here / "SKILL.md", arcname="smart-home-rpi4/SKILL.md")
+    zf.write(here / "SKILL.md", arcname="smart-home-ai/SKILL.md")
 
 print(f"Done: {out}")
 print("Drag this file into Cowork → Settings → Skills to install.")

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Cross-compile the Matter bridge for Raspberry Pi 4 (aarch64).
+# Cross-compile the Matter bridge for the Orange Pi 6 Plus (aarch64).
+# The GN build targets generic arm64, so the same binary also runs on the
+# secondary Raspberry Pi 4 target.
 # Must run inside the Docker dev container after setup-matter-sdk.sh.
 # Usage: docker compose run --rm dev bash scripts/build-matter-bridge.sh
 set -e

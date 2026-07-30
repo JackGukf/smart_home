@@ -81,7 +81,7 @@ RUN groupadd --gid "${USER_GID}" "${USERNAME}" \
     && echo "${USERNAME} ALL=(root) NOPASSWD:ALL" > "/etc/sudoers.d/${USERNAME}" \
     && chmod 0440 "/etc/sudoers.d/${USERNAME}"
 
-WORKDIR /workspace/smart-home-rpi4
+WORKDIR /workspace/smart_home_AI
 
 COPY src/python/requirements.txt /tmp/requirements.txt
 # Matter CHIP SDK build tools: IDL codegen (lark, jinja2, stringcase) and matter_idl package

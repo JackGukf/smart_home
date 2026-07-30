@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Restart the Matter bridge on the Pi with a fresh KVS so it opens the
+# Restart the Matter bridge on the board with a fresh KVS so it opens the
 # commissioning window, then print the manual pairing code from the log.
 #
 # The bridge runs as the systemd user unit matter-bridge.service under
-# the smarthome user (see configs/matter-bridge.service).
+# the orangepi user (see configs/matter-bridge.service).
 #
 # Requires:
-#   PI_HOST env var — Pi IP address or hostname (default: raspberrypi.local)
-#   PI_USER env var — SSH username (default: smarthome)
+#   PI_HOST env var — board IP address or hostname (default: 192.168.0.234)
+#   PI_USER env var — SSH username (default: orangepi)
 #
 # Usage:
-#   PI_HOST=192.168.0.176 bash scripts/recommission-matter-bridge.sh
-#   PI_HOST=192.168.0.176 KEEP_KVS=1 bash scripts/recommission-matter-bridge.sh   # restart only, keep fabrics
+#   bash scripts/recommission-matter-bridge.sh
+#   KEEP_KVS=1 bash scripts/recommission-matter-bridge.sh   # restart only, keep fabrics
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-raspberrypi.local}"
-PI_USER="${PI_USER:-smarthome}"
+PI_HOST="${PI_HOST:-192.168.0.234}"
+PI_USER="${PI_USER:-orangepi}"
 REMOTE="${PI_USER}@${PI_HOST}"
 KEEP_KVS="${KEEP_KVS:-0}"
 

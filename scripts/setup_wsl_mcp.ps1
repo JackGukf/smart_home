@@ -35,7 +35,7 @@ if (-not $config.PSObject.Properties['mcpServers']) {
 $wslServer = [PSCustomObject]@{
     command = "wsl.exe"
     args    = @("-d", "Ubuntu-22.04", "python3",
-                "/home/jackgu/workspace/smart-home-rpi4/scripts/wsl_mcp_server.py")
+                "/home/jackgu/workspace/smart_home_AI/scripts/wsl_mcp_server.py")
 }
 $config.mcpServers | Add-Member -MemberType NoteProperty -Name 'wsl-shell' -Value $wslServer -Force
 

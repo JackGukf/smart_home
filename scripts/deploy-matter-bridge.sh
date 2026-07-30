@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
-# Deploy the Matter bridge binary to the Raspberry Pi as a systemd user unit.
+# Deploy the Matter bridge binary to the Orange Pi 6 Plus as a systemd user unit.
 #
 # The bridge runs as the systemd *user* service matter-bridge.service
-# (configs/matter-bridge.service) under the smarthome user with linger
+# (configs/matter-bridge.service) under the orangepi user with linger
 # enabled. The old Docker deployment path was retired 2026-07-08.
 #
 # Requires:
-#   PI_HOST env var — Pi IP address or hostname (default: raspberrypi.local)
-#   PI_USER env var — SSH username (default: smarthome, matching deploy-to-pi.sh)
+#   PI_HOST env var — board IP address or hostname (default: 192.168.0.234)
+#   PI_USER env var — SSH username (default: orangepi, matching deploy-to-pi.sh)
 #
 # Usage:
-#   PI_HOST=192.168.0.176 bash scripts/deploy-matter-bridge.sh
-#   PI_HOST=192.168.0.176 SKIP_BUILD=1 bash scripts/deploy-matter-bridge.sh
+#   bash scripts/deploy-matter-bridge.sh
+#   SKIP_BUILD=1 bash scripts/deploy-matter-bridge.sh
+#
+# Secondary Raspberry Pi 4 install:
+#   PI_HOST=192.168.0.176 PI_USER=smarthome \
+#     REMOTE_PATH=/home/smarthome/smart-home-rpi4 bash scripts/deploy-matter-bridge.sh
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PI_HOST="${PI_HOST:-raspberrypi.local}"
-PI_USER="${PI_USER:-smarthome}"
+PI_HOST="${PI_HOST:-192.168.0.234}"
+PI_USER="${PI_USER:-orangepi}"
 REMOTE="${PI_USER}@${PI_HOST}"
-REMOTE_DIR="${REMOTE_PATH:-/home/${PI_USER}/smart-home-rpi4}"
+REMOTE_DIR="${REMOTE_PATH:-/home/${PI_USER}/smart_home_AI}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 BINARY="$PROJECT_ROOT/build/matter-bridge/chip-bridge-app"
 UNIT_NAME="matter-bridge.service"

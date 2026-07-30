@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.176}"
-PI_USER="${PI_USER:-smarthome}"
-REMOTE_PATH="${REMOTE_PATH:-/home/${PI_USER}/smart-home-rpi4}"
+PI_HOST="${PI_HOST:-192.168.0.234}"
+PI_USER="${PI_USER:-orangepi}"
+REMOTE_PATH="${REMOTE_PATH:-/home/${PI_USER}/smart_home_AI}"
 
 usage() {
     cat <<'EOF'
@@ -14,12 +14,16 @@ Examples:
   scripts/connect-pi.sh
   scripts/connect-pi.sh --check
   scripts/connect-pi.sh -- uname -a
-  scripts/connect-pi.sh -- "cd ~/smart-home-rpi4 && ./bin/smart_home_controller"
+  scripts/connect-pi.sh -- "cd ~/smart_home_AI && ./bin/smart_home_controller"
+
+  # Secondary Raspberry Pi 4 target:
+  scripts/connect-pi.sh --host 192.168.0.176 --user smarthome \
+      --remote-path /home/smarthome/smart-home-rpi4
 
 Environment variables:
-  PI_HOST       Raspberry Pi IP/hostname. Default: 192.168.0.176
-  PI_USER       SSH username. Default: smarthome
-  REMOTE_PATH   Remote project directory. Default: /home/$PI_USER/smart-home-rpi4
+  PI_HOST       Board IP/hostname. Default: 192.168.0.234 (Orange Pi 6 Plus)
+  PI_USER       SSH username. Default: orangepi
+  REMOTE_PATH   Remote project directory. Default: /home/$PI_USER/smart_home_AI
 EOF
 }
 

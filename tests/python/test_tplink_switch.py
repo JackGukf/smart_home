@@ -61,7 +61,10 @@ async def test_turn_on_sends_command_and_refreshes_state() -> None:
 
     assert state.is_on is True
     assert device.turn_on_count == 1
-    assert device.update_count == 2
+    # One refresh, after the command. turn_on/turn_off do not need to read state
+    # first, so _run only updates afterwards; toggle updates twice because it
+    # must read the current state before deciding which command to send.
+    assert device.update_count == 1
 
 
 @pytest.mark.asyncio

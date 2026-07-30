@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Deploy dashboard files to Raspberry Pi and restart the systemd dashboard service.
-# Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER]
+# Deploy dashboard files to the Orange Pi 6 Plus and restart the systemd
+# dashboard service. Pass --host/--user to target a different board (e.g. the
+# secondary Raspberry Pi 4 install).
+# Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER] [--remote-path PATH]
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.176}"
-PI_USER="${PI_USER:-smarthome}"
+PI_HOST="${PI_HOST:-192.168.0.234}"
+PI_USER="${PI_USER:-orangepi}"
+REMOTE_PATH="${REMOTE_PATH:-}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)  PI_HOST="$2"; shift 2 ;;
         --user)  PI_USER="$2"; shift 2 ;;
+        --remote-path) REMOTE_PATH="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER]"
+            echo "Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER] [--remote-path PATH]"
             exit 0 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -19,7 +23,7 @@ done
 
 PI_TARGET="${PI_USER}@${PI_HOST}"
 REMOTE_HOME="/home/${PI_USER}"
-REMOTE_PATH="${REMOTE_HOME}/smart-home-rpi4"
+REMOTE_PATH="${REMOTE_PATH:-${REMOTE_HOME}/smart_home_AI}"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 BUILD_COUNT_FILE="${PROJECT_ROOT}/BUILD_COUNT"

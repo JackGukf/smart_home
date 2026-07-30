@@ -22,9 +22,9 @@ Visual Studio 2022 can still open this folder for CMake-based C++ work because t
 Open Ubuntu WSL:
 
 ```bash
-cd ~/workspace/smart-home-rpi4
+cd ~/workspace/smart_home_AI
 docker compose build dev
-docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4
+docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart_home_AI
 ```
 
 ## Open in VS Code
@@ -32,7 +32,7 @@ docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4
 From WSL:
 
 ```bash
-cd ~/workspace/smart-home-rpi4
+cd ~/workspace/smart_home_AI
 code .
 ```
 
@@ -42,7 +42,7 @@ Then choose:
 Dev Containers: Reopen in Container
 ```
 
-VS Code will build the image from `Dockerfile`, attach to the `dev` service from `docker-compose.yml`, and use `/workspace/smart-home-rpi4` as the workspace folder.
+VS Code will build the image from `Dockerfile`, attach to the `dev` service from `docker-compose.yml`, and use `/workspace/smart_home_AI` as the workspace folder.
 
 ## Build C/C++
 
@@ -76,16 +76,16 @@ In VS Code after reopening in the container:
 ```bash
 docker compose build dev
 docker compose run --rm dev bash
-docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4
+docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart_home_AI
 docker compose down
 ```
 
-## Raspberry Pi 4 Cross-Compile
+## Orange Pi 6 Plus Cross-Compile
 
-The Docker image also includes the ARM64 cross-compiler for Raspberry Pi OS 64-bit:
+The Docker image also includes the ARM64 cross-compiler for the Orange Pi 6 Plus (Ubuntu 24.04 ARM64):
 
 ```bash
-./scripts/build-rpi4.sh
+./scripts/build-orangepi6.sh
 ```
 
-See `docs/rpi4-cross-compile-deploy.md` for deployment over SSH.
+See `docs/orangepi6-cross-compile-deploy.md` for deployment over SSH.

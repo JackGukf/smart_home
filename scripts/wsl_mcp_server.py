@@ -14,7 +14,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("WSL Shell")
 
-DEFAULT_WORKDIR = "/home/jackgu/workspace/smart-home-rpi4"
+DEFAULT_WORKDIR = "/home/jackgu/workspace/smart_home_AI"
 
 
 @mcp.tool()

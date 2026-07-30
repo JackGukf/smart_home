@@ -7,9 +7,13 @@ TEST(DeviceMapper, LightSwitchNonDimmable) {
     EXPECT_FALSE(spec.read_only);
 }
 
-TEST(DeviceMapper, LightSwitchDimmable) {
+// Dimmable light switches are deliberately still mapped to OnOffLight.
+// DimmableLight requires the LevelControl cluster, which the bridge does not
+// implement; advertising it makes Apple Home attempt to dim and show
+// "No response". Revisit only when LevelControl is actually supported.
+TEST(DeviceMapper, LightSwitchDimmableStillMapsToOnOffLight) {
     auto spec = MapCategoryToMatter("light_switch", true);
-    EXPECT_EQ(spec.type, MatterDeviceType::DimmableLight);
+    EXPECT_EQ(spec.type, MatterDeviceType::OnOffLight);
     EXPECT_FALSE(spec.read_only);
 }
 

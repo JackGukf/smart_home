@@ -1,5 +1,10 @@
-# systemd *user* unit — install to ~/.config/systemd/user/ on the Pi
-# (deployed by scripts/deploy-matter-bridge.sh; requires loginctl enable-linger smarthome)
+# systemd *user* unit — install to ~/.config/systemd/user/ on the board
+# (deployed by scripts/deploy-matter-bridge.sh; requires loginctl enable-linger orangepi)
+#
+# --interface must name a real interface on the target. On the Orange Pi 6 Plus
+# the Wi-Fi interface is wlp1s0 and Ethernet is enp97s0 (predictable names), not
+# the wlan0/eth0 used by Raspberry Pi OS. Verify with `ip -o -4 addr show` on the
+# board before installing; a wrong interface makes commissioning fail silently.
 [Unit]
 Description=Matter Bridge (chip-bridge-app)
 After=network-online.target
@@ -7,13 +12,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/smarthome/smart-home-rpi4
+WorkingDirectory=/home/orangepi/smart_home_AI
 Environment=BRIDGE_SYNC_URL=http://localhost:8000
-ExecStart=/home/smarthome/smart-home-rpi4/build/matter-bridge/chip-bridge-app --KVS /home/smarthome/matter-bridge-kvs/kvs --interface wlan0 --discriminator 2861 --passcode 56123489
+ExecStart=/home/orangepi/smart_home_AI/build/matter-bridge/chip-bridge-app --KVS /home/orangepi/matter-bridge-kvs/kvs --interface wlp1s0 --discriminator 2861 --passcode 56123489
 Restart=always
 RestartSec=5
-StandardOutput=append:/home/smarthome/matter-bridge.log
-StandardError=append:/home/smarthome/matter-bridge.log
+StandardOutput=append:/home/orangepi/matter-bridge.log
+StandardError=append:/home/orangepi/matter-bridge.log
 
 [Install]
 WantedBy=default.target

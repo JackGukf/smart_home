@@ -17,12 +17,12 @@ sudo apt install -y \
   mosquitto \
   mosquitto-clients
 
-python3 -m venv "$HOME/workspace/smart-home-rpi4/src/python/.venv"
-"$HOME/workspace/smart-home-rpi4/src/python/.venv/bin/pip" install --upgrade pip
+python3 -m venv "$HOME/workspace/smart_home_AI/src/python/.venv"
+"$HOME/workspace/smart_home_AI/src/python/.venv/bin/pip" install --upgrade pip
 
-if [ -f "$HOME/workspace/smart-home-rpi4/src/python/requirements.txt" ]; then
-  "$HOME/workspace/smart-home-rpi4/src/python/.venv/bin/pip" install -r "$HOME/workspace/smart-home-rpi4/src/python/requirements.txt"
+if [ -f "$HOME/workspace/smart_home_AI/src/python/requirements.txt" ]; then
+  "$HOME/workspace/smart_home_AI/src/python/.venv/bin/pip" install -r "$HOME/workspace/smart_home_AI/src/python/requirements.txt"
 fi
 
 echo "Development tools installed."
-echo "Project path: $HOME/workspace/smart-home-rpi4"
+echo "Project path: $HOME/workspace/smart_home_AI"

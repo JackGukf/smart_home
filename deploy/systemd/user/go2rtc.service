@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/smarthome/smart-home-rpi4
-ExecStart=/home/smarthome/smart-home-rpi4/scripts/run-go2rtc.sh
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/scripts/run-go2rtc.sh
 Restart=always
 RestartSec=5
 

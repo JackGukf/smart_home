@@ -40,9 +40,22 @@
       }
     },
     {
+      "name": "docker-orangepi6-release",
+      "displayName": "Docker Orange Pi 6 Plus Release",
+      "description": "ARM64 release build for Orange Pi 6 Plus (Ubuntu 24.04 ARM64). Primary deployment target.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/orangepi6-release",
+      "cacheVariables": {
+        "BUILD_TESTING": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/orangepi6-aarch64.cmake"
+      }
+    },
+    {
       "name": "docker-rpi4-release",
-      "displayName": "Docker Raspberry Pi 4 Release",
-      "description": "ARM64 release build for Raspberry Pi OS 64-bit.",
+      "displayName": "Docker Raspberry Pi 4 Release (secondary)",
+      "description": "ARM64 release build for Raspberry Pi OS 64-bit. Secondary target, kept for the existing Pi install.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/rpi4-release",
       "cacheVariables": {
@@ -65,6 +78,10 @@
     {
       "name": "wsl-release",
       "configurePreset": "wsl-release"
+    },
+    {
+      "name": "docker-orangepi6-release",
+      "configurePreset": "docker-orangepi6-release"
     },
     {
       "name": "docker-rpi4-release",

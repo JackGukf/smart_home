@@ -10,7 +10,7 @@
     {
       "label": "Docker: run dev check",
       "type": "shell",
-      "command": "docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4",
+      "command": "docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart_home_AI",
       "problemMatcher": []
     },
     {

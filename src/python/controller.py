@@ -1,5 +1,5 @@
 def startup_message() -> str:
-    return "Smart Home Raspberry Pi 4 Python controller starting..."
+    return "Smart Home Orange Pi 6 Plus Python controller starting..."
 
 
 def main() -> None:

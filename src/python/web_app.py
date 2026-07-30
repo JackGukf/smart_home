@@ -298,7 +298,7 @@ def create_app(
     areas_path: Path = DEFAULT_AREAS_PATH,
     device_groups_path: Path = DEFAULT_DEVICE_GROUPS_PATH,
 ) -> FastAPI:
-    app = FastAPI(title="Smart Home Raspberry Pi 4 Dashboard")
+    app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard")
     app.state.discovery_path = discovery_path
     app.state.config_path = config_path
     app.state.controller = controller or KasaLightSwitchController()
@@ -1516,7 +1516,7 @@ def _ambient_light_card(light: AmbientLightDefinition) -> dict[str, Any]:
     if light.provider == "govee_ble":
         has_address = _is_real_ble_address(light.address)
         status = "configured" if has_address else "needs_ble_address"
-        note = "BLE address configured" if has_address else "Run Govee BLE discovery on the Raspberry Pi and add the address."
+        note = "BLE address configured" if has_address else "Run Govee BLE discovery on the Orange Pi and add the address."
         controllable = has_address
     elif light.provider == "govee_lan":
         has_id = _is_real_ble_address(light.address) or bool(light.model)
@@ -1744,7 +1744,7 @@ def _govee_ble_discovery_payload() -> dict[str, Any]:
     except Exception as exc:
         return {
             "status": "bleak_missing",
-            "message": "Install bleak on the Raspberry Pi to scan Govee Bluetooth devices.",
+            "message": "Install bleak on the Orange Pi to scan Govee Bluetooth devices.",
             "error": str(exc),
             "devices": [],
         }
@@ -1864,7 +1864,7 @@ def _govee_humidifier_state(entry: dict[str, Any]) -> dict[str, Any] | None:
         payload = _govee_cloud_request(
             "/router/api/v1/device/state",
             {
-                "requestId": "smart-home-rpi4",
+                "requestId": "smart-home-ai",
                 "payload": {"sku": entry.get("sku"), "device": entry.get("device")},
             },
         )
@@ -1948,7 +1948,7 @@ def _govee_thermometer_reading(entry: dict[str, Any]) -> dict[str, Any] | None:
     try:
         payload = _govee_cloud_request(
             "/router/api/v1/device/state",
-            {"requestId": "smart-home-rpi4", "payload": {"sku": entry.get("sku"), "device": entry.get("device")}},
+            {"requestId": "smart-home-ai", "payload": {"sku": entry.get("sku"), "device": entry.get("device")}},
         )
     except Exception:
         return None
@@ -2098,7 +2098,7 @@ def _govee_cloud_control(
     return _govee_cloud_request(
         "/router/api/v1/device/control",
         {
-            "requestId": "smart-home-rpi4",
+            "requestId": "smart-home-ai",
             "payload": {
                 "sku": entry.get("sku"),
                 "device": entry.get("device"),
@@ -2474,7 +2474,7 @@ def _govee_ble_command_payload(light: AmbientLightDefinition, command: str, body
     try:
         import bleak  # noqa: F401  # type: ignore
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Install bleak on the Raspberry Pi for Govee BLE control: {exc}") from exc
+        raise HTTPException(status_code=503, detail=f"Install bleak on the Orange Pi for Govee BLE control: {exc}") from exc
 
     packet = _govee_ble_command_bytes(command, body)
     try:
@@ -3738,7 +3738,7 @@ def _camera_card(camera: CameraDefinition, check_ports: bool = True) -> dict[str
             view_url = None
             view_type = "unavailable"
             status = "offline"
-            status_detail = f"RTSP port {rtsp_port} is not reachable from the Raspberry Pi."
+            status_detail = f"RTSP port {rtsp_port} is not reachable from the Orange Pi."
 
     card = {
         "id": camera.host,

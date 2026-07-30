@@ -6,7 +6,7 @@ local KLAP handshake with every plug in tplink_switches.json that has no
 readable alias. Prints pass/fail only — never the credentials.
 
 Usage (on the Pi):
-    cd ~/smart-home-rpi4 && set -a && . ./.env && set +a && \
+    cd ~/smart_home_AI && set -a && . ./.env && set +a && \
         .venv/bin/python scripts/check-tplink-credentials.py
 """
 from __future__ import annotations

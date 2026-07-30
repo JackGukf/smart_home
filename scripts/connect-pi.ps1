@@ -1,13 +1,13 @@
 param(
-    [string]$PiHost = "192.168.0.176",
-    [string]$PiUser = "smarthome",
-    [string]$RemotePath = "/home/smarthome/smart-home-rpi4",
+    [string]$PiHost = "192.168.0.234",
+    [string]$PiUser = "orangepi",
+    [string]$RemotePath = "/home/orangepi/smart_home_AI",
     [switch]$Check,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Command
 )
 
-$WslProjectRoot = "/home/jackgu/workspace/smart-home-rpi4"
+$WslProjectRoot = "/home/jackgu/workspace/smart_home_AI"
 $CheckArg = if ($Check) { "--check" } else { "" }
 $RemoteCommand = if ($Command.Count -gt 0) { "-- " + ($Command -join " ") } else { "" }
 

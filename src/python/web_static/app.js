@@ -1257,7 +1257,7 @@ function renderPlugSection(devices) {
   }
 
   if (devices.length === 0) {
-    plugGrid.innerHTML = '<div class="empty">No TP-Link smart plugs found. Run discovery on the Raspberry Pi first.</div>';
+    plugGrid.innerHTML = '<div class="empty">No TP-Link smart plugs found. Run discovery on the Orange Pi first.</div>';
     return;
   }
 

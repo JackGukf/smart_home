@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Installs the smart-home-rpi4 skill into Cowork.
-# Run once from WSL: bash ~/workspace/smart-home-rpi4/smart-home-rpi4-skill/install-skill.sh
+# Installs the smart-home-ai skill into Cowork.
+# Run once from WSL: bash ~/workspace/smart_home_AI/smart-home-ai-skill/install-skill.sh
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_NAME="smart-home-rpi4"
+SKILL_NAME="smart-home-ai"
 
 # Find the Cowork skills folder (skills-plugin path varies per session ID but the structure is stable)
 SKILLS_BASE="$APPDATA/Claude/local-agent-mode-sessions/skills-plugin"

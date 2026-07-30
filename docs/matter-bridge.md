@@ -7,7 +7,7 @@
 
 ## What Was Built
 
-A C++ daemon (`chip-bridge-app`) running on the Raspberry Pi 4 that bridges all dashboard devices (TP-Link switches, Tuya sensors) into Apple Home via the Matter protocol.
+A C++ daemon (`chip-bridge-app`) running on the Orange Pi 6 Plus that bridges all dashboard devices (TP-Link switches, Tuya sensors) into Apple Home via the Matter protocol.
 
 ```
 Apple Home ──Matter/mDNS──► C++ chip-bridge-app  (systemd user unit, host network)

@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/smarthome/smart-home-rpi4
+WorkingDirectory=/home/orangepi/smart_home_AI
 Environment=HOST=0.0.0.0
 Environment=PORT=8000
-ExecStart=/home/smarthome/smart-home-rpi4/scripts/run-dashboard.sh
+ExecStart=/home/orangepi/smart_home_AI/scripts/run-dashboard.sh
 Restart=always
 RestartSec=5
 

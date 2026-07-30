@@ -4,3 +4,8 @@ testpaths = ["tests/python"]
 markers = [
     "matter_integration: requires native chip-bridge-app binary (build with scripts/build-matter-bridge-native.sh)",
 ]
+# The matter_integration tests build the full CHIP SDK natively (many minutes,
+# dev-container only), so they are not part of a plain `pytest` run. Opt in with:
+#   docker compose run --rm dev python3 -m pytest -m matter_integration -v
+# A -m on the command line overrides this.
+addopts = "-m 'not matter_integration'"

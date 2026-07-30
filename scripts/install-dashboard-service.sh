@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT="${PROJECT_ROOT:-/home/smarthome/smart-home-rpi4}"
+# Default to the checkout this script was deployed into, so the install works on
+# any board/user without the project path being baked in.
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 RUN_USER="$(id -un)"
 USER_HOME="$(getent passwd "${RUN_USER}" | cut -d: -f6)"
 SERVICE_NAMES=(

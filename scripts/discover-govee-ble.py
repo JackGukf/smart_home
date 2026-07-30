@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan nearby Bluetooth devices for Govee LED strips from the Raspberry Pi."""
+"""Scan nearby Bluetooth devices for Govee LED strips from the Orange Pi."""
 from __future__ import annotations
 
 import asyncio

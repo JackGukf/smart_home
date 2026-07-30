@@ -85,7 +85,10 @@ struct EmberAfEndpointType {
 #define ZCL_TEMP_MIN_MEASURED_VALUE_ATTRIBUTE_ID           0x0001u
 #define ZCL_TEMP_MAX_MEASURED_VALUE_ATTRIBUTE_ID           0x0002u
 #define ZCL_UNIQUE_ID_ATTRIBUTE_ID                         0x0012u
+// FeatureMap (0xFFFC) and ClusterRevision (0xFFFD) are global attributes —
+// the same ID on every cluster.
 #define ZCL_FEATURE_MAP_ATTRIBUTE_ID                       0xFFFCu
+#define ZCL_CLUSTER_REVISION_ATTRIBUTE_ID                  0xFFFDu
 
 #define ZCL_BOOLEAN_ATTRIBUTE_TYPE   0x10
 #define ZCL_CHAR_STRING_ATTRIBUTE_TYPE 0x42
@@ -96,6 +99,7 @@ struct EmberAfEndpointType {
 #define BOOLEAN     ZCL_BOOLEAN_ATTRIBUTE_TYPE
 #define CHAR_STRING ZCL_CHAR_STRING_ATTRIBUTE_TYPE
 #define INT16S      ZCL_INT16S_ATTRIBUTE_TYPE
+#define INT16U      0x21
 #define ARRAY       ZCL_ARRAY_ATTRIBUTE_TYPE
 #define BITMAP32    ZCL_BITMAP32_ATTRIBUTE_TYPE
 

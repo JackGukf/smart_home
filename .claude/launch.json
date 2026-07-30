@@ -4,13 +4,13 @@
     {
       "name": "dashboard",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd /home/jackgu/workspace/smart-home-rpi4 && python3 -m uvicorn src.python.web_app:app --host 0.0.0.0 --port 8000"],
+      "runtimeArgs": ["-c", "cd /home/jackgu/workspace/smart_home_AI && python3 -m uvicorn src.python.web_app:app --host 0.0.0.0 --port 8000"],
       "port": 8000
     },
     {
       "name": "dashboard-sandbox",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd /home/jackgu/workspace/smart-home-rpi4 && python3 -c \"import pathlib, uvicorn; from src.python.web_app import create_app; app = create_app(config_path=pathlib.Path('/tmp/sandbox-config.yaml'), check_camera_ports=False); uvicorn.run(app, host='0.0.0.0', port=8123)\""],
+      "runtimeArgs": ["-c", "cd /home/jackgu/workspace/smart_home_AI && python3 -c \"import pathlib, uvicorn; from src.python.web_app import create_app; app = create_app(config_path=pathlib.Path('/tmp/sandbox-config.yaml'), check_camera_ports=False); uvicorn.run(app, host='0.0.0.0', port=8123)\""],
       "port": 8123
     }
   ]

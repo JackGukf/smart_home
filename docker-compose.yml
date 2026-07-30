@@ -3,11 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: smart-home-rpi4-dev:latest
-    container_name: smart-home-rpi4-dev
-    working_dir: /workspace/smart-home-rpi4
+    image: smart-home-ai-dev:latest
+    container_name: smart-home-ai-dev
+    working_dir: /workspace/smart_home_AI
     volumes:
-      - .:/workspace/smart-home-rpi4
+      - .:/workspace/smart_home_AI
     tty: true
     stdin_open: true
     command: /bin/bash

@@ -8,11 +8,11 @@ pip install --user --break-system-packages "python-matter-server[server]"
 
 echo "==> Creating Matter storage directory..."
 sudo mkdir -p /var/lib/matter
-sudo chown smarthome:smarthome /var/lib/matter
+sudo chown orangepi:orangepi /var/lib/matter
 
 echo "==> Creating /data directory required by CHIP SDK..."
 sudo mkdir -p /data
-sudo chown smarthome:smarthome /data
+sudo chown orangepi:orangepi /data
 
 echo "==> Installing systemd service..."
 sudo cp "$REPO_ROOT/configs/matter-server.service" /etc/systemd/system/matter-server.service

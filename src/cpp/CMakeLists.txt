@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(smart_home_rpi4_cpp LANGUAGES C CXX)
+project(smart_home_ai_cpp LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)

@@ -1,20 +1,48 @@
-# Smart Home Raspberry Pi 4 — Claude Code Context
+# Smart Home AI (Orange Pi 6 Plus) — Claude Code Context
 
 ## Project Overview
 
-Smart home controller for a Raspberry Pi 4 targeting TP-Link/Kasa switches, Tuya sensors, cameras, and a web dashboard. Dual-language: Python for fast automation and C/C++ for long-running services.
+Smart home controller for an **Orange Pi 6 Plus** targeting TP-Link/Kasa switches, Tuya sensors, Govee/Lepro ambient devices, cameras, Home Assistant entities, a Matter bridge, and a web dashboard. Dual-language: Python for fast automation and C/C++ for long-running services.
+
+The workspace was migrated from `smart-home-rpi4` to `smart_home_AI` on 2026-07-29 with Git history intact, and the deployment target moved from the Raspberry Pi 4 to the Orange Pi 6 Plus. Read `PROJECT_CONTEXT.md` for the full handoff.
+
+## Target Hardware
+
+The Orange Pi 6 Plus is the **primary** target. The Raspberry Pi 4 is kept as a **secondary** target so the existing remote install keeps working — it is never the default; select it explicitly.
+
+| | Orange Pi 6 Plus (primary) | Raspberry Pi 4 (secondary) |
+| --- | --- | --- |
+| OS | Ubuntu 24.04 ARM64 | Raspberry Pi OS 64-bit |
+| CPU | Cix P1 / CD8180, 12 cores, Armv9.2-A (Cortex-A720 + A520) | Cortex-A72, Armv8-A |
+| SSH | `orangepi@192.168.0.234` | `smarthome@192.168.0.176` |
+| Remote path | `/home/orangepi/smart_home_AI` | `/home/smarthome/smart-home-rpi4` |
+| Net interfaces | `wlp1s0` (Wi-Fi), `enp97s0` (Ethernet) | `wlan0`, `eth0` |
+| CMake preset | `docker-orangepi6-release` | `docker-rpi4-release` |
+| Toolchain | `cmake/toolchains/orangepi6-aarch64.cmake` | `cmake/toolchains/rpi4-aarch64.cmake` |
+| Build dir | `build/orangepi6-release/` | `build/rpi4-release/` |
+
+Gotchas that have bitten this project:
+
+- **Interface names differ.** Ubuntu uses predictable names, so anything passing `--interface` (notably the Matter bridge in `configs/matter-bridge.service`) must use `wlp1s0`/`enp97s0`, not `wlan0`. A wrong interface makes Matter commissioning fail quietly.
+- **`-mcpu=cortex-a720` is unavailable.** It needs GCC 14+; the dev container ships the Ubuntu 22.04 aarch64 cross-compiler (GCC 11). The Orange Pi toolchain probes for the best `-march` the compiler accepts and falls back to a safe baseline. Override with `-DORANGEPI6_ARCH_FLAGS=...`.
+- Both boards are `aarch64`, so a generic arm64 binary (e.g. the Matter bridge from the GN build) runs on either.
 
 ## Repository Layout
 
 ```
 src/python/          Python source modules (web_app.py, tplink_switch.py, controller.py)
+src/python/web_static/  Dashboard front-end assets
 src/cpp/             C/C++ source and CMakeLists.txt
+src/cpp/matter_bridge/  Native C++ Matter bridge
 tests/python/        pytest test suite
-scripts/             Utility and one-off scripts
+tests/cpp/           GoogleTest suite
+scripts/             Utility, build, and deploy scripts
 configs/             Device config files (never commit devices.local.yaml)
-cmake/toolchains/    Cross-compile toolchain for RPi4 aarch64
-build/               CMake out-of-tree build dirs (docker-debug, rpi4-release, dev-check)
+deploy/systemd/user/ systemd *user* units for the board
+cmake/toolchains/    Cross-compile toolchains (orangepi6-aarch64, rpi4-aarch64)
+build/               CMake out-of-tree build dirs (docker-debug, orangepi6-release, dev-check)
 docs/                Architecture notes and setup guides
+third_party/connectedhomeip  Matter/CHIP SDK — large, treat as a dependency
 .codex/              Codex-specific config — do not modify
 ```
 
@@ -38,7 +66,7 @@ python3 -m src.python.tplink_switch --host <IP> status|on|off|toggle
 ### Docker (preferred dev environment)
 ```bash
 docker compose build dev
-docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart-home-rpi4
+docker compose run --rm dev ./scripts/dev-check.sh /workspace/smart_home_AI
 
 # Run Python tests in Docker
 docker compose run --rm dev python3 -m pytest
@@ -49,12 +77,17 @@ docker compose run --rm dev sh -lc \
    ctest --test-dir build/docker-debug --output-on-failure"
 ```
 
-### RPi4 cross-compile and deploy
+### Orange Pi 6 Plus cross-compile and deploy
 ```bash
-./scripts/build-rpi4.sh
-./scripts/deploy-to-pi.sh
+./scripts/build-orangepi6.sh          # add --board rpi4 for the secondary target
+./scripts/deploy-to-pi.sh             # C++ binary + Python source
+./scripts/deploy-dashboard.sh         # dashboard + systemd user services
 ./scripts/connect-pi.sh [--check]
 ```
+
+Deploy scripts default to `orangepi@192.168.0.234` and `/home/orangepi/smart_home_AI`. Override with `--host`/`--user`/`--remote-path` (or `PI_HOST`/`PI_USER`/`REMOTE_PATH`) — always confirm the target before deploying, and never assume a default points at the board you mean.
+
+`deploy-dashboard.sh` increments `BUILD_COUNT`, rewrites static cache-busting versions and `web_static/build_info.json`. It mutates the source tree; review the resulting diff.
 
 ## Python Environment
 
@@ -65,28 +98,51 @@ docker compose run --rm dev sh -lc \
 ## C++ / CMake
 
 - Root `CMakeLists.txt` delegates to `src/cpp/CMakeLists.txt`
-- Presets defined in `CMakePresets.json`: `docker-debug`, `rpi4-release`, `dev-check`
-- Cross-compile toolchain: `cmake/toolchains/rpi4-aarch64.cmake`
+- Presets in `CMakePresets.json`: `docker-debug`, `wsl-debug`, `wsl-release`, `docker-orangepi6-release`, `docker-rpi4-release`
+- Cross-compile toolchains: `cmake/toolchains/orangepi6-aarch64.cmake` (primary), `rpi4-aarch64.cmake` (secondary)
+- Matter bridge builds through the CHIP SDK's GN build, not these presets — see `scripts/build-matter-bridge.sh` and `docs/matter-bridge.md`
 
 ## Architecture Conventions
 
-- One module per vendor integration (`tplink`, `tuya`, `camera`, `automation`)
+- One module per vendor integration (`tplink`, `tuya`, `camera`, `govee`, `automation`)
 - Vendor integrations sit behind clear interfaces — keep them isolated
 - Prefer local-network control over cloud where possible
 - Long-running services → C/C++ daemon; scripts and API calls → Python
+- The Home Assistant integration must degrade gracefully when HA is unavailable
+
+## Local AI
+
+The board runs Ollama as a system service with `qwen3:4b`, bound to loopback only — that is intentional. Reach it with an SSH tunnel, not by widening the bind address:
+
+```bash
+ssh -N -L 11434:127.0.0.1:11434 orangepi@192.168.0.234
+```
+
+Treat model output as untrusted input: validate schema, enforce an allow-list, and keep device control deterministic.
 
 ## Secrets / Credentials
 
-- **Never commit** passwords, API keys, camera credentials, or Wi-Fi details
+- **Never commit** passwords, API keys, camera credentials, device IDs, or Wi-Fi details
 - Real device config goes in `configs/devices.local.yaml` (git-ignored)
 - See `configs/devices.example.yaml` for the schema
-- Runtime secrets passed via environment variables (e.g. `TUYA_ACCESS_ID`, `HOME_ASSISTANT_TOKEN`, `ECOBEE_ACCESS_TOKEN`)
+- Runtime secrets passed via environment variables (e.g. `TUYA_ACCESS_ID`, `HOME_ASSISTANT_TOKEN`, `ECOBEE_ACCESS_TOKEN`, `DASHBOARD_SECRET_KEY`)
 
 ## Testing Notes
 
-- Test files live in `tests/python/`
+- Python tests live in `tests/python/`, C++ tests in `tests/cpp/`
 - Tests are importable without installing; `pythonpath = ["."]` in `pyproject.toml` handles this
 - Use `pytest-asyncio` for async tests (`tplink_switch` controller is async)
+- `tests/python/test_systemd_service.py` asserts the literal paths in `deploy/systemd/user/*.service` — update both together
+- Prefer focused tests first; run the full suite when the affected boundary warrants it
+
+## Docs
+
+- `docs/setup-orangepi6.md` — verified board facts and first-time setup
+- `docs/orangepi6-cross-compile-deploy.md` — build and deploy workflow (both boards)
+- `docs/docker-development.md`, `docs/WSL_DEVELOPMENT.md` — dev environment
+- `docs/matter-bridge.md` — Matter bridge design and deployment
+- `docs/architecture.md` — architecture notes
+- `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
 
 ## Git Remote
 

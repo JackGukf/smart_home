@@ -2,8 +2,8 @@
 set -e
 set -x
 
-CHIP_ROOT=/workspace/smart-home-rpi4/third_party/connectedhomeip
-BUILD_DIR=/workspace/smart-home-rpi4/build/chip-tool-x86
+CHIP_ROOT=/workspace/smart_home_AI/third_party/connectedhomeip
+BUILD_DIR=/workspace/smart_home_AI/build/chip-tool-x86
 
 source "$CHIP_ROOT/scripts/activate.sh"
 

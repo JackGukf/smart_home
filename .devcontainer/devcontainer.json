@@ -1,8 +1,8 @@
 {
-  "name": "Smart Home Raspberry Pi 4",
+  "name": "Smart Home AI (Orange Pi 6 Plus)",
   "dockerComposeFile": "../docker-compose.yml",
   "service": "dev",
-  "workspaceFolder": "/workspace/smart-home-rpi4",
+  "workspaceFolder": "/workspace/smart_home_AI",
   "shutdownAction": "stopCompose",
   "customizations": {
     "vscode": {

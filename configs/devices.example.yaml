@@ -145,7 +145,7 @@ ambient_lights:
       provider: govee_ble
       model: H613A
       room: Living Room
-      # Run scripts/discover-govee-ble.py on the Raspberry Pi and paste the BLE address here.
+      # Run scripts/discover-govee-ble.py on the Orange Pi and paste the BLE address here.
       address: replace_me
     - name: Govee H6054 Light
       provider: govee_ble

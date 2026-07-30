@@ -39,12 +39,19 @@ def test_bridge_build_prunes_stock_zap_model_for_home_subscriptions() -> None:
 
     assert "Pruning bridge ZAP model" in script
     assert "ROOT_CLUSTERS = {29, 31, 40, 48, 49, 60, 62, 63}" in script
-    assert "OPCREDS_ATTRS" in script
-    assert "2, 3, 5" in script
-    assert 'attr.get("code") in OPCREDS_ATTRS' in script
     assert "AGGREGATOR_CLUSTERS = {3, 29}" in script
-    assert "BASIC_ATTRS" in script
     assert "19, 21, 22" not in script
+
+    # Pruning is cluster-level only. Attribute-level pruning was tried and
+    # reverted: dropping NOCs/Fabrics/TrustedRootCertificates from
+    # OperationalCredentials made Apple Home's post-CommissioningComplete read of
+    # the Fabrics list (0x3E/0x0001) return UnsupportedAttribute, so the iPhone
+    # aborted with "Pairing failed" and sent RemoveFabric. Oversized wildcard
+    # reports are handled by the report-chunking patch below instead.
+    assert "do NOT prune individual attributes" in script
+    assert "OPCREDS_ATTRS" not in script
+    assert "BASIC_ATTRS" not in script
+    assert 'attr.get("code")' not in script
     assert "Bounding CHIP report chunks" in script
     assert "kMaxAttributesPerReportChunk = 8" in script
     assert "if (attributesRead > kMaxAttributesPerReportChunk)" in script
@@ -92,8 +99,11 @@ def test_bridge_registers_runtime_onoff_command_handler_for_dynamic_endpoints() 
     assert "OnOff::Commands::On::Id" in source
     assert "OnOff::Commands::Off::Id" in source
     assert "OnOff::Commands::Toggle::Id" in source
-    assert "HandleOnOffCommand(endpoint, true)" in source
-    assert "HandleOnOffCommand(endpoint, false)" in source
+    # Commands arriving over the Interaction Model must notify subscribers;
+    # the ember write path passes notify_subscribers=false to avoid recursing.
+    assert "HandleOnOffCommand(endpoint, true, /*notify_subscribers=*/true)" in source
+    assert "HandleOnOffCommand(endpoint, false, /*notify_subscribers=*/true)" in source
+    assert "HandleOnOffCommand(endpoint, on, /*notify_subscribers=*/false)" in source
 
 
 def test_bridge_exposes_stable_unique_id_for_each_bridged_endpoint() -> None:

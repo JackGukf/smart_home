@@ -7,10 +7,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def test_dashboard_systemd_service_restarts_and_uses_project_runner() -> None:
     unit = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "smart-home-dashboard.service").read_text(encoding="utf-8")
 
-    assert "WorkingDirectory=/home/smarthome/smart-home-rpi4" in unit
+    assert "WorkingDirectory=/home/orangepi/smart_home_AI" in unit
     assert "User=" not in unit
     assert "Group=" not in unit
-    assert "ExecStart=/home/smarthome/smart-home-rpi4/scripts/run-dashboard.sh" in unit
+    assert "ExecStart=/home/orangepi/smart_home_AI/scripts/run-dashboard.sh" in unit
     assert "Restart=always" in unit
     assert "Environment=HOST=0.0.0.0" in unit
     assert "Environment=PORT=8000" in unit
@@ -21,8 +21,8 @@ def test_go2rtc_systemd_service_restarts_and_uses_project_runner() -> None:
 
     assert "After=network-online.target" in unit
     assert "Wants=network-online.target" in unit
-    assert "WorkingDirectory=/home/smarthome/smart-home-rpi4" in unit
-    assert "ExecStart=/home/smarthome/smart-home-rpi4/scripts/run-go2rtc.sh" in unit
+    assert "WorkingDirectory=/home/orangepi/smart_home_AI" in unit
+    assert "ExecStart=/home/orangepi/smart_home_AI/scripts/run-go2rtc.sh" in unit
     assert "Restart=always" in unit
     assert "WantedBy=default.target" in unit
 
