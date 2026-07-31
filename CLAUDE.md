@@ -26,6 +26,7 @@ Gotchas that have bitten this project:
 - **Interface names differ.** Ubuntu uses predictable names, so anything passing `--interface` (notably the Matter bridge in `configs/matter-bridge.service`) must use `wlp1s0`/`enp97s0`, not `wlan0`. A wrong interface makes Matter commissioning fail quietly.
 - **`-mcpu=cortex-a720` is unavailable.** It needs GCC 14+; the dev container ships the Ubuntu 22.04 aarch64 cross-compiler (GCC 11). The Orange Pi toolchain probes for the best `-march` the compiler accepts and falls back to a safe baseline. Override with `-DORANGEPI6_ARCH_FLAGS=...`.
 - Both boards are `aarch64`, so a generic arm64 binary (e.g. the Matter bridge from the GN build) runs on either.
+- **Two Bluetooth controllers.** The onboard Intel AX210 (`E0:D5:5D:9D:38:97`) sits alongside the TP-Link UB500 (`20:E1:5D:68:2B:DB`), which is the one BLE should use. Pin it with `BLE_ADAPTER` in `.env` — a MAC, not `hciN`, because the numbering can swap across reboots. bleak returns *zero* devices when given no adapter on this host, so `src/python/ble_adapter.py` always passes one. See `docs/setup-orangepi6.md`.
 
 ## Repository Layout
 

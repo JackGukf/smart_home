@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 import yaml
 
+from src.python.ble_adapter import ble_kwargs as _ble_kwargs
 from src.python.tplink_switch import KasaLightSwitchController, SwitchDefinition
 from src.python.matter_device import DashboardMatterClient, node_to_device
 from src.python import bridge_sync
@@ -1750,7 +1751,7 @@ def _govee_ble_discovery_payload() -> dict[str, Any]:
         }
 
     async def _scan() -> list[dict[str, Any]]:
-        found = await BleakScanner.discover(timeout=8.0)
+        found = await BleakScanner.discover(timeout=8.0, **_ble_kwargs())
         devices = []
         for item in found:
             name = item.name or ""
@@ -2421,12 +2422,16 @@ class _GoveeBleManager:
             await asyncio.to_thread(_govee_ble_forget_cached_device, light.address)
             initial_delay = 5 if (light.model or "").upper() == "H613A" else 1
             await asyncio.sleep(initial_delay)
-            device = await BleakScanner.find_device_by_address(light.address, timeout=8.0)
+            ble_kwargs = _ble_kwargs()
+            device = await BleakScanner.find_device_by_address(
+                light.address, timeout=8.0, **ble_kwargs
+            )
             target = device or light.address
             client = BleakClient(
                 target,
                 timeout=12.0,
                 disconnected_callback=lambda _client: self._clients.pop(light.address or "", None),
+                **ble_kwargs,
             )
             await client.connect()
             self._clients[light.address] = client

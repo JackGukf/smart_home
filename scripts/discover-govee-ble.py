@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.python.ble_adapter import ble_kwargs, resolve_ble_adapter  # noqa: E402
 
 
 async def main() -> None:
@@ -12,8 +18,11 @@ async def main() -> None:
     except Exception as exc:
         raise SystemExit(f"Install bleak first: python -m pip install bleak ({exc})")
 
+    adapter = resolve_ble_adapter()
+    print(f"Scanning on adapter: {adapter or 'none found'}", file=sys.stderr)
+
     try:
-        devices = await BleakScanner.discover(timeout=10.0)
+        devices = await BleakScanner.discover(timeout=10.0, **ble_kwargs())
     except Exception as exc:
         print(json.dumps({
             "devices": [],

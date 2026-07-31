@@ -53,6 +53,47 @@ Systemd user units only survive logout with linger enabled:
 sudo loginctl enable-linger orangepi
 ```
 
+## Bluetooth
+
+The board has **two** Bluetooth controllers:
+
+| Adapter | MAC | Notes |
+| --- | --- | --- |
+| Onboard Intel AX210 | `E0:D5:5D:9D:38:97` | USB `8087:0032`; the AX210's Wi-Fi is separate (PCIe, `wlp1s0`) |
+| TP-Link UB500 | `20:E1:5D:68:2B:DB` | USB `2357:0604`, Realtek RTL8761B; **the one BLE should use** |
+
+BLE devices (the Govee strips) are pinned to the UB500 with `BLE_ADAPTER` in
+`.env`:
+
+```bash
+BLE_ADAPTER=20:E1:5D:68:2B:DB
+```
+
+`BLE_ADAPTER` accepts an `hciN` name or a MAC. **Prefer the MAC** — `hciN`
+numbering is assigned in probe order and can swap across reboots when two
+adapters are present. List adapters with `hciconfig -a`.
+
+Three things that are easy to get wrong here:
+
+- **bleak needs an explicit adapter on this host.** With no adapter argument,
+  `BleakScanner.discover()` returns *zero* devices — it does not fall back to
+  the default controller. `src/python/ble_adapter.py` therefore always passes
+  one, defaulting to the first adapter found when `BLE_ADAPTER` is unset.
+- **`/sys/class/bluetooth/hciN/address` does not exist on this kernel.** The
+  `hciN` entries are there but carry no `address` attribute, so MAC-to-interface
+  lookup falls back to parsing `hciconfig`.
+- **Govee BLE devices are never paired or bonded.** They stay `Paired: no`,
+  `Connected: no` in `bluetoothctl`; the dashboard opens a GATT link per command
+  and keeps it warm. Do not try to pair them.
+
+Verify the wiring end to end:
+
+```bash
+cd ~/smart_home_AI && set -a && . ./.env && set +a
+.venv/bin/python -c "from src.python.ble_adapter import resolve_ble_adapter, ble_kwargs; print(resolve_ble_adapter(), ble_kwargs())"
+python3 scripts/discover-govee-ble.py
+```
+
 ## Local AI (Ollama)
 
 The board also runs Ollama as a system service with `qwen3:4b` installed

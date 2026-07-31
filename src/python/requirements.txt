@@ -12,7 +12,7 @@ fastapi
 uvicorn
 httpx2
 tzdata
-bleak
+bleak>=3.0,<4.0
 itsdangerous
 python-multipart
 python-matter-server[client]
