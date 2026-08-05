@@ -2694,6 +2694,17 @@ function cameraIdFor(camera) {
 function cameraMedia(camera) {
   const isActive = activeCameraIds.has(cameraIdFor(camera));
   if (camera.customMedia) return camera.customMedia;
+  // Battery doorbells must never open a persistent camera stream. Apart from
+  // draining the battery, Home Assistant's stream proxy is not reliable for
+  // sleep-prone doorbell cameras. The View button fetches one snapshot below.
+  if (camera.battery_powered) {
+    const cameraId = cameraIdFor(camera);
+    const cached = loadCachedSnapshot(cameraId);
+    if (cached) {
+      return `<img class="camera-media camera-preview" src="${cached}" alt="${escapeHtml(camera.name)} last view" data-camera-snap="${escapeHtml(cameraId)}" />`;
+    }
+    return `<div class="camera-placeholder doorbell-placeholder">Battery camera<br /><span>Tap View to load a picture</span></div>`;
+  }
   const liveUrl  = camera.view_url || camera.webrtc_url;
   const liveType = camera.view_url ? camera.view_type
                  : (camera.webrtc_url ? "webrtc" : null);
@@ -2703,7 +2714,8 @@ function cameraMedia(camera) {
     }
     if (liveType === "snapshot" || liveType === "mjpeg" || liveType === "doorbell") {
       const separator = liveUrl.includes("?") ? "&" : "?";
-      return `<img class="camera-media" src="${liveUrl}${separator}ts=${Date.now()}" alt="${escapeHtml(camera.name)} live view" />`;
+      const fallbackUrl = camera.snapshot_url || snapshotUrlFor(camera);
+      return `<img class="camera-media" src="${liveUrl}${separator}ts=${Date.now()}" alt="${escapeHtml(camera.name)} live view" onerror="this.onerror=null;this.src='${fallbackUrl}'" />`;
     }
     return `<video class="camera-media" src="${liveUrl}" controls muted playsinline></video>`;
   }
@@ -5334,7 +5346,11 @@ document.addEventListener("click", (event) => {
   card.querySelector(".camera-action").innerHTML = cameraAction(camera);
 
   if (activating && camera.battery_powered) {
-    captureSnapshotOnce(camera).catch(() => {});
+    captureSnapshotOnce(camera).then(() => {
+      // The initial state can be a placeholder, so render again after the
+      // one-shot fetch makes the cached doorbell image available.
+      card.querySelector(".camera-frame").innerHTML = cameraMedia(camera) + cameraBatteryBadge(camera);
+    }).catch(() => {});
   }
 });
 
