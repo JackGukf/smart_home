@@ -20,7 +20,7 @@ tplink:
       model: Tapo C200
       room: Family Room
       stream_name: family_room_camera
-      go2rtc_url: http://192.168.0.176:1984
+      go2rtc_url: http://192.168.0.234:1984
       # Browser-viewable camera sources:
       # - snapshot_url for an HTTP/JPEG snapshot endpoint
       # - stream_url for a browser-playable HTTP/HLS/MJPEG stream
@@ -42,7 +42,7 @@ tplink:
       model: Tapo C210
       room: Bedroom
       stream_name: bedroom_camera
-      go2rtc_url: http://192.168.0.176:1984
+      go2rtc_url: http://192.168.0.234:1984
       username_env: TAPO_CAMERA_USERNAME
       password_env: TAPO_CAMERA_PASSWORD
       stream_path: /stream2
@@ -51,7 +51,7 @@ tplink:
       mjpeg_quality: 7
 
 media_gateway:
-  go2rtc_url: http://192.168.0.176:1984
+  go2rtc_url: http://192.168.0.234:1984
 
 cameras:
   - name: wyze_camera
@@ -60,7 +60,7 @@ cameras:
     model: Wyze RTSP
     room: Garage
     stream_name: wyze_camera
-    go2rtc_url: http://192.168.0.176:1984
+    go2rtc_url: http://192.168.0.234:1984
     username_env: WYZE_RTSP_USERNAME
     password_env: WYZE_RTSP_PASSWORD
     rtsp_scheme: rtsps
@@ -73,7 +73,7 @@ cameras:
     model: Hipcam RealServer
     room: Home
     stream_name: chortau_camera_1
-    go2rtc_url: http://192.168.0.176:1984
+    go2rtc_url: http://192.168.0.234:1984
     username_env: CHORTAU_CAMERA_USERNAME
     password_env: CHORTAU_CAMERA_PASSWORD
     rtsp_port: 554
