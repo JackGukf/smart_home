@@ -53,6 +53,58 @@ Systemd user units only survive logout with linger enabled:
 sudo loginctl enable-linger orangepi
 ```
 
+## Docker and Home Assistant Autostart
+
+Home Assistant runs as a Docker container on the board, not as a systemd user
+unit — so the `enable-linger` above does **not** cover it:
+
+| Property | Value |
+| --- | --- |
+| Container | `homeassistant` |
+| Image | `ghcr.io/home-assistant/home-assistant` |
+| Network | `host` (UI on `:8123`) |
+| Restart policy | `unless-stopped` |
+
+**`docker.service` must be enabled, not just `docker.socket`.** Docker ships
+both units, and the socket alone is enough for interactive use: the first
+command that touches `/var/run/docker.sock` socket-activates the daemon. But a
+container's restart policy is only applied when the daemon itself starts, so
+with `docker.service` disabled the board boots with no daemon, nothing restores
+the container, and Home Assistant never comes back after a power cut.
+
+This one is easy to miss because **inspecting it hides it** — running `docker ps`
+to check starts the daemon as a side effect, which restarts the container, so
+everything looks healthy about ten seconds after you go looking. The symptom
+reads as "Home Assistant is down until I check on it".
+
+```bash
+sudo systemctl enable --now docker.service
+systemctl is-enabled docker.service containerd.service   # both: enabled
+```
+
+Verify after a reboot *without* issuing a Docker command first, since that would
+mask the fault:
+
+```bash
+uptime -s                                                        # boot time
+systemctl show docker.service -p ActiveEnterTimestamp            # within ~15s of boot
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8123/  # 200
+```
+
+Three related notes:
+
+- **Never `docker stop` the container to test this.** With `unless-stopped`, a
+  container stopped explicitly is *not* restarted when the daemon returns — that
+  would both invalidate the test and leave HA down. Reboot instead.
+- **The board has no battery-backed RTC.** It boots with a stale clock restored
+  from `fake-hwclock` until NTP corrects it, so some unit timestamps can appear
+  to predate `uptime -s`. Compare against `uptime -s` from the *same* boot
+  rather than wall-clock dates.
+- Power cuts hard-kill the container, and HA then logs `could not validate that
+  the sqlite3 database ... was shutdown cleanly`. Harmless once, but repeated
+  hard cuts can corrupt `home-assistant_v2.db` — a UPS is the real fix.
+  Autostart only guarantees HA returns afterwards.
+
 ## Bluetooth
 
 The board has **two** Bluetooth controllers:

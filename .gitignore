@@ -39,6 +39,16 @@ compile_commands.json
 # chip-tool session state (Matter commissioning credentials)
 .chip-tool/
 
+# Vendor auth artifacts saved as images. A Tuya "qrLogin" QR encodes a token
+# that authorizes a login session on the account — short-lived, but never
+# commit one. Decode before assuming an innocuous-looking PNG is a screenshot.
+*authorization*.png
+*qr-login*.png
+*qrlogin*.png
+
+# Personal remote-desktop profiles (per-machine host/user, not project config)
+*.rdp
+
 # Logs and runtime data
 *.log
 logs/

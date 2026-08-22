@@ -265,6 +265,9 @@ static DynamicOnOffCommandHandler gDynamicOnOffCommandHandler;
 // Apple Home's post-add conformance pass rejects it and marks every bridged
 // accessory unavailable). Values mirror the SDK reference bridge-app example.
 static constexpr uint16_t kOnOffClusterRevision        = 4;
+static constexpr uint32_t kOnOffFeatureMap             = 0;
+static constexpr uint16_t kDescriptorClusterRevision   = 2;
+static constexpr uint32_t kDescriptorFeatureMap        = 0;
 static constexpr uint16_t kBridgedBasicClusterRevision = 2;
 static constexpr uint32_t kBridgedBasicFeatureMap      = 0;
 static constexpr uint16_t kTempClusterRevision         = 1;
@@ -301,6 +304,16 @@ IMStatus emberAfExternalAttributeReadCallback(EndpointId endpoint,
         }
         if (am->attributeId == OnOff::Attributes::ClusterRevision::Id) {
             return WriteUint16Attr(kOnOffClusterRevision, buffer, maxReadLength);
+        }
+        if (am->attributeId == OnOff::Attributes::FeatureMap::Id) {
+            return WriteUint32Attr(kOnOffFeatureMap, buffer, maxReadLength);
+        }
+    } else if (clusterId == Descriptor::Id) {
+        if (am->attributeId == Descriptor::Attributes::ClusterRevision::Id) {
+            return WriteUint16Attr(kDescriptorClusterRevision, buffer, maxReadLength);
+        }
+        if (am->attributeId == Descriptor::Attributes::FeatureMap::Id) {
+            return WriteUint32Attr(kDescriptorFeatureMap, buffer, maxReadLength);
         }
     } else if (clusterId == TemperatureMeasurement::Id) {
         if (am->attributeId == TemperatureMeasurement::Attributes::ClusterRevision::Id) {
