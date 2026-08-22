@@ -1,12 +1,23 @@
 [Unit]
-Description=Python Matter Server
-After=network.target
+Description=Python Matter Server (Matter controller for the dashboard)
+After=network-online.target bluetooth.target
+Wants=network-online.target
 
 [Service]
-ExecStart=/home/smarthome/.local/bin/matter-server --storage-path /var/lib/matter --port 5580
+Type=simple
+User=orangepi
+Group=orangepi
+# Installed into its own venv by scripts/install-matter-server.sh so the CHIP
+# core wheel cannot drag the dashboard venv's dependencies around.
+ExecStart=/home/orangepi/.venvs/matter-server/bin/matter-server \
+    --storage-path /var/lib/matter \
+    --port 5580 \
+    --primary-interface wlp1s0 \
+    --bluetooth-adapter 0
 Restart=on-failure
 RestartSec=5
-User=smarthome
+# CHIP writes its counters/KVS under /data unless told otherwise.
+Environment=HOME=/home/orangepi
 
 [Install]
 WantedBy=multi-user.target

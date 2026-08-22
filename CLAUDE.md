@@ -141,7 +141,8 @@ Treat model output as untrusted input: validate schema, enforce an allow-list, a
 - `docs/setup-orangepi6.md` — verified board facts and first-time setup
 - `docs/orangepi6-cross-compile-deploy.md` — build and deploy workflow (both boards)
 - `docs/docker-development.md`, `docs/WSL_DEVELOPMENT.md` — dev environment
-- `docs/matter-bridge.md` — Matter bridge design and deployment
+- `docs/matter-bridge.md` — Matter bridge design and deployment (our devices → Apple Home)
+- `docs/matter-controller.md` — Matter controller setup (third-party Matter devices → dashboard)
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
 

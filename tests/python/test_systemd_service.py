@@ -56,3 +56,25 @@ def test_install_script_installs_and_enables_go2rtc_service() -> None:
     assert 'chmod +x "${PROJECT_ROOT}/scripts/run-go2rtc.sh"' in script
     assert 'systemctl --user enable "${service_name}"' in script
     assert 'systemctl --user restart "${service_name}"' in script
+
+
+def test_matter_server_service_targets_the_orange_pi() -> None:
+    """The unit shipped with the Raspberry Pi user/paths, so it never started."""
+    unit = (PROJECT_ROOT / "configs" / "matter-server.service").read_text(encoding="utf-8")
+
+    assert "smarthome" not in unit
+    assert "User=orangepi" in unit
+    assert "/home/orangepi/.venvs/matter-server/bin/matter-server" in unit
+    assert "--port 5580" in unit
+    # Commissioning a factory-fresh device needs BLE.
+    assert "--bluetooth-adapter" in unit
+    assert "Restart=on-failure" in unit
+
+
+def test_matter_server_installer_creates_data_dir_the_chip_stack_needs() -> None:
+    """CHIP aborts at startup when it cannot write /data/chip_factory.ini."""
+    script = (PROJECT_ROOT / "scripts" / "install-matter-server.sh").read_text(encoding="utf-8")
+
+    assert "/data" in script
+    assert "python-matter-server[server]" in script
+    assert "systemctl enable matter-server" in script

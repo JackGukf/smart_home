@@ -3,6 +3,9 @@
 **Status:** Working. Apple Home commissioning confirmed on 2026-06-27.
 **Deployment:** systemd user unit since 2026-07-08 (the original Docker deployment was retired — the published image was amd64 and failed on the Pi with `exec format error`).
 
+> This is the bridge (our devices *out* to Apple Home). For pairing third-party
+> Matter devices *into* the dashboard, see [`matter-controller.md`](matter-controller.md).
+
 ---
 
 ## What Was Built

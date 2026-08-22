@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -31,9 +32,15 @@ import yaml
 
 from src.python.ble_adapter import ble_kwargs as _ble_kwargs
 from src.python.tplink_switch import KasaLightSwitchController, SwitchDefinition
-from src.python.matter_device import DashboardMatterClient, node_to_device
+from src.python.matter_device import (
+    DEFAULT_COMMISSION_TIMEOUT,
+    DashboardMatterClient,
+    MatterServerUnavailable,
+    node_to_device,
+)
 from src.python import bridge_sync
 
+_matter_log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DISCOVERY_PATH = PROJECT_ROOT / "tplink_switches.json"
@@ -121,7 +128,12 @@ _matter_device_meta: dict[int, dict] = {
     for d in (_matter_cfg.get("devices") or [])
     if "node_id" in d
 }
-_matter_client = DashboardMatterClient(_matter_server_url)
+_matter_commission_timeout: float = float(
+    _matter_cfg.get("commission_timeout", DEFAULT_COMMISSION_TIMEOUT)
+)
+_matter_client = DashboardMatterClient(
+    _matter_server_url, commission_timeout=_matter_commission_timeout
+)
 
 
 class _MatterCommissionBody(BaseModel):
@@ -856,17 +868,24 @@ def create_app(
                     "available": info.available,
                 })
             return {"devices": devices, "matter_online": True}
-        except Exception:
-            return {"devices": [], "matter_online": False}
+        except Exception as exc:
+            _matter_log.debug("Matter Server unavailable: %s", exc)
+            return {"devices": [], "matter_online": False, "error": str(exc)}
 
     @app.post("/api/matter/commission")
     async def _matter_commission(body: _MatterCommissionBody) -> dict:
         try:
-            node_id = await asyncio.wait_for(
-                _matter_client.commission(body.setup_code), timeout=35.0
-            )
+            node_id = await _matter_client.commission(body.setup_code)
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=408, detail="Commission timed out after 30 s")
+            raise HTTPException(
+                status_code=408,
+                detail=(
+                    f"Commissioning timed out after {int(_matter_commission_timeout)} s. "
+                    "Put the device back in pairing mode and try again."
+                ),
+            )
+        except MatterServerUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
         _write_matter_device_to_config(node_id, body.name, body.room)
@@ -883,6 +902,8 @@ def create_app(
         try:
             await _matter_client.send_command(node_id, command, brightness=brightness)
             return {"status": "ok"}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=503, detail=str(exc))
 
@@ -890,6 +911,8 @@ def create_app(
     async def _matter_decommission(node_id: int) -> dict:
         try:
             await _matter_client.remove_node(node_id)
+        except MatterServerUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
         _matter_device_meta.pop(node_id, None)
