@@ -743,6 +743,13 @@ def create_app(
     async def home_assistant_command(entity_id: str, command: str) -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_service_command, app.state.config_path, entity_id, command)
 
+    @app.post("/api/home-assistant/entities/{entity_id}/brightness")
+    async def home_assistant_brightness(entity_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        level = int(body.get("level", 50))
+        return await asyncio.to_thread(
+            _home_assistant_brightness_command, app.state.config_path, entity_id, level
+        )
+
     @app.post("/api/home-assistant/devices/{entity_id}/confirm")
     async def home_assistant_device_confirm(
         entity_id: str, body: _HomeAssistantDeviceConfirmBody
@@ -1004,6 +1011,49 @@ def _switch_command_error(host: str, exc: Exception) -> HTTPException:
     return HTTPException(status_code=502, detail=f"Device {host} command failed: {exc}")
 
 
+# Home Assistant signals dimming through supported_color_modes: every mode
+# except "onoff" implies brightness support.  "unknown" is what HA reports
+# before a light has been reached for the first time.
+_HA_NON_DIMMING_COLOR_MODES = {"onoff", "unknown"}
+_HA_MAX_BRIGHTNESS = 255
+
+
+def _home_assistant_supports_brightness(
+    entity_id: str | None, attributes: dict[str, Any]
+) -> bool:
+    """Whether an HA entity can be dimmed.
+
+    Only the light domain dims — a switch is on/off however capable the
+    hardware behind it is.
+    """
+    if _home_assistant_entity_domain(entity_id) != "light":
+        return False
+    modes = attributes.get("supported_color_modes")
+    if isinstance(modes, (list, tuple)) and any(
+        str(mode).lower() not in _HA_NON_DIMMING_COLOR_MODES for mode in modes
+    ):
+        return True
+    # Older integrations omit supported_color_modes; a live brightness reading
+    # is proof enough.  It is absent while the light is off, so this can only
+    # ever add capability, never remove it.
+    return attributes.get("brightness") is not None
+
+
+def _home_assistant_brightness_percent(attributes: dict[str, Any]) -> int | None:
+    """Convert HA's 0–255 brightness to the dashboard's percent scale.
+
+    Returns None when the light is off — HA drops the attribute entirely then.
+    """
+    raw = attributes.get("brightness")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(100, round(value / _HA_MAX_BRIGHTNESS * 100)))
+
+
 def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
     entries = _load_home_assistant_devices(path)
     if not entries:
@@ -1022,6 +1072,7 @@ def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
     for entry in entries:
         entity_id = entry.get("entity_id")
         state_entity = states_by_id.get(entity_id)
+        attributes: dict[str, Any] = (state_entity or {}).get("attributes") or {}
         cards.append(
             {
                 "id": entity_id,
@@ -1030,10 +1081,10 @@ def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
                 "model": "Home Assistant",
                 "type": "Home Assistant",
                 "category": entry.get("category") or "light_switch",
-                "is_dimmable": False,
+                "is_dimmable": _home_assistant_supports_brightness(entity_id, attributes),
                 "room": entry.get("room") or "",
                 "is_on": {"on": True, "off": False}.get(state_entity.get("state")) if state_entity else None,
-                "brightness": None,
+                "brightness": _home_assistant_brightness_percent(attributes),
             }
         )
     return cards
@@ -2964,6 +3015,35 @@ def _home_assistant_service_command(path: Path, entity_id: str, command: str) ->
         service = "lock" if command == "on" else "unlock"
     payload = _home_assistant_post(config, token, f"/api/services/{domain}/{service}", {"entity_id": entity_id})
     return {"status": "ok", "result": payload}
+
+
+def _home_assistant_brightness_command(
+    path: Path, entity_id: str, level: int
+) -> dict[str, Any]:
+    """Set an HA light's brightness via light.turn_on with brightness_pct.
+
+    Note HA treats brightness_pct 0 as "off", unlike the Matter path which
+    clamps to the lowest on-level.  That is HA's own semantics; passing it
+    through keeps the dashboard and Home Assistant in agreement.
+    """
+    config = _load_home_assistant_config(path)
+    token = os.getenv(config.token_env)
+    if not token:
+        raise HTTPException(status_code=503, detail=f"{config.token_env} is not configured")
+    domain = _home_assistant_entity_domain(entity_id)
+    if domain != "light":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Brightness is only supported for light entities, not {domain or 'unknown'}",
+        )
+    level = max(0, min(100, int(level)))
+    payload = _home_assistant_post(
+        config,
+        token,
+        "/api/services/light/turn_on",
+        {"entity_id": entity_id, "brightness_pct": level},
+    )
+    return {"status": "ok", "brightness": level, "result": payload}
 
 
 def _home_assistant_climate_update(path: Path, entity_id: str, update: ClimateUpdateRequest) -> dict[str, Any]:

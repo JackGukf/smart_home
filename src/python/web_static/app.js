@@ -605,6 +605,19 @@ async function sendBrightness(host, level) {
     if (!resp.ok) throw new Error("Brightness set failed: " + resp.status);
     return resp.json();
   }
+  if (host.startsWith("ha:")) {
+    const entityId = host.slice(3);
+    const resp = await fetch(
+      `/api/home-assistant/entities/${encodeURIComponent(entityId)}/brightness`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ level }),
+      },
+    );
+    if (!resp.ok) throw new Error("Brightness set failed: " + resp.status);
+    return resp.json();
+  }
   const resp = await fetch("/api/devices/" + encodeURIComponent(host) + "/brightness", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

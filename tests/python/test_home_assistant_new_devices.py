@@ -484,3 +484,189 @@ def test_home_assistant_device_cards_maps_unavailable_state_to_is_on_none(tmp_pa
     cards = _home_assistant_device_cards(config)
 
     assert cards[0]["is_on"] is None
+
+
+# ── brightness support for Home Assistant lights ────────────────────────
+#
+# HA reports dimming through supported_color_modes and a 0-255 brightness
+# attribute; the dashboard works in percent.  Switches never dim.
+
+import pytest
+from fastapi import HTTPException
+
+from src.python.web_app import (
+    _home_assistant_brightness_command,
+    _home_assistant_brightness_percent,
+    _home_assistant_supports_brightness,
+)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _ha_config(tmp_path: Path, entity_id: str, category: str = "light_switch") -> Path:
+    config = tmp_path / "devices.local.yaml"
+    config.write_text(
+        "home_assistant:\n"
+        "  base_url: http://127.0.0.1:8123\n"
+        "  token_env: HOME_ASSISTANT_TOKEN\n"
+        "home_assistant_devices:\n"
+        f"- entity_id: {entity_id}\n"
+        "  name: Stick S3\n"
+        "  room: Office\n"
+        f"  category: {category}\n"
+    )
+    return config
+
+
+def test_supports_brightness_true_for_light_with_color_modes() -> None:
+    assert _home_assistant_supports_brightness(
+        "light.test_product", {"supported_color_modes": ["color_temp", "xy"]}
+    ) is True
+
+
+def test_supports_brightness_false_for_onoff_only_light() -> None:
+    assert _home_assistant_supports_brightness(
+        "light.plain", {"supported_color_modes": ["onoff"]}
+    ) is False
+
+
+def test_supports_brightness_false_for_switch_domain() -> None:
+    """A switch is on/off no matter how capable the hardware behind it is."""
+    assert _home_assistant_supports_brightness(
+        "switch.north_bedroom", {"supported_color_modes": ["brightness"]}
+    ) is False
+
+
+def test_supports_brightness_falls_back_to_live_brightness_attribute() -> None:
+    """Older integrations omit supported_color_modes."""
+    assert _home_assistant_supports_brightness("light.legacy", {"brightness": 128}) is True
+
+
+def test_supports_brightness_false_when_no_capability_signal() -> None:
+    assert _home_assistant_supports_brightness("light.unknown", {}) is False
+
+
+def test_brightness_percent_converts_from_ha_255_scale() -> None:
+    assert _home_assistant_brightness_percent({"brightness": 255}) == 100
+    assert _home_assistant_brightness_percent({"brightness": 128}) == 50
+    assert _home_assistant_brightness_percent({"brightness": 0}) == 0
+
+
+def test_brightness_percent_none_when_light_is_off() -> None:
+    """HA drops the attribute entirely while the light is off."""
+    assert _home_assistant_brightness_percent({}) is None
+
+
+def test_brightness_percent_none_for_garbage_value() -> None:
+    assert _home_assistant_brightness_percent({"brightness": "bright"}) is None
+
+
+def test_device_card_reports_dimming_for_capable_light(tmp_path: Path, monkeypatch) -> None:
+    config = _ha_config(tmp_path, "light.test_product")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_get(home_assistant_config, token, path):
+        return [{
+            "entity_id": "light.test_product",
+            "state": "on",
+            "attributes": {"supported_color_modes": ["color_temp", "xy"], "brightness": 128},
+        }]
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_get)
+
+    card = _home_assistant_device_cards(config)[0]
+    assert card["is_dimmable"] is True
+    assert card["brightness"] == 50
+    assert card["is_on"] is True
+
+
+def test_device_card_switch_stays_non_dimmable(tmp_path: Path, monkeypatch) -> None:
+    config = _ha_config(tmp_path, "switch.north_bedroom")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_get(home_assistant_config, token, path):
+        return [{"entity_id": "switch.north_bedroom", "state": "on", "attributes": {}}]
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_get)
+
+    card = _home_assistant_device_cards(config)[0]
+    assert card["is_dimmable"] is False
+    assert card["brightness"] is None
+
+
+def test_device_card_unreachable_ha_is_not_dimmable(tmp_path: Path, monkeypatch) -> None:
+    """No state means no capability claim — do not render a slider we cannot drive."""
+    config = _ha_config(tmp_path, "light.test_product")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def boom(home_assistant_config, token, path):
+        raise RuntimeError("unreachable")
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", boom)
+
+    card = _home_assistant_device_cards(config)[0]
+    assert card["is_dimmable"] is False
+    assert card["brightness"] is None
+
+
+def test_brightness_command_calls_light_turn_on_with_pct(tmp_path: Path, monkeypatch) -> None:
+    config = _ha_config(tmp_path, "light.test_product")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+    calls: list[tuple] = []
+
+    def fake_post(home_assistant_config, token, path, payload):
+        calls.append((path, payload))
+        return {}
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_post", fake_post)
+
+    result = _home_assistant_brightness_command(config, "light.test_product", 40)
+
+    assert calls == [(
+        "/api/services/light/turn_on",
+        {"entity_id": "light.test_product", "brightness_pct": 40},
+    )]
+    assert result["brightness"] == 40
+
+
+def test_brightness_command_clamps_out_of_range(tmp_path: Path, monkeypatch) -> None:
+    config = _ha_config(tmp_path, "light.test_product")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        "src.python.web_app._home_assistant_post",
+        lambda c, t, path, payload: calls.append((path, payload)) or {},
+    )
+
+    _home_assistant_brightness_command(config, "light.test_product", 250)
+    _home_assistant_brightness_command(config, "light.test_product", -10)
+
+    assert [p["brightness_pct"] for _, p in calls] == [100, 0]
+
+
+def test_brightness_command_rejects_non_light_domain(tmp_path: Path, monkeypatch) -> None:
+    config = _ha_config(tmp_path, "switch.north_bedroom")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    with pytest.raises(HTTPException) as exc:
+        _home_assistant_brightness_command(config, "switch.north_bedroom", 50)
+    assert exc.value.status_code == 400
+
+
+def test_brightness_command_requires_token(tmp_path: Path, monkeypatch) -> None:
+    config = _ha_config(tmp_path, "light.test_product")
+    monkeypatch.delenv("HOME_ASSISTANT_TOKEN", raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        _home_assistant_brightness_command(config, "light.test_product", 50)
+    assert exc.value.status_code == 503
+
+
+def test_frontend_routes_ha_hosts_to_the_ha_brightness_endpoint() -> None:
+    """sendBrightness must not fall through to the Kasa endpoint for ha: hosts."""
+    app_js = (PROJECT_ROOT / "src" / "python" / "web_static" / "app.js").read_text(encoding="utf-8")
+    send = app_js.split("async function sendBrightness(", 1)[1].split("\n}", 1)[0]
+
+    assert 'host.startsWith("ha:")' in send
+    assert "/api/home-assistant/entities/" in send
+    assert send.index('host.startsWith("ha:")') < send.index('"/api/devices/"')
