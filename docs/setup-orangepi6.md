@@ -105,6 +105,49 @@ Three related notes:
   hard cuts can corrupt `home-assistant_v2.db` — a UPS is the real fix.
   Autostart only guarantees HA returns afterwards.
 
+### Container DNS must be pinned, or Tuya "authentication" breaks
+
+Docker writes each container's `/etc/resolv.conf` from the host's **at container
+start**. If the container starts before the host's DNS has settled — the host
+still showing only the `127.0.0.53` systemd-resolved stub, which Docker strips
+for containers — Docker can produce a `resolv.conf` with *no nameserver line at
+all*. The container then resolves nothing, for as long as it stays up. Restarting
+the container regenerates the file and fixes it, which is why the fault survives
+reboots but vanishes the moment you restart HA to investigate.
+
+Pin a nameserver so a boot race cannot produce an empty resolver:
+
+```bash
+echo '{"dns": ["192.168.0.1"]}' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+```
+
+Note `systemctl restart docker` restarts the containers with it.
+
+**This presents as a Tuya authentication failure, not a network fault.** Home
+Assistant surfaces "authentication failed" while the log shows the real cause:
+
+```
+Failed to resolve 'apigw.tuyaus.com' ([Errno -3] Try again)
+```
+
+`EAI_AGAIN` is a resolver failure, not a rejected credential. The misdiagnosis
+sticks because **re-authenticating fails too** — the Tuya config flow fetches a
+login QR code (`config_flow.py` → `__async_get_qr_code`) over the same dead
+resolver, so every attempt to fix it through the UI fails the same way and looks
+like the credentials really are bad. Observed 2026-08-23: 34 Tuya entities
+offline for days with valid tokens the whole time.
+
+Check the resolver before touching credentials:
+
+```bash
+docker exec homeassistant grep ^nameserver /etc/resolv.conf   # must be non-empty
+docker exec homeassistant python3 -c "import socket;print(socket.gethostbyname('github.com'))"
+```
+
+A failure on a *neutral* host like `github.com` proves it is DNS and not the
+vendor — that one check separates the two causes immediately.
+
 ## Bluetooth
 
 The board has **two** Bluetooth controllers:
