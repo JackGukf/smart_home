@@ -5084,6 +5084,15 @@ function updateCachedCameraName(cameraId, name) {
 
 /* ── View navigation ── */
 function activateView(viewName) {
+  /* A dynamic group panel — user-created, or the synthetic Unassigned bucket —
+     is built on demand. syncDeviceGroupNav() pre-creates them, but it runs from
+     loadDeviceGroups() and the inventory may still be empty then, in which case
+     Unassigned did not exist yet and got no panel. Create it here, before the
+     toggle below, which can only activate a panel that is already in the DOM. */
+  const group = findDeviceGroup(viewName);
+  const isDynamicGroup = Boolean(group) && !group.builtin;
+  if (isDynamicGroup) ensureDeviceGroupPanel(group);
+
   railButtonEls().forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.view === viewName);
   });
@@ -5111,7 +5120,10 @@ function activateView(viewName) {
   if (viewName === "devices") {
     renderDevicesOverview();
   }
-  if (DEVICE_GROUP_VIEWS.includes(viewName)) {
+  /* DEVICE_GROUP_VIEWS is built from the persisted groups, so the synthetic
+     Unassigned bucket is never in it. Keying only off that list left it with no
+     back button and no rendered panel. */
+  if (DEVICE_GROUP_VIEWS.includes(viewName) || isDynamicGroup) {
     setDevicesBackVisible(arrivedFromDevices);
     if (!document.querySelector(`[data-view-panel="${CSS.escape(viewName)}"] .device-grid, [data-view-panel="${CSS.escape(viewName)}"] .ambient-grid`)) {
       renderDynamicGroupPanel(viewName);

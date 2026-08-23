@@ -1254,3 +1254,87 @@ console.log(JSON.stringify({{ afterBuiltinActive, afterDynamicActive: renderCall
     assert result["afterDynamicActive"] == ["movie-night"], (
         "the active dynamic panel must be re-rendered, and only that one"
     )
+
+
+def test_activate_view_opens_the_synthetic_unassigned_panel(tmp_path: Path) -> None:
+    """Clicking the Unassigned tile must show its devices and the back button.
+
+    Regression: DEVICE_GROUP_VIEWS is built from the *persisted* groups, so the
+    synthetic auto:unassigned bucket was never in it. activateView took the
+    else branch — hiding the back button and never rendering the panel — and the
+    panel itself could be missing entirely, because syncDeviceGroupNav() creates
+    panels from loadDeviceGroups(), which can run before any devices load.
+    """
+    script = """
+eval(pick('activateView'));
+
+// Minimal DOM: only the devices panel exists, as when syncDeviceGroupNav() ran
+// against an empty inventory and so never built an Unassigned panel.
+const panels = [{ dataset: { viewPanel: 'devices' }, classList: { toggle(c, on) { this.on = on; } } }];
+let createdPanelFor = null;
+let backVisible = null;
+let renderedPanel = null;
+
+const railButtonEls = () => [];
+const viewPanelEls = () => panels;
+const DEVICE_GROUP_VIEWS = ['lights', 'plugs'];   // persisted groups only
+const arrivedFromDevices = true;
+const unassigned = { id: 'auto:unassigned', name: 'Unassigned', builtin: false,
+                     synthetic: true, devices: [{ key: 'k', kind: 'switch' }] };
+const findDeviceGroup = (id) => (id === 'auto:unassigned' ? unassigned : undefined);
+const ensureDeviceGroupPanel = (g) => {
+  createdPanelFor = g.id;
+  panels.push({ dataset: { viewPanel: g.id }, classList: { toggle(c, on) { this.on = on; } } });
+};
+const setDevicesBackVisible = (v) => { backVisible = v; };
+const renderDynamicGroupPanel = (v) => { renderedPanel = v; };
+const renderDevicesOverview = () => {};
+const loadAmbientLights = () => ({ catch() {} });
+const loadHumidifiers = () => ({ catch() {} });
+const loadEnvironmentSensors = () => ({ catch() {} });
+const requestJson = () => ({ then() { return { catch() {} }; } });
+const CSS = { escape: (s) => s };
+const document = {
+  body: { classList: { toggle() {} } },
+  querySelector: () => null,
+};
+
+activateView('auto:unassigned');
+
+console.log(JSON.stringify({
+  createdPanelFor,
+  backVisible,
+  renderedPanel,
+  activePanel: panels.find((p) => p.classList.on)?.dataset.viewPanel ?? null,
+}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["createdPanelFor"] == "auto:unassigned"
+    assert result["backVisible"] is True, "back button must stay reachable"
+    assert result["renderedPanel"] == "auto:unassigned", "panel contents must render"
+    assert result["activePanel"] == "auto:unassigned", "panel must be created before the toggle"
+
+
+def test_activate_view_hides_back_button_outside_device_groups(tmp_path: Path) -> None:
+    """The synthetic-group fix must not arm the back button on ordinary views."""
+    script = """
+eval(pick('activateView'));
+let backVisible = null;
+const panels = [{ dataset: { viewPanel: 'cameras' }, classList: { toggle() {} } }];
+const railButtonEls = () => [];
+const viewPanelEls = () => panels;
+const DEVICE_GROUP_VIEWS = ['lights'];
+const arrivedFromDevices = true;
+const findDeviceGroup = () => undefined;
+const ensureDeviceGroupPanel = () => { throw new Error('must not build a panel'); };
+const setDevicesBackVisible = (v) => { backVisible = v; };
+const renderDynamicGroupPanel = () => {};
+const renderDevicesOverview = () => {};
+const CSS = { escape: (s) => s };
+const document = { body: { classList: { toggle() {} } }, querySelector: () => null };
+
+activateView('cameras');
+console.log(JSON.stringify({ backVisible }));
+"""
+    assert _run_node(script, tmp_path)["backVisible"] is False
