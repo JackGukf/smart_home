@@ -148,6 +148,45 @@ docker exec homeassistant python3 -c "import socket;print(socket.gethostbyname('
 A failure on a *neutral* host like `github.com` proves it is DNS and not the
 vendor — that one check separates the two causes immediately.
 
+### The Living Room Camera needs a patched Tuya integration
+
+Tuya moved the Living Room Camera (`ebbec1c57e3b06cfb3hzev`) to an
+**undocumented device category `cdsxj`**. Home Assistant's Tuya integration maps
+only `sp` and `dghsxj` to the camera platform, so the device produces *zero*
+entities and the device page shows `Smart Camera (unsupported)`. Upstream:
+[home-assistant/core#177197](https://github.com/home-assistant/core/issues/177197),
+still open as of HA 2026.6.3. Tuya has done this before — cameras moved `sp` →
+`dghsxj`, fixed in PR #136960 the same one-line way.
+
+This is *not* an authentication or network fault, and re-adding the integration
+does not help: the category comes from the cloud. Confirm it from diagnostics
+rather than guessing:
+
+```bash
+curl -s -H "Authorization: Bearer $HOME_ASSISTANT_TOKEN" \
+  "http://localhost:8123/api/diagnostics/config_entry/<entry_id>/device/<device_id>" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(d["category"], d["online"], list(d["function"]))'
+```
+
+Re-apply the patch with:
+
+```bash
+./scripts/patch-ha-tuya-cdsxj-camera.sh
+```
+
+It edits `camera.py` in the **container's writable layer**, so it survives
+restarts and reboots but is lost the moment the container is recreated or the
+image is updated — re-run it after either. The original file is kept at
+`/config/tuya-camera.py.orig`; `--revert` restores it.
+
+Two things the patch does *not* bring back. The cloud now returns an empty DP
+schema (`function: {}`, `status_range: {}`) for this device, so the eleven
+control entities — privacy mode, motion detection, flip, watermark — stay gone;
+only video returns, because `stream_source()` calls the cloud's
+`get_device_stream_allocate` keyed on device id alone and never touches the DPs.
+And there is no local fallback: ports 554/8554 are closed on the camera, and a
+local tinytuya query against port 6668 returns `null`.
+
 ## Bluetooth
 
 The board has **two** Bluetooth controllers:
