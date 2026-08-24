@@ -806,12 +806,18 @@ def create_app(
     @app.get("/api/cameras/{camera_id}/snapshot.jpg")
     async def camera_snapshot(camera_id: str) -> Response:
         camera = _find_camera(_load_cameras(app.state.config_path), camera_id)
-        if not camera.stream_url or not camera.stream_url.startswith(("rtsp://", "rtsps://")):
-            raise HTTPException(status_code=400, detail="Camera does not have an RTSP stream URL")
-        if not shutil.which("ffmpeg"):
-            raise HTTPException(status_code=503, detail="ffmpeg is required for camera snapshots")
 
-        frame = await asyncio.to_thread(_capture_rtsp_frame, camera.stream_url)
+        # Prefer go2rtc, which reuses the session it already holds. Cameras like
+        # the Wyze RTSP build serve one client at a time, so grabbing the still
+        # with our own ffmpeg would open a competing session to the same camera.
+        frame = await asyncio.to_thread(_capture_go2rtc_frame, camera)
+        if not frame:
+            if not camera.stream_url or not camera.stream_url.startswith(("rtsp://", "rtsps://")):
+                raise HTTPException(status_code=400, detail="Camera does not have an RTSP stream URL")
+            if not shutil.which("ffmpeg"):
+                raise HTTPException(status_code=503, detail="ffmpeg is required for camera snapshots")
+            frame = await asyncio.to_thread(_capture_rtsp_frame, camera.stream_url)
+
         return Response(
             frame,
             media_type="image/jpeg",
@@ -3950,6 +3956,34 @@ def _go2rtc_player_url(camera: CameraDefinition, mode: str) -> str | None:
     if mode == "hls":
         return f"{base_url}/stream.html?src={stream}&mode=hls"
     return f"{base_url}/webrtc.html?src={stream}"
+
+
+def _go2rtc_frame_url(camera: CameraDefinition) -> str | None:
+    if not camera.go2rtc_url:
+        return None
+
+    base_url = camera.go2rtc_url.rstrip("/")
+    return f"{base_url}/api/frame.jpeg?src={quote_plus(camera.stream_name)}"
+
+
+def _capture_go2rtc_frame(camera: CameraDefinition) -> bytes | None:
+    """Return a still from go2rtc, or None when it cannot supply one.
+
+    go2rtc answers 200 with an empty body while a stream has no producer yet,
+    so an empty response counts as "no frame" and the caller falls back to
+    reading the camera directly.
+    """
+    url = _go2rtc_frame_url(camera)
+    if not url:
+        return None
+
+    try:
+        with urlopen(_URLRequest(url, headers={"Accept": "image/jpeg"}), timeout=15) as response:
+            if response.status != 200:
+                return None
+            return response.read() or None
+    except Exception:
+        return None
 
 
 def _rtsp_port(rtsp_url: str) -> int:

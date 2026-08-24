@@ -1560,9 +1560,10 @@ def test_ambient_runtime_state_tracks_power_commands() -> None:
     assert web_app_module._ambient_light_card(light)["is_on"] is True
 
 
-def test_camera_snapshot_offloads_blocking_ffmpeg_from_event_loop() -> None:
+def test_camera_snapshot_offloads_blocking_work_from_event_loop() -> None:
     source = Path("src/python/web_app.py").read_text(encoding="utf-8")
 
+    assert "await asyncio.to_thread(_capture_go2rtc_frame, camera)" in source
     assert "await asyncio.to_thread(_capture_rtsp_frame, camera.stream_url)" in source
     assert "except subprocess.TimeoutExpired" in source
 

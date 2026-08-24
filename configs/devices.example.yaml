@@ -67,6 +67,22 @@ cameras:
     rtsp_port: 322
     stream_path: /stream0
     go2rtc_source: ffmpeg
+  # Each Wyze camera gets its own RTSP username/password, set per camera when
+  # you enable RTSP in the app, so give every one its own *_env pair rather
+  # than sharing WYZE_RTSP_USERNAME/PASSWORD.
+  - name: wyze_camera_2
+    provider: wyze
+    host: 192.168.0.88
+    model: Wyze RTSP
+    room: Home
+    stream_name: wyze_camera_2
+    go2rtc_url: http://192.168.0.176:1984
+    username_env: WYZE_FRONT_DOOR_RTSP_USERNAME
+    password_env: WYZE_FRONT_DOOR_RTSP_PASSWORD
+    rtsp_scheme: rtsps
+    rtsp_port: 322
+    stream_path: /stream0
+    go2rtc_source: ffmpeg
   - name: chortau_camera_1
     provider: chortau
     host: 192.168.0.57

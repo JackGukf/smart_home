@@ -187,6 +187,50 @@ only video returns, because `stream_source()` calls the cloud's
 And there is no local fallback: ports 554/8554 are closed on the camera, and a
 local tinytuya query against port 6668 returns `null`.
 
+### Wyze RTSP cameras serve one client at a time
+
+The Wyze cameras (`Backyard camera`, `Front door camera`) speak RTSP over TLS on
+port **322**, not plain RTSP on 554, and each camera has its **own** RTSP
+username and password generated when RTSP is enabled in the app — so every one
+needs its own `username_env`/`password_env` pair rather than sharing
+`WYZE_RTSP_USERNAME`/`PASSWORD`.
+
+Their RTSP server tolerates roughly one client and **can crash outright**.
+Observed 2026-08-24 on the front door camera: port 322 first served two
+connections, then accepted TCP while dropping every TLS handshake
+(`unexpected eof while reading`), then stopped listening altogether. Ping stayed
+perfect throughout, so the network is not the signal to look at. A power-cycle
+restores it; the TLS certificate is regenerated at that point, which makes
+`notBefore` a reliable boot marker:
+
+```bash
+openssl s_client -connect 192.168.0.88:322 </dev/null 2>/dev/null | openssl x509 -noout -dates
+```
+
+Because of that single-client limit, the dashboard's idle thumbnail is fetched
+from **go2rtc** (`/api/frame.jpeg?src=<stream>`), reusing the session go2rtc
+already holds, and only falls back to its own ffmpeg for cameras that have no
+gateway. Verify no competing session is being opened with:
+
+```bash
+ps -eo pid,ppid,comm | grep ffmpeg   # parent must be go2rtc, not the dashboard
+```
+
+### Adding camera credentials needs two restarts
+
+`.env` is read **at process start**, so new credentials are invisible to
+anything already running. After editing it:
+
+```bash
+cd /home/orangepi/smart_home_AI && python3 scripts/generate-go2rtc-config.py \
+  && systemctl --user restart go2rtc smart-home-dashboard
+```
+
+Skipping the dashboard restart produces a confusing split: the live view works
+(go2rtc has the credentials baked into its regenerated config) while snapshots
+fail with `400 {"detail":"Camera does not have an RTSP stream URL"}`, because
+the dashboard builds that URL from env vars it never loaded.
+
 ## Bluetooth
 
 The board has **two** Bluetooth controllers:
