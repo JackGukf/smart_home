@@ -231,6 +231,53 @@ Skipping the dashboard restart produces a confusing split: the live view works
 fail with `400 {"detail":"Camera does not have an RTSP stream URL"}`, because
 the dashboard builds that URL from env vars it never loaded.
 
+### Newer TP-Link switches (S505) need Matter, not the tplink integration
+
+The S505 in the north bedroom cannot be driven locally by `python-kasa`. It
+negotiates TP-Link's newer **TPAP** encryption, which the library does not
+implement:
+
+```
+UnsupportedDeviceError: Unsupported device 192.168.0.163 of type SMART.TAPOSWITCH
+with encrypt_scheme EncryptionScheme(is_support_https=False, encrypt_type='TPAP', ...)
+```
+
+Home Assistant bundles the same library, so its `tplink` integration fails too —
+there it surfaces as `responded with 403 to handshake1`, which reads like bad
+credentials but is not: the handshake never gets past the encryption scheme.
+Tracked upstream as [python-kasa#1590](https://github.com/python-kasa/python-kasa/issues/1590)
+(open, PR #1706 unmerged as of 2026-08-27), so upgrading HA will not fix it
+until that lands. The old HS200/HS103/HS220 switches are unaffected — they use
+the legacy unauthenticated protocol.
+
+Left unattended, that entry logged a 403 roughly every five seconds and grew
+`home-assistant.log` to 67 MB in three days. Its config entry is therefore
+**disabled**, not deleted, so it can be re-enabled if TPAP support ships.
+
+Control it through **Matter** instead. Matter devices hold several fabrics at
+once, so commissioning Home Assistant does not disturb Apple Home: get a setup
+code from the Home app (accessory settings, *Turn On Pairing Mode*) and add it
+under HA's Matter integration. The dashboard then targets the Matter entity:
+
+```yaml
+home_assistant_devices:
+- category: light_switch
+  entity_id: light.bedroom_north_bedroom_light_switch   # Matter, not switch.north_bedroom
+  name: North bedroom light switch
+```
+
+**Re-pairing reuses the existing HA device entry** when the serial matches
+(`serial_ACA7F1B55729`), so a device id captured before pairing points at the
+*live* device afterwards, not at the orphan. Re-read the registry after
+commissioning before removing anything. If the device is deleted by mistake, the
+node stays commissioned in the fabric and reloading the Matter config entry
+rebuilds it:
+
+```bash
+curl -X POST -H "Authorization: Bearer $HOME_ASSISTANT_TOKEN" \
+  http://localhost:8123/api/config/config_entries/entry/<matter_entry_id>/reload
+```
+
 ## Bluetooth
 
 The board has **two** Bluetooth controllers:
