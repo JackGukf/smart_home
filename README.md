@@ -5,9 +5,16 @@ This project area is for controlling and monitoring smart home devices from an O
 Target device examples:
 
 - TP-Link/Kasa light switches and plugs
-- TP-Link cameras
+- Cameras: TP-Link/Tapo, Wyze, Chortau, and Tuya
 - Tuya smart sensors
+- Govee and Lepro ambient lights
+- Ecobee thermostats and environment sensors
+- Matter devices, in both directions: our devices exposed to Apple Home via the
+  Matter bridge, and third-party Matter devices controlled from the dashboard
 - Other LAN, Wi-Fi, MQTT, HTTP, or vendor API based devices
+
+Home Assistant sits alongside these as a source of devices the dashboard can
+read and control; it is optional and the dashboard degrades gracefully without it.
 
 ## Goals
 
@@ -122,6 +129,54 @@ On the board's touch screen, open:
 ```text
 http://localhost:8000
 ```
+
+## Cameras
+
+Camera streams are served through **go2rtc**, which holds a single connection per
+camera and fans it out to the dashboard as WebRTC. Idle thumbnails come from the
+same go2rtc session (`/api/frame.jpeg`) rather than a second RTSP connection,
+because some cameras serve only one client at a time.
+
+```bash
+./scripts/run-go2rtc.sh                       # regenerates go2rtc.yaml, then runs it
+python3 scripts/generate-go2rtc-config.py     # regenerate the config only
+python3 scripts/probe-camera-services.py IP   # find a camera's ports and RTSP paths
+```
+
+`go2rtc/go2rtc.yaml` is generated from the `cameras:` section of
+`configs/devices.local.yaml` plus credentials in `.env` — edit those, never the
+generated file. Give every camera its own `username_env`/`password_env` pair:
+vendors such as Wyze issue credentials per camera, not per account.
+
+## Home Assistant and Matter
+
+The dashboard reads Home Assistant entities and can control them, so devices
+with no local protocol still get a card. Configure the connection under
+`home_assistant:` in `configs/devices.local.yaml` and set `HOME_ASSISTANT_TOKEN`.
+
+Matter runs in two independent directions, documented separately:
+
+- `docs/matter-bridge.md` — our devices exposed to Apple Home
+- `docs/matter-controller.md` — third-party Matter devices controlled here
+
+Both share one Matter server, so a device commissioned into that fabric can be
+reached either directly (`matter:<node_id>`) or through Home Assistant.
+
+## Known Device Quirks
+
+Vendor firmware changes have broken working devices more than once, and the
+symptoms rarely name the real cause. `docs/setup-orangepi6.md` records each one
+with the check that identifies it:
+
+- **Container DNS** must be pinned, or Home Assistant reports a Tuya
+  *authentication* failure that is really a dead resolver.
+- **Tuya cameras** moved to an undocumented `cdsxj` category that Home Assistant
+  does not map, producing a device with zero entities. Re-apply the fix with
+  `./scripts/patch-ha-tuya-cdsxj-camera.sh` after any HA container rebuild.
+- **Wyze RTSP** serves roughly one client at a time and its RTSP service can
+  crash outright; a power-cycle restores it.
+- **Newer TP-Link switches (S505)** negotiate TPAP encryption, which
+  `python-kasa` does not implement — control them over Matter instead.
 
 ## Security Notes
 
