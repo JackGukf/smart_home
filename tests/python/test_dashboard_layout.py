@@ -25,7 +25,10 @@ def test_stat_cards_are_inside_status_view_only() -> None:
 
     assert '<div class="stat-row">' in status_panel
     assert before_status.count('<div class="stat-row">') == 0
-    assert status_panel.count('class="stat-card"') == 4
+    # Matched on the class token, not the exact attribute: the Connected card
+    # carries a second class, and a literal match would quietly skip it.
+    stat_cards = re.findall(r'class="[^"]*\bstat-card\b[^"]*"', status_panel)
+    assert len(stat_cards) == 5
 
 def _sidebar_view_order(html: str) -> list[str]:
     """Views in the sidebar's Views section, in source order.

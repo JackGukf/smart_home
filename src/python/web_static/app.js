@@ -6216,6 +6216,80 @@ function _renderMatterDeviceList(devices) {
   window.openNewDeviceModal = openModal;
 })();
 
+/* ═════════════════ CONNECTED DEVICES ═════════════════ */
+
+function renderNetworkModalList(payload) {
+  const list = document.querySelector("#networkModalList");
+  if (!list) return;
+  const groups = (payload?.groups || []).filter((group) => (group.devices || []).length);
+  if (!groups.length) {
+    list.innerHTML = `<div class="home-empty">No devices with an address of their own.</div>`;
+    return;
+  }
+  list.innerHTML = groups.map((group) => {
+    const rows = group.devices.map((device) => {
+      // online is null for write-only devices, where we genuinely do not know.
+      const dot = device.online === null
+        ? ""
+        : `<span class="net-row-dot ${device.online ? "online" : "offline"}"
+                 title="${device.online ? "Reachable" : "Not responding"}"></span>`;
+      return `
+        <div class="net-row">
+          <span class="net-row-icon"><i class="ti ${escapeHtml(device.icon || "ti-device-desktop")}"></i></span>
+          <span class="net-row-name">
+            ${escapeHtml(device.name || "Unknown device")}
+            <span class="net-row-address">${escapeHtml(device.address || "")}</span>
+          </span>
+          <span class="net-row-status">
+            <span class="net-row-detail">${escapeHtml(device.detail || "")}</span>
+            ${dot}
+          </span>
+        </div>`;
+    }).join("");
+    return `
+      <div class="net-group-head">
+        <span>${escapeHtml(group.label)}</span>
+        <span class="net-group-count">${group.devices.length}</span>
+      </div>
+      ${rows}`;
+  }).join("");
+}
+
+async function refreshNetworkDevices() {
+  const payload = await requestJson("/api/network/devices");
+  const badge = document.querySelector("#networkCount");
+  if (badge) badge.textContent = payload.total ?? "–";
+  renderNetworkModalList(payload);
+  return payload;
+}
+
+(function initNetworkUi() {
+  const modal = document.querySelector("#networkModal");
+  const list = document.querySelector("#networkModalList");
+  const closeModal = () => { if (modal) modal.hidden = true; };
+
+  document.querySelector("#openNetworkModal")?.addEventListener("click", () => {
+    if (modal) modal.hidden = false;
+    if (list) list.innerHTML = `<div class="home-empty"><i class="ti ti-loader-2 spin"></i> Loading…</div>`;
+    refreshNetworkDevices().catch((error) => {
+      console.error(error);
+      if (list) list.innerHTML = `<div class="home-empty">Could not load connected devices.</div>`;
+    });
+  });
+
+  document.querySelector("#closeNetworkModal")?.addEventListener("click", closeModal);
+  modal?.addEventListener("click", (event) => {
+    if (event.target === modal) closeModal();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && modal && !modal.hidden) closeModal();
+  });
+
+  // Fill the card's count without opening the modal; the listing is cheap and
+  // shares the device cache the dashboard already refreshed.
+  refreshNetworkDevices().catch(console.error);
+})();
+
 async function loadBuildInfo() {
   if (!buildBadge) return;
   try {

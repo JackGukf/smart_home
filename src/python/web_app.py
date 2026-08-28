@@ -791,6 +791,10 @@ def create_app(
     async def home_assistant_entities() -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_payload, app.state.config_path)
 
+    @app.get("/api/network/devices")
+    async def network_devices() -> dict[str, Any]:
+        return await _connected_device_groups(app)
+
     @app.get("/api/bluetooth/devices")
     async def bluetooth_devices() -> dict[str, Any]:
         return await asyncio.to_thread(_bluetooth_devices_payload)
@@ -1144,6 +1148,97 @@ def _patch_device_cache(app: FastAPI, host: str, state: Any) -> None:
             if state.brightness is not None:
                 card["brightness"] = state.brightness
             break
+
+
+_IPV4 = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def _is_ip_host(host: Any) -> bool:
+    """True for a real LAN address, false for ids like 'ha:...' or 'matter:1'."""
+    return bool(_IPV4.match(str(host or "")))
+
+
+async def _connected_device_groups(app: FastAPI) -> dict[str, Any]:
+    """Every device the dashboard can address directly, grouped by how.
+
+    Only devices with an address of their own are listed. Entities proxied
+    through Home Assistant or Matter are deliberately left out: they have no
+    IP or MAC to show, so a row for them would be an empty promise.
+    """
+    switches = [card for card in await _device_cards_cached(app) if _is_ip_host(card.get("host"))]
+    cameras = [
+        card
+        for card in await asyncio.to_thread(
+            _camera_cards, app.state.config_path, app.state.check_camera_ports
+        )
+        if _is_ip_host(card.get("host"))
+    ]
+    lights = await asyncio.to_thread(_load_ambient_lights, app.state.config_path)
+
+    network = [
+        {
+            "name": card.get("name"),
+            "address": card.get("host"),
+            "detail": " · ".join(part for part in (card.get("model"), card.get("room")) if part),
+            "icon": "ti-plug" if card.get("category") == "smart_plug" else "ti-bulb",
+            # is_on is None when the switch did not answer its last poll.
+            "online": card.get("is_on") is not None,
+        }
+        for card in switches
+    ] + [
+        {
+            "name": card.get("name"),
+            "address": card.get("host"),
+            "detail": " · ".join(
+                part for part in (card.get("model") or card.get("provider"), card.get("room")) if part
+            ),
+            "icon": "ti-camera",
+            "online": card.get("status") == "ready",
+        }
+        for card in cameras
+    ]
+
+    bluetooth = [
+        {
+            "name": light.name,
+            "address": light.address,
+            "detail": " · ".join(
+                part for part in (light.model, _AMBIENT_PROVIDER_LABELS.get(light.provider, light.provider)) if part
+            ),
+            "icon": "ti-bulb",
+            "online": None,  # Ambient lights are write-only; reachability is unknown.
+        }
+        for light in lights
+        if light.address
+    ]
+
+    # bluetoothctl can be slow or absent; a paired speaker is a bonus here, not
+    # a reason to fail the whole listing.
+    try:
+        paired = await asyncio.to_thread(_bluetooth_devices_payload)
+    except Exception:
+        paired = {"status": "error", "devices": []}
+    known = {str(item["address"]).upper() for item in bluetooth}
+    for device in paired.get("devices") or []:
+        if str(device.get("mac", "")).upper() in known:
+            continue
+        bluetooth.append(
+            {
+                "name": device.get("name"),
+                "address": device.get("mac"),
+                "detail": device.get("type") or "Bluetooth",
+                "icon": "ti-bluetooth",
+                "online": bool(device.get("connected")),
+            }
+        )
+
+    return {
+        "groups": [
+            {"id": "network", "label": "Wi-Fi / Ethernet", "devices": network},
+            {"id": "bluetooth", "label": "Bluetooth", "devices": bluetooth},
+        ],
+        "total": len(network) + len(bluetooth),
+    }
 
 
 def _schedule_switch_rediscovery(app: FastAPI) -> None:
@@ -1849,6 +1944,16 @@ def _is_real_ble_address(address: str | None) -> bool:
         return False
     value = address.strip().lower()
     return value not in {"replace_me", "todo", "none", "null", "unknown"}
+
+
+# How each ambient provider is described in the connected-devices listing.
+_AMBIENT_PROVIDER_LABELS = {
+    "govee_ble": "Govee BLE",
+    # Reached over Wi-Fi, but Govee exposes only a MAC, so it is listed beside
+    # the MAC-addressed devices rather than the ones with an IP.
+    "govee_lan": "Govee LAN (Wi-Fi)",
+    "alexa": "Alexa",
+}
 
 
 def _ambient_light_card(light: AmbientLightDefinition) -> dict[str, Any]:

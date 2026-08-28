@@ -508,7 +508,7 @@ aside {
 /* ── STAT ROW ── */
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 12px;
 }
 
@@ -535,6 +535,28 @@ aside {
 .stat-card:nth-child(2) { --stat-color: var(--cyan); }
 .stat-card:nth-child(3) { --stat-color: var(--green); }
 .stat-card:nth-child(4) { --stat-color: var(--purple); }
+.stat-card:nth-child(5) { --stat-color: var(--accent); }
+
+/* Five across gets cramped well before the 900px two-column rule applies. */
+@media (max-width: 1180px) {
+  .stat-row { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* The Connected card is a button; strip the control chrome back to a card. */
+.stat-card-action {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+}
+
+.stat-card-action:hover { border-color: var(--accent); }
+
+.stat-card-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .stat-icon {
   font-size: 18px;
@@ -4402,4 +4424,107 @@ aside {
 @media (max-width: 700px) {
   .area-grid { grid-template-columns: 1fr; gap: 8px; }
   .area-icon-picker { grid-template-columns: repeat(6, 1fr); }
+}
+
+
+/* ── Connected devices modal ── */
+
+.net-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 4px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.net-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 2px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--t-text-dim, var(--muted));
+}
+
+.net-group-head:first-child { padding-top: 2px; }
+
+.net-group-count {
+  font-family: var(--mono);
+  letter-spacing: 0;
+  color: var(--t-text-dim2, var(--muted));
+}
+
+.net-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.net-row:hover { background: var(--card-hover, rgba(127, 127, 127, 0.08)); }
+
+.net-row-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--card-hover, rgba(127, 127, 127, 0.1));
+  color: var(--t-text-dim, var(--muted));
+  font-size: 15px;
+}
+
+.net-row-name {
+  font-size: 13.5px;
+  color: var(--t-text, inherit);
+  /* Long device names must not push the address column off a phone screen. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.net-row-address {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--t-text-dim2, var(--muted));
+}
+
+.net-row-detail {
+  font-size: 11px;
+  color: var(--t-text-dim2, var(--muted));
+  text-align: right;
+  white-space: nowrap;
+}
+
+.net-row-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+
+.net-row-dot.online { background: var(--green); }
+.net-row-dot.offline { background: var(--red, #e5534b); }
+
+.net-row-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+/* On a phone the trailing detail costs more than it gives; keep the address. */
+@media (max-width: 560px) {
+  .net-row-detail { display: none; }
+  .net-row { grid-template-columns: auto 1fr auto; padding: 9px 6px; }
 }

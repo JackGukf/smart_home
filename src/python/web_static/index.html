@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build112">
+  <link rel="stylesheet" href="/static/styles.css?v=build113">
 </head>
 <body>
 
@@ -162,6 +162,13 @@
         <div class="stat-value mono" id="cameraCount">–</div>
         <div class="stat-trend">Live feeds</div>
       </div>
+      <button class="stat-card stat-card-action" id="openNetworkModal" type="button"
+              aria-haspopup="dialog" title="Show every device with an IP or MAC address">
+        <div class="stat-icon"><i class="ti ti-router"></i></div>
+        <div class="stat-label">Connected</div>
+        <div class="stat-value mono" id="networkCount">–</div>
+        <div class="stat-trend">Wi-Fi &amp; Bluetooth</div>
+      </button>
       </div>
     </div>
 
@@ -800,6 +807,20 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="networkModal" hidden aria-modal="true" role="dialog" aria-labelledby="networkModalTitle">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title" id="networkModalTitle">Connected Devices</span>
+      <button class="modal-close" id="closeNetworkModal" type="button" aria-label="Close">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+    <div class="net-modal-list" id="networkModalList">
+      <div class="home-empty"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+    </div>
+  </div>
+</div>
+
 <div class="weather-backdrop" id="weatherBackdrop"></div>
 <div class="weather-dropdown" id="weatherDropdown" aria-hidden="true">
   <div class="weather-dropdown-current">
@@ -827,6 +848,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build112"></script>
+<script src="/static/app.js?v=build113"></script>
 </body>
 </html>
