@@ -6,6 +6,7 @@
       "device_type": "DeviceType.Dimmer",
       "host": "192.168.0.110",
       "is_on": true,
+      "mac": "10:27:F5:77:2D:04",
       "model": "HS220",
       "name": "Kitchen light switch"
     },
@@ -14,6 +15,7 @@
       "device_type": "DeviceType.WallSwitch",
       "host": "192.168.0.143",
       "is_on": false,
+      "mac": "E8:48:B8:E3:7C:26",
       "model": "HS200",
       "name": "Master bedroom light"
     },
@@ -22,6 +24,7 @@
       "device_type": "DeviceType.Plug",
       "host": "192.168.0.161",
       "is_on": true,
+      "mac": "DC:62:79:35:53:F4",
       "model": "HS103",
       "name": "Raspberry PI"
     },
@@ -30,14 +33,16 @@
       "device_type": "DeviceType.Plug",
       "host": "192.168.0.165",
       "is_on": true,
+      "mac": "60:A4:B7:E2:FA:0A",
       "model": "HS103",
       "name": "Living room cabinet LED"
     },
     {
       "alias": "North bedroom night light",
       "device_type": "DeviceType.Plug",
-      "host": "192.168.0.208",
+      "host": "192.168.0.207",
       "is_on": false,
+      "mac": "1C:61:B4:F9:B1:1C",
       "model": "HS103",
       "name": "North bedroom night light"
     },
@@ -46,6 +51,7 @@
       "device_type": "DeviceType.Plug",
       "host": "192.168.0.51",
       "is_on": true,
+      "mac": "00:5F:67:B2:48:6F",
       "model": "HS103",
       "name": "Office switch"
     },
@@ -54,6 +60,7 @@
       "device_type": "DeviceType.Dimmer",
       "host": "192.168.0.61",
       "is_on": true,
+      "mac": "10:27:F5:52:73:9E",
       "model": "HS220",
       "name": "Family room switch"
     },
@@ -62,6 +69,7 @@
       "device_type": "DeviceType.WallSwitch",
       "host": "192.168.0.73",
       "is_on": true,
+      "mac": "54:AF:97:A9:4B:A1",
       "model": "HS200",
       "name": "Living room switch 2"
     }

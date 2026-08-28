@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterator, Literal
@@ -34,6 +35,7 @@ import yaml
 
 from src.python.ble_adapter import ble_kwargs as _ble_kwargs
 from src.python.tplink_switch import KasaLightSwitchController, SwitchDefinition
+from src.python.tplink_discovery import apply_discovered_hosts, discover_hosts_by_mac
 from src.python.matter_device import (
     DEFAULT_COMMISSION_TIMEOUT,
     DashboardMatterClient,
@@ -64,7 +66,16 @@ DEFAULT_DEVICE_GROUPS_PATH = PROJECT_ROOT / "dashboard_device_groups.json"
 # python-kasa waits ~5s for a switch that has dropped off WiFi. The dashboard
 # used to pay that serially for every switch, so a single dead device added 5s
 # to every page load. Poll concurrently and cap what any one device can cost.
-SWITCH_STATUS_TIMEOUT = 1.5
+#
+# Measured on the board: the first poll after the switches have been idle costs
+# 3-5s per device, and settles to well under a second once they are awake. The
+# cap has to clear that cold floor or every switch reads back unknown after a
+# restart - it is not a page-load budget, because the cache below means only
+# the very first request ever waits on a poll.
+SWITCH_STATUS_TIMEOUT = 6.0
+# Polling all of them at once makes each one slower: they share the board's
+# WiFi, and the contention showed up as every device creeping past the cap.
+SWITCH_POLL_CONCURRENCY = 4
 # Only drop a cached connection after this many consecutive failures, so a
 # merely slow switch is not forced to reconnect (and get slower) on every poll.
 SWITCH_EVICT_AFTER_FAILURES = 2
@@ -72,6 +83,25 @@ SWITCH_EVICT_AFTER_FAILURES = 2
 # off. The dashboard re-polls every 60s, so this keeps the cache warm without
 # letting a burst of requests each start their own refresh.
 DEVICE_CACHE_STALE_AFTER = 10.0
+# A switch that misses this many consecutive polls may have been handed a new
+# DHCP lease rather than died, so go looking for it. Set above
+# SWITCH_EVICT_AFTER_FAILURES: reconnecting is the cheap explanation and is
+# tried first, and a broadcast scan is only worth it once that has not helped.
+SWITCH_REDISCOVER_AFTER_FAILURES = 3
+# Floor between broadcast scans. A switch that is genuinely off keeps failing,
+# and without this every poll cycle would kick off another scan.
+SWITCH_REDISCOVER_MIN_INTERVAL = 300.0
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Poll the switches before anyone asks.
+
+    The first poll after the devices have been idle is the expensive one, so
+    pay it at startup rather than making the first page load wait for it.
+    """
+    _schedule_device_refresh(app)
+    yield
 
 
 class _CachedStaticFiles(StaticFiles):
@@ -344,7 +374,7 @@ def create_app(
     areas_path: Path = DEFAULT_AREAS_PATH,
     device_groups_path: Path = DEFAULT_DEVICE_GROUPS_PATH,
 ) -> FastAPI:
-    app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard")
+    app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
     app.state.discovery_path = discovery_path
     app.state.config_path = config_path
     app.state.controller = controller or KasaLightSwitchController()
@@ -353,8 +383,10 @@ def create_app(
     app.state.device_groups_path = device_groups_path
     # Last known device list, served instantly while a refresh runs behind it.
     app.state.device_cache = {"cards": None, "at": 0.0, "task": None}
-    # Consecutive status failures per switch host, used to retire dead sockets.
+    # Consecutive status failures per switch host, used to retire dead sockets
+    # and to notice a switch that may have moved to a new address.
     app.state.switch_failures = {}
+    app.state.rediscovery = {"task": None, "at": 0.0}
     _load_ambient_runtime_state(config_path)
 
     # app.js and styles.css are ~380KB of text served uncompressed otherwise.
@@ -979,7 +1011,9 @@ def create_app(
     return app
 
 
-async def _switch_status(app: FastAPI, switch: SwitchDefinition) -> Any:
+async def _switch_status(
+    app: FastAPI, switch: SwitchDefinition, limit: asyncio.Semaphore
+) -> Any:
     """Poll one switch, giving up quickly so it cannot stall the whole page.
 
     Returns None when the switch does not answer in time; the caller renders
@@ -987,9 +1021,10 @@ async def _switch_status(app: FastAPI, switch: SwitchDefinition) -> Any:
     """
     failures = app.state.switch_failures
     try:
-        state = await asyncio.wait_for(
-            app.state.controller.status(switch), timeout=SWITCH_STATUS_TIMEOUT
-        )
+        async with limit:
+            state = await asyncio.wait_for(
+                app.state.controller.status(switch), timeout=SWITCH_STATUS_TIMEOUT
+            )
     except Exception:
         count = failures.get(switch.host, 0) + 1
         failures[switch.host] = count
@@ -1003,6 +1038,10 @@ async def _switch_status(app: FastAPI, switch: SwitchDefinition) -> Any:
                 await forget(switch.host)
             except Exception:
                 pass
+        # Reconnecting did not bring it back, so the switch may not be at this
+        # address any more. Look for it by MAC instead of writing it off.
+        if count >= SWITCH_REDISCOVER_AFTER_FAILURES:
+            _schedule_switch_rediscovery(app)
         return None
     failures.pop(switch.host, None)
     return state
@@ -1014,8 +1053,9 @@ async def _device_cards(app: FastAPI) -> list[dict[str, Any]]:
     # Poll every switch at once, and fetch the Home Assistant devices alongside
     # them, so the request costs as long as the slowest source rather than the
     # sum of all of them. gather preserves order, so cards stay in config order.
+    limit = asyncio.Semaphore(SWITCH_POLL_CONCURRENCY)
     states, ha_cards = await asyncio.gather(
-        asyncio.gather(*(_switch_status(app, device.switch) for device in devices)),
+        asyncio.gather(*(_switch_status(app, device.switch, limit) for device in devices)),
         asyncio.to_thread(_home_assistant_device_cards, app.state.config_path),
     )
 
@@ -1059,9 +1099,11 @@ async def _device_cards_cached(app: FastAPI) -> list[dict[str, Any]]:
     """
     cache = app.state.device_cache
     if cache["cards"] is None:
-        cache["cards"] = await _device_cards(app)
-        cache["at"] = time.monotonic()
-        return cache["cards"]
+        # Nothing cached yet, so this one call has to wait - but share the poll
+        # that startup already began rather than racing a second one against it.
+        _schedule_device_refresh(app)
+        await cache["task"]
+        return cache["cards"] or []
 
     if time.monotonic() - cache["at"] >= DEVICE_CACHE_STALE_AFTER:
         _schedule_device_refresh(app)
@@ -1102,6 +1144,80 @@ def _patch_device_cache(app: FastAPI, host: str, state: Any) -> None:
             if state.brightness is not None:
                 card["brightness"] = state.brightness
             break
+
+
+def _schedule_switch_rediscovery(app: FastAPI) -> None:
+    """Kick off a background scan for switches that moved, at most one at a time.
+
+    A broadcast scan takes seconds, so it never runs inside a request: the poll
+    that noticed the failure returns an unknown state immediately, and a later
+    poll picks up the corrected address.
+    """
+    rediscovery = app.state.rediscovery
+    task = rediscovery.get("task")
+    if task is not None and not task.done():
+        return
+    if time.monotonic() - rediscovery["at"] < SWITCH_REDISCOVER_MIN_INTERVAL:
+        return
+    rediscovery["at"] = time.monotonic()
+    rediscovery["task"] = asyncio.create_task(_rediscover_switch_hosts(app))
+
+
+async def _rediscover_switch_hosts(app: FastAPI) -> None:
+    """Re-point stored switches at the addresses their MACs answer on now."""
+    path = app.state.discovery_path
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    switches = payload.get("switches") or []
+    if not any(switch.get("mac") for switch in switches):
+        # Nothing to match on; tplink_switches.json predates MAC recording.
+        _matter_log.warning(
+            "Skipping switch rediscovery: %s has no MAC addresses. "
+            "Re-run scripts/discover_tplink_switches.py to record them.",
+            path,
+        )
+        return
+
+    try:
+        found = await discover_hosts_by_mac()
+    except Exception:
+        _matter_log.exception("Switch rediscovery scan failed")
+        return
+
+    moves = apply_discovered_hosts(switches, found)
+    if not moves:
+        return
+
+    payload["switches"] = switches
+    try:
+        _write_json_atomic(path, payload)
+    except Exception:
+        _matter_log.exception("Could not persist rediscovered switch addresses")
+        return
+
+    forget = getattr(app.state.controller, "forget", None)
+    for name, old_host, new_host in moves:
+        _matter_log.info("Switch %r moved from %s to %s", name, old_host, new_host)
+        # Drop any connection and failure history filed under either address.
+        for host in (old_host, new_host):
+            app.state.switch_failures.pop(host, None)
+            if forget is not None:
+                try:
+                    await forget(host)
+                except Exception:
+                    pass
+
+    # The cached cards still carry the old addresses, so rebuild them now.
+    await _refresh_device_cache(app)
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    """Write via a temp file so a crash cannot truncate the device list."""
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp.replace(path)
 
 
 def _load_switches(path: Path) -> list[DashboardDevice]:

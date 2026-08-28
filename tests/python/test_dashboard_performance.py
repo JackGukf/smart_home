@@ -13,8 +13,19 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from src.python import web_app as web_app_module
 from src.python.tplink_switch import SwitchState
-from src.python.web_app import SWITCH_STATUS_TIMEOUT, create_app
+from src.python.web_app import create_app
+
+# The real cap clears the switches' 3-5s cold-connect floor; these tests only
+# need it to be shorter than the hang they simulate.
+TEST_STATUS_TIMEOUT = 0.3
+
+
+@pytest.fixture
+def fast_timeout(monkeypatch) -> float:
+    monkeypatch.setattr(web_app_module, "SWITCH_STATUS_TIMEOUT", TEST_STATUS_TIMEOUT)
+    return TEST_STATUS_TIMEOUT
 
 
 def _write_discovery(path: Path) -> None:
@@ -81,7 +92,7 @@ def test_switches_are_polled_concurrently(tmp_path: Path) -> None:
     assert elapsed < 0.5, f"switches appear to be polled serially ({elapsed:.2f}s)"
 
 
-def test_one_dead_switch_does_not_stall_the_others(tmp_path: Path) -> None:
+def test_one_dead_switch_does_not_stall_the_others(tmp_path: Path, fast_timeout: float) -> None:
     discovery = tmp_path / "tplink_switches.json"
     _write_discovery(discovery)
     controller = SlowController(delay=0.05, dead={"10.0.0.2"})
@@ -96,10 +107,10 @@ def test_one_dead_switch_does_not_stall_the_others(tmp_path: Path) -> None:
     assert by_host["10.0.0.3"]["is_on"] is True
     # The unreachable one reports unknown rather than failing the request.
     assert by_host["10.0.0.2"]["is_on"] is None
-    assert elapsed < SWITCH_STATUS_TIMEOUT + 1.0
+    assert elapsed < fast_timeout + 1.0
 
 
-def test_repeated_failures_drop_the_cached_connection(tmp_path: Path) -> None:
+def test_repeated_failures_drop_the_cached_connection(tmp_path: Path, fast_timeout: float) -> None:
     discovery = tmp_path / "tplink_switches.json"
     _write_discovery(discovery)
     controller = SlowController(delay=0.05, dead={"10.0.0.2"})

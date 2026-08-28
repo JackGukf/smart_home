@@ -4,11 +4,15 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from kasa import Discover
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.python.tplink_discovery import normalize_mac  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -19,6 +23,9 @@ class DiscoveredSwitch:
     model: str | None
     device_type: str | None
     is_on: bool | None
+    # The only identifier that survives a DHCP lease change; the dashboard uses
+    # it to find a switch again after its IP moves.
+    mac: str | None
 
 
 def _is_tapo_device(device: Any) -> bool:
@@ -79,6 +86,7 @@ async def discover_switches(timeout: int) -> list[DiscoveredSwitch]:
                     model=_safe_getattr(device, "model"),
                     device_type=str(_safe_getattr(device, "device_type") or _safe_getattr(device, "type") or "") or None,
                     is_on=_safe_getattr(device, "is_on"),
+                    mac=normalize_mac(_safe_getattr(device, "mac")),
                 )
             )
     finally:
@@ -97,12 +105,19 @@ def merge_previous_aliases(
 
     KLAP devices report no alias without credentials; without this, re-running
     discovery would replace manually assigned names with bare IP addresses.
+
+    Matched on MAC before host, so a switch that changed address keeps its name
+    instead of reverting to a bare IP - which is exactly when a device is least
+    recognisable and the name matters most.
     """
+    previous_by_mac = {
+        mac: item for item in previous if (mac := normalize_mac(item.get("mac")))
+    }
     previous_by_host = {item.get("host"): item for item in previous}
     merged = []
     for item in switches:
         if not item.get("alias"):
-            old = previous_by_host.get(item.get("host"))
+            old = previous_by_mac.get(normalize_mac(item.get("mac"))) or previous_by_host.get(item.get("host"))
             if old and old.get("alias"):
                 item = {**item, "alias": old["alias"], "name": old["alias"]}
         merged.append(item)
