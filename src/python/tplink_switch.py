@@ -121,6 +121,14 @@ class KasaLightSwitchController:
             self._cache[switch.host] = device
         return self._cache[switch.host]
 
+    async def forget(self, host: str) -> None:
+        """Drop the cached connection for a host so the next call reconnects.
+
+        A switch that was power cycled (or dropped off WiFi and came back) will
+        not answer on the socket we opened before it went away.
+        """
+        await self._evict(host)
+
     async def _evict(self, host: str) -> None:
         device = self._cache.pop(host, None)
         if device is not None:

@@ -26,8 +26,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Scope
 import yaml
 
 from src.python.ble_adapter import ble_kwargs as _ble_kwargs
@@ -58,6 +60,37 @@ DEFAULT_AREAS = [
     {"id": "utility-room", "name": "Utility Room", "icon": "tools"},
 ]
 DEFAULT_DEVICE_GROUPS_PATH = PROJECT_ROOT / "dashboard_device_groups.json"
+
+# python-kasa waits ~5s for a switch that has dropped off WiFi. The dashboard
+# used to pay that serially for every switch, so a single dead device added 5s
+# to every page load. Poll concurrently and cap what any one device can cost.
+SWITCH_STATUS_TIMEOUT = 1.5
+# Only drop a cached connection after this many consecutive failures, so a
+# merely slow switch is not forced to reconnect (and get slower) on every poll.
+SWITCH_EVICT_AFTER_FAILURES = 2
+# How long a cached device list is served before a background refresh is kicked
+# off. The dashboard re-polls every 60s, so this keeps the cache warm without
+# letting a burst of requests each start their own refresh.
+DEVICE_CACHE_STALE_AFTER = 10.0
+
+
+class _CachedStaticFiles(StaticFiles):
+    """Static assets served with cache headers.
+
+    index.html references app.js/styles.css with a ?v=buildNNN query that
+    deploy-dashboard.sh bumps on every deploy, so a versioned URL can be cached
+    hard: the URL changes whenever the bytes do. Unversioned requests get a
+    short TTL instead, so a stale asset can never pin itself in a phone's cache.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        if response.status_code in {200, 304}:
+            query = scope.get("query_string", b"").decode("latin-1")
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable" if "v=" in query else "public, max-age=300"
+            )
+        return response
 
 # Seeded to reproduce the sidebar exactly as it was before device groups became
 # data. Sensors keeps the id "tuya" because data-view="tuya" may already be
@@ -318,7 +351,14 @@ def create_app(
     app.state.check_camera_ports = check_camera_ports
     app.state.areas_path = areas_path
     app.state.device_groups_path = device_groups_path
+    # Last known device list, served instantly while a refresh runs behind it.
+    app.state.device_cache = {"cards": None, "at": 0.0, "task": None}
+    # Consecutive status failures per switch host, used to retire dead sockets.
+    app.state.switch_failures = {}
     _load_ambient_runtime_state(config_path)
+
+    # app.js and styles.css are ~380KB of text served uncompressed otherwise.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     _raw_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else None
     _raw_cfg = _raw_cfg or {}
@@ -398,7 +438,7 @@ def create_app(
             response.delete_cookie(key="session")
             return response
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", _CachedStaticFiles(directory=STATIC_DIR), name="static")
 
     app.include_router(bridge_sync.router)
     import functools as _functools
@@ -417,7 +457,7 @@ def create_app(
 
     @app.get("/api/devices")
     async def devices() -> dict[str, list[dict[str, Any]]]:
-        return {"devices": await _device_cards(app)}
+        return {"devices": await _device_cards_cached(app)}
 
     @app.get("/api/areas")
     async def areas_get() -> dict[str, Any]:
@@ -801,6 +841,8 @@ def create_app(
         return StreamingResponse(
             _mjpeg_frames(camera.stream_url, camera),
             media_type="multipart/x-mixed-replace; boundary=frame",
+            # Already-compressed JPEG frames, and gzip would buffer the stream.
+            headers={"Content-Encoding": "identity"},
         )
 
     @app.get("/api/cameras/{camera_id}/snapshot.jpg")
@@ -821,7 +863,7 @@ def create_app(
         return Response(
             frame,
             media_type="image/jpeg",
-            headers={"Cache-Control": "no-store"},
+            headers={"Cache-Control": "no-store", "Content-Encoding": "identity"},
         )
 
     @app.post("/api/devices/{host}/commands/{command}")
@@ -843,6 +885,7 @@ def create_app(
         except Exception as exc:
             raise _switch_command_error(switch.host, exc)
 
+        _patch_device_cache(app, switch.host, state)
         return asdict(state)
 
     @app.post("/api/devices/{host}/brightness")
@@ -853,6 +896,7 @@ def create_app(
             state = await app.state.controller.set_brightness(switch, level)
         except Exception as exc:
             raise _switch_command_error(switch.host, exc)
+        _patch_device_cache(app, switch.host, state)
         return asdict(state)
 
     @app.get("/api/matter/devices")
@@ -935,17 +979,51 @@ def create_app(
     return app
 
 
+async def _switch_status(app: FastAPI, switch: SwitchDefinition) -> Any:
+    """Poll one switch, giving up quickly so it cannot stall the whole page.
+
+    Returns None when the switch does not answer in time; the caller renders
+    that as an unknown state rather than failing the request.
+    """
+    failures = app.state.switch_failures
+    try:
+        state = await asyncio.wait_for(
+            app.state.controller.status(switch), timeout=SWITCH_STATUS_TIMEOUT
+        )
+    except Exception:
+        count = failures.get(switch.host, 0) + 1
+        failures[switch.host] = count
+        # A power-cycled switch answers on a fresh connection but not on the
+        # dead one we cached, so let go of that socket once the failures look
+        # real. Waiting for a second failure keeps a slow-but-healthy switch
+        # from being forced through a reconnect on every poll.
+        forget = getattr(app.state.controller, "forget", None)
+        if forget is not None and count >= SWITCH_EVICT_AFTER_FAILURES:
+            try:
+                await forget(switch.host)
+            except Exception:
+                pass
+        return None
+    failures.pop(switch.host, None)
+    return state
+
+
 async def _device_cards(app: FastAPI) -> list[dict[str, Any]]:
+    devices = _load_switches(app.state.discovery_path)
+
+    # Poll every switch at once, and fetch the Home Assistant devices alongside
+    # them, so the request costs as long as the slowest source rather than the
+    # sum of all of them. gather preserves order, so cards stay in config order.
+    states, ha_cards = await asyncio.gather(
+        asyncio.gather(*(_switch_status(app, device.switch) for device in devices)),
+        asyncio.to_thread(_home_assistant_device_cards, app.state.config_path),
+    )
+
     cards: list[dict[str, Any]] = []
-    for device in _load_switches(app.state.discovery_path):
+    for device, state in zip(devices, states):
         switch = device.switch
-        try:
-            state = await app.state.controller.status(switch)
-            is_on = state.is_on
-            brightness = state.brightness
-        except Exception:
-            is_on = None
-            brightness = None
+        is_on = state.is_on if state is not None else None
+        brightness = state.brightness if state is not None else None
 
         # Keep bridge state cache fresh so GET /bridge/state/all is never stale.
         if is_on is not None:
@@ -965,8 +1043,65 @@ async def _device_cards(app: FastAPI) -> list[dict[str, Any]]:
                 "brightness": brightness,
             }
         )
-    cards.extend(await asyncio.to_thread(_home_assistant_device_cards, app.state.config_path))
+    cards.extend(ha_cards)
     return cards
+
+
+async def _device_cards_cached(app: FastAPI) -> list[dict[str, Any]]:
+    """Serve the last known device list immediately, refreshing behind it.
+
+    A cold call polls for real, so the first load of a fresh process is
+    accurate. After that the dashboard paints from cache while a background
+    task re-polls, which trades up to DEVICE_CACHE_STALE_AFTER seconds of
+    staleness for a response that no longer waits on the devices themselves.
+    Commands patch the cache directly, so a switch the user just toggled never
+    reads back stale.
+    """
+    cache = app.state.device_cache
+    if cache["cards"] is None:
+        cache["cards"] = await _device_cards(app)
+        cache["at"] = time.monotonic()
+        return cache["cards"]
+
+    if time.monotonic() - cache["at"] >= DEVICE_CACHE_STALE_AFTER:
+        _schedule_device_refresh(app)
+    return cache["cards"]
+
+
+def _schedule_device_refresh(app: FastAPI) -> None:
+    """Start a background re-poll unless one is already in flight."""
+    cache = app.state.device_cache
+    task = cache.get("task")
+    if task is not None and not task.done():
+        return
+    cache["task"] = asyncio.create_task(_refresh_device_cache(app))
+
+
+async def _refresh_device_cache(app: FastAPI) -> None:
+    try:
+        cards = await _device_cards(app)
+    except Exception:
+        _matter_log.exception("Background device refresh failed; keeping previous cache")
+        return
+    app.state.device_cache["cards"] = cards
+    app.state.device_cache["at"] = time.monotonic()
+
+
+def _patch_device_cache(app: FastAPI, host: str, state: Any) -> None:
+    """Fold a just-executed command into the cache.
+
+    Without this the cached card would keep reporting the pre-command state
+    until the next background refresh, and the toggle would look like it failed.
+    """
+    cards = app.state.device_cache.get("cards")
+    if not cards:
+        return
+    for card in cards:
+        if card.get("host") == host:
+            card["is_on"] = state.is_on
+            if state.brightness is not None:
+                card["brightness"] = state.brightness
+            break
 
 
 def _load_switches(path: Path) -> list[DashboardDevice]:
@@ -1208,7 +1343,11 @@ def _home_assistant_camera_events(name: str, states: list[dict[str, Any]]) -> li
 def _home_assistant_camera_snapshot(path: Path, entity_id: str) -> Response:
     config, token = _home_assistant_auth(path)
     payload, content_type = _home_assistant_camera_fetch(config, token, f"/api/camera_proxy/{entity_id}")
-    return Response(payload, media_type=content_type or "image/jpeg", headers={"Cache-Control": "no-store"})
+    return Response(
+        payload,
+        media_type=content_type or "image/jpeg",
+        headers={"Cache-Control": "no-store", "Content-Encoding": "identity"},
+    )
 
 
 def _home_assistant_camera_stream(path: Path, entity_id: str) -> StreamingResponse:
@@ -1228,7 +1367,11 @@ def _home_assistant_camera_stream(path: Path, entity_id: str) -> StreamingRespon
                     break
                 yield chunk
 
-    return StreamingResponse(chunks(), media_type=media_type, headers={"Cache-Control": "no-store"})
+    return StreamingResponse(
+        chunks(),
+        media_type=media_type,
+        headers={"Cache-Control": "no-store", "Content-Encoding": "identity"},
+    )
 
 
 def _home_assistant_camera_fetch(config: HomeAssistantConfig, token: str, ha_path: str) -> tuple[bytes, str | None]:
