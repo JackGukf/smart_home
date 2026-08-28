@@ -795,6 +795,21 @@ def create_app(
     async def network_devices() -> dict[str, Any]:
         return await _connected_device_groups(app)
 
+    @app.post("/api/network/devices/rescan")
+    async def network_devices_rescan() -> dict[str, Any]:
+        """Re-check every device now, and look for any that changed address.
+
+        Asking explicitly overrides the automatic scan's rate limit: the point
+        of the button is to act when the listing looks wrong, which is exactly
+        when waiting out the interval is least useful.
+        """
+        await _rediscover_switch_hosts(app)
+        app.state.rediscovery["at"] = time.monotonic()
+        # Poll for real rather than serving what the cache already holds; the
+        # addresses may have just been rewritten underneath it.
+        await _refresh_device_cache(app)
+        return await _connected_device_groups(app)
+
     @app.get("/api/bluetooth/devices")
     async def bluetooth_devices() -> dict[str, Any]:
         return await asyncio.to_thread(_bluetooth_devices_payload)

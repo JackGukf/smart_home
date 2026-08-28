@@ -155,3 +155,55 @@ def test_five_stat_cards_still_fit_on_a_phone() -> None:
     five_col = css.index("grid-template-columns: repeat(5, 1fr)")
     two_col = css.index(".stat-row { grid-template-columns: repeat(2, 1fr); }")
     assert five_col < two_col
+
+
+def test_rescan_repolls_devices_and_looks_for_moved_addresses(tmp_path: Path, monkeypatch) -> None:
+    from src.python import web_app as web_app_module
+
+    scans = []
+
+    async def fake_scan(timeout: int = 8) -> dict[str, str]:
+        scans.append(timeout)
+        # The dead plug turns out to have moved to a new lease.
+        return {"AA:BB:CC:DD:EE:FF": "192.168.0.98"}
+
+    monkeypatch.setattr(web_app_module, "discover_hosts_by_mac", fake_scan)
+    client = _client(tmp_path)
+
+    client.get("/api/network/devices")            # prime the cache
+    payload = client.post("/api/network/devices/rescan").json()
+
+    assert scans, "rescan did not run a discovery scan"
+    network = {d["name"]: d for d in payload["groups"][0]["devices"]}
+    assert network["Dead plug"]["address"] == "192.168.0.98", "rescan did not pick up the new address"
+
+
+def test_rescan_ignores_the_automatic_scan_rate_limit(tmp_path: Path, monkeypatch) -> None:
+    from src.python import web_app as web_app_module
+
+    scans = []
+
+    async def fake_scan(timeout: int = 8) -> dict[str, str]:
+        scans.append(timeout)
+        return {}
+
+    monkeypatch.setattr(web_app_module, "discover_hosts_by_mac", fake_scan)
+    client = _client(tmp_path)
+
+    # Pressing the button is a deliberate act; waiting out the interval that
+    # exists to throttle *automatic* scans would defeat the point.
+    client.post("/api/network/devices/rescan")
+    client.post("/api/network/devices/rescan")
+
+    assert len(scans) == 2
+
+
+def test_rescan_button_is_wired_up() -> None:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    js = APP_JS.read_text(encoding="utf-8")
+
+    modal = html[html.index('id="networkModal"'):]
+    assert 'id="networkModalRescan"' in modal
+    assert "/api/network/devices/rescan" in js
+    # A slow action needs to say it is working and refuse a second press.
+    assert "rescanBtn.disabled = true" in js

@@ -6277,6 +6277,32 @@ async function refreshNetworkDevices() {
     });
   });
 
+  const rescanBtn = document.querySelector("#networkModalRescan");
+  const hint = document.querySelector("#networkModalHint");
+  rescanBtn?.addEventListener("click", async () => {
+    rescanBtn.disabled = true;
+    if (hint) hint.textContent = "";
+    if (list) {
+      list.innerHTML = `<div class="home-empty"><i class="ti ti-loader-2 spin"></i>
+        Re-checking devices and looking for changed addresses…</div>`;
+    }
+    try {
+      const payload = await requestJson("/api/network/devices/rescan", { method: "POST" });
+      const badge = document.querySelector("#networkCount");
+      if (badge) badge.textContent = payload.total ?? "–";
+      renderNetworkModalList(payload);
+      if (hint) hint.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+      logActivity("Rescanned connected devices");
+      // Addresses may have moved, so the rest of the dashboard is stale too.
+      loadDevices().catch(console.error);
+    } catch (error) {
+      console.error(error);
+      if (list) list.innerHTML = `<div class="home-empty">Rescan failed.</div>`;
+      logActivity("Connected devices rescan failed", "error");
+    }
+    rescanBtn.disabled = false;
+  });
+
   document.querySelector("#closeNetworkModal")?.addEventListener("click", closeModal);
   modal?.addEventListener("click", (event) => {
     if (event.target === modal) closeModal();

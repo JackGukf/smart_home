@@ -4528,3 +4528,11 @@ aside {
   .net-row-detail { display: none; }
   .net-row { grid-template-columns: auto 1fr auto; padding: 9px 6px; }
 }
+
+/* Sits opposite the Rescan button, so the row reads left-to-right. */
+.net-modal-hint {
+  flex: 1 1 auto;
+  font-size: 11px;
+  color: var(--t-text-dim2, var(--muted));
+  align-self: center;
+}
