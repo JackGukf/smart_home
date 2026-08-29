@@ -4171,6 +4171,17 @@ function fitClimateBody() {
   fitHomeFitBody(document.querySelector("#homeClimateBody"));
 }
 
+/* Re-fit whatever scales itself to its card.
+
+   ResizeObserver is Safari 13.1, so on an older tablet the observer below
+   never starts and nothing ever re-fits: the ecobee dial kept its old size
+   while the card around it grew. Calling this straight from the resize drag
+   works everywhere, and is cheap enough to run on every move. */
+function refitHomeCards() {
+  layoutAreaGrid();
+  fitClimateBody();
+}
+
 /* Re-fit areas and climate live while their cards are resized. The sensors
    card scales through CSS container queries instead. */
 (function initHomeFitObservers() {
@@ -4660,6 +4671,7 @@ const DEFAULT_HOME_LAYOUT = {
   climate:   { x: 5, y: 1, w: 4, h: 9 },
   bluetooth: { x: 5, y: 10, w: 4, h: 6 },
   areas:     { x: 9, y: 1, w: 4, h: 12 },
+  tempsensors: { x: 1, y: 13, w: 4, h: 6 },
 };
 
 function loadHomeLayout() {
@@ -4677,31 +4689,28 @@ function homeGridMode() {
   return !!grid && getComputedStyle(grid).display === "grid";
 }
 
-/* Settle a dropped card on the nearest free row, searching upward first.
-
-   The old rule only ever pushed the card downward. A card dropped anywhere
-   occupied therefore slid further away, and once a couple of cards had drifted
-   low, every attempt to drag one back up collided with something on the way
-   and was pushed down again - the cards could travel down but never return.
-   Looking in both directions lets a card climb back. */
-function nearestFreeRow(lay, others) {
-  const free = (y) => y >= 1 && !others.some((o) => homeCellsOverlap({ ...lay, y }, o));
-  if (free(lay.y)) return lay.y;
-  for (let step = 1; step <= 200; step++) {
-    if (free(lay.y - step)) return lay.y - step;
-    if (free(lay.y + step)) return lay.y + step;
-  }
-  return lay.y;
-}
-
 function setCardCell(card, lay) {
   card.style.gridColumn = `${lay.x} / span ${lay.w}`;
   card.style.gridRow = `${lay.y} / span ${lay.h}`;
 }
 
+/* Read the cell a card is actually occupying, from the inline style
+   applyHomeCardLayout wrote. */
+function readCardCell(card) {
+  const column = /^(\d+) \/ span (\d+)$/.exec(card.style.gridColumn || "");
+  const row = /^(\d+) \/ span (\d+)$/.exec(card.style.gridRow || "");
+  if (!column || !row) return null;
+  return { x: +column[1], w: +column[2], y: +row[1], h: +row[2] };
+}
+
 function cardLayoutOf(card) {
   const id = card.dataset.homeCard;
-  return { ...(loadHomeLayout()[id] || DEFAULT_HOME_LAYOUT[id] || { x: 1, y: 1, w: 4, h: 6 }) };
+  const stored = loadHomeLayout()[id] || DEFAULT_HOME_LAYOUT[id];
+  if (stored) return { ...stored };
+  // Falling back to {1,1} teleported an unplaced card to the top the instant
+  // it was touched, before the finger had moved - which is what made the
+  // temperatures card impossible to drag. Start from where it actually is.
+  return readCardCell(card) || { x: 1, y: 1, w: 4, h: 6 };
 }
 
 function persistCardLayout(card, lay) {
@@ -4842,17 +4851,6 @@ function homeGridPitch(grid) {
   return { pitchX: cellW + HOME_GRID_GAP, pitchY: HOME_GRID_ROW + HOME_GRID_GAP };
 }
 
-function homeCellsOverlap(a, b) {
-  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-}
-
-function otherCardCells(excludeCard) {
-  const grid = document.querySelector("#homeCardGrid");
-  if (!grid) return [];
-  return [...grid.querySelectorAll(".home-card")]
-    .filter((c) => c !== excludeCard)
-    .map((c) => cardLayoutOf(c));
-}
 
 (function initHomeCardLayout() {
   const grid = document.querySelector("#homeCardGrid");
@@ -4897,8 +4895,8 @@ function otherCardCells(excludeCard) {
       onMove,
       onEnd: () => {
         card.classList.remove("dragging");
-        lay.y = nearestFreeRow(lay, otherCardCells(card));
-        setCardCell(card, lay);
+        // Cards are allowed to overlap: a card stays exactly where it is put,
+        // rather than being shuffled to the nearest free row.
         persistCardLayout(card, lay);
       },
     });
@@ -4919,26 +4917,19 @@ function otherCardCells(excludeCard) {
     const startH = lay.h;
     card.classList.add("resizing");
 
-    const others = otherCardCells(card);
     const onMove = (point) => {
-      const w = Math.min(Math.max(2, startW + Math.round((point.clientX - startX) / pitchX)), HOME_GRID_COLS - lay.x + 1);
-      const h = Math.max(3, startH + Math.round((point.clientY - startY) / pitchY));
-      // Grow only until touching a neighbour — cards never overlap or move.
-      if (!others.some((o) => homeCellsOverlap({ ...lay, w, h }, o))) {
-        lay.w = w;
-        lay.h = h;
-      } else if (!others.some((o) => homeCellsOverlap({ ...lay, w }, o))) {
-        lay.w = w;
-      } else if (!others.some((o) => homeCellsOverlap({ ...lay, h }, o))) {
-        lay.h = h;
-      }
+      // Overlapping is allowed, so a card grows freely past its neighbours.
+      lay.w = Math.min(Math.max(2, startW + Math.round((point.clientX - startX) / pitchX)), HOME_GRID_COLS - lay.x + 1);
+      lay.h = Math.max(3, startH + Math.round((point.clientY - startY) / pitchY));
       setCardCell(card, lay);
+      refitHomeCards();
     };
     trackDrag(event, {
       onMove,
       onEnd: () => {
         card.classList.remove("resizing");
         persistCardLayout(card, lay);
+        refitHomeCards();
       },
     });
   });

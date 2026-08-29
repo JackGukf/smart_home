@@ -13,23 +13,50 @@ APP_JS = PROJECT_ROOT / "src" / "python" / "web_static" / "app.js"
 INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
 
 
-def test_a_dropped_card_can_settle_upward() -> None:
+def test_cards_may_overlap_and_stay_where_they_are_dropped() -> None:
+    """A dropped card is no longer shuffled to a free row.
+
+    Pushing cards out of each other's way is what stranded them: a card
+    dropped on an occupied row slid further down, and once a few had drifted
+    low, dragging one back up collided on the way and it was pushed down
+    again. Overlapping is now allowed, so a card stays where it is put.
+    """
     js = APP_JS.read_text(encoding="utf-8")
-    fn = re.search(r"function nearestFreeRow\(.*?\n\}", js, re.S)
-    assert fn, "nearestFreeRow is gone"
-    body = fn.group(0)
 
-    # Searching only downward is what stranded cards at the bottom.
-    assert "lay.y - step" in body, "a dropped card must be able to settle upward"
-    assert "lay.y + step" in body
-    # Upward is checked first, so a card dragged up does not sink back down.
-    assert body.index("lay.y - step") < body.index("lay.y + step")
-    assert "y >= 1" in body, "row 1 is the top of the grid"
+    assert "nearestFreeRow" not in js
+    assert "homeCellsOverlap" not in js, "collision logic left behind as dead code"
+    assert "otherCardCells" not in js
 
 
-def test_drop_no_longer_pushes_cards_down_forever() -> None:
+def test_an_unplaced_card_drags_from_where_it_sits() -> None:
+    """Starting a drag from {1,1} teleported the card to the top on touch."""
     js = APP_JS.read_text(encoding="utf-8")
-    assert "while (others.some((o) => homeCellsOverlap(lay, o)) && guard++ < 200) lay.y += 1;" not in js
+
+    assert "function readCardCell(card)" in js
+    fn = re.search(r"function cardLayoutOf\(.*?\n\}", js, re.S).group(0)
+    assert "readCardCell(card)" in fn
+
+    # Every card shipped in index.html should have a default cell, so this
+    # fallback is a safety net rather than the normal path.
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    shipped = set(re.findall(r'data-home-card="([^"]+)"', html))
+    defaults = re.search(r"const DEFAULT_HOME_LAYOUT = \{(.*?)\};", js, re.S).group(1)
+    for card_id in shipped:
+        assert f"{card_id}:" in defaults, f"{card_id} has no default cell"
+
+
+def test_resizing_refits_card_contents_without_resizeobserver() -> None:
+    """ResizeObserver is Safari 13.1; older tablets never fire it.
+
+    The ecobee dial kept its old size while the card grew around it, because
+    the only thing re-fitting it was an observer that never started.
+    """
+    js = APP_JS.read_text(encoding="utf-8")
+
+    assert "function refitHomeCards()" in js
+    resize = js[js.index('.home-card-resize"') :]
+    resize = resize[: resize.index("});")]
+    assert "refitHomeCards()" in resize, "resizing must re-fit contents directly"
 
 
 def test_reset_and_visibility_controls_exist() -> None:
