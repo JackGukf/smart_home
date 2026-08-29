@@ -3767,6 +3767,37 @@ function areaCardHtml(area) {
     </div>`;
 }
 
+/* ── Re-rendering without losing the reader's place ──
+
+   The Home panels rebuild themselves by assigning innerHTML. That empties the
+   container for an instant, and the browser clamps the scroll offset to the
+   briefly shorter page. Below 900px `main` drops to height:auto, so on a
+   tablet the document itself is the scroller - and every 60s refresh threw the
+   reader back to the top of the Home view.
+
+   Skipping identical markup avoids the churn altogether, which also keeps
+   focus and half-typed input alive across a refresh. When the markup really
+   did change, the scroll offset is restored by hand. */
+const lastRenderedHtml = new WeakMap();
+
+function renderHtml(element, html) {
+  if (!element) return false;
+  if (lastRenderedHtml.get(element) === html) return false;
+
+  const scroller = document.scrollingElement || document.documentElement;
+  const documentTop = scroller.scrollTop;
+  // Above 900px the panel scrolls instead of the document, so save both.
+  const panel = element.closest(".content");
+  const panelTop = panel ? panel.scrollTop : 0;
+
+  element.innerHTML = html;
+  lastRenderedHtml.set(element, html);
+
+  if (scroller.scrollTop !== documentTop) scroller.scrollTop = documentTop;
+  if (panel && panel.scrollTop !== panelTop) panel.scrollTop = panelTop;
+  return true;
+}
+
 function renderHomeView() {
   const areaGrid = document.querySelector("#areaGrid");
   if (!areaGrid) return;
@@ -3780,12 +3811,14 @@ function renderHomeView() {
   const homeMeta = document.querySelector("#homeMeta");
   if (homeMeta) homeMeta.textContent = `${totalDevices} devices · ${shown.length} area${shown.length === 1 ? "" : "s"}`;
 
-  areaGrid.innerHTML =
+  renderHtml(
+    areaGrid,
     shown.map(areaCardHtml).join("") +
-    `<button class="area-card area-card-add" id="areaAddCard" type="button">
+      `<button class="area-card area-card-add" id="areaAddCard" type="button">
        <span class="area-add-plus"><i class="ti ti-plus"></i></span>
        <span class="area-add-label">New Area</span>
-     </button>`;
+     </button>`
+  );
   layoutAreaGrid();
 
   renderHomeClimate();
@@ -3935,7 +3968,7 @@ function renderHomeClimate() {
   }).join("");
 
   const content = thermoCards || `<div class="home-empty">No thermostat found</div>`;
-  body.innerHTML = `<div class="home-fit-clip"><div class="home-fit">${content}</div></div>`;
+  renderHtml(body, `<div class="home-fit-clip"><div class="home-fit">${content}</div></div>`);
   fitClimateBody();
 }
 
@@ -3972,9 +4005,9 @@ function renderHomeTempSensors() {
       <span class="temp-tile-name">${escapeHtml(s.name)}</span>
     </div>`).join("");
 
-  body.innerHTML = sources.length
+  renderHtml(body, sources.length
     ? (tiles ? `<div class="temp-tile-grid">${tiles}</div>` : `<div class="home-empty">No sensors selected — use the filter above</div>`)
-    : `<div class="home-empty">No temperature sensors found</div>`;
+    : `<div class="home-empty">No temperature sensors found</div>`);
 }
 
 /* Scale a card's fit-wrapped contents to fill it: grow with the width, and
@@ -4055,22 +4088,24 @@ function renderHomeCamera() {
   try { savedId = localStorage.getItem(HOME_CAMERA_KEY); } catch {}
   const camera = cameras.find((c) => cameraIdFor(c) === savedId) || cameras[0] || null;
 
-  select.innerHTML = cameras.map((c) => {
+  // Rebuilding the option list resets the dropdown, so leave it alone when
+  // the cameras have not changed.
+  renderHtml(select, cameras.map((c) => {
     const id = cameraIdFor(c);
     return `<option value="${escapeHtml(id)}"${camera && cameraIdFor(camera) === id ? " selected" : ""}>${escapeHtml(c.name || id)}</option>`;
-  }).join("");
+  }).join(""));
   select.hidden = cameras.length === 0;
 
   if (!camera) {
-    body.innerHTML = `<div class="home-empty">No cameras found</div>`;
+    renderHtml(body, `<div class="home-empty">No cameras found</div>`);
     return;
   }
-  body.innerHTML = `
+  renderHtml(body, `
     <div class="home-camera-frame" data-goto-view="cameras" role="button" tabindex="0"
          title="Open the Cameras view">
       ${cameraMedia(camera)}${cameraBatteryBadge(camera)}
     </div>
-    <div class="home-camera-meta">${escapeHtml(camera.name)}${camera.room ? ` · ${escapeHtml(camera.room)}` : ""}</div>`;
+    <div class="home-camera-meta">${escapeHtml(camera.name)}${camera.room ? ` · ${escapeHtml(camera.room)}` : ""}</div>`);
 }
 
 /* ── Bluetooth: music card on Home, scan/connect modal under Discovery ── */
@@ -4280,9 +4315,11 @@ function renderCustomHomeCards() {
       .filter((item) => item.kind !== "light" && item.kind !== "plug")
       .map(customCardRowHtml)
       .join("");
-    el.querySelector("[data-custom-body]").innerHTML =
+    renderHtml(
+      el.querySelector("[data-custom-body]"),
       (tiles ? `<div class="custom-tile-grid">${tiles}</div>` : "") + rows ||
-      `<div class="home-empty">No devices linked — click the pencil to pick some.</div>`;
+        `<div class="home-empty">No devices linked — click the pencil to pick some.</div>`
+    );
   }
   applyHomeCardLayout();
 }
