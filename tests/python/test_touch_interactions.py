@@ -144,3 +144,46 @@ def test_touch_targets_are_grown_not_overflowed() -> None:
 
     # Press-and-hold must not raise the iOS callout instead of dragging.
     assert "-webkit-touch-callout: none" in css
+
+
+def _card_move_handler(js: str) -> str:
+    start = js.index('const grip = event.target.closest(".home-card-grip")')
+    return js[start : js.index("trackDrag(event", start)]
+
+
+def test_card_move_uses_deltas_not_a_captured_grid_rect() -> None:
+    """A rect captured at drag start goes stale the moment the page scrolls.
+
+    Moving a card can shorten the page; where the document is the scroller, as
+    on a tablet, the browser then clamps the scroll offset. Every later move
+    measured against the stale rect resolves to row 1, pinning the card to the
+    top of the view - which is exactly what an iPad mini did.
+    """
+    js = APP_JS.read_text(encoding="utf-8")
+    handler = _card_move_handler(js)
+
+    assert "getBoundingClientRect" not in handler, (
+        "card move measures against a captured rect, which goes stale on scroll"
+    )
+    # Same delta arithmetic the resize handle uses, which never had this bug.
+    assert "point.clientX - startX" in handler
+    assert "point.clientY - startY" in handler
+
+
+def test_card_move_survives_a_zero_pitch() -> None:
+    js = APP_JS.read_text(encoding="utf-8")
+    handler = _card_move_handler(js)
+
+    # Dividing by a zero pitch yields NaN, and a NaN grid row silently drops
+    # the card back to automatic placement at the top.
+    assert "if (!pitchX || !pitchY) return;" in handler
+
+
+def test_synthetic_mouse_events_after_a_touch_are_ignored() -> None:
+    js = APP_JS.read_text(encoding="utf-8")
+    fn = re.search(r"function onDragStart\(.*?\n\}", js, re.S).group(0)
+
+    # iOS replays a touch as mousedown/mouseup, which would start a second drag
+    # over the one just finished and move the card on the next gesture.
+    assert "lastTouchAt" in fn
+    assert re.search(r"Date\.now\(\) - lastTouchAt < \d+", fn)

@@ -3785,14 +3785,25 @@ function dragPoint(event) {
   return touch || event;
 }
 
+let lastTouchAt = 0;
+
 function onDragStart(target, handler) {
   if (!target) return;
   if (HAS_POINTER_EVENTS) {
     target.addEventListener("pointerdown", handler);
-  } else {
-    target.addEventListener("touchstart", handler, { passive: false });
-    target.addEventListener("mousedown", handler);
+    return;
   }
+  target.addEventListener("touchstart", (event) => {
+    lastTouchAt = Date.now();
+    handler(event);
+  }, { passive: false });
+  // iOS replays a touch as mousedown/mouseup a moment later. Letting that
+  // through starts a second drag on top of the one just finished, which then
+  // moves the card on the next unrelated gesture.
+  target.addEventListener("mousedown", (event) => {
+    if (Date.now() - lastTouchAt < 700) return;
+    handler(event);
+  });
 }
 
 function trackDrag(startEvent, { onMove, onEnd }) {
@@ -4726,18 +4737,28 @@ function otherCardCells(excludeCard) {
     event.preventDefault();
     const start = dragPoint(event);
     const { pitchX, pitchY } = homeGridPitch(grid);
-    const gridRect = grid.getBoundingClientRect();
-    const cardRect = card.getBoundingClientRect();
-    const grabX = start.clientX - cardRect.left;
-    const grabY = start.clientY - cardRect.top;
+    if (!pitchX || !pitchY) return;
+    const startX = start.clientX;
+    const startY = start.clientY;
     const lay = cardLayoutOf(card);
+    // Where the card started, so movement can be expressed as a delta.
+    const originX = lay.x;
+    const originY = lay.y;
     card.classList.add("dragging");
 
+    /* Deltas, not absolute positions measured against the grid.
+
+       Moving a card can shorten the page - and where the document is the
+       scroller, as it is on a tablet, the browser then clamps the scroll
+       offset. A grid rectangle captured at drag start is stale the moment that
+       happens, and every later move resolves to row 1, pinning the card to the
+       top. A delta cannot go stale: it is the same arithmetic the resize
+       handle has always used. */
     const onMove = (point) => {
-      const x = 1 + Math.round((point.clientX - grabX - gridRect.left) / pitchX);
-      const y = 1 + Math.round((point.clientY - grabY - gridRect.top) / pitchY);
-      lay.x = Math.min(Math.max(1, x), HOME_GRID_COLS - lay.w + 1);
-      lay.y = Math.max(1, y);
+      const dx = Math.round((point.clientX - startX) / pitchX);
+      const dy = Math.round((point.clientY - startY) / pitchY);
+      lay.x = Math.min(Math.max(1, originX + dx), HOME_GRID_COLS - lay.w + 1);
+      lay.y = Math.max(1, originY + dy);
       setCardCell(card, lay);
     };
     trackDrag(event, {
