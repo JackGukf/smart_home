@@ -235,3 +235,30 @@ def test_fullscreen_overlay_sizes_the_frame_without_a_ratio() -> None:
     # The media fills the frame, so a zero-height frame hides it entirely.
     media = re.search(r"\.home-camera-frame \.camera-media,.*?\{(.*?)\}", css, re.S).group(1)
     assert "height: 100%" in media
+
+
+def test_expanded_camera_is_sized_in_pixels_from_javascript() -> None:
+    """CSS sizing failed three ways on an older iPad; stop depending on it.
+
+    aspect-ratio, then a percentage-padding stand-in, then a vh rule each left
+    the frame at zero height, and the media inside is height:100%, so the
+    picture collapsed while the black backdrop remained.
+    """
+    js = APP_JS.read_text(encoding="utf-8")
+    fn = re.search(r"function sizeExpandedCamera\(.*?\n\}", js, re.S)
+    assert fn, "no JS sizing for the expanded camera"
+    body = fn.group(0)
+
+    assert "frame.style.height" in body and "frame.style.width" in body
+    # The media must not depend on the frame establishing a containing block.
+    assert 'media.style.position = "static"' in body
+    assert "media.style.height" in body
+
+    # Sizing has to survive a re-render, which replaces the sized elements.
+    render = js[js.index("function renderHomeCamera") :]
+    render = render[: render.index("\n}\n")]
+    assert "sizeExpandedCamera()" in render
+
+    # And leaving full screen must not strand inline styles on the card.
+    collapse = re.search(r"function collapseExpandedCamera\(.*?\n\}", js, re.S).group(0)
+    assert 'removeAttribute("style")' in collapse

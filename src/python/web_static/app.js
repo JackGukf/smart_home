@@ -4260,6 +4260,9 @@ function renderHomeCamera() {
         </button>
       </span>
     </div>`);
+  // A refresh that really did change the markup replaces the elements the
+  // expanded view had sized, so put the sizing back on the new ones.
+  sizeExpandedCamera();
 }
 
 
@@ -4277,7 +4280,7 @@ document.addEventListener("click", (event) => {
   const body = document.querySelector("#homeCameraBody");
   if (body && body.classList.contains("home-camera-expanded")) {
     // Leaving full screen should not also stop the stream.
-    body.classList.remove("home-camera-expanded");
+    collapseExpandedCamera(body);
     return;
   }
 
@@ -4338,6 +4341,57 @@ function expandHomeCamera() {
     }
   }
   body.classList.add("home-camera-expanded");
+  sizeExpandedCamera();
+}
+
+/* Size the expanded view in pixels, from JavaScript.
+
+   Three attempts at doing this in CSS all produced a black screen on an older
+   iPad: the frame's height came from aspect-ratio, then from a percentage
+   padding stand-in, then from a vh rule - and the media inside is height:100%,
+   so anything that failed to resolve collapsed the picture to nothing while
+   the black backdrop stayed. Explicit pixel values on the elements themselves
+   depend on no feature and no cascade, and the media is taken out of absolute
+   positioning so it cannot rely on the frame establishing a containing block
+   either.
+
+   The measurements are logged because this path cannot be inspected from here
+   - if it is still wrong, the numbers say which box is zero. */
+function sizeExpandedCamera() {
+  const body = document.querySelector("#homeCameraBody");
+  if (!body || !body.classList.contains("home-camera-expanded")) return;
+  const frame = body.querySelector(".home-camera-frame");
+  const media = body.querySelector(".camera-media");
+  if (!frame) return;
+
+  const width = body.clientWidth || window.innerWidth;
+  const height = Math.round((window.innerHeight || 600) * 0.72);
+
+  frame.style.width = `${width}px`;
+  frame.style.height = `${height}px`;
+  if (media) {
+    media.style.position = "static";
+    media.style.width = `${width}px`;
+    media.style.height = `${height}px`;
+    media.style.objectFit = "contain";
+  }
+
+  logActivity(
+    `Full screen: frame ${width}x${height}, media ${media ? media.tagName.toLowerCase() : "none"} ` +
+    `${media ? media.clientWidth : 0}x${media ? media.clientHeight : 0}`
+  );
+}
+
+window.addEventListener("orientationchange", () => setTimeout(sizeExpandedCamera, 250));
+window.addEventListener("resize", () => sizeExpandedCamera());
+
+function collapseExpandedCamera(body) {
+  body.classList.remove("home-camera-expanded");
+  const frame = body.querySelector(".home-camera-frame");
+  const media = body.querySelector(".camera-media");
+  // Inline styles would otherwise outrank every rule once back in the card.
+  if (frame) frame.removeAttribute("style");
+  if (media) media.removeAttribute("style");
 }
 
 /* ── Bluetooth: music card on Home, scan/connect modal under Discovery ── */
