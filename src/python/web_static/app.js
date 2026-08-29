@@ -4319,12 +4319,23 @@ function expandHomeCamera() {
   const frame = body && body.querySelector(".home-camera-frame");
   if (!frame) return;
 
+  /* The method existing is not the same as it working. An older iPad defines
+     webkitRequestFullscreen but reports fullscreenEnabled false, and the call
+     then does nothing and throws nothing - so testing for the method alone
+     took the early return and left the screen exactly as it was. Ask whether
+     full screen is enabled, and treat an async rejection as a refusal too. */
+  const enabled = document.fullscreenEnabled || document.webkitFullscreenEnabled;
   const request = frame.requestFullscreen || frame.webkitRequestFullscreen;
-  if (request) {
+  if (enabled && request) {
     try {
-      request.call(frame);
+      const pending = request.call(frame);
+      if (pending && typeof pending.catch === "function") {
+        pending.catch(() => body.classList.add("home-camera-expanded"));
+      }
       return;
-    } catch {}
+    } catch {
+      // Fall through to the overlay below.
+    }
   }
   body.classList.add("home-camera-expanded");
 }

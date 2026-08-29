@@ -4785,3 +4785,16 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   height: 17px;
   flex-shrink: 0;
 }
+
+/* The overlay has no browser-drawn chrome to close it, so say how to leave. */
+.home-camera-expanded::after {
+  content: "Tap the picture to exit";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  text-align: center;
+  font-size: 11px;
+  color: #9aa;
+  pointer-events: none;
+}

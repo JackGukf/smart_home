@@ -97,6 +97,25 @@ def test_fullscreen_falls_back_when_the_api_is_refused() -> None:
     # The frame is replaced on refresh, so the state must live on the container.
     assert 'querySelector("#homeCameraBody")' in fn
 
+    # An older iPad defines the method but reports fullscreenEnabled false, and
+    # the call then does nothing and throws nothing. Testing for the method
+    # alone returns early and leaves the screen untouched.
+    assert "fullscreenEnabled" in fn, "must ask whether full screen is allowed, not just callable"
+    assert "webkitFullscreenEnabled" in fn
+    # requestFullscreen rejects asynchronously, which try/catch cannot see.
+    assert "pending.catch" in fn, "an async refusal must fall back to the overlay"
+
+
+def test_the_fullscreen_overlay_says_how_to_leave() -> None:
+    css = STYLES.read_text(encoding="utf-8")
+
+    # The overlay draws no browser chrome, so without a hint there is nothing
+    # to suggest that tapping the picture exits.
+    block = re.search(r"\.home-camera-expanded::after \{(.*?)\}", css, re.S)
+    assert block, "no exit hint on the fullscreen fallback"
+    assert "content:" in block.group(1)
+    assert "pointer-events: none" in block.group(1), "the hint must not eat the tap that exits"
+
 
 def test_drag_does_not_depend_on_pointer_events_alone() -> None:
     """Safari gained Pointer Events in 13; an iOS 12 iPad has none."""
