@@ -1219,6 +1219,7 @@ aside {
 
 .thermo-dial-svg {
   position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -1227,6 +1228,7 @@ aside {
 
 .thermo-knob {
   position: absolute;
+  top: 28px; right: 28px; bottom: 28px; left: 28px;
   inset: 28px;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, var(--t-knob-start), var(--t-knob-end) 70%);
@@ -1948,12 +1950,14 @@ aside {
 
 .dial-svg {
   position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
   inset: 0;
   width: 100%; height: 100%;
 }
 
 .dial-knob {
   position: absolute;
+  top: 12px; right: 12px; bottom: 12px; left: 12px;
   inset: 12px;
   border-radius: 50%;
   display: flex;
@@ -2298,6 +2302,7 @@ aside {
 @media (max-width: 480px) {
   .weather-backdrop {
     position: fixed;
+    top: 0; right: 0; bottom: 0; left: 0;
     inset: 0;
     background: rgba(0, 0, 0, 0.55);
     z-index: 250;
@@ -2659,6 +2664,7 @@ aside {
 
 .doorbell-live-glow {
   position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
   inset: 0;
   animation: doorbell-glow 3s ease-in-out infinite;
 }
@@ -2933,6 +2939,7 @@ aside {
 .doorbell-live-media,
 .doorbell-live-placeholder {
   position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -3122,6 +3129,7 @@ aside {
    ──────────────────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed;
+  top: 0; right: 0; bottom: 0; left: 0;
   inset: 0;
   z-index: 200;
   display: flex;
@@ -3935,6 +3943,7 @@ aside {
 .home-camera-frame .camera-media,
 .home-camera-frame .camera-placeholder {
   position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -4536,3 +4545,57 @@ aside {
   color: var(--t-text-dim2, var(--muted));
   align-self: center;
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   Fallbacks for browsers without aspect-ratio (Safari < 15).
+
+   Gated on the .no-aspect-ratio class that index.html sets before paint,
+   so nothing here applies to a browser that supports the real property.
+   Without these, a frame that gets its height solely from aspect-ratio
+   collapses: cameras render at natural size or vanish, and square tiles
+   have no height to centre their contents in.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Grid frames: an in-flow pseudo-element in the same cell supplies the
+   height (padding percentages resolve against the container's width), and
+   the real children are lifted out of flow to fill it. */
+html.no-aspect-ratio .camera-frame::before {
+  content: "";
+  display: block;
+  grid-area: 1 / 1;
+  width: 100%;
+  padding-top: 56.25%; /* 16:9 */
+}
+
+html.no-aspect-ratio .camera-frame > * {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+/* Children here are already absolutely positioned, so the frame only needs
+   its height back. */
+html.no-aspect-ratio .home-camera-frame::before {
+  content: "";
+  display: block;
+  padding-top: 56.25%; /* 16:9 */
+}
+
+html.no-aspect-ratio .area-icon-choice::before {
+  content: "";
+  display: block;
+  grid-area: 1 / 1;
+  width: 100%;
+  padding-top: 100%; /* square */
+}
+
+/* The square tiles are flex columns, where a pseudo-element would become a
+   flex item and push the centred content off-centre. A minimum height is
+   the honest fallback: it matches the grid's minimum column width, so the
+   tiles are square at their narrowest and merely wide when the column
+   stretches - and, crucially, there is a height to centre content within. */
+html.no-aspect-ratio .custom-light-tile { min-height: 72px; }
+html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
