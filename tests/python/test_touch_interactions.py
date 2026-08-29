@@ -210,7 +210,7 @@ def test_fullscreen_does_not_use_the_fullscreen_api() -> None:
     assert "fullscreenEnabled" not in js
 
 
-def test_fullscreen_overlay_can_be_closed_and_reports_what_it_built() -> None:
+def test_fullscreen_overlay_can_be_closed() -> None:
     js = APP_JS.read_text(encoding="utf-8")
 
     assert "function closeCameraOverlay()" in js
@@ -218,5 +218,3 @@ def test_fullscreen_overlay_can_be_closed_and_reports_what_it_built() -> None:
     # Opening twice must not stack overlays.
     expand = re.search(r"function expandHomeCamera\(.*?\n\}", js, re.S).group(0)
     assert "closeCameraOverlay();" in expand
-    # The log names the element and its measured size, or says none was built.
-    assert "NO MEDIA ELEMENT" in expand

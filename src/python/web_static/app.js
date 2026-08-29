@@ -4355,11 +4355,6 @@ function expandHomeCamera(cameraId) {
       `position:static;display:block;margin:0 auto;width:${width}px;height:${height}px;object-fit:contain;border:0;`
     );
   }
-
-  logActivity(
-    `Full screen ${width}x${height}: ${media ? media.tagName.toLowerCase() : "NO MEDIA ELEMENT"}` +
-    `${media ? ` rendered ${media.clientWidth}x${media.clientHeight}` : ""}`
-  );
 }
 
 document.addEventListener("click", (event) => {
