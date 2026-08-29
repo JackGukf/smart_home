@@ -48,8 +48,15 @@ rsync --checksum -av \
     "${PROJECT_ROOT}/src/python/requirements.txt" \
     "${PI_TARGET}:${REMOTE_PATH}/src/python/"
 
+# Ship a compiled app.js, not the source: the dashboard is written in modern
+# JavaScript that older browsers cannot even parse. Staged after the cache-bust
+# rewrite above so index.html carries this build's version.
+STAGE_DIR="$(mktemp -d)"
+trap 'rm -rf "${STAGE_DIR}"' EXIT
+bash "${PROJECT_ROOT}/scripts/build-dashboard-assets.sh" "${STAGE_DIR}"
+
 rsync --checksum -av \
-    "${PROJECT_ROOT}/src/python/web_static/" \
+    "${STAGE_DIR}/" \
     "${PI_TARGET}:${REMOTE_PATH}/src/python/web_static/"
 
 rsync --checksum -av \
