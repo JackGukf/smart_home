@@ -4757,43 +4757,6 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   pointer-events: none;
 }
 
-/* Full screen fallback for browsers that refuse it for a non-<video>. */
-.home-camera-expanded {
-  position: fixed;
-  top: 0; right: 0; bottom: 0; left: 0;
-  inset: 0;
-  z-index: 200;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 10px;
-  padding: 12px;
-  background: #000;
-}
-
-/* An explicit height, rather than one derived from a ratio.
-
-   Everywhere else the frame's height comes from aspect-ratio, or from the
-   percentage-padding pseudo-element standing in for it on older browsers.
-   Neither is dependable for a flex item in an old WebKit, and a frame of zero
-   height makes the media inside it - which is height:100% - zero too: a black
-   overlay with the picture technically present and one pixel tall. vh needs
-   no ratio support and no percentage resolution. */
-.home-camera-expanded .home-camera-frame {
-  width: 100%;
-  height: 72vh;
-  max-height: 78vh;
-  flex: 0 0 auto;
-}
-
-/* The stand-in would otherwise add its own height on top of the explicit one. */
-.home-camera-expanded .home-camera-frame::before { display: none; }
-
-/* Full screen is for seeing the whole picture, not a cropped fill. */
-.home-camera-expanded .camera-media { object-fit: contain; }
-
-.home-camera-expanded .home-camera-meta { color: #ddd; }
-
 /* Card visibility rows in the Home Cards modal. */
 .home-card-toggle {
   cursor: pointer;
@@ -4806,15 +4769,3 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   flex-shrink: 0;
 }
 
-/* The overlay has no browser-drawn chrome to close it, so say how to leave. */
-.home-camera-expanded::after {
-  content: "Tap the picture to exit";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 6px;
-  text-align: center;
-  font-size: 11px;
-  color: #9aa;
-  pointer-events: none;
-}

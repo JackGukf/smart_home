@@ -88,33 +88,6 @@ def test_home_camera_starts_and_stops_in_place() -> None:
     assert "expandHomeCamera" in js
 
 
-def test_fullscreen_falls_back_when_the_api_is_refused() -> None:
-    js = APP_JS.read_text(encoding="utf-8")
-    fn = re.search(r"function expandHomeCamera\(.*?\n\}", js, re.S).group(0)
-
-    assert "webkitRequestFullscreen" in fn, "iPadOS only offers the prefixed call"
-    assert "home-camera-expanded" in fn, "needs a fallback where the API is refused"
-    # The frame is replaced on refresh, so the state must live on the container.
-    assert 'querySelector("#homeCameraBody")' in fn
-
-    # An older iPad defines the method but reports fullscreenEnabled false, and
-    # the call then does nothing and throws nothing. Testing for the method
-    # alone returns early and leaves the screen untouched.
-    assert "fullscreenEnabled" in fn, "must ask whether full screen is allowed, not just callable"
-    assert "webkitFullscreenEnabled" in fn
-    # requestFullscreen rejects asynchronously, which try/catch cannot see.
-    assert "pending.catch" in fn, "an async refusal must fall back to the overlay"
-
-
-def test_the_fullscreen_overlay_says_how_to_leave() -> None:
-    css = STYLES.read_text(encoding="utf-8")
-
-    # The overlay draws no browser chrome, so without a hint there is nothing
-    # to suggest that tapping the picture exits.
-    block = re.search(r"\.home-camera-expanded::after \{(.*?)\}", css, re.S)
-    assert block, "no exit hint on the fullscreen fallback"
-    assert "content:" in block.group(1)
-    assert "pointer-events: none" in block.group(1), "the hint must not eat the tap that exits"
 
 
 def test_drag_does_not_depend_on_pointer_events_alone() -> None:
@@ -208,57 +181,42 @@ def test_synthetic_mouse_events_after_a_touch_are_ignored() -> None:
     assert re.search(r"Date\.now\(\) - lastTouchAt < \d+", fn)
 
 
-def test_fullscreen_overlay_sizes_the_frame_without_a_ratio() -> None:
-    """A frame with no height makes its height:100% media zero too.
+def test_fullscreen_builds_a_standalone_overlay() -> None:
+    """Expanding the card's own markup showed black four different ways.
 
-    Everywhere else the camera frame is sized by aspect-ratio, or by the
-    percentage-padding stand-in used where that is unsupported. Neither is
-    dependable for a flex item in an old WebKit, and the result is a black
-    overlay with the picture present and one pixel tall.
-    """
-    css = STYLES.read_text(encoding="utf-8")
-
-    block = re.search(
-        r"\.home-camera-expanded \.home-camera-frame \{(.*?)\}", css, re.S
-    )
-    assert block, "the expanded frame has no rule of its own"
-    body = block.group(1)
-
-    height = re.search(r"height:\s*([0-9.]+)(vh|px)", body)
-    assert height, "the expanded frame needs an explicit height, not an inherited ratio"
-
-    # The stand-in would otherwise stack its own height on top of this one.
-    assert re.search(
-        r"\.home-camera-expanded \.home-camera-frame::before \{[^}]*display: none", css, re.S
-    )
-
-    # The media fills the frame, so a zero-height frame hides it entirely.
-    media = re.search(r"\.home-camera-frame \.camera-media,.*?\{(.*?)\}", css, re.S).group(1)
-    assert "height: 100%" in media
-
-
-def test_expanded_camera_is_sized_in_pixels_from_javascript() -> None:
-    """CSS sizing failed three ways on an older iPad; stop depending on it.
-
-    aspect-ratio, then a percentage-padding stand-in, then a vh rule each left
-    the frame at zero height, and the media inside is height:100%, so the
-    picture collapsed while the black backdrop remained.
+    aspect-ratio, a percentage-padding stand-in, a vh rule and inline pixels
+    each left something at zero height, and the media asks for 100% of it. A
+    fresh element on <body> inherits none of the card's sizing chain.
     """
     js = APP_JS.read_text(encoding="utf-8")
-    fn = re.search(r"function sizeExpandedCamera\(.*?\n\}", js, re.S)
-    assert fn, "no JS sizing for the expanded camera"
-    body = fn.group(0)
+    fn = re.search(r"function expandHomeCamera\(.*?\n\}", js, re.S).group(0)
 
-    assert "frame.style.height" in body and "frame.style.width" in body
-    # The media must not depend on the frame establishing a containing block.
-    assert 'media.style.position = "static"' in body
-    assert "media.style.height" in body
+    assert 'document.createElement("div")' in fn
+    assert "document.body.appendChild(overlay)" in fn
+    # Nothing may be inherited from the card, so no lookup into it either.
+    assert "home-camera-frame" not in fn
 
-    # Sizing has to survive a re-render, which replaces the sized elements.
-    render = js[js.index("function renderHomeCamera") :]
-    render = render[: render.index("\n}\n")]
-    assert "sizeExpandedCamera()" in render
+    # The media is sized on itself, not left asking a container for a height.
+    assert "width:${width}px;height:${height}px" in fn
+    assert "position:static" in fn
 
-    # And leaving full screen must not strand inline styles on the card.
-    collapse = re.search(r"function collapseExpandedCamera\(.*?\n\}", js, re.S).group(0)
-    assert 'removeAttribute("style")' in collapse
+
+def test_fullscreen_does_not_use_the_fullscreen_api() -> None:
+    """It silently does nothing where unavailable and differs where present."""
+    js = APP_JS.read_text(encoding="utf-8")
+
+    assert "requestFullscreen" not in js
+    assert "webkitRequestFullscreen" not in js
+    assert "fullscreenEnabled" not in js
+
+
+def test_fullscreen_overlay_can_be_closed_and_reports_what_it_built() -> None:
+    js = APP_JS.read_text(encoding="utf-8")
+
+    assert "function closeCameraOverlay()" in js
+    assert 'id="cameraOverlayClose"' in js
+    # Opening twice must not stack overlays.
+    expand = re.search(r"function expandHomeCamera\(.*?\n\}", js, re.S).group(0)
+    assert "closeCameraOverlay();" in expand
+    # The log names the element and its measured size, or says none was built.
+    assert "NO MEDIA ELEMENT" in expand

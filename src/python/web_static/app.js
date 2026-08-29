@@ -4260,9 +4260,6 @@ function renderHomeCamera() {
         </button>
       </span>
     </div>`);
-  // A refresh that really did change the markup replaces the elements the
-  // expanded view had sized, so put the sizing back on the new ones.
-  sizeExpandedCamera();
 }
 
 
@@ -4276,13 +4273,6 @@ document.addEventListener("click", (event) => {
   if (!trigger) return;
   event.preventDefault();
   event.stopPropagation();
-
-  const body = document.querySelector("#homeCameraBody");
-  if (body && body.classList.contains("home-camera-expanded")) {
-    // Leaving full screen should not also stop the stream.
-    collapseExpandedCamera(body);
-    return;
-  }
 
   const cameraId = trigger.dataset.homeCameraToggle;
   if (activeCameraIds.has(cameraId)) {
@@ -4310,89 +4300,74 @@ document.addEventListener("click", (event) => {
     activeCameraIds.add(cameraId);
     renderHomeCamera();
   }
-  expandHomeCamera();
+  expandHomeCamera(cameraId);
 });
 
-/* iPadOS honours the webkit-prefixed call on an arbitrary element. Where
-   neither form exists - iPhone Safari allows full screen only for a <video> -
-   fall back to a fixed overlay, which needs no API at all. The class goes on
-   the container rather than the frame because a refresh replaces the frame. */
-function expandHomeCamera() {
-  const body = document.querySelector("#homeCameraBody");
-  const frame = body && body.querySelector(".home-camera-frame");
-  if (!frame) return;
+/* ── Full screen camera ──
 
-  /* The method existing is not the same as it working. An older iPad defines
-     webkitRequestFullscreen but reports fullscreenEnabled false, and the call
-     then does nothing and throws nothing - so testing for the method alone
-     took the early return and left the screen exactly as it was. Ask whether
-     full screen is enabled, and treat an async rejection as a refusal too. */
-  const enabled = document.fullscreenEnabled || document.webkitFullscreenEnabled;
-  const request = frame.requestFullscreen || frame.webkitRequestFullscreen;
-  if (enabled && request) {
-    try {
-      const pending = request.call(frame);
-      if (pending && typeof pending.catch === "function") {
-        pending.catch(() => body.classList.add("home-camera-expanded"));
-      }
-      return;
-    } catch {
-      // Fall through to the overlay below.
-    }
-  }
-  body.classList.add("home-camera-expanded");
-  sizeExpandedCamera();
+   Built from scratch and attached to <body>, deliberately.
+
+   Four earlier attempts expanded the card's own markup in place and every one
+   showed black on an older iPad: the frame's height came from aspect-ratio,
+   then a percentage-padding stand-in, then a vh rule, then inline pixels, and
+   whatever failed to resolve collapsed the picture while the backdrop stayed.
+   A fresh element inherits none of that - no card rules, no ratio, no
+   containing-block chain - and its size is set in pixels on the element
+   itself.
+
+   The Fullscreen API is not used at all. Where it is unavailable it silently
+   does nothing, where it is present it behaves differently per browser, and
+   this overlay fills the viewport on every device without either problem. */
+function closeCameraOverlay() {
+  document.querySelector("#cameraOverlay")?.remove();
 }
 
-/* Size the expanded view in pixels, from JavaScript.
+function expandHomeCamera(cameraId) {
+  const camera = latestCameraById.get(cameraId);
+  if (!camera) return;
+  closeCameraOverlay();
 
-   Three attempts at doing this in CSS all produced a black screen on an older
-   iPad: the frame's height came from aspect-ratio, then from a percentage
-   padding stand-in, then from a vh rule - and the media inside is height:100%,
-   so anything that failed to resolve collapsed the picture to nothing while
-   the black backdrop stayed. Explicit pixel values on the elements themselves
-   depend on no feature and no cascade, and the media is taken out of absolute
-   positioning so it cannot rely on the frame establishing a containing block
-   either.
+  const width = window.innerWidth || document.documentElement.clientWidth || 1024;
+  const height = Math.round((window.innerHeight || document.documentElement.clientHeight || 768) * 0.82);
 
-   The measurements are logged because this path cannot be inspected from here
-   - if it is still wrong, the numbers say which box is zero. */
-function sizeExpandedCamera() {
-  const body = document.querySelector("#homeCameraBody");
-  if (!body || !body.classList.contains("home-camera-expanded")) return;
-  const frame = body.querySelector(".home-camera-frame");
-  const media = body.querySelector(".camera-media");
-  if (!frame) return;
+  const overlay = document.createElement("div");
+  overlay.id = "cameraOverlay";
+  overlay.setAttribute(
+    "style",
+    "position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;" +
+    "z-index:9999;background:#000;text-align:center;"
+  );
+  overlay.innerHTML =
+    `<div id="cameraOverlayMedia">${cameraMedia(camera)}</div>` +
+    `<button id="cameraOverlayClose" type="button" style="position:absolute;top:10px;right:10px;` +
+    `padding:10px 16px;font-size:15px;border-radius:8px;border:1px solid #555;` +
+    `background:rgba(0,0,0,0.6);color:#fff;">Close</button>` +
+    `<div style="position:absolute;left:0;right:0;bottom:8px;color:#8a9;font-size:12px;">` +
+    `${escapeHtml(camera.name || "")}</div>`;
+  document.body.appendChild(overlay);
 
-  const width = body.clientWidth || window.innerWidth;
-  const height = Math.round((window.innerHeight || 600) * 0.72);
-
-  frame.style.width = `${width}px`;
-  frame.style.height = `${height}px`;
+  // Size the media itself: the container cannot be relied on to hand a height
+  // down to something that asks for 100% of it.
+  const media = overlay.querySelector(".camera-media");
   if (media) {
-    media.style.position = "static";
-    media.style.width = `${width}px`;
-    media.style.height = `${height}px`;
-    media.style.objectFit = "contain";
+    media.setAttribute(
+      "style",
+      `position:static;display:block;margin:0 auto;width:${width}px;height:${height}px;object-fit:contain;border:0;`
+    );
   }
 
   logActivity(
-    `Full screen: frame ${width}x${height}, media ${media ? media.tagName.toLowerCase() : "none"} ` +
-    `${media ? media.clientWidth : 0}x${media ? media.clientHeight : 0}`
+    `Full screen ${width}x${height}: ${media ? media.tagName.toLowerCase() : "NO MEDIA ELEMENT"}` +
+    `${media ? ` rendered ${media.clientWidth}x${media.clientHeight}` : ""}`
   );
 }
 
-window.addEventListener("orientationchange", () => setTimeout(sizeExpandedCamera, 250));
-window.addEventListener("resize", () => sizeExpandedCamera());
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#cameraOverlayClose") || event.target.id === "cameraOverlay") {
+    closeCameraOverlay();
+  }
+});
 
-function collapseExpandedCamera(body) {
-  body.classList.remove("home-camera-expanded");
-  const frame = body.querySelector(".home-camera-frame");
-  const media = body.querySelector(".camera-media");
-  // Inline styles would otherwise outrank every rule once back in the card.
-  if (frame) frame.removeAttribute("style");
-  if (media) media.removeAttribute("style");
-}
 
 /* ── Bluetooth: music card on Home, scan/connect modal under Discovery ── */
 let latestBluetooth = null;
