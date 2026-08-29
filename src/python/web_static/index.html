@@ -14,13 +14,24 @@
       if (!supported) {
         document.documentElement.className += " no-aspect-ratio";
       }
+      /* Whether this browser can parse the syntax that embedded players (the
+         go2rtc page we put in an iframe) are written in. Where it cannot, the
+         iframe renders as a dead shell - go2rtc's own "Live broadcast" heading
+         with no picture under it - and the camera has to be served some other
+         way. new Function keeps the modern syntax out of this file's own
+         parse, which has to succeed on the oldest browser we support. */
+      try {
+        new Function("var probe = function (a) { return a?.b ?? 0; };");
+      } catch (error) {
+        document.documentElement.className += " legacy-js";
+      }
     })();
   </script>
   <title>HomeOS · Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build127">
+  <link rel="stylesheet" href="/static/styles.css?v=build128">
 </head>
 <body>
 
@@ -389,6 +400,14 @@
             </button>
             <button class="area-add-btn" id="addAreaButton" type="button" title="Create a new area">
               <i class="ti ti-plus"></i> New Area
+            </button>
+            <button class="area-add-btn" id="homeCardsButton" type="button"
+                    aria-haspopup="dialog" title="Choose which cards appear on the Home view">
+              <i class="ti ti-eye"></i> Cards
+            </button>
+            <button class="area-add-btn" id="homeResetLayout" type="button"
+                    title="Put every card back to its default size and position">
+              <i class="ti ti-layout-board-split"></i> Reset Layout
             </button>
           </div>
         </div>
@@ -820,6 +839,22 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="homeCardsModal" hidden aria-modal="true" role="dialog" aria-labelledby="homeCardsTitle">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title" id="homeCardsTitle">Home Cards</span>
+      <button class="modal-close" id="closeHomeCardsModal" type="button" aria-label="Close">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+    <div class="net-modal-list" id="homeCardsList"></div>
+    <div class="modal-actions">
+      <span class="net-modal-hint">Hidden cards keep their layout and devices.</span>
+      <button class="btn-primary" id="homeCardsShowAll" type="button">Show all</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="networkModal" hidden aria-modal="true" role="dialog" aria-labelledby="networkModalTitle">
   <div class="modal-card">
     <div class="modal-header">
@@ -868,6 +903,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build127"></script>
+<script src="/static/app.js?v=build128"></script>
 </body>
 </html>

@@ -183,6 +183,10 @@ const CAMERA_ORDER_KEY = "camera_order_v1";
 const DEVICE_ORDER_KEYS = { light_switch: "light_order_v1", smart_plug: "plug_order_v1" };
 const LIGHT_DRAG_UNLOCK_KEY = "light_drag_unlocked_v1";
 const activeCameraIds   = new Set();
+/* Set by the probe in index.html: this browser cannot parse the syntax that
+   embedded players are written in, so anything relying on one must be given a
+   plainer alternative. */
+const LEGACY_JS = document.documentElement.classList.contains("legacy-js");
 let latestCameras       = [];
 let latestTuyaDevices   = [];
 let latestAlarmData     = null;
@@ -2712,6 +2716,14 @@ function cameraMedia(camera) {
                  : (camera.webrtc_url ? "webrtc" : null);
   if (liveUrl && isActive) {
     if (liveType === "webrtc") {
+      /* go2rtc's player is modern JavaScript, so on an older browser the
+         iframe renders as a dead shell - go2rtc's own "Live broadcast"
+         heading with no picture beneath it. Our MJPEG proxy is just an <img>,
+         which every browser can show. */
+      if (LEGACY_JS) {
+        const proxyId = encodeURIComponent(cameraIdFor(camera));
+        return `<img class="camera-media" src="/api/cameras/${proxyId}/mjpeg" alt="${escapeHtml(camera.name)} live view" />`;
+      }
       return `<iframe class="camera-media camera-player" src="${liveUrl}" title="${camera.name} live WebRTC view" allow="autoplay; fullscreen; microphone"></iframe>`;
     }
     if (liveType === "snapshot" || liveType === "mjpeg" || liveType === "doorbell") {
@@ -4665,6 +4677,23 @@ function homeGridMode() {
   return !!grid && getComputedStyle(grid).display === "grid";
 }
 
+/* Settle a dropped card on the nearest free row, searching upward first.
+
+   The old rule only ever pushed the card downward. A card dropped anywhere
+   occupied therefore slid further away, and once a couple of cards had drifted
+   low, every attempt to drag one back up collided with something on the way
+   and was pushed down again - the cards could travel down but never return.
+   Looking in both directions lets a card climb back. */
+function nearestFreeRow(lay, others) {
+  const free = (y) => y >= 1 && !others.some((o) => homeCellsOverlap({ ...lay, y }, o));
+  if (free(lay.y)) return lay.y;
+  for (let step = 1; step <= 200; step++) {
+    if (free(lay.y - step)) return lay.y - step;
+    if (free(lay.y + step)) return lay.y + step;
+  }
+  return lay.y;
+}
+
 function setCardCell(card, lay) {
   card.style.gridColumn = `${lay.x} / span ${lay.w}`;
   card.style.gridRow = `${lay.y} / span ${lay.h}`;
@@ -4681,13 +4710,116 @@ function persistCardLayout(card, lay) {
   saveHomeLayout(layout);
 }
 
+/* ── Which Home cards are shown ──
+
+   Hiding is deliberately separate from layout: a hidden card keeps its size,
+   position and linked devices, so showing it again puts it back where it was
+   rather than dumping it at the bottom. */
+const HOME_HIDDEN_CARDS_KEY = "home_hidden_cards";
+
+const HOME_CARD_LABELS = {
+  weather: "Weather",
+  camera: "Camera",
+  climate: "Climate",
+  bluetooth: "Music",
+  areas: "Areas",
+};
+
+function loadHiddenHomeCards() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(HOME_HIDDEN_CARDS_KEY) || "[]") || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenHomeCards(hidden) {
+  try { localStorage.setItem(HOME_HIDDEN_CARDS_KEY, JSON.stringify([...hidden])); } catch {}
+}
+
+function homeCardLabel(card) {
+  const id = card.dataset.homeCard || "";
+  if (HOME_CARD_LABELS[id]) return HOME_CARD_LABELS[id];
+  const title = card.querySelector(".panel-title");
+  return (title ? title.textContent : "").trim() || id;
+}
+
+function renderHomeCardsModal() {
+  const list = document.querySelector("#homeCardsList");
+  const grid = document.querySelector("#homeCardGrid");
+  if (!list || !grid) return;
+  const hidden = loadHiddenHomeCards();
+  const cards = [...grid.querySelectorAll(".home-card")];
+  if (!cards.length) {
+    list.innerHTML = `<div class="home-empty">No cards yet.</div>`;
+    return;
+  }
+  list.innerHTML = cards.map((card) => {
+    const id = card.dataset.homeCard || "";
+    const shown = !hidden.has(id);
+    return `
+      <label class="net-row home-card-toggle">
+        <span class="net-row-icon"><i class="ti ${shown ? "ti-eye" : "ti-eye-off"}"></i></span>
+        <span class="net-row-name">${escapeHtml(homeCardLabel(card))}</span>
+        <input type="checkbox" data-home-card-visible="${escapeHtml(id)}" ${shown ? "checked" : ""} />
+      </label>`;
+  }).join("");
+}
+
+function resetHomeLayout() {
+  try { localStorage.removeItem(HOME_CARD_LAYOUT_KEY); } catch {}
+  try { localStorage.removeItem(HOME_HIDDEN_CARDS_KEY); } catch {}
+  applyHomeCardLayout();
+  logActivity("Home layout reset to default");
+}
+
+(function initHomeCardControls() {
+  const modal = document.querySelector("#homeCardsModal");
+  const closeModal = () => { if (modal) modal.hidden = true; };
+
+  document.querySelector("#homeCardsButton")?.addEventListener("click", () => {
+    renderHomeCardsModal();
+    if (modal) modal.hidden = false;
+  });
+  document.querySelector("#closeHomeCardsModal")?.addEventListener("click", closeModal);
+  modal?.addEventListener("click", (event) => {
+    if (event.target === modal) closeModal();
+  });
+
+  document.querySelector("#homeCardsShowAll")?.addEventListener("click", () => {
+    saveHiddenHomeCards(new Set());
+    applyHomeCardLayout();
+    renderHomeCardsModal();
+    logActivity("All Home cards shown");
+  });
+
+  document.addEventListener("change", (event) => {
+    const box = event.target.closest("input[data-home-card-visible]");
+    if (!box) return;
+    const hidden = loadHiddenHomeCards();
+    if (box.checked) hidden.delete(box.dataset.homeCardVisible);
+    else hidden.add(box.dataset.homeCardVisible);
+    saveHiddenHomeCards(hidden);
+    applyHomeCardLayout();
+    renderHomeCardsModal();
+  });
+
+  document.querySelector("#homeResetLayout")?.addEventListener("click", () => {
+    resetHomeLayout();
+  });
+})();
+
 function applyHomeCardLayout() {
   const grid = document.querySelector("#homeCardGrid");
   if (!grid) return;
   const layout = loadHomeLayout();
+  const hidden = loadHiddenHomeCards();
   let changed = false;
   for (const card of grid.querySelectorAll(".home-card")) {
     const id = card.dataset.homeCard;
+    // A hidden card keeps its stored layout; it is only taken off the screen.
+    card.hidden = hidden.has(id);
+    if (card.hidden) continue;
     let lay = layout[id] || DEFAULT_HOME_LAYOUT[id];
     if (!lay) {
       // New (custom) card: park it below everything currently placed.
@@ -4765,11 +4897,7 @@ function otherCardCells(excludeCard) {
       onMove,
       onEnd: () => {
         card.classList.remove("dragging");
-        // If dropped onto another card, slide down to the first free row —
-        // the dragged card yields, never the others.
-        const others = otherCardCells(card);
-        let guard = 0;
-        while (others.some((o) => homeCellsOverlap(lay, o)) && guard++ < 200) lay.y += 1;
+        lay.y = nearestFreeRow(lay, otherCardCells(card));
         setCardCell(card, lay);
         persistCardLayout(card, lay);
       },

@@ -74,8 +74,13 @@ def test_detection_runs_before_paint_and_is_es5() -> None:
     script = next(s for s in _inline_scripts(head) if "no-aspect-ratio" in s)
     # The deploy's esbuild step only compiles app.js, so inline script is
     # shipped verbatim and must already be parseable by the oldest browser.
+    #
+    # String literals are stripped first: the feature probe deliberately holds
+    # modern syntax as a *string* for new Function, which never reaches this
+    # file's own parse. Only executable syntax is checked.
+    code = re.sub(r'"[^"]*"|\'[^\']*\'', '""', script)
     for token in ("=>", "const ", "let ", "?.", "??", "`"):
-        assert token not in script, f"inline detection uses {token!r}, which is not ES5"
+        assert token not in code, f"inline detection uses {token!r}, which is not ES5"
 
 
 def test_inset_shorthand_always_has_longhand_beside_it() -> None:

@@ -4769,3 +4769,15 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
 
 .home-camera-expanded .home-camera-frame { width: 100%; }
 .home-camera-expanded .home-camera-meta { color: #ddd; }
+
+/* Card visibility rows in the Home Cards modal. */
+.home-card-toggle {
+  cursor: pointer;
+}
+
+.home-card-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
