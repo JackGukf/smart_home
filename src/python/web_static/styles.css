@@ -3428,6 +3428,10 @@ aside {
   gap: 16px;
 }
 
+/* [hidden] must beat the flex display below, same idiom as .room-item[hidden].
+   Without this, hiding a card from the Cards modal does nothing at all. */
+.home-card[hidden] { display: none; }
+
 .home-card {
   position: relative;
   display: flex;

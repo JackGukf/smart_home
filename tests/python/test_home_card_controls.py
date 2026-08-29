@@ -76,3 +76,38 @@ def test_legacy_browsers_get_a_playable_camera_stream() -> None:
     # the "Live broadcast" heading, so serve MJPEG instead.
     assert "LEGACY_JS" in js
     assert "/mjpeg" in js[js.index("function cameraMedia") : js.index("function cameraMedia") + 2000]
+
+
+def _rule_display(css: str, selector: str) -> str | None:
+    """The display value a bare class rule sets, if any."""
+    match = re.search(rf"^{re.escape(selector)}\s*\{{(.*?)\}}", css, re.S | re.M)
+    if not match:
+        return None
+    display = re.search(r"display:\s*([a-z-]+)", match.group(1))
+    return display.group(1) if display else None
+
+
+def test_elements_hidden_by_attribute_beat_their_display_rule() -> None:
+    """The `hidden` attribute only works if no rule out-specifies it.
+
+    `[hidden] { display: none }` comes from the UA stylesheet, which any class
+    rule setting a display beats. Setting element.hidden then does nothing at
+    all - which is exactly what happened to the Home cards.
+    """
+    css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+    js = APP_JS.read_text(encoding="utf-8")
+
+    # Classes whose elements the code hides via the attribute rather than a class.
+    hidden_by_attribute = [".home-card", ".room-item", ".device-back-btn"]
+
+    for selector in hidden_by_attribute:
+        display = _rule_display(css, selector)
+        if display in (None, "none"):
+            continue
+        assert re.search(rf"{re.escape(selector)}\[hidden\]", css), (
+            f"{selector} sets display:{display}, which beats [hidden]; "
+            f"hiding it from JS will silently do nothing"
+        )
+
+    # And the Home cards really are hidden by the attribute.
+    assert "card.hidden = hidden.has(id)" in js
