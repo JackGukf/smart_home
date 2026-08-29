@@ -4700,13 +4700,21 @@ const HOME_GRID_COLS = 12;
 const HOME_GRID_ROW = 40;
 const HOME_GRID_GAP = 16;
 
+/* Three columns of four on the grid:
+
+     Weather   Camera         Areas
+     Climate   Temperatures
+     Music
+
+   Only applies to a browser with no saved layout - an existing one is left
+   alone, and Reset Layout is what adopts this. */
 const DEFAULT_HOME_LAYOUT = {
-  weather:   { x: 1, y: 1, w: 4, h: 5 },
-  camera:    { x: 1, y: 6, w: 4, h: 7 },
-  climate:   { x: 5, y: 1, w: 4, h: 9 },
-  bluetooth: { x: 5, y: 10, w: 4, h: 6 },
-  areas:     { x: 9, y: 1, w: 4, h: 12 },
-  tempsensors: { x: 1, y: 13, w: 4, h: 6 },
+  weather:     { x: 1, y: 1,  w: 4, h: 5 },
+  climate:     { x: 1, y: 6,  w: 4, h: 9 },
+  bluetooth:   { x: 1, y: 15, w: 4, h: 6 },
+  camera:      { x: 5, y: 1,  w: 4, h: 7 },
+  tempsensors: { x: 5, y: 8,  w: 4, h: 6 },
+  areas:       { x: 9, y: 1,  w: 4, h: 12 },
 };
 
 function loadHomeLayout() {

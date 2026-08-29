@@ -4769,3 +4769,29 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   flex-shrink: 0;
 }
 
+
+/* ── Home header controls on a narrow screen ──
+
+   New Card, New Area, Cards and Reset Layout do not fit one line on a phone.
+   A two-column grid puts them on two lines of two; grid gap is used rather
+   than flex gap because older Safari ignores the latter. */
+@media (max-width: 739px) {
+  #homeOverview .section-header { align-items: flex-start; }
+
+  #homeOverview .section-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    width: 100%;
+  }
+
+  #homeOverview .section-actions .section-meta {
+    grid-column: 1 / -1;
+    order: -1;
+  }
+
+  #homeOverview .section-actions .area-add-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
