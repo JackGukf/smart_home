@@ -9,6 +9,8 @@ Three separate causes made the iPads feel broken:
   all, so cards and camera tiles could not be moved by any gesture
 - handles were revealed by :hover, which touch never fires, and were well
   under the ~44px a fingertip can reliably hit
+- and underneath all of it, every drag was bound to Pointer Events, which
+  Safari did not ship until 13: on an iOS 12 iPad those handlers never fire
 """
 
 import re
@@ -55,7 +57,11 @@ def test_pointer_reorder_works_for_grids_and_single_columns() -> None:
     # The axis has to be chosen per pair: the same lists are multi-column on a
     # tablet and single-column on a phone.
     assert "sameRow" in helper
-    assert "pointercancel" in helper, "a cancelled touch must not leave a card stuck mid-drag"
+    # Cancellation is handled by trackDrag, which every drag path shares.
+    tracker = re.search(r"function trackDrag\(.*?\n\}", js, re.S).group(0)
+    assert "pointercancel" in tracker and "touchcancel" in tracker, (
+        "a cancelled touch must not leave a card stuck mid-drag"
+    )
 
 
 def test_drag_handles_are_reachable_without_hover() -> None:
@@ -65,8 +71,8 @@ def test_drag_handles_are_reachable_without_hover() -> None:
     assert block, "no touch-specific handle styling"
     body = block.group(0)
     # The resize corner is invisible until hover, which touch never fires.
-    assert ".home-card-resize { opacity: 1; }" in body
-    assert "44px" in body, "touch targets must reach ~44px"
+    assert re.search(r"\.home-card-resize \{[^}]*opacity: 1", body, re.S)
+    assert "width: 40px" in body, "touch targets must be finger-sized"
 
     # Suppressing scroll is only acceptable on the handle itself.
     assert re.search(r"\.camera-drag-handle,\s*\.area-card-grip \{\s*touch-action: none;", css)
@@ -90,3 +96,51 @@ def test_fullscreen_falls_back_when_the_api_is_refused() -> None:
     assert "home-camera-expanded" in fn, "needs a fallback where the API is refused"
     # The frame is replaced on refresh, so the state must live on the container.
     assert 'querySelector("#homeCameraBody")' in fn
+
+
+def test_drag_does_not_depend_on_pointer_events_alone() -> None:
+    """Safari gained Pointer Events in 13; an iOS 12 iPad has none."""
+    js = APP_JS.read_text(encoding="utf-8")
+
+    assert "HAS_POINTER_EVENTS" in js
+    assert "typeof window.PointerEvent" in js
+    # Touch is the fallback that makes an iOS 12 iPad work at all.
+    assert '"touchstart"' in js and '"touchmove"' in js
+    # And mouse for any desktop browser in the same position.
+    assert '"mousedown"' in js and '"mousemove"' in js
+
+
+def test_drag_paths_go_through_the_input_abstraction() -> None:
+    js = APP_JS.read_text(encoding="utf-8")
+
+    # Card move, card resize and list reordering must all be reachable by touch.
+    for anchor in ('.home-card-grip"', '.home-card-resize"'):
+        block = js[js.index(anchor) - 400 : js.index(anchor)]
+        assert "onDragStart(" in block, f"the drag starting at {anchor} is not routed through onDragStart"
+
+    helper = re.search(r"function enablePointerReorder\(.*?\n\}", js, re.S).group(0)
+    assert "onDragStart(container" in helper
+    assert "trackDrag(event" in helper
+
+
+def test_touch_moves_can_cancel_page_scrolling() -> None:
+    js = APP_JS.read_text(encoding="utf-8")
+    tracker = re.search(r"function trackDrag\(.*?\n\}", js, re.S).group(0)
+
+    # Without a non-passive listener preventDefault is ignored, and the page
+    # scrolls out from under the gesture instead of the card moving.
+    assert "passive: false" in tracker
+    assert "event.preventDefault()" in tracker
+
+
+def test_touch_targets_are_grown_not_overflowed() -> None:
+    css = STYLES.read_text(encoding="utf-8")
+
+    # .home-card clips its overflow, so a target that reaches past the corner
+    # is cut off - which is most of where a thumb lands on a corner handle.
+    assert re.search(r"\.home-card \{[^}]*overflow: hidden", css, re.S)
+    block = re.search(r"@media \(hover: none\) \{.*?\n\}", css, re.S).group(0)
+    assert "width: 40px" in block and "height: 40px" in block
+
+    # Press-and-hold must not raise the iOS callout instead of dragging.
+    assert "-webkit-touch-callout: none" in css

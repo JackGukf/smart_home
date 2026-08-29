@@ -4614,21 +4614,42 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
    The visible size stays put; only the touch target grows, via a transparent
    pseudo-element centred on the handle. */
 @media (hover: none) {
-  .home-card-resize { opacity: 1; }
-
-  .home-card-grip::after,
-  .home-card-resize::after,
-  .camera-drag-handle::after,
-  .area-card-grip::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 44px;
-    height: 44px;
-    margin-top: -22px;
-    margin-left: -22px;
+  /* Grown for real rather than with an oversized pseudo-element: the cards
+     clip their overflow, so a target that reaches past the corner is simply
+     cut off - which is most of where a thumb actually lands. */
+  .home-card-resize {
+    opacity: 1;
+    width: 40px;
+    height: 40px;
+    right: 0;
+    bottom: 0;
+    font-size: 18px;
   }
+
+  .home-card-grip {
+    width: 34px;
+    height: 34px;
+    font-size: 18px;
+    margin-left: -8px;
+  }
+
+  .camera-drag-handle,
+  .area-card-grip {
+    width: 36px;
+    height: 36px;
+    font-size: 17px;
+  }
+}
+
+/* Press-and-hold on iOS raises the callout menu or starts selecting text,
+   either of which eats the gesture before a drag can begin. */
+.home-card-grip,
+.home-card-resize,
+.camera-drag-handle,
+.area-card-grip {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Dragging must not also scroll the page, and a handle is the only part of a

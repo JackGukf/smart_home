@@ -3769,6 +3769,55 @@ function areaCardHtml(area) {
     </div>`;
 }
 
+/* ── Drag input, with and without Pointer Events ──
+
+   Pointer Events did not reach Safari until 13, so on an iOS 12 iPad none of
+   the pointerdown handlers here ever fired: dragging and resizing a card were
+   not awkward there, they were inert. Touch events cover those browsers, and
+   mouse events cover any desktop browser in the same position.
+
+   Touch also needs preventDefault on every move, or the page scrolls out from
+   under the gesture - and that needs a listener registered as non-passive. */
+const HAS_POINTER_EVENTS = typeof window.PointerEvent === "function";
+
+function dragPoint(event) {
+  const touch = event.touches && event.touches[0];
+  return touch || event;
+}
+
+function onDragStart(target, handler) {
+  if (!target) return;
+  if (HAS_POINTER_EVENTS) {
+    target.addEventListener("pointerdown", handler);
+  } else {
+    target.addEventListener("touchstart", handler, { passive: false });
+    target.addEventListener("mousedown", handler);
+  }
+}
+
+function trackDrag(startEvent, { onMove, onEnd }) {
+  const isTouch = startEvent.type === "touchstart";
+  const moveName = HAS_POINTER_EVENTS ? "pointermove" : isTouch ? "touchmove" : "mousemove";
+  const endNames = HAS_POINTER_EVENTS
+    ? ["pointerup", "pointercancel"]
+    : isTouch
+    ? ["touchend", "touchcancel"]
+    : ["mouseup"];
+
+  const move = (event) => {
+    if (isTouch) event.preventDefault();
+    onMove(dragPoint(event));
+  };
+  const end = () => {
+    window.removeEventListener(moveName, move);
+    endNames.forEach((name) => window.removeEventListener(name, end));
+    onEnd();
+  };
+
+  window.addEventListener(moveName, move, { passive: false });
+  endNames.forEach((name) => window.addEventListener(name, end));
+}
+
 /* ── Pointer-driven reordering ──
 
    Reordering was built on HTML5 drag-and-drop, which iOS Safari does not
@@ -3784,14 +3833,13 @@ function areaCardHtml(area) {
 function enablePointerReorder({ container, itemSelector, handleSelector, onReorder }) {
   if (!container) return;
 
-  container.addEventListener("pointerdown", (event) => {
-    if (event.button !== undefined && event.button !== 0) return;
+  onDragStart(container, (event) => {
+    if (event.button) return;
     const handle = event.target.closest(handleSelector);
     const item = handle && handle.closest(itemSelector);
     if (!item || !container.contains(item)) return;
 
     event.preventDefault();
-    try { handle.setPointerCapture(event.pointerId); } catch {}
     item.classList.add("dragging");
 
     const onMove = (move) => {
@@ -3813,17 +3861,13 @@ function enablePointerReorder({ container, itemSelector, handleSelector, onReord
       container.insertBefore(item, before ? over : over.nextSibling);
     };
 
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      item.classList.remove("dragging");
-      onReorder(container, item);
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
+    trackDrag(event, {
+      onMove,
+      onEnd: () => {
+        item.classList.remove("dragging");
+        onReorder(container, item);
+      },
+    });
   });
 }
 
@@ -4675,60 +4719,61 @@ function otherCardCells(excludeCard) {
   applyHomeCardLayout();
 
   /* Move: pointer-drag from the header grip; only this card changes cell. */
-  grid.addEventListener("pointerdown", (event) => {
+  onDragStart(grid, (event) => {
     const grip = event.target.closest(".home-card-grip");
     const card = grip?.closest(".home-card");
     if (!card || !homeGridMode()) return;
     event.preventDefault();
+    const start = dragPoint(event);
     const { pitchX, pitchY } = homeGridPitch(grid);
     const gridRect = grid.getBoundingClientRect();
     const cardRect = card.getBoundingClientRect();
-    const grabX = event.clientX - cardRect.left;
-    const grabY = event.clientY - cardRect.top;
+    const grabX = start.clientX - cardRect.left;
+    const grabY = start.clientY - cardRect.top;
     const lay = cardLayoutOf(card);
     card.classList.add("dragging");
 
-    const onMove = (move) => {
-      const x = 1 + Math.round((move.clientX - grabX - gridRect.left) / pitchX);
-      const y = 1 + Math.round((move.clientY - grabY - gridRect.top) / pitchY);
+    const onMove = (point) => {
+      const x = 1 + Math.round((point.clientX - grabX - gridRect.left) / pitchX);
+      const y = 1 + Math.round((point.clientY - grabY - gridRect.top) / pitchY);
       lay.x = Math.min(Math.max(1, x), HOME_GRID_COLS - lay.w + 1);
       lay.y = Math.max(1, y);
       setCardCell(card, lay);
     };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      card.classList.remove("dragging");
-      // If dropped onto another card, slide down to the first free row —
-      // the dragged card yields, never the others.
-      const others = otherCardCells(card);
-      let guard = 0;
-      while (others.some((o) => homeCellsOverlap(lay, o)) && guard++ < 200) lay.y += 1;
-      setCardCell(card, lay);
-      persistCardLayout(card, lay);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    trackDrag(event, {
+      onMove,
+      onEnd: () => {
+        card.classList.remove("dragging");
+        // If dropped onto another card, slide down to the first free row —
+        // the dragged card yields, never the others.
+        const others = otherCardCells(card);
+        let guard = 0;
+        while (others.some((o) => homeCellsOverlap(lay, o)) && guard++ < 200) lay.y += 1;
+        setCardCell(card, lay);
+        persistCardLayout(card, lay);
+      },
+    });
   });
 
   /* Resize: corner grip adjusts the card's column/row span. */
-  grid.addEventListener("pointerdown", (event) => {
+  onDragStart(grid, (event) => {
     const handle = event.target.closest(".home-card-resize");
     const card = handle?.closest(".home-card");
     if (!card || !homeGridMode()) return;
     event.preventDefault();
     const { pitchX, pitchY } = homeGridPitch(grid);
-    const startX = event.clientX;
-    const startY = event.clientY;
+    const start = dragPoint(event);
+    const startX = start.clientX;
+    const startY = start.clientY;
     const lay = cardLayoutOf(card);
     const startW = lay.w;
     const startH = lay.h;
     card.classList.add("resizing");
 
     const others = otherCardCells(card);
-    const onMove = (move) => {
-      const w = Math.min(Math.max(2, startW + Math.round((move.clientX - startX) / pitchX)), HOME_GRID_COLS - lay.x + 1);
-      const h = Math.max(3, startH + Math.round((move.clientY - startY) / pitchY));
+    const onMove = (point) => {
+      const w = Math.min(Math.max(2, startW + Math.round((point.clientX - startX) / pitchX)), HOME_GRID_COLS - lay.x + 1);
+      const h = Math.max(3, startH + Math.round((point.clientY - startY) / pitchY));
       // Grow only until touching a neighbour — cards never overlap or move.
       if (!others.some((o) => homeCellsOverlap({ ...lay, w, h }, o))) {
         lay.w = w;
@@ -4740,14 +4785,13 @@ function otherCardCells(excludeCard) {
       }
       setCardCell(card, lay);
     };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      card.classList.remove("resizing");
-      persistCardLayout(card, lay);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    trackDrag(event, {
+      onMove,
+      onEnd: () => {
+        card.classList.remove("resizing");
+        persistCardLayout(card, lay);
+      },
+    });
   });
 
   /* Double-click the corner grip: reset the card to its default cell. */
