@@ -182,6 +182,82 @@ if (logoText) {
 const CAMERA_ORDER_KEY = "camera_order_v1";
 const DEVICE_ORDER_KEYS = { light_switch: "light_order_v1", smart_plug: "plug_order_v1" };
 const LIGHT_DRAG_UNLOCK_KEY = "light_drag_unlocked_v1";
+/* Promise.allSettled is Safari 13. The deploy compiles modern *syntax* down
+   to ES2019, but an API is just a missing function at run time - the call
+   throws where it stands. Unlike syntax, an API can simply be supplied. */
+if (typeof Promise.allSettled !== "function") {
+  Promise.allSettled = function (promises) {
+    return Promise.all(
+      Array.from(promises, (item) =>
+        Promise.resolve(item).then(
+          (value) => ({ status: "fulfilled", value }),
+          (reason) => ({ status: "rejected", reason })
+        )
+      )
+    );
+  };
+}
+
+/* ── Drag input, with and without Pointer Events ──
+
+   Pointer Events did not reach Safari until 13, so on an iOS 12 iPad none of
+   the pointerdown handlers here ever fired: dragging and resizing a card were
+   not awkward there, they were inert. Touch events cover those browsers, and
+   mouse events cover any desktop browser in the same position.
+
+   Touch also needs preventDefault on every move, or the page scrolls out from
+   under the gesture - and that needs a listener registered as non-passive. */
+const HAS_POINTER_EVENTS = typeof window.PointerEvent === "function";
+
+function dragPoint(event) {
+  const touch = event.touches && event.touches[0];
+  return touch || event;
+}
+
+let lastTouchAt = 0;
+
+function onDragStart(target, handler) {
+  if (!target) return;
+  if (HAS_POINTER_EVENTS) {
+    target.addEventListener("pointerdown", handler);
+    return;
+  }
+  target.addEventListener("touchstart", (event) => {
+    lastTouchAt = Date.now();
+    handler(event);
+  }, { passive: false });
+  // iOS replays a touch as mousedown/mouseup a moment later. Letting that
+  // through starts a second drag on top of the one just finished, which then
+  // moves the card on the next unrelated gesture.
+  target.addEventListener("mousedown", (event) => {
+    if (Date.now() - lastTouchAt < 700) return;
+    handler(event);
+  });
+}
+
+function trackDrag(startEvent, { onMove, onEnd }) {
+  const isTouch = startEvent.type === "touchstart";
+  const moveName = HAS_POINTER_EVENTS ? "pointermove" : isTouch ? "touchmove" : "mousemove";
+  const endNames = HAS_POINTER_EVENTS
+    ? ["pointerup", "pointercancel"]
+    : isTouch
+    ? ["touchend", "touchcancel"]
+    : ["mouseup"];
+
+  const move = (event) => {
+    if (isTouch) event.preventDefault();
+    onMove(dragPoint(event));
+  };
+  const end = () => {
+    window.removeEventListener(moveName, move);
+    endNames.forEach((name) => window.removeEventListener(name, end));
+    onEnd();
+  };
+
+  window.addEventListener(moveName, move, { passive: false });
+  endNames.forEach((name) => window.addEventListener(name, end));
+}
+
 const activeCameraIds   = new Set();
 /* Set by the probe in index.html: this browser cannot parse the syntax that
    embedded players are written in, so anything relying on one must be given a
@@ -539,41 +615,39 @@ function attachDimDrag(card) {
     return Math.max(1, Math.min(100, Math.round(t * 100)));
   }
 
-  wrap.addEventListener("pointerdown", (e) => {
+  onDragStart(wrap, (e) => {
     if (card.dataset.dimLocked === "true") return;
-    const lv = levelFromPointer(e.clientX, e.clientY);
+    const start = dragPoint(e);
+    const lv = levelFromPointer(start.clientX, start.clientY);
+    // Null means the dead zone at the dial's gap: leave that touch to the page
+    // so the view can still be scrolled from there.
     if (lv === null) return;
+    e.preventDefault();
     dragging = true;
     pendingLevel = lv;
-    wrap.setPointerCapture(e.pointerId);
     updateDialLines(wrap, lv, card.classList.contains("on"));
     card.dataset.brightness = lv;
-  });
 
-  wrap.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
-    const lv = levelFromPointer(e.clientX, e.clientY);
-    if (lv === null) return;
-    pendingLevel = lv;
-    updateDialLines(wrap, lv, card.classList.contains("on"));
-    card.dataset.brightness = lv;
+    trackDrag(e, {
+      onMove: (point) => {
+        const moved = levelFromPointer(point.clientX, point.clientY);
+        if (moved === null) return;
+        pendingLevel = moved;
+        updateDialLines(wrap, moved, card.classList.contains("on"));
+        card.dataset.brightness = moved;
+      },
+      onEnd: () => {
+        if (!dragging) return;
+        dragging = false;
+        const level = pendingLevel;
+        pendingLevel = null;
+        if (level === null) return;
+        sendBrightness(card.dataset.host, level).catch((err) => {
+          console.error("Brightness set failed:", err);
+        });
+      },
+    });
   });
-
-  wrap.addEventListener("pointerup", async () => {
-    if (!dragging) return;
-    dragging = false;
-    const lv = pendingLevel;
-    pendingLevel = null;
-    if (lv !== null) {
-      try {
-        await sendBrightness(card.dataset.host, lv);
-      } catch (err) {
-        console.error("Brightness set failed:", err);
-      }
-    }
-  });
-
-  wrap.addEventListener("pointercancel", () => { dragging = false; pendingLevel = null; });
 }
 
 async function stepLightBrightness(card, delta) {
@@ -2026,14 +2100,16 @@ function attachThermoDrag(wrap) {
     refreshThermoDial(id);
   }
 
-  wrap.addEventListener("pointerdown", (e) => {
+  onDragStart(wrap, (e) => {
+    const start = dragPoint(e);
+    e.preventDefault();
     dragging = true;
-    wrap.setPointerCapture(e.pointerId);
-    setFromPointer(e.clientX, e.clientY);
+    setFromPointer(start.clientX, start.clientY);
+    trackDrag(e, {
+      onMove: (point) => { if (dragging) setFromPointer(point.clientX, point.clientY); },
+      onEnd: () => { dragging = false; },
+    });
   });
-  wrap.addEventListener("pointermove",  (e) => { if (dragging) setFromPointer(e.clientX, e.clientY); });
-  wrap.addEventListener("pointerup",    () => { dragging = false; });
-  wrap.addEventListener("pointercancel",() => { dragging = false; });
 }
 
 function renderThermostats(payload) {
@@ -3779,66 +3855,6 @@ function areaCardHtml(area) {
       </div>
       <div class="area-card-chips">${chips.join("")}</div>
     </div>`;
-}
-
-/* ── Drag input, with and without Pointer Events ──
-
-   Pointer Events did not reach Safari until 13, so on an iOS 12 iPad none of
-   the pointerdown handlers here ever fired: dragging and resizing a card were
-   not awkward there, they were inert. Touch events cover those browsers, and
-   mouse events cover any desktop browser in the same position.
-
-   Touch also needs preventDefault on every move, or the page scrolls out from
-   under the gesture - and that needs a listener registered as non-passive. */
-const HAS_POINTER_EVENTS = typeof window.PointerEvent === "function";
-
-function dragPoint(event) {
-  const touch = event.touches && event.touches[0];
-  return touch || event;
-}
-
-let lastTouchAt = 0;
-
-function onDragStart(target, handler) {
-  if (!target) return;
-  if (HAS_POINTER_EVENTS) {
-    target.addEventListener("pointerdown", handler);
-    return;
-  }
-  target.addEventListener("touchstart", (event) => {
-    lastTouchAt = Date.now();
-    handler(event);
-  }, { passive: false });
-  // iOS replays a touch as mousedown/mouseup a moment later. Letting that
-  // through starts a second drag on top of the one just finished, which then
-  // moves the card on the next unrelated gesture.
-  target.addEventListener("mousedown", (event) => {
-    if (Date.now() - lastTouchAt < 700) return;
-    handler(event);
-  });
-}
-
-function trackDrag(startEvent, { onMove, onEnd }) {
-  const isTouch = startEvent.type === "touchstart";
-  const moveName = HAS_POINTER_EVENTS ? "pointermove" : isTouch ? "touchmove" : "mousemove";
-  const endNames = HAS_POINTER_EVENTS
-    ? ["pointerup", "pointercancel"]
-    : isTouch
-    ? ["touchend", "touchcancel"]
-    : ["mouseup"];
-
-  const move = (event) => {
-    if (isTouch) event.preventDefault();
-    onMove(dragPoint(event));
-  };
-  const end = () => {
-    window.removeEventListener(moveName, move);
-    endNames.forEach((name) => window.removeEventListener(name, end));
-    onEnd();
-  };
-
-  window.addEventListener(moveName, move, { passive: false });
-  endNames.forEach((name) => window.addEventListener(name, end));
 }
 
 /* ── Pointer-driven reordering ──
@@ -6416,17 +6432,23 @@ document.addEventListener("click", (event) => {
   }
 });
 
-/* ── Hold-to-talk ── */
-document.addEventListener("pointerdown", (event) => {
+/* ── Hold-to-talk ──
+   Bound for touch as well: without Pointer Events the icon never reacted. */
+const talkStart = (event) => {
   const btn = event.target.closest("button[data-doorbell-talk]");
   if (!btn) return;
   btn.querySelector(".live-ctrl-icon")?.classList.add("talking");
-});
-document.addEventListener("pointerup", (event) => {
+};
+const talkEnd = (event) => {
   const btn = event.target.closest("button[data-doorbell-talk]");
   if (!btn) return;
   btn.querySelector(".live-ctrl-icon")?.classList.remove("talking");
-});
+};
+document.addEventListener("pointerdown", talkStart);
+document.addEventListener("touchstart", talkStart, { passive: true });
+document.addEventListener("pointerup", talkEnd);
+document.addEventListener("touchend", talkEnd);
+document.addEventListener("touchcancel", talkEnd);
 document.addEventListener("pointerleave", (event) => {
   const btn = event.target.closest("button[data-doorbell-talk]");
   if (!btn) return;
