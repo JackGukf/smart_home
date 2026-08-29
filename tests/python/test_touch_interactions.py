@@ -206,3 +206,32 @@ def test_synthetic_mouse_events_after_a_touch_are_ignored() -> None:
     # over the one just finished and move the card on the next gesture.
     assert "lastTouchAt" in fn
     assert re.search(r"Date\.now\(\) - lastTouchAt < \d+", fn)
+
+
+def test_fullscreen_overlay_sizes_the_frame_without_a_ratio() -> None:
+    """A frame with no height makes its height:100% media zero too.
+
+    Everywhere else the camera frame is sized by aspect-ratio, or by the
+    percentage-padding stand-in used where that is unsupported. Neither is
+    dependable for a flex item in an old WebKit, and the result is a black
+    overlay with the picture present and one pixel tall.
+    """
+    css = STYLES.read_text(encoding="utf-8")
+
+    block = re.search(
+        r"\.home-camera-expanded \.home-camera-frame \{(.*?)\}", css, re.S
+    )
+    assert block, "the expanded frame has no rule of its own"
+    body = block.group(1)
+
+    height = re.search(r"height:\s*([0-9.]+)(vh|px)", body)
+    assert height, "the expanded frame needs an explicit height, not an inherited ratio"
+
+    # The stand-in would otherwise stack its own height on top of this one.
+    assert re.search(
+        r"\.home-camera-expanded \.home-camera-frame::before \{[^}]*display: none", css, re.S
+    )
+
+    # The media fills the frame, so a zero-height frame hides it entirely.
+    media = re.search(r"\.home-camera-frame \.camera-media,.*?\{(.*?)\}", css, re.S).group(1)
+    assert "height: 100%" in media
