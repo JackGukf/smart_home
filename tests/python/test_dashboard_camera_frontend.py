@@ -23,11 +23,11 @@ def test_camera_cards_support_drag_saved_order() -> None:
     assert 'const CAMERA_ORDER_KEY = "camera_order_v1";' in source
     assert 'function applyCameraOrder(cameras)' in source
     assert 'function saveCameraOrderFromDom()' in source
-    assert 'draggable="true"' in source
     assert 'data-camera-drag' in source
-    assert 'dragstart' in source
-    assert 'drop' in source
-    assert 'saveCameraOrderFromDom(); // dragend persistence' in source
+    # Reordering moved from HTML5 drag-and-drop to pointer events, which iOS
+    # Safari actually implements; the order is persisted from the drop.
+    assert 'enablePointerReorder({' in source
+    assert 'saveCameraOrderFromDom();' in source
 
 def test_camera_drag_handle_does_not_overlap_edit_button() -> None:
     source = APP_JS.read_text(encoding="utf-8")

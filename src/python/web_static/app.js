@@ -2652,7 +2652,7 @@ function cameraDragHandle(cameraId) {
 function cameraCardHtml(camera) {
   const cameraId = cameraIdFor(camera);
   return `
-    <article class="camera-card" data-camera-id="${escapeHtml(cameraId)}" draggable="true">
+    <article class="camera-card" data-camera-id="${escapeHtml(cameraId)}">
       <div class="camera-frame">${cameraMedia(camera)}${cameraBatteryBadge(camera)}</div>
       <div class="camera-info">
         <div class="camera-copy">
@@ -3749,10 +3749,12 @@ function areaCardHtml(area) {
   const count = area.devices.length;
   return `
     <div class="area-card ${lit ? "lit" : ""}" data-area-id="${escapeHtml(area.id)}" role="button" tabindex="0"
-         draggable="true" aria-label="Open ${escapeHtml(area.name)}">
+         aria-label="Open ${escapeHtml(area.name)}">
       <div class="area-card-glow"></div>
       <div class="area-card-top">
         <span class="area-card-icon"><i class="ti ti-${escapeHtml(area.icon)}"></i></span>
+        <button class="area-card-grip" data-area-drag="${escapeHtml(area.id)}" type="button"
+          title="Drag to rearrange" aria-label="Drag to rearrange ${escapeHtml(area.name)}"><i class="ti ti-grip-vertical" aria-hidden="true"></i></button>
         ${switches.length ? `
           <button class="area-lights-toggle ${lit ? "on" : ""}" data-area-lights="${escapeHtml(area.id)}"
             type="button" title="${lit ? "Turn off" : "Turn on"} all lights in ${escapeHtml(area.name)}">
@@ -3765,6 +3767,64 @@ function areaCardHtml(area) {
       </div>
       <div class="area-card-chips">${chips.join("")}</div>
     </div>`;
+}
+
+/* ── Pointer-driven reordering ──
+
+   Reordering was built on HTML5 drag-and-drop, which iOS Safari does not
+   implement at all: on an iPad the cards and camera tiles simply would not
+   move, no matter how carefully you dragged. Pointer events cover mouse,
+   touch and pencil through one code path, so this replaces drag-and-drop
+   rather than sitting alongside it.
+
+   The drag starts from a handle rather than the whole card, because
+   suppressing touch scrolling (touch-action: none) is only acceptable on a
+   small part of a card - otherwise a card big enough to fill the screen
+   becomes a place the page cannot be scrolled. */
+function enablePointerReorder({ container, itemSelector, handleSelector, onReorder }) {
+  if (!container) return;
+
+  container.addEventListener("pointerdown", (event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    const handle = event.target.closest(handleSelector);
+    const item = handle && handle.closest(itemSelector);
+    if (!item || !container.contains(item)) return;
+
+    event.preventDefault();
+    try { handle.setPointerCapture(event.pointerId); } catch {}
+    item.classList.add("dragging");
+
+    const onMove = (move) => {
+      // elementFromPoint rather than the event target: the pointer is captured
+      // by the handle, so every move reports the handle as its target.
+      const under = document.elementFromPoint(move.clientX, move.clientY);
+      const over = under && under.closest(itemSelector);
+      if (!over || over === item || !container.contains(over)) return;
+
+      const rect = over.getBoundingClientRect();
+      const itemRect = item.getBoundingClientRect();
+      // Compare along whichever axis actually separates the two cards, so the
+      // same code works for a multi-column grid and a single-column stack.
+      const sameRow =
+        Math.abs(rect.top - itemRect.top) < Math.min(rect.height, itemRect.height) / 2;
+      const before = sameRow
+        ? move.clientX < rect.left + rect.width / 2
+        : move.clientY < rect.top + rect.height / 2;
+      container.insertBefore(item, before ? over : over.nextSibling);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      item.classList.remove("dragging");
+      onReorder(container, item);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  });
 }
 
 /* ── Re-rendering without losing the reader's place ──
@@ -4100,12 +4160,95 @@ function renderHomeCamera() {
     renderHtml(body, `<div class="home-empty">No cameras found</div>`);
     return;
   }
+  const cameraId = cameraIdFor(camera);
+  const live = activeCameraIds.has(cameraId);
   renderHtml(body, `
-    <div class="home-camera-frame" data-goto-view="cameras" role="button" tabindex="0"
-         title="Open the Cameras view">
+    <div class="home-camera-frame" data-home-camera-toggle="${escapeHtml(cameraId)}" role="button" tabindex="0"
+         title="${live ? "Tap to stop the live view" : "Tap to start the live view"}">
       ${cameraMedia(camera)}${cameraBatteryBadge(camera)}
+      ${live ? "" : `<span class="home-camera-play" aria-hidden="true"><i class="ti ti-player-play-filled"></i></span>`}
     </div>
-    <div class="home-camera-meta">${escapeHtml(camera.name)}${camera.room ? ` · ${escapeHtml(camera.room)}` : ""}</div>`);
+    <div class="home-camera-meta">
+      <span class="home-camera-name">${escapeHtml(camera.name)}${camera.room ? ` · ${escapeHtml(camera.room)}` : ""}</span>
+      <span class="home-camera-controls">
+        <button class="home-camera-btn" data-home-camera-toggle="${escapeHtml(cameraId)}" type="button"
+          title="${live ? "Stop the live view" : "Start the live view"}"
+          aria-label="${live ? "Stop the live view" : "Start the live view"}">
+          <i class="ti ${live ? "ti-player-stop-filled" : "ti-player-play-filled"}" aria-hidden="true"></i>
+        </button>
+        <button class="home-camera-btn" data-home-camera-fullscreen="${escapeHtml(cameraId)}" type="button"
+          title="Full screen" aria-label="View full screen">
+          <i class="ti ti-maximize" aria-hidden="true"></i>
+        </button>
+      </span>
+    </div>`);
+}
+
+
+/* ── Home camera: watch in place ──
+
+   Tapping the card used to jump to the Cameras view. It now starts and stops
+   the stream where it sits, with explicit controls, because the reason to tap
+   a camera is almost always to look at it rather than to go somewhere. */
+document.addEventListener("click", (event) => {
+  const trigger = event.target.closest("[data-home-camera-toggle]");
+  if (!trigger) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const body = document.querySelector("#homeCameraBody");
+  if (body && body.classList.contains("home-camera-expanded")) {
+    // Leaving full screen should not also stop the stream.
+    body.classList.remove("home-camera-expanded");
+    return;
+  }
+
+  const cameraId = trigger.dataset.homeCameraToggle;
+  if (activeCameraIds.has(cameraId)) {
+    activeCameraIds.delete(cameraId);
+  } else {
+    activeCameraIds.add(cameraId);
+  }
+  renderHomeCamera();
+
+  const camera = latestCameraById.get(cameraId);
+  if (camera && activeCameraIds.has(cameraId) && camera.battery_powered) {
+    captureSnapshotOnce(camera).catch(() => {});
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-home-camera-fullscreen]");
+  if (!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  // A still frame is a poor thing to go full screen with, so start it first.
+  const cameraId = button.dataset.homeCameraFullscreen;
+  if (!activeCameraIds.has(cameraId)) {
+    activeCameraIds.add(cameraId);
+    renderHomeCamera();
+  }
+  expandHomeCamera();
+});
+
+/* iPadOS honours the webkit-prefixed call on an arbitrary element. Where
+   neither form exists - iPhone Safari allows full screen only for a <video> -
+   fall back to a fixed overlay, which needs no API at all. The class goes on
+   the container rather than the frame because a refresh replaces the frame. */
+function expandHomeCamera() {
+  const body = document.querySelector("#homeCameraBody");
+  const frame = body && body.querySelector(".home-camera-frame");
+  if (!frame) return;
+
+  const request = frame.requestFullscreen || frame.webkitRequestFullscreen;
+  if (request) {
+    try {
+      request.call(frame);
+      return;
+    } catch {}
+  }
+  body.classList.add("home-camera-expanded");
 }
 
 /* ── Bluetooth: music card on Home, scan/connect modal under Discovery ── */
@@ -4992,37 +5135,15 @@ document.addEventListener("change", async (event) => {
   /* Area tile drag-to-reorder inside the Areas card */
   const areaGridEl = document.querySelector("#areaGrid");
   let draggedAreaCard = null;
-  areaGridEl?.addEventListener("dragstart", (event) => {
-    const card = event.target.closest(".area-card[data-area-id]");
-    if (!card) return;
-    event.stopPropagation();
-    draggedAreaCard = card;
-    card.classList.add("dragging");
-    event.dataTransfer.effectAllowed = "move";
-    try { event.dataTransfer.setData("text/plain", card.dataset.areaId); } catch {}
-  });
-  areaGridEl?.addEventListener("dragover", (event) => {
-    if (!draggedAreaCard) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = "move";
-    const target = event.target.closest(".area-card[data-area-id]");
-    if (!target || target === draggedAreaCard) return;
-    const rect = target.getBoundingClientRect();
-    const before = (event.clientX - rect.left) / rect.width < 0.5;
-    areaGridEl.insertBefore(draggedAreaCard, before ? target : target.nextSibling);
-  });
-  areaGridEl?.addEventListener("drop", (event) => {
-    if (draggedAreaCard) { event.preventDefault(); event.stopPropagation(); }
-  });
-  areaGridEl?.addEventListener("dragend", (event) => {
-    if (!draggedAreaCard) return;
-    event.stopPropagation();
-    draggedAreaCard.classList.remove("dragging");
-    draggedAreaCard = null;
-    const order = [...areaGridEl.querySelectorAll(".area-card[data-area-id]")].map((c) => c.dataset.areaId);
-    try { localStorage.setItem(HOME_AREA_ORDER_KEY, JSON.stringify(order)); } catch {}
-    logActivity("Areas rearranged");
+  enablePointerReorder({
+    container: areaGridEl,
+    itemSelector: ".area-card[data-area-id]",
+    handleSelector: "[data-area-drag]",
+    onReorder: (grid) => {
+      const order = [...grid.querySelectorAll(".area-card[data-area-id]")].map((c) => c.dataset.areaId);
+      try { localStorage.setItem(HOME_AREA_ORDER_KEY, JSON.stringify(order)); } catch {}
+      logActivity("Areas rearranged");
+    },
   });
 
   document.querySelector("#homeSensorGear")?.addEventListener("click", () => {
@@ -5486,37 +5607,14 @@ document.addEventListener("drop", (event) => {
   logActivity(grid.id === "plugGrid" ? "Plug order saved" : "Light order saved");
 });
 /* ── Camera drag ordering ── */
-document.addEventListener("dragstart", (event) => {
-  const card = event.target.closest(".camera-card[data-camera-id]");
-  if (!card) return;
-  event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("text/plain", card.dataset.cameraId || "");
-  card.classList.add("dragging");
-});
-
-document.addEventListener("dragend", (event) => {
-  const card = event.target.closest(".camera-card[data-camera-id]");
-  if (!card) return;
-  card.classList.remove("dragging");
-  saveCameraOrderFromDom(); // dragend persistence
-});
-
-document.addEventListener("dragover", (event) => {
-  const target = event.target.closest(".camera-card[data-camera-id]");
-  const dragging = cameraGrid?.querySelector(".camera-card.dragging");
-  if (!target || !dragging || target === dragging) return;
-  event.preventDefault();
-  const rect = target.getBoundingClientRect();
-  const insertAfter = event.clientY > rect.top + rect.height / 2;
-  cameraGrid.insertBefore(dragging, insertAfter ? target.nextSibling : target);
-});
-
-document.addEventListener("drop", (event) => {
-  const target = event.target.closest(".camera-card[data-camera-id]");
-  if (!target) return;
-  event.preventDefault();
-  saveCameraOrderFromDom();
-  logActivity("Camera order saved");
+enablePointerReorder({
+  container: cameraGrid,
+  itemSelector: ".camera-card[data-camera-id]",
+  handleSelector: "[data-camera-drag]",
+  onReorder: () => {
+    saveCameraOrderFromDom();
+    logActivity("Camera order saved");
+  },
 });
 
 /* ── Home card tile drag ordering (custom-card lights + temp sensors) ──

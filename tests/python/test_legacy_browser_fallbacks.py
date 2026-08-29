@@ -53,7 +53,11 @@ def test_every_aspect_ratio_rule_has_a_fallback() -> None:
 def test_fallbacks_are_gated_so_modern_browsers_are_untouched() -> None:
     css = STYLES.read_text(encoding="utf-8")
 
-    fallbacks = css[css.index("Fallbacks for browsers without aspect-ratio"):]
+    # Bounded at the next section banner: more CSS has been appended since,
+    # and an unbounded slice would police unrelated rules.
+    start = css.index("Fallbacks for browsers without aspect-ratio")
+    end = css.find("/* \u2500\u2500", start)
+    fallbacks = css[start : end if end != -1 else len(css)]
     rules = re.findall(r"^(\S[^{]*)\{", fallbacks, flags=re.M)
     for rule in rules:
         assert "no-aspect-ratio" in rule, (

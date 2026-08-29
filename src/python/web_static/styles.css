@@ -3700,6 +3700,7 @@ aside {
   font-size: 14px;
   cursor: grab;
   touch-action: none;
+  position: relative;
 }
 
 .home-card-grip:hover { color: var(--t-text); }
@@ -4424,9 +4425,12 @@ aside {
   text-overflow: ellipsis;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 739px) {
   /* Grid placement doesn't fit small screens: stack cards in one column.
-     grid-column/grid-row inline styles are inert inside a flex container. */
+     grid-column/grid-row inline styles are inert inside a flex container.
+     homeGridMode() keys off this computed display, so stacking here is also
+     what switches card dragging and resizing off. Kept below every tablet -
+     the narrowest iPad mini is 744px - so cards stay arrangeable there. */
   .home-layout { display: flex; flex-direction: column; }
 }
 
@@ -4599,3 +4603,148 @@ html.no-aspect-ratio .area-icon-choice::before {
    stretches - and, crucially, there is a height to centre content within. */
 html.no-aspect-ratio .custom-light-tile { min-height: 72px; }
 html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
+
+
+/* ── Touch-friendly drag handles ──
+
+   A touch device has no hover, so a handle revealed by :hover is invisible on
+   an iPad - the resize corner was there all along, unlit and unfindable. And
+   18px is well under the ~44px a fingertip can reliably hit.
+
+   The visible size stays put; only the touch target grows, via a transparent
+   pseudo-element centred on the handle. */
+@media (hover: none) {
+  .home-card-resize { opacity: 1; }
+
+  .home-card-grip::after,
+  .home-card-resize::after,
+  .camera-drag-handle::after,
+  .area-card-grip::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    margin-top: -22px;
+    margin-left: -22px;
+  }
+}
+
+/* Dragging must not also scroll the page, and a handle is the only part of a
+   card where that trade is worth making. */
+.camera-drag-handle,
+.area-card-grip {
+  touch-action: none;
+  position: relative;
+}
+
+.area-card-grip {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--t-text-dim2, var(--muted));
+  font-size: 14px;
+  cursor: grab;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.area-card-grip:hover { color: var(--t-text, inherit); }
+.area-card-grip:active { cursor: grabbing; }
+
+.camera-card.dragging,
+.area-card.dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+/* ── Home camera card: watch in place ── */
+
+.home-camera-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.home-camera-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-camera-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.home-camera-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--t-card-border, var(--border));
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--t-text-dim, var(--muted));
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.home-camera-btn:hover { color: var(--t-text, inherit); border-color: var(--border-hover); }
+
+/* Fingertip-sized target without changing how big the button looks. */
+@media (hover: none) {
+  .home-camera-btn::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    margin-top: -22px;
+    margin-left: -22px;
+  }
+}
+
+/* Marks a frame showing a still rather than a stream. */
+.home-camera-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin-top: -21px;
+  margin-left: -21px;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 18px;
+  pointer-events: none;
+}
+
+/* Full screen fallback for browsers that refuse it for a non-<video>. */
+.home-camera-expanded {
+  position: fixed;
+  top: 0; right: 0; bottom: 0; left: 0;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  background: #000;
+}
+
+.home-camera-expanded .home-camera-frame { width: 100%; }
+.home-camera-expanded .home-camera-meta { color: #ddd; }
