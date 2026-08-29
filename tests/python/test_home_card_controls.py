@@ -69,16 +69,34 @@ def test_reset_and_visibility_controls_exist() -> None:
     assert "function resetHomeLayout()" in js
 
 
-def test_hiding_a_card_keeps_its_layout() -> None:
+def test_hiding_a_card_frees_its_cell() -> None:
+    """A hidden card must not keep reserving a hole in the grid."""
     js = APP_JS.read_text(encoding="utf-8")
 
-    # Hiding must not clear the stored position, or showing a card again would
-    # dump it at the bottom instead of putting it back.
     apply_fn = js[js.index("function applyHomeCardLayout()") :]
     apply_fn = apply_fn[: apply_fn.index("\n}\n")]
     assert "card.hidden = hidden.has(id)" in apply_fn
     assert "if (card.hidden) continue;" in apply_fn
-    assert "removeItem(HOME_HIDDEN_CARDS_KEY)" not in apply_fn
+
+    assert "function releaseHomeCardCell(id)" in js
+    release = re.search(r"function releaseHomeCardCell\(.*?\n\}", js, re.S).group(0)
+    assert "delete layout[id]" in release
+
+
+def test_showing_a_card_again_puts_it_at_the_bottom() -> None:
+    js = APP_JS.read_text(encoding="utf-8")
+    fn = re.search(r"function placeHomeCardAtBottom\(.*?\n\}", js, re.S).group(0)
+
+    # A card that is still hidden reserves nothing, or the returning card
+    # would be pushed below space no one is using.
+    assert "!hidden.has(key)" in fn
+    assert "cell.y + cell.h" in fn
+
+    # Show all reveals them one at a time; revealing them together would put
+    # every card on the same row.
+    show_all = js[js.index('#homeCardsShowAll') :]
+    show_all = show_all[: show_all.index("});")]
+    assert "hidden.delete(id)" in show_all and "saveHiddenHomeCards(hidden)" in show_all
 
 
 def test_reset_clears_both_layout_and_hidden_cards() -> None:

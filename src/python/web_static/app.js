@@ -4746,6 +4746,34 @@ function saveHiddenHomeCards(hidden) {
   try { localStorage.setItem(HOME_HIDDEN_CARDS_KEY, JSON.stringify([...hidden])); } catch {}
 }
 
+/* Hiding frees the card's cell; showing puts the card back at the bottom.
+
+   Keeping the stored cell would leave a hole in the grid that nothing could
+   reclaim without dragging every other card around it, so the slot is given
+   up on hide. Coming back at the bottom is the same treatment a newly created
+   card gets, and it is somewhere the card can be seen and then moved. */
+function releaseHomeCardCell(id) {
+  const layout = loadHomeLayout();
+  delete layout[id];
+  saveHomeLayout(layout);
+}
+
+function placeHomeCardAtBottom(id) {
+  const layout = loadHomeLayout();
+  const hidden = loadHiddenHomeCards();
+  const size = layout[id] || DEFAULT_HOME_LAYOUT[id] || { w: 4, h: 6 };
+
+  // Only cards actually on screen reserve space; a hidden one holds nothing.
+  const occupied = [...new Set([...Object.keys(DEFAULT_HOME_LAYOUT), ...Object.keys(layout)])]
+    .filter((key) => key !== id && !hidden.has(key))
+    .map((key) => layout[key] || DEFAULT_HOME_LAYOUT[key])
+    .filter(Boolean);
+
+  const bottom = occupied.reduce((max, cell) => Math.max(max, cell.y + cell.h), 1);
+  layout[id] = { x: 1, y: bottom, w: size.w, h: size.h };
+  saveHomeLayout(layout);
+}
+
 function homeCardLabel(card) {
   const id = card.dataset.homeCard || "";
   if (HOME_CARD_LABELS[id]) return HOME_CARD_LABELS[id];
@@ -4796,7 +4824,14 @@ function resetHomeLayout() {
   });
 
   document.querySelector("#homeCardsShowAll")?.addEventListener("click", () => {
-    saveHiddenHomeCards(new Set());
+    // Unhide one at a time: placeHomeCardAtBottom ignores cards still marked
+    // hidden, so revealing them all first would stack them on the same row.
+    const hidden = loadHiddenHomeCards();
+    for (const id of [...hidden]) {
+      hidden.delete(id);
+      saveHiddenHomeCards(hidden);
+      placeHomeCardAtBottom(id);
+    }
     applyHomeCardLayout();
     renderHomeCardsModal();
     logActivity("All Home cards shown");
@@ -4805,10 +4840,17 @@ function resetHomeLayout() {
   document.addEventListener("change", (event) => {
     const box = event.target.closest("input[data-home-card-visible]");
     if (!box) return;
+    const id = box.dataset.homeCardVisible;
     const hidden = loadHiddenHomeCards();
-    if (box.checked) hidden.delete(box.dataset.homeCardVisible);
-    else hidden.add(box.dataset.homeCardVisible);
-    saveHiddenHomeCards(hidden);
+    if (box.checked) {
+      hidden.delete(id);
+      saveHiddenHomeCards(hidden);
+      placeHomeCardAtBottom(id);
+    } else {
+      hidden.add(id);
+      saveHiddenHomeCards(hidden);
+      releaseHomeCardCell(id);
+    }
     applyHomeCardLayout();
     renderHomeCardsModal();
   });
