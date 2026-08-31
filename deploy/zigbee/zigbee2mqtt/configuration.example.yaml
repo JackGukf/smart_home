@@ -1,0 +1,65 @@
+# Zigbee2MQTT for the Orange Pi 6 Plus.
+#
+# No secrets in this file.  The MQTT credentials and the frontend token come
+# from secret.yaml beside it, which scripts/install-zigbee2mqtt.sh generates and
+# .gitignore excludes.  The Zigbee network key and PAN IDs are generated on
+# first start and written back here by Zigbee2MQTT itself - once that has
+# happened this file contains live network identity, so do not commit it back.
+
+homeassistant:
+  enabled: true
+
+# Off by default.  Turn it on from the web UI only while pairing a device; it
+# closes itself again afterwards.  A permanently open network is how strangers'
+# devices end up on yours.
+permit_join: false
+
+mqtt:
+  base_topic: zigbee2mqtt
+  server: mqtt://127.0.0.1:1883
+  user: '!secret mqtt_user'
+  password: '!secret mqtt_password'
+
+serial:
+  # Inside the container the adapter is always /dev/ttyACM0; the compose file
+  # maps the host's stable /dev/serial/by-id path onto it.
+  port: /dev/ttyACM0
+  # Sonoff ZBDongle-P is a TI CC2652P running Z-Stack.
+  adapter: zstack
+
+advanced:
+  # 15, 20 and 25 sit in the gaps between Wi-Fi channels 1, 6 and 11.  This
+  # board has 2.4GHz Wi-Fi and two Bluetooth controllers of its own, so the
+  # choice matters more here than on a quiet host.
+  #
+  # Changing this after devices are paired means re-pairing every one of them.
+  # Pick it now, not later.
+  channel: 25
+
+  # GENERATE means "make a fresh random one on first start and write it back".
+  # Never commit the generated values.
+  network_key: GENERATE
+  pan_id: GENERATE
+  ext_pan_id: GENERATE
+
+  log_level: info
+
+  # Timestamps on every device report.  Phase 0 showed the trigger path is the
+  # weak link, so being able to see when a sensor last spoke is worth the noise.
+  last_seen: ISO_8601
+
+frontend:
+  enabled: true
+  port: 8080
+  # Exposed on the LAN because pairing means walking around the house with a
+  # phone, which an SSH tunnel makes miserable.  The token is what makes that
+  # acceptable - it is required, not optional.
+  host: 0.0.0.0
+  auth_token: '!secret frontend_token'
+
+# Sensible defaults for every device unless overridden per-device below.
+device_options:
+  # Retain the last state so a broker restart does not blank the dashboard.
+  retain: true
+
+devices: {}

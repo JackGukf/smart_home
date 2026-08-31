@@ -75,3 +75,12 @@ dashboard_areas.json
 
 # SDD scratch: task briefs, reports, review packages (may contain device ids)
 .superpowers/
+
+# Zigbee stack runtime state and credentials.
+# Zigbee2MQTT rewrites configuration.yaml on first start with the generated
+# network key and PAN IDs, so the live file is network identity, not config —
+# same example/local split as configs/devices.example.yaml. coordinator_backup
+# .json holds the network key outright.
+deploy/zigbee/zigbee2mqtt/*
+!deploy/zigbee/zigbee2mqtt/configuration.example.yaml
+deploy/zigbee/mosquitto/passwd

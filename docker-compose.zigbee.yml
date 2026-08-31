@@ -1,0 +1,50 @@
+# Local Zigbee coordinator stack for the Orange Pi 6 Plus.
+#
+# Deliberately a separate file from docker-compose.pi.yml: the dashboard and
+# go2rtc run as systemd *user* units on the board, and bringing this stack up
+# must never start a second copy of either.
+#
+#   cd /home/orangepi/smart_home_AI
+#   docker compose -f docker-compose.zigbee.yml up -d
+#
+# Compose reads ./.env from this directory, which is where ZIGBEE_ADAPTER and
+# the broker credentials live.  Run scripts/install-zigbee2mqtt.sh first; it
+# creates the password and secret files these containers mount.
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./deploy/zigbee/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./deploy/zigbee/mosquitto/passwd:/mosquitto/config/passwd:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    environment:
+      TZ: ${TZ:-America/Vancouver}
+
+  zigbee2mqtt:
+    image: ghcr.io/koenkk/zigbee2mqtt:latest
+    container_name: zigbee2mqtt
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    devices:
+      # Pinned to the stable by-id path, never /dev/ttyUSB0.  USB enumeration
+      # order changes across reboots on a host with several USB devices - the
+      # same failure mode BLE_ADAPTER works around by pinning a MAC instead of
+      # an hciN name.  See .env.example.
+      - ${ZIGBEE_ADAPTER:?run scripts/install-zigbee2mqtt.sh, or set ZIGBEE_ADAPTER in .env to the /dev/serial/by-id path of the dongle}:/dev/ttyACM0
+    volumes:
+      - ./deploy/zigbee/zigbee2mqtt:/app/data
+      # Lets Zigbee2MQTT resolve the adapter's USB metadata for its own checks.
+      - /run/udev:/run/udev:ro
+    environment:
+      TZ: ${TZ:-America/Vancouver}
+
+volumes:
+  mosquitto-data:
+  mosquitto-log:
