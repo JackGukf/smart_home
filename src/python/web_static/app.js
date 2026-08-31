@@ -375,21 +375,42 @@ function dynamicGroupTileData(group) {
 }
 
 /* Devices overview tiles. Renders from arrays already in memory — no fetches. */
+/* Has the user moved this device out of that group in Manage Devices?
+
+   Builtin tiles count from the typed device lists (latestSwitchDevices and
+   friends) rather than from resolved group membership, so without this a device
+   the user reassigned keeps being counted by the tile it left - the panel below
+   shows one fewer than the tile above it. Keys match collectHomeInventory(). */
+function isExcludedFromGroup(key, groupId) {
+  const rules = (latestDeviceGroupOverrides || {})[key];
+  return Boolean(rules && (rules.exclude || []).includes(groupId));
+}
+
 function deviceGroupTileData() {
   const allSwitchLike = [...latestSwitchDevices, ...latestMatterDevices];
-  const lights = allSwitchLike.filter((d) => d.category === "light_switch");
-  const plugs  = allSwitchLike.filter((d) => d.category === "smart_plug");
+  const lights = allSwitchLike.filter(
+    (d) => d.category === "light_switch" && !isExcludedFromGroup(`dev:${d.host}`, "lights")
+  );
+  const plugs = allSwitchLike.filter(
+    (d) => d.category === "smart_plug" && !isExcludedFromGroup(`dev:${d.host}`, "plugs")
+  );
+  const ambient = latestAmbientLights.filter((d) => !isExcludedFromGroup(`ambient:${d.id}`, "ambient"));
+  const humidifiers = latestHumidifiers.filter((d) => !isExcludedFromGroup(`humidifier:${d.id}`, "humidifier"));
+  const thermostats = latestThermostats.filter((d) => !isExcludedFromGroup(`thermo:${d.id}`, "climate"));
+  const envSensors = latestEnvironmentSensors.filter(
+    (d) => !isExcludedFromGroup(`env:${areaSlug(d.name || "environment sensor")}`, "environment")
+  );
   const onOf = (list) => `${list.filter((d) => d.is_on).length} of ${list.length} on`;
   const onlineOf = (list) => `${list.filter((d) => d.online !== false).length} online`;
 
   const builtinTiles = [
     { view: "lights",     label: "Lights",      icon: "ti-bulb",       count: lights.length,                 summary: onOf(lights) },
     { view: "plugs",      label: "Plugs",       icon: "ti-plug",       count: plugs.length,                  summary: onOf(plugs) },
-    { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: latestAmbientLights.length,    summary: onlineOf(latestAmbientLights) },
-    { view: "humidifier", label: "Humidifiers", icon: "ti-droplet",    count: latestHumidifiers.length,      summary: onlineOf(latestHumidifiers) },
-    { view: "environment", label: "Environment", icon: "ti-temperature-celsius", count: sensorGroupCount("environment") + latestEnvironmentSensors.length, summary: environmentSummary() },
+    { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: ambient.length,                summary: onlineOf(ambient) },
+    { view: "humidifier", label: "Humidifiers", icon: "ti-droplet",    count: humidifiers.length,            summary: onlineOf(humidifiers) },
+    { view: "environment", label: "Environment", icon: "ti-temperature-celsius", count: sensorGroupCount("environment") + envSensors.length, summary: environmentSummary() },
     { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(sensorsTileGroups()) },
-    { view: "climate",    label: "Climate",     icon: "ti-temperature",count: latestThermostats.length,      summary: onlineOf(latestThermostats) },
+    { view: "climate",    label: "Climate",     icon: "ti-temperature",count: thermostats.length,            summary: onlineOf(thermostats) },
   ];
 
   const dynamicTiles = resolveDeviceGroups()
@@ -1542,18 +1563,31 @@ function groupHasViewContent(group, mode) {
   return mode === "sensors" && !hasAnyKnownCapability;
 }
 
-function sensorGroupCount(mode) {
+/* The Sensors and Environment tiles are two views of the same sensor groups, so
+   both filter the same universe - and both have to respect a group the user
+   moved a sensor out of. "sensors" is the tuya group's id for historical
+   reasons; the tile is labelled Sensors. */
+function sensorTileGroupId(mode) {
+  return mode === "environment" ? "environment" : "tuya";
+}
+
+function visibleSensorGroups(mode) {
   const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
-  return groupSensorDevices(visible).filter((g) => groupHasViewContent(g, mode)).length;
+  const groupId = sensorTileGroupId(mode);
+  return groupSensorDevices(visible)
+    .filter((g) => groupHasViewContent(g, mode))
+    .filter((g) => !isExcludedFromGroup(`sensor:${areaSlug(g.name)}`, groupId));
+}
+
+function sensorGroupCount(mode) {
+  return visibleSensorGroups(mode).length;
 }
 
 /* Device groups backing the Sensors tile, collapsed to one online flag per
    group so onlineOf() can summarize groups instead of raw readings -- the
    same universe sensorGroupCount("sensors") counts. */
 function sensorsTileGroups() {
-  const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
-  return groupSensorDevices(visible)
-    .filter((g) => groupHasViewContent(g, "sensors"))
+  return visibleSensorGroups("sensors")
     .map((g) => ({ online: g.readings.some((d) => d.online !== false) }));
 }
 
@@ -3581,6 +3615,10 @@ async function toggleManageDevice(checkbox) {
   }
   await loadDeviceGroups();
   renderManageDevicesList();
+  /* The tiles are counted from the overrides just reloaded, so redraw them now
+     rather than waiting on loadDevices() - that refetches every device and the
+     count would otherwise sit stale for the length of a full poll. */
+  renderDevicesOverview();
   loadDevices().catch((error) => console.error(error));
 }
 
@@ -5552,6 +5590,10 @@ function activateView(viewName) {
   if (viewName === "environment") {
     loadEnvironmentSensors().catch((error) => console.error(error));
   }
+  if (viewName === "zigbee") {
+    loadZigbeeFrame().catch((error) => console.error(error));
+    loadZigbeeBridgeCard().catch((error) => console.error(error));
+  }
   if (viewName === "discovery") {
     requestJson("/api/matter/devices")
       .then((data) => {
@@ -6471,6 +6513,148 @@ renderPalettePicker();
   if (on)  on.innerHTML  = buildDimControlDial(70, true,  true);
 })();
 renderAlarmSection();
+
+/* ── Zigbee2MQTT embed ──
+   Zigbee2MQTT is a separate web app on its own port, so the iframe is
+   cross-origin and cannot see the token the browser stored for that origin.
+   Its frontend reads ?token= for exactly this case, and /api/zigbee/frontend
+   supplies it from the board - behind the same dashboard login.
+
+   Only the browser knows which address it reached the board on, so the host
+   comes from window.location rather than from the server. */
+let zigbeeFrameLoaded = false;
+
+function _zigbeeUiUrl(port, token) {
+  const host = window.location.hostname || "192.168.0.234";
+  const base = `http://${host}:${port || 8080}`;
+  return token ? `${base}/?token=${encodeURIComponent(token)}` : base;
+}
+
+function _showZigbeeFallback(message) {
+  const fallback = document.querySelector("#zigbeeFallback");
+  const embed = document.querySelector('[data-view-panel="zigbee"] .home-assistant-embed');
+  if (embed) embed.hidden = true;
+  if (!fallback) return;
+  fallback.hidden = false;
+  fallback.innerHTML = message;
+}
+
+async function loadZigbeeFrame() {
+  const frame = document.querySelector("#zigbeeFrame");
+  const openLink = document.querySelector("#zigbeeOpen");
+  const meta = document.querySelector("#zigbeeMeta");
+  if (!frame || zigbeeFrameLoaded) return;
+
+  let info;
+  try {
+    info = await requestJson("/api/zigbee/frontend");
+  } catch (error) {
+    _showZigbeeFallback("Could not reach the dashboard API to load Zigbee2MQTT.");
+    return;
+  }
+
+  const url = _zigbeeUiUrl(info.port, info.token);
+  if (openLink) openLink.href = url;
+
+  if (!info.available) {
+    /* No token file means the Zigbee stack was never installed on this host.
+       Say that, rather than framing a login prompt nobody can satisfy. */
+    _showZigbeeFallback(
+      "Zigbee2MQTT is not set up on this board yet. Run " +
+      "<code>scripts/install-zigbee2mqtt.sh</code> with the coordinator plugged in."
+    );
+    if (meta) meta.textContent = "Not installed";
+    return;
+  }
+
+  /* Zigbee2MQTT ships an ES-module bundle. On a browser that cannot parse that
+     syntax the iframe renders as a dead shell, exactly like the go2rtc player,
+     so send those browsers to a real tab instead of a blank box. */
+  if (LEGACY_JS) {
+    _showZigbeeFallback(
+      `This browser is too old to run the Zigbee2MQTT interface inline. ` +
+      `<a href="${url}" target="_blank" rel="noreferrer">Open it in a new tab</a> instead.`
+    );
+    if (meta) meta.textContent = "Opens in a tab";
+    return;
+  }
+
+  frame.src = url;
+  zigbeeFrameLoaded = true;
+  if (meta) meta.textContent = "Pair and manage sensors";
+}
+
+/* The coordinator's own controls. Zigbee2MQTT publishes permit join as a switch
+   entity, so left alone it lands on the Devices view among the household lights;
+   the backend keeps it out of there and surfaces it here instead. */
+async function loadZigbeeBridgeCard() {
+  const card = document.querySelector("#zigbeeBridgeCard");
+  const meta = document.querySelector("#zigbeeBridgeMeta");
+  const button = document.querySelector("#zigbeePermitBtn");
+  const label = document.querySelector("#zigbeePermitLabel");
+  if (!card) return;
+
+  let info;
+  try {
+    info = await requestJson("/api/zigbee/bridge");
+  } catch (error) {
+    card.hidden = true;
+    return;
+  }
+  if (!info.available) {
+    card.hidden = true;
+    return;
+  }
+
+  card.hidden = false;
+  const parts = [];
+  if (info.connected === true) parts.push("Connected");
+  else if (info.connected === false) parts.push("Disconnected");
+  if (info.version) parts.push(`Zigbee2MQTT ${info.version}`);
+  if (meta) meta.textContent = parts.join(" · ") || "Zigbee2MQTT";
+
+  if (!info.permit_join_entity) {
+    if (button) button.hidden = true;
+    return;
+  }
+  if (button) {
+    button.hidden = false;
+    button.dataset.entityId = info.permit_join_entity;
+    button.dataset.on = info.permit_join === true ? "1" : "0";
+    button.classList.toggle("is-open", info.permit_join === true);
+  }
+  /* Pairing is the whole reason to open this view, so the button says what will
+     happen next rather than naming the underlying entity's state. */
+  if (label) label.textContent = info.permit_join === true ? "Stop pairing" : "Permit join";
+}
+
+document.querySelector("#zigbeePermitBtn")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const entityId = button.dataset.entityId;
+  if (!entityId) return;
+  const turningOn = button.dataset.on !== "1";
+  button.disabled = true;
+  try {
+    await requestJson(
+      `/api/home-assistant/entities/${encodeURIComponent(entityId)}/commands/${turningOn ? "on" : "off"}`,
+      { method: "POST" }
+    );
+    logActivity(turningOn ? "Zigbee network open for pairing" : "Zigbee pairing closed");
+    /* Zigbee2MQTT closes the window on its own after a couple of minutes, so the
+       card is re-read rather than assumed to match what we just sent. */
+    await loadZigbeeBridgeCard();
+  } catch (error) {
+    logActivity("Could not change Zigbee permit join", "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/* The Discovery panel's button is a shortcut to the same view, not a second
+   way of reaching Zigbee2MQTT. */
+document.querySelector("#openZigbeeUI")?.addEventListener("click", () => {
+  activateView("zigbee");
+});
 
 function _updateMatterServerStatus(online) {
   const badge = document.querySelector("#matterServerStatus");

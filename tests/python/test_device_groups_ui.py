@@ -1167,6 +1167,7 @@ globalThis.sensorsTileGroups = () => [];
 globalThis.environmentSummary = () => 'No readings';
 
 eval(constOf('GROUP_COLOR_VARS') + constOf('GROUP_ICON_PATTERN') + constOf('BUILTIN_TILE_VIEWS')
+   + pick('isExcludedFromGroup')
    + pick('dynamicGroupTileData') + pick('deviceGroupTileData'));
 
 const tiles = deviceGroupTileData();

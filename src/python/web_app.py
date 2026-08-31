@@ -51,6 +51,12 @@ DEFAULT_DISCOVERY_PATH = PROJECT_ROOT / "tplink_switches.json"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "devices.local.yaml"
 DEFAULT_HA_KNOWN_ENTITIES_PATH = PROJECT_ROOT / "home_assistant_known_entities.json"
 DEFAULT_AREAS_PATH = PROJECT_ROOT / "dashboard_areas.json"
+# Written by scripts/install-zigbee2mqtt.sh, git-ignored. Read only to hand the
+# dashboard's own iframe a frontend token; see the /api/zigbee/frontend route.
+DEFAULT_ZIGBEE_SECRET_PATH = PROJECT_ROOT / "deploy" / "zigbee" / "zigbee2mqtt" / "secret.yaml"
+# Zigbee2MQTT's own web app. Not configurable in configuration.example.yaml
+# either, so a constant rather than a setting.
+ZIGBEE_FRONTEND_PORT = 8080
 # Mirrors the areas defined in Home Assistant; seeded when no areas file exists yet.
 DEFAULT_AREAS = [
     {"id": "living-room", "name": "Living Room", "icon": "sofa"},
@@ -373,6 +379,7 @@ def create_app(
     check_camera_ports: bool = True,
     areas_path: Path = DEFAULT_AREAS_PATH,
     device_groups_path: Path = DEFAULT_DEVICE_GROUPS_PATH,
+    zigbee_secret_path: Path = DEFAULT_ZIGBEE_SECRET_PATH,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
     app.state.discovery_path = discovery_path
@@ -381,6 +388,7 @@ def create_app(
     app.state.check_camera_ports = check_camera_ports
     app.state.areas_path = areas_path
     app.state.device_groups_path = device_groups_path
+    app.state.zigbee_secret_path = zigbee_secret_path
     # Last known device list, served instantly while a refresh runs behind it.
     app.state.device_cache = {"cards": None, "at": 0.0, "task": None}
     # Consecutive status failures per switch host, used to retire dead sockets
@@ -950,6 +958,31 @@ def create_app(
         _patch_device_cache(app, switch.host, state)
         return asdict(state)
 
+    @app.get("/api/zigbee/frontend")
+    async def zigbee_frontend() -> dict[str, Any]:
+        """Hand the dashboard what it needs to embed the Zigbee2MQTT web app.
+
+        Zigbee2MQTT runs on its own port, so its UI is a cross-origin iframe and
+        cannot reach the token the browser stored for that origin.  Its frontend
+        accepts ?token= for exactly this case, so the token is returned here
+        rather than baked into index.html - this route sits behind the same
+        dashboard login as everything else.
+
+        The port is returned instead of a whole URL because only the browser
+        knows which address it reached the board on.
+        """
+        token = _zigbee_frontend_token(app.state.zigbee_secret_path)
+        return {"available": token is not None, "port": ZIGBEE_FRONTEND_PORT, "token": token}
+
+    @app.get("/api/zigbee/bridge")
+    async def zigbee_bridge() -> dict[str, Any]:
+        """State of the Zigbee coordinator itself, for the card on the Zigbee view.
+
+        These are the entities deliberately kept out of the device grid by
+        _is_zigbee_bridge_entity; this is where they surface instead.
+        """
+        return _zigbee_bridge_payload(app.state.config_path)
+
     @app.get("/api/matter/devices")
     async def _matter_devices_list() -> dict:
         try:
@@ -1438,6 +1471,11 @@ def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
     cards = []
     for entry in entries:
         entity_id = entry.get("entity_id")
+        # Bridge controls belong to the Zigbee view, not the device grid. Filter
+        # here as well as at confirmation time, because an entry added before
+        # this existed is still sitting in devices.local.yaml.
+        if _is_zigbee_bridge_entity(entity_id):
+            continue
         state_entity = states_by_id.get(entity_id)
         attributes: dict[str, Any] = (state_entity or {}).get("attributes") or {}
         cards.append(
@@ -3613,6 +3651,23 @@ def _default_areas_doc() -> dict[str, Any]:
     return {"areas": [dict(a) for a in DEFAULT_AREAS], "assignments": {}}
 
 
+def _zigbee_frontend_token(path: Path) -> str | None:
+    """Read the Zigbee2MQTT frontend token, or None if the stack is not set up.
+
+    A missing file is the normal state on a machine where the Zigbee stack was
+    never installed, so it is not an error - the dashboard just shows the panel
+    as unavailable rather than framing a login prompt nobody can satisfy.
+    """
+    if not path.exists():
+        return None
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    token = payload.get("frontend_token") if isinstance(payload, dict) else None
+    return str(token) if token else None
+
+
 def _load_areas(path: Path) -> dict[str, Any]:
     if not path.exists():
         return _default_areas_doc()
@@ -3755,8 +3810,72 @@ def _mark_ha_entity_known(path: Path, entity_id: str) -> None:
     _save_known_ha_entities(path, known)
 
 
+def _zigbee_bridge_payload(path: Path) -> dict[str, Any]:
+    """Collect the coordinator's own entities from Home Assistant.
+
+    Degrades to available: False whenever Home Assistant is unreachable or the
+    MQTT integration has not been added, so the Zigbee view can say so instead of
+    rendering an empty card.
+    """
+    empty: dict[str, Any] = {"available": False, "permit_join": None, "connected": None,
+                             "version": None, "permit_join_entity": None}
+    config = _load_home_assistant_config(path)
+    token = os.getenv(config.token_env)
+    if not token:
+        return empty
+    try:
+        states = _home_assistant_get(config, token, "/api/states")
+    except Exception:
+        return empty
+
+    bridge = {
+        str(entity.get("entity_id")): entity
+        for entity in states
+        if _is_zigbee_bridge_entity(entity.get("entity_id"))
+    }
+    if not bridge:
+        return empty
+
+    def _state(entity_id: str) -> Any:
+        entity = bridge.get(entity_id)
+        return entity.get("state") if entity else None
+
+    permit = _state("switch.zigbee2mqtt_bridge_permit_join")
+    connection = _state("binary_sensor.zigbee2mqtt_bridge_connection_state")
+    return {
+        "available": True,
+        # None rather than False when the entity is missing, so the card can tell
+        # "closed" apart from "no such control".
+        "permit_join": {"on": True, "off": False}.get(str(permit)) if permit is not None else None,
+        "connected": {"on": True, "off": False}.get(str(connection)) if connection is not None else None,
+        "version": _state("sensor.zigbee2mqtt_bridge_version"),
+        "permit_join_entity": "switch.zigbee2mqtt_bridge_permit_join"
+        if "switch.zigbee2mqtt_bridge_permit_join" in bridge
+        else None,
+    }
+
+
+def _is_zigbee_bridge_entity(entity_id: str | None) -> bool:
+    """Is this one of Zigbee2MQTT's own bridge controls rather than a device?
+
+    Zigbee2MQTT publishes controls for the coordinator itself - permit join, log
+    level, restart, connection state. Home Assistant marks them
+    entity_category: config/diagnostic, but that lives in the entity registry and
+    never appears in /api/states, so the entity_id is what we have to go on.
+
+    They matter because `switch.zigbee2mqtt_bridge_permit_join` is a switch
+    domain entity, so without this it is offered as a new device and then renders
+    as a light switch on the Devices view.
+    """
+    return "zigbee2mqtt_bridge" in str(entity_id or "").lower()
+
+
 def _mark_new_light_switch_entities(entities: list[dict[str, Any]], known_ids: set[str]) -> None:
     for entity in entities:
+        # Never offer the coordinator's own controls as a household device.
+        if _is_zigbee_bridge_entity(entity.get("entity_id")):
+            entity["is_new"] = False
+            continue
         if entity.get("domain") in {"light", "switch"}:
             entity["is_new"] = entity.get("entity_id") not in known_ids
 
