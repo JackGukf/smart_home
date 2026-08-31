@@ -8,6 +8,12 @@
 
 homeassistant:
   enabled: true
+  # Without this a button publishes {"action":"single"} to MQTT but Home
+  # Assistant gets no entity to bind an automation to - only its battery level
+  # shows up, which looks like the button simply does not work.
+  # Still flagged experimental upstream; it creates one event entity per device
+  # carrying every gesture (single/double/hold) as an event_type.
+  experimental_event_entities: true
 
 # Off by default.  Turn it on from the web UI only while pairing a device; it
 # closes itself again afterwards.  A permanently open network is how strangers'
