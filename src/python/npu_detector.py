@@ -171,6 +171,7 @@ class Config:
     base_topic: str = "smarthome/vision"
     discovery: bool = True
     discovery_prefix: str = "homeassistant"
+    entity_category: str | None = "diagnostic"
 
     @property
     def availability_topic(self) -> str:
@@ -195,6 +196,7 @@ class Config:
             base_topic=os.getenv("NPU_BASE_TOPIC", "smarthome/vision"),
             discovery=os.getenv("NPU_DISCOVERY", "1").lower() not in {"0", "false", "no"},
             discovery_prefix=os.getenv("NPU_DISCOVERY_PREFIX", "homeassistant"),
+            entity_category=os.getenv("NPU_ENTITY_CATEGORY", "diagnostic") or None,
         )
 
 
@@ -258,6 +260,7 @@ def discovery_messages(
     base_topic: str,
     availability_topic: str,
     discovery_prefix: str = "homeassistant",
+    entity_category: str | None = "diagnostic",
 ) -> list[tuple[str, str]]:
     """Home Assistant MQTT discovery configs for one camera.
 
@@ -290,6 +293,19 @@ def discovery_messages(
             "origin": origin,
             "state_topic": state_topic,
         }
+        # "diagnostic" keeps these off Home Assistant's auto-generated dashboard
+        # and tucks them under the device instead. Automations and templates can
+        # still use them normally - the category only affects presentation.
+        # Set NPU_ENTITY_CATEGORY="" to put them back on the main dashboard.
+        #
+        # Changing this later does NOT take effect by republishing: Home
+        # Assistant applies entity_category when it first registers an entity
+        # and a later discovery update leaves the registry entry alone. To move
+        # existing entities, retract each config topic (publish an empty
+        # retained payload to it), let HA drop them, then restart this service
+        # to re-register. The unique_ids are stable, so entity_ids survive.
+        if entity_category:
+            common["entity_category"] = entity_category
         messages.append((
             f"{discovery_prefix}/binary_sensor/{node}/{slug}/config",
             json.dumps({
@@ -386,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
             for camera in cfg.cameras:
                 for topic, payload in discovery_messages(
                     camera, cfg.classes, cfg.base_topic, cfg.availability_topic,
-                    cfg.discovery_prefix,
+                    cfg.discovery_prefix, cfg.entity_category,
                 ):
                     # Retained: Home Assistant reads these when it starts, which
                     # is usually long after this service did.

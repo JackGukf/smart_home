@@ -306,3 +306,33 @@ def test_discovery_can_be_turned_off(monkeypatch) -> None:
     assert Config.from_env().discovery is False
     monkeypatch.setenv("NPU_DISCOVERY", "1")
     assert Config.from_env().discovery is True
+
+
+def test_entities_are_diagnostic_by_default() -> None:
+    """Keeps them off Home Assistant's auto-generated dashboard.
+
+    The category is presentation only - automations and templates still read
+    these entities normally.
+    """
+    for payload in _discovery(classes=("person",)).values():
+        assert json.loads(payload)["entity_category"] == "diagnostic"
+
+
+def test_entity_category_can_be_cleared(monkeypatch) -> None:
+    """An empty NPU_ENTITY_CATEGORY puts them back on the main dashboard."""
+    from src.python.npu_detector import discovery_messages
+
+    monkeypatch.setenv("NPU_ENTITY_CATEGORY", "")
+    assert Config.from_env().entity_category is None
+
+    msgs = dict(discovery_messages(
+        "cam", ("person",), "smarthome/vision", "smarthome/vision/status",
+        "homeassistant", None,
+    ))
+    for payload in msgs.values():
+        assert "entity_category" not in json.loads(payload)
+
+
+def test_entity_category_default_survives_an_unset_environment(monkeypatch) -> None:
+    monkeypatch.delenv("NPU_ENTITY_CATEGORY", raising=False)
+    assert Config.from_env().entity_category == "diagnostic"
