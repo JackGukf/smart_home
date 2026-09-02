@@ -124,3 +124,31 @@ def test_zigbee_adapter_watch_survives_failures_and_uses_the_stable_by_id_path()
     assert "udevadm monitor" in script
     # Polling is the safety net for a missed udev event.
     assert "ZIGBEE_POLL_SECONDS" in script
+
+
+def test_resource_logger_service_survives_and_is_low_priority() -> None:
+    """It exists to explain the next unexplained reboot.
+
+    journald on this image is Storage=volatile, so the 2026-09-02 hang left no
+    readable evidence behind. This writes somewhere the login user can read
+    after a reboot.
+    """
+    unit = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "resource-logger.service").read_text(
+        encoding="utf-8"
+    )
+    assert "ExecStart=/home/orangepi/smart_home_AI/scripts/resource-logger.sh" in unit
+    assert "Restart=always" in unit
+    assert "WantedBy=default.target" in unit
+    # A monitor must not compete with what it is monitoring.
+    assert "Nice=10" in unit
+
+
+def test_resource_logger_cannot_fill_the_disk() -> None:
+    """A monitor that fills / would cause the outage it exists to explain."""
+    script = (PROJECT_ROOT / "scripts" / "resource-logger.sh").read_text(encoding="utf-8")
+    assert "RESOURCE_LOG_MAX_BYTES" in script
+    assert "tail -c" in script
+    # Boot markers are what make a reboot visible when reading the file back.
+    assert "BOOT uptime=" in script
+    # Records the biggest consumers, so a growing process is identifiable.
+    assert "--sort=-rss" in script

@@ -1,0 +1,15 @@
+[Unit]
+Description=Resource History Logger
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/scripts/resource-logger.sh
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=default.target
