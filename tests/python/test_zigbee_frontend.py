@@ -19,7 +19,8 @@ from src.python.web_app import (
     create_app,
 )
 
-STATIC = Path(__file__).resolve().parents[2] / "src" / "python" / "web_static"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+STATIC = PROJECT_ROOT / "src" / "python" / "web_static"
 
 
 def _client(secret_path: Path) -> TestClient:
@@ -278,3 +279,22 @@ def test_ha_absent_value_sentinels_are_normalised() -> None:
     assert _clean_ha_state("Unavailable") is None
     assert _clean_ha_state("2.13.0") == "2.13.0"
     assert _clean_ha_state(None) is None
+
+
+def test_example_config_asks_for_the_coordinator_s_full_transmit_power() -> None:
+    """Unset, Z-Stack runs the CC2652P at ~5 dBm and its +20 dBm PA never engages.
+
+    Found on the live board: transmit_power was absent, so the dongle had been
+    running at a quarter of the chip's rated output since install.
+    """
+    import yaml
+
+    example = (
+        PROJECT_ROOT
+        / "deploy" / "zigbee" / "zigbee2mqtt" / "configuration.example.yaml"
+    )
+    config = yaml.safe_load(example.read_text(encoding="utf-8"))
+    assert config["advanced"]["transmit_power"] == 20
+    # Channel and power both live under advanced:; a regression that drops the
+    # block would take the carefully chosen Wi-Fi-gap channel with it.
+    assert config["advanced"]["channel"] == 25

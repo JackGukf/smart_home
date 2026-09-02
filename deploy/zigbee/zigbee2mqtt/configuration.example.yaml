@@ -42,6 +42,18 @@ advanced:
   # Pick it now, not later.
   channel: 25
 
+  # The CC2652P has a +20 dBm power amplifier that Z-Stack leaves idle unless
+  # asked: unset, the dongle runs at its ~5 dBm default and the PA never
+  # engages.  20 is the chip's maximum.
+  #
+  # This only helps the downlink - commands going out to devices.  It does not
+  # improve the linkquality figures Zigbee2MQTT reports, because those are
+  # measured by the coordinator receiving from a device, and a battery sensor's
+  # own transmitter (0-4 dBm on the Tuya and Zbeacon parts here) sets that side.
+  # A weak sensor needs a mains-powered router near it, not a louder
+  # coordinator.
+  transmit_power: 20
+
   # GENERATE means "make a fresh random one on first start and write it back".
   # Never commit the generated values.
   network_key: GENERATE
