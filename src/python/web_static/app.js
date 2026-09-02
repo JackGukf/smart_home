@@ -4769,6 +4769,7 @@ const DEFAULT_HOME_LAYOUT = {
   camera:      { x: 5, y: 1,  w: 4, h: 7 },
   tempsensors: { x: 5, y: 8,  w: 4, h: 6 },
   areas:       { x: 9, y: 1,  w: 4, h: 12 },
+  zigbeehealth:{ x: 9, y: 13, w: 4, h: 5 },
 };
 
 function loadHomeLayout() {
@@ -4829,6 +4830,7 @@ const HOME_CARD_LABELS = {
   climate: "Climate",
   bluetooth: "Music",
   areas: "Areas",
+  zigbeehealth: "Zigbee",
 };
 
 function loadHiddenHomeCards() {
@@ -6584,6 +6586,69 @@ async function loadZigbeeFrame() {
   if (meta) meta.textContent = "Pair and manage sensors";
 }
 
+/* How long the bridge has held its current state, in words. Coarse on purpose:
+   the useful distinction is "just now" versus "this has been broken for hours",
+   not the exact minute. */
+function _zigbeeSince(iso) {
+  if (!iso) return "";
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const mins = Math.floor((Date.now() - then) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} h`;
+  return `${Math.floor(hours / 24)} d`;
+}
+
+/* Zigbee health on the Home view.
+
+   A dead bridge is silent: every Zigbee device just stops updating, and nothing
+   on screen says why. One replug went unnoticed for 66 minutes. This tile states
+   the coordinator's state outright, and separates "offline" (the bridge is down,
+   act on it) from "unknown" (we cannot reach Home Assistant to ask, which is a
+   different problem). */
+async function loadZigbeeHealthCard() {
+  const body = document.querySelector("#homeZigbeeBody");
+  const stateEl = document.querySelector("#homeZigbeeState");
+  const metaEl = document.querySelector("#homeZigbeeMeta");
+  if (!body) return;
+
+  const render = (state, text, meta) => {
+    body.dataset.state = state;
+    if (stateEl) stateEl.textContent = text;
+    if (metaEl) metaEl.textContent = meta || "";
+  };
+
+  let info;
+  try {
+    info = await requestJson("/api/zigbee/bridge");
+  } catch (error) {
+    render("unknown", "Unknown", "Dashboard could not reach the bridge API");
+    return;
+  }
+
+  if (!info.available) {
+    render("unknown", "Unknown", "Home Assistant unreachable, or MQTT not set up");
+    return;
+  }
+
+  const since = _zigbeeSince(info.connection_changed);
+  const version = info.version ? `Zigbee2MQTT ${info.version}` : "Zigbee2MQTT";
+
+  if (info.connected === true) {
+    render("online", "Online", since ? `${version} · up ${since}` : version);
+  } else if (info.connected === false) {
+    render("offline", "Offline", since ? `Down for ${since} · ${version}` : version);
+  } else {
+    render("unknown", "Unknown", `${version} · no connection state published`);
+  }
+}
+
+document.querySelector("#homeZigbeeOpen")?.addEventListener("click", () => {
+  activateView("zigbee");
+});
+
 /* The coordinator's own controls. Zigbee2MQTT publishes permit join as a switch
    entity, so left alone it lands on the Devices view among the household lights;
    the backend keeps it out of there and surfaces it here instead. */
@@ -6944,7 +7009,12 @@ loadDevices().catch((error) => {
   console.error(error);
 });
 
+loadZigbeeHealthCard().catch((error) => console.error(error));
+
 /* Auto-refresh every 60 s */
 setInterval(() => {
   loadDevices().catch(console.error);
+  /* Refreshed on the same cycle so an outage that starts while the dashboard is
+     already open still surfaces, rather than only on reload. */
+  loadZigbeeHealthCard().catch(console.error);
 }, 60_000);

@@ -3818,7 +3818,8 @@ def _zigbee_bridge_payload(path: Path) -> dict[str, Any]:
     rendering an empty card.
     """
     empty: dict[str, Any] = {"available": False, "permit_join": None, "connected": None,
-                             "version": None, "permit_join_entity": None}
+                             "version": None, "permit_join_entity": None,
+                             "connection_changed": None}
     config = _load_home_assistant_config(path)
     token = os.getenv(config.token_env)
     if not token:
@@ -3842,6 +3843,10 @@ def _zigbee_bridge_payload(path: Path) -> dict[str, Any]:
 
     permit = _state("switch.zigbee2mqtt_bridge_permit_join")
     connection = _state("binary_sensor.zigbee2mqtt_bridge_connection_state")
+    # How long the bridge has been in its current state. A dead bridge is silent
+    # rather than noisy - one replug went unnoticed for 66 minutes - so the
+    # health tile needs to say "offline since when", not just "offline".
+    connection_entity = bridge.get("binary_sensor.zigbee2mqtt_bridge_connection_state")
     return {
         "available": True,
         # None rather than False when the entity is missing, so the card can tell
@@ -3852,6 +3857,7 @@ def _zigbee_bridge_payload(path: Path) -> dict[str, Any]:
         "permit_join_entity": "switch.zigbee2mqtt_bridge_permit_join"
         if "switch.zigbee2mqtt_bridge_permit_join" in bridge
         else None,
+        "connection_changed": (connection_entity or {}).get("last_changed"),
     }
 
 

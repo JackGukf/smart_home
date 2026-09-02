@@ -480,6 +480,26 @@
             </div>
             <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
           </div>
+          <!-- Zigbee coordinator health. A dead bridge is silent - every Zigbee
+               device simply stops updating - so this states it outright on the
+               landing view rather than only on the Zigbee view. -->
+          <div class="panel home-panel home-card" id="homeZigbeePanel" data-home-card="zigbeehealth">
+            <div class="home-panel-head">
+              <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
+              <span class="panel-title"><i class="ti ti-access-point"></i> Zigbee</span>
+              <button class="home-gear-btn" id="homeZigbeeOpen" type="button" title="Open the Zigbee view">
+                <i class="ti ti-external-link"></i>
+              </button>
+            </div>
+            <div class="home-zigbee-body" id="homeZigbeeBody" data-state="unknown">
+              <div class="home-zigbee-status">
+                <span class="home-zigbee-dot" aria-hidden="true"></span>
+                <span class="home-zigbee-state" id="homeZigbeeState">Checking…</span>
+              </div>
+              <div class="home-zigbee-meta" id="homeZigbeeMeta"></div>
+            </div>
+            <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
+          </div>
           <div class="panel home-panel home-card" id="homeBluetoothPanel" data-home-card="bluetooth">
             <div class="home-panel-head">
               <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
@@ -490,7 +510,6 @@
             </div>
             <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
           </div>
-
         </div>
       </div>
 

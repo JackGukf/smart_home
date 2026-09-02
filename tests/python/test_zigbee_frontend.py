@@ -149,3 +149,100 @@ def test_bridge_card_degrades_when_home_assistant_is_absent(tmp_path: Path, monk
     config = tmp_path / "devices.local.yaml"
     config.write_text("home_assistant:\n  base_url: http://127.0.0.1:8123\n", encoding="utf-8")
     assert _zigbee_bridge_payload(config)["available"] is False
+
+
+def test_bridge_payload_reports_when_the_connection_state_last_changed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """"Offline" alone does not say whether to worry.
+
+    A replug on 2026-09-02 left the bridge down for 66 minutes with nothing on
+    screen saying so, so the health tile needs the timestamp to turn that into
+    "down for 1 h".
+    """
+    import src.python.web_app as web_app
+
+    config = tmp_path / "devices.local.yaml"
+    config.write_text("home_assistant:\n  base_url: http://127.0.0.1:8123\n", encoding="utf-8")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "t0ken")
+    monkeypatch.setattr(
+        web_app,
+        "_home_assistant_get",
+        lambda *a, **k: [
+            {
+                "entity_id": "binary_sensor.zigbee2mqtt_bridge_connection_state",
+                "state": "off",
+                "last_changed": "2026-09-02T01:26:17+00:00",
+            },
+            {"entity_id": "sensor.zigbee2mqtt_bridge_version", "state": "2.13.0"},
+        ],
+    )
+
+    payload = _zigbee_bridge_payload(config)
+    assert payload["available"] is True
+    assert payload["connected"] is False
+    assert payload["connection_changed"] == "2026-09-02T01:26:17+00:00"
+    assert payload["version"] == "2.13.0"
+
+
+def test_bridge_payload_shape_is_stable_when_home_assistant_is_absent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The tile reads connection_changed unconditionally, so the key must exist."""
+    monkeypatch.delenv("HOME_ASSISTANT_TOKEN", raising=False)
+    config = tmp_path / "devices.local.yaml"
+    config.write_text("home_assistant:\n  base_url: http://127.0.0.1:8123\n", encoding="utf-8")
+    payload = _zigbee_bridge_payload(config)
+    assert payload["connection_changed"] is None
+    assert payload["connected"] is None
+
+
+def test_zigbee_health_tile_is_on_the_home_view() -> None:
+    """A dead bridge is silent - every Zigbee device simply stops updating.
+
+    The tile has to live on the landing view; on the Zigbee view it would only be
+    seen by someone who already suspected a problem.
+    """
+    index = (STATIC / "index.html").read_text(encoding="utf-8")
+    home = index[index.index('data-view-panel="home"'):index.index('data-view-panel="cameras"')]
+    assert 'data-home-card="zigbeehealth"' in home
+    assert 'id="homeZigbeeBody"' in home
+    assert 'id="homeZigbeeState"' in home
+
+
+def test_zigbee_health_tile_is_registered_as_a_home_card() -> None:
+    """Unregistered cards cannot be hidden or laid out with the others."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "zigbeehealth:" in app_js[app_js.index("const DEFAULT_HOME_LAYOUT"):][:600]
+    assert 'zigbeehealth: "Zigbee"' in app_js
+
+
+def test_zigbee_health_tile_separates_offline_from_unknown() -> None:
+    """"Cannot reach Home Assistant" is a different problem from "bridge is down".
+
+    Collapsing them would either cry wolf when HA restarts, or stay quiet during
+    a real outage.
+    """
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    start = app_js.index("async function loadZigbeeHealthCard")
+    body = app_js[start:app_js.index("async function loadZigbeeBridgeCard", start)]
+    assert 'render("offline"' in body
+    assert 'render("unknown"' in body
+    assert 'render("online"' in body
+    # available is false when HA is unreachable, which must not read as Offline.
+    assert "if (!info.available)" in body
+
+
+def test_zigbee_health_tile_refreshes_without_a_reload() -> None:
+    """The outage this exists for started while the dashboard was already open."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    start = app_js.index("/* Auto-refresh every 60 s */")
+    assert "loadZigbeeHealthCard()" in app_js[start:start + 400]
+
+
+def test_zigbee_health_tile_does_not_rely_on_colour_alone() -> None:
+    """The dot is paired with a word, for colour-blind readers and screenshots."""
+    css = (STATIC / "styles.css").read_text(encoding="utf-8")
+    assert '.home-zigbee-body[data-state="offline"] .home-zigbee-state' in css
+    index = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'class="home-zigbee-state"' in index

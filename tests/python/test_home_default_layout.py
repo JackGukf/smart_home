@@ -15,7 +15,12 @@ INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
 STYLES = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 
-PHONE_ORDER = ["weather", "camera", "climate", "tempsensors", "areas", "bluetooth"]
+# Zigbee health sits above Music: below 740px this list is the literal top-to-
+# bottom order, and a tile that exists to make an outage noticeable must not be
+# the one thing below the fold.
+PHONE_ORDER = [
+    "weather", "camera", "climate", "tempsensors", "areas", "zigbeehealth", "bluetooth",
+]
 
 # Grid columns are 4 wide, so these are the three column starts.
 LEFT, MIDDLE, RIGHT = 1, 5, 9
@@ -40,7 +45,7 @@ def test_desktop_columns_hold_the_intended_cards() -> None:
 
     assert [n for n, c in cells.items() if c["x"] == LEFT] == ["weather", "climate", "bluetooth"]
     assert [n for n, c in cells.items() if c["x"] == MIDDLE] == ["camera", "tempsensors"]
-    assert [n for n, c in cells.items() if c["x"] == RIGHT] == ["areas"]
+    assert [n for n, c in cells.items() if c["x"] == RIGHT] == ["areas", "zigbeehealth"]
 
 
 def test_no_two_default_cards_overlap() -> None:
