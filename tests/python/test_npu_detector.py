@@ -336,3 +336,46 @@ def test_entity_category_can_be_cleared(monkeypatch) -> None:
 def test_entity_category_default_survives_an_unset_environment(monkeypatch) -> None:
     monkeypatch.delenv("NPU_ENTITY_CATEGORY", raising=False)
     assert Config.from_env().entity_category == "diagnostic"
+
+
+# ------------------------------- keeping detections off the dashboard's views
+
+def test_detection_entities_are_not_offered_as_tuya_devices() -> None:
+    """Their occupancy device_class otherwise puts them in the Tuya list, and
+    because the names contain "camera" the front end renders them as camera
+    cards - three phantom cameras reading "Tuya camera stream is not
+    configured" on the Cameras view.
+    """
+    from src.python.web_app import _is_tuya_home_assistant_entity
+
+    detection = {
+        "entity_id": "binary_sensor.front_door_camera_npu_person",
+        "state": "off",
+        "attributes": {
+            "friendly_name": "Front Door Camera (NPU) Person",
+            "device_class": "occupancy",
+        },
+    }
+    assert _is_tuya_home_assistant_entity(detection) is False
+
+
+def test_a_real_tuya_occupancy_sensor_is_still_offered() -> None:
+    """The filter must be specific to our entities, not to occupancy sensors."""
+    from src.python.web_app import _is_tuya_home_assistant_entity
+
+    real = {
+        "entity_id": "binary_sensor.hallway_motion_occupancy",
+        "state": "off",
+        "attributes": {"friendly_name": "Hallway motion", "device_class": "occupancy"},
+    }
+    assert _is_tuya_home_assistant_entity(real) is True
+
+
+def test_npu_vision_entities_are_recognised() -> None:
+    from src.python.web_app import _is_npu_vision_entity
+
+    assert _is_npu_vision_entity("binary_sensor.front_door_camera_npu_person") is True
+    assert _is_npu_vision_entity("sensor.office_camera_npu_person_count") is True
+    assert _is_npu_vision_entity("binary_sensor.hallway_motion_occupancy") is False
+    assert _is_npu_vision_entity("camera.front_door") is False
+    assert _is_npu_vision_entity(None) is False

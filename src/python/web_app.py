@@ -1794,6 +1794,21 @@ def _tplink_device_names(discovery_path: Path | None) -> set[str]:
         return set()
 
 
+def _is_npu_vision_entity(entity_id: str | None) -> bool:
+    """Is this one of the NPU camera detector's own entities?
+
+    src/python/npu_detector.py publishes them over MQTT discovery with a device
+    named "<Camera> (NPU)", so Home Assistant derives ids like
+    binary_sensor.front_door_camera_npu_person. They belong to the Zigbee-style
+    "our own service" category rather than to any vendor integration, and in
+    particular they are not cameras - they are what a camera detected.
+
+    Matched on the entity_id rather than an attribute because /api/states
+    exposes no origin or device information to filter on.
+    """
+    return "_npu_" in str(entity_id or "").lower()
+
+
 def _is_tuya_home_assistant_entity(
     entity: dict[str, Any],
     tplink_names: set[str] | None = None,
@@ -1801,6 +1816,13 @@ def _is_tuya_home_assistant_entity(
 ) -> bool:
     entity_id = str(entity.get("entity_id") or "")
     if confirmed_entity_ids and entity_id in confirmed_entity_ids:
+        return False
+    # Our own camera detections are not Tuya devices. Left in, their occupancy
+    # device_class puts them in this list, and because their names contain
+    # "camera" the front end's isTuyaCamera() then renders them as camera cards
+    # on the Cameras view - three phantom cameras reading "stream not
+    # configured". Same reasoning as _is_zigbee_bridge_entity.
+    if _is_npu_vision_entity(entity_id):
         return False
     domain = _home_assistant_entity_domain(entity_id)
     if domain not in {"light", "switch", "sensor", "binary_sensor", "cover", "fan", "lock"}:
