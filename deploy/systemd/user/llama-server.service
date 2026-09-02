@@ -1,0 +1,17 @@
+[Unit]
+Description=llama.cpp Qwen3 Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/scripts/run-llama-server.sh
+Restart=always
+RestartSec=5
+# The model is 2.3GB and Ollama may hold its own copy; letting both be reclaimed
+# under pressure is preferable to the OOM killer picking the dashboard.
+OOMPolicy=stop
+
+[Install]
+WantedBy=default.target

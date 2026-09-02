@@ -16,3 +16,7 @@ bleak>=3.0,<4.0
 itsdangerous
 python-multipart
 python-matter-server[client]
+# Detection post-processing for the NPU camera service (src/python/npu_detector.py).
+# The detector itself runs from its own Python 3.11 env on the board, but the
+# post-processing is tested here.
+numpy

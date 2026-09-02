@@ -1,0 +1,16 @@
+[Unit]
+Description=NPU Camera Detector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/scripts/run-npu-detector.sh
+Restart=always
+# Compiling the graph for the NPU takes ~14s on start, so a crash loop would
+# otherwise hammer the device. Back off further than the usual 5s.
+RestartSec=15
+
+[Install]
+WantedBy=default.target
