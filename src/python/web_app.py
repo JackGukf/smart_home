@@ -3810,6 +3810,15 @@ def _mark_ha_entity_known(path: Path, entity_id: str) -> None:
     _save_known_ha_entities(path, known)
 
 
+def _clean_ha_state(value: Any) -> Any:
+    """Turn Home Assistant's absent-value sentinels into None.
+
+    HA reports a dropped entity as the literal string "unavailable" (or
+    "unknown"), which reads as real data everywhere it is displayed verbatim.
+    """
+    return None if str(value).lower() in {"unavailable", "unknown", "none"} else value
+
+
 def _zigbee_bridge_payload(path: Path) -> dict[str, Any]:
     """Collect the coordinator's own entities from Home Assistant.
 
@@ -3853,7 +3862,10 @@ def _zigbee_bridge_payload(path: Path) -> dict[str, Any]:
         # "closed" apart from "no such control".
         "permit_join": {"on": True, "off": False}.get(str(permit)) if permit is not None else None,
         "connected": {"on": True, "off": False}.get(str(connection)) if connection is not None else None,
-        "version": _state("sensor.zigbee2mqtt_bridge_version"),
+        # Home Assistant reports a dropped sensor as the literal strings
+        # "unavailable"/"unknown". Passed through, the health tile reads
+        # "Zigbee2MQTT unavailable" as if that were a version number.
+        "version": _clean_ha_state(_state("sensor.zigbee2mqtt_bridge_version")),
         "permit_join_entity": "switch.zigbee2mqtt_bridge_permit_join"
         if "switch.zigbee2mqtt_bridge_permit_join" in bridge
         else None,

@@ -246,3 +246,35 @@ def test_zigbee_health_tile_does_not_rely_on_colour_alone() -> None:
     assert '.home-zigbee-body[data-state="offline"] .home-zigbee-state' in css
     index = (STATIC / "index.html").read_text(encoding="utf-8")
     assert 'class="home-zigbee-state"' in index
+
+
+def test_unavailable_version_is_not_shown_as_a_version_number(tmp_path: Path, monkeypatch) -> None:
+    """A downed bridge makes HA report the version sensor as "unavailable".
+
+    Passed through, the health tile rendered "Zigbee2MQTT unavailable" as though
+    that were the running version. Found by taking the real bridge down.
+    """
+    import src.python.web_app as web_app
+
+    config = tmp_path / "devices.local.yaml"
+    config.write_text("home_assistant:\n  base_url: http://127.0.0.1:8123\n", encoding="utf-8")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "t0ken")
+    monkeypatch.setattr(
+        web_app,
+        "_home_assistant_get",
+        lambda *a, **k: [
+            {"entity_id": "binary_sensor.zigbee2mqtt_bridge_connection_state", "state": "off"},
+            {"entity_id": "sensor.zigbee2mqtt_bridge_version", "state": "unavailable"},
+        ],
+    )
+    assert _zigbee_bridge_payload(config)["version"] is None
+
+
+def test_ha_absent_value_sentinels_are_normalised() -> None:
+    from src.python.web_app import _clean_ha_state
+
+    assert _clean_ha_state("unavailable") is None
+    assert _clean_ha_state("unknown") is None
+    assert _clean_ha_state("Unavailable") is None
+    assert _clean_ha_state("2.13.0") == "2.13.0"
+    assert _clean_ha_state(None) is None
