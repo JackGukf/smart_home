@@ -32,10 +32,11 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import numpy as np
 
@@ -172,6 +173,7 @@ class Config:
     discovery: bool = True
     discovery_prefix: str = "homeassistant"
     entity_category: str | None = "diagnostic"
+    fetch_timeout: float = 8.0
 
     @property
     def availability_topic(self) -> str:
@@ -197,6 +199,7 @@ class Config:
             discovery=os.getenv("NPU_DISCOVERY", "1").lower() not in {"0", "false", "no"},
             discovery_prefix=os.getenv("NPU_DISCOVERY_PREFIX", "homeassistant"),
             entity_category=os.getenv("NPU_ENTITY_CATEGORY", "diagnostic") or None,
+            fetch_timeout=float(os.getenv("NPU_FETCH_TIMEOUT", "8.0")),
         )
 
 
@@ -229,6 +232,46 @@ class Detector:
         output = self.session.run(None, {self.input_name: blob})[0]
         return decode(output, scale, pad_x, pad_y, frame.shape[:2], cfg.conf, cfg.iou,
                       cfg.classes)
+
+
+def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cfg: Config,
+               publish: "Callable[[str, str], None]", stop: "threading.Event") -> None:
+    """Watch one camera on its own cadence until stop is set.
+
+    One thread per camera rather than a single loop over all of them. Frame
+    fetch dominates - 0.25s to 4.1s depending on whether go2rtc serves the
+    stream natively or has to spawn ffmpeg - so a shared loop makes every camera
+    wait for the slowest, and an unreachable one stalls the lot for its whole
+    timeout. Independent loops mean a 0.36s camera updates every 0.36s no matter
+    what the 3s doorbell is doing.
+
+    Inference is serialised behind npu_lock. There is one NPU and one session,
+    and this execution provider is not one to take chances with concurrently -
+    it corrupts the heap on inputs it dislikes. Serialising costs nothing here:
+    64ms per frame is ~15 inferences a second against a handful of cameras
+    wanting one every couple of seconds.
+    """
+    LOG.info("%s: watching every %.1fs", camera, cfg.interval)
+    while not stop.is_set():
+        started = time.monotonic()
+        try:
+            frame = grab_frame(cfg.go2rtc_url, camera, cfg.fetch_timeout)
+            if frame is not None:
+                fetched = time.monotonic()
+                with npu_lock:
+                    detections = detector.detect(frame, cfg)
+                publish(camera, build_payload(camera, detections, cfg.classes))
+                LOG.debug("%s: %d detection(s)  fetch %.0fms  infer %.0fms",
+                          camera, len(detections), (fetched - started) * 1000,
+                          (time.monotonic() - fetched) * 1000)
+        except Exception:
+            # One camera failing must not take its thread down and silently stop
+            # watching that view for the life of the process.
+            LOG.exception("%s: detection cycle failed", camera)
+        slack = cfg.interval - (time.monotonic() - started)
+        if slack > 0:
+            stop.wait(slack)
+    LOG.info("%s: stopped", camera)
 
 
 def grab_frame(go2rtc_url: str, camera: str, timeout: float = 8.0) -> np.ndarray | None:
@@ -411,39 +454,54 @@ def main(argv: list[str] | None = None) -> int:
             LOG.info("published %d Home Assistant discovery configs under %s/",
                      published, cfg.discovery_prefix)
 
-    running = True
+    def publish(camera: str, payload: str) -> None:
+        if client is not None:
+            # Retained: a restarted broker or a newly started Home Assistant
+            # should see the last known state rather than nothing.
+            client.publish(f"{cfg.base_topic}/{camera}", payload, retain=True)
+        else:
+            print(payload, flush=True)
 
-    def stop(_signum: int, _frame: Any) -> None:
-        nonlocal running
-        running = False
+    npu_lock = threading.Lock()
 
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
-
-    LOG.info("watching %s every %.1fs for %s",
-             ", ".join(cfg.cameras), cfg.interval, ", ".join(sorted(cfg.classes)))
-    while running:
-        cycle_started = time.time()
+    if args.once:
+        # Sequential and deterministic: --once is for checking a setup, where
+        # interleaved output would be harder to read than it is worth.
         for camera in cfg.cameras:
-            frame = grab_frame(cfg.go2rtc_url, camera)
+            frame = grab_frame(cfg.go2rtc_url, camera, cfg.fetch_timeout)
             if frame is None:
                 continue
-            started = time.time()
-            detections = detector.detect(frame, cfg)
-            elapsed = (time.time() - started) * 1000
-            payload = build_payload(camera, detections, cfg.classes)
-            if client is not None:
-                # Retained: a restarted broker or a newly started Home Assistant
-                # should see the last known state rather than nothing.
-                client.publish(f"{cfg.base_topic}/{camera}", payload, retain=True)
-            else:
-                print(payload)
-            LOG.debug("%s: %d detection(s) in %.0f ms", camera, len(detections), elapsed)
-        if args.once:
-            break
-        slack = cfg.interval - (time.time() - cycle_started)
-        if slack > 0:
-            time.sleep(slack)
+            publish(camera, build_payload(camera, detector.detect(frame, cfg), cfg.classes))
+    else:
+        stop_event = threading.Event()
+
+        def stop(_signum: int, _frame: Any) -> None:
+            stop_event.set()
+
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
+
+        LOG.info("watching %d camera(s) on independent %.1fs cycles for %s",
+                 len(cfg.cameras), cfg.interval, ", ".join(sorted(cfg.classes)))
+        threads = [
+            threading.Thread(
+                target=run_camera,
+                args=(camera, detector, npu_lock, cfg, publish, stop_event),
+                name=f"cam-{camera}",
+                daemon=True,
+            )
+            for camera in cfg.cameras
+        ]
+        for thread in threads:
+            thread.start()
+        try:
+            while not stop_event.wait(1.0):
+                pass
+        except KeyboardInterrupt:  # pragma: no cover - interactive only
+            stop_event.set()
+        # Generous: a thread may be inside a fetch that has not timed out yet.
+        for thread in threads:
+            thread.join(timeout=cfg.fetch_timeout + 5)
 
     if client is not None:
         # A clean disconnect suppresses the will, so mark it offline explicitly -

@@ -379,3 +379,146 @@ def test_npu_vision_entities_are_recognised() -> None:
     assert _is_npu_vision_entity("binary_sensor.hallway_motion_occupancy") is False
     assert _is_npu_vision_entity("camera.front_door") is False
     assert _is_npu_vision_entity(None) is False
+
+
+# ------------------------------------------------- per-camera independent loops
+
+def test_a_slow_camera_does_not_delay_a_fast_one() -> None:
+    """The whole point of the change.
+
+    A shared loop made every camera wait for the slowest, so the 0.36s office
+    camera updated at the 3s doorbell's pace. Independent threads decouple them.
+    """
+    import threading
+    import time as _time
+    from src.python.npu_detector import run_camera
+    import src.python.npu_detector as nd
+
+    delays = {"slow": 0.30, "fast": 0.01}
+
+    def fake_grab(_url, camera, _timeout=8.0):
+        _time.sleep(delays[camera])
+        return object()
+
+    class FakeDetector:
+        def detect(self, _frame, _cfg):
+            return []
+
+    published: dict[str, int] = {"slow": 0, "fast": 0}
+    lock = threading.Lock()
+
+    def publish(camera, _payload):
+        with lock:
+            published[camera] += 1
+
+    cfg = Config(model=Path("unused"), cameras=["slow", "fast"], interval=0.0,
+                 fetch_timeout=1.0)
+    original = nd.grab_frame
+    nd.grab_frame = fake_grab
+    try:
+        stop = threading.Event()
+        npu_lock = threading.Lock()
+        threads = [
+            threading.Thread(target=run_camera,
+                             args=(c, FakeDetector(), npu_lock, cfg, publish, stop),
+                             daemon=True)
+            for c in ("slow", "fast")
+        ]
+        for t in threads:
+            t.start()
+        _time.sleep(0.9)
+        stop.set()
+        for t in threads:
+            t.join(timeout=3)
+    finally:
+        nd.grab_frame = original
+
+    # The fast camera must have run many more cycles than the slow one; under a
+    # shared loop the two counts would be identical.
+    assert published["fast"] > published["slow"] * 3, published
+
+
+def test_one_camera_failing_does_not_kill_its_thread() -> None:
+    """A raising camera must keep being retried, not silently stop being watched."""
+    import threading
+    import time as _time
+    from src.python.npu_detector import run_camera
+    import src.python.npu_detector as nd
+
+    calls = {"n": 0}
+
+    def exploding_grab(_url, _camera, _timeout=8.0):
+        calls["n"] += 1
+        raise RuntimeError("camera on fire")
+
+    cfg = Config(model=Path("unused"), cameras=["boom"], interval=0.0, fetch_timeout=1.0)
+    original = nd.grab_frame
+    nd.grab_frame = exploding_grab
+    try:
+        stop = threading.Event()
+        t = threading.Thread(target=run_camera,
+                             args=("boom", None, threading.Lock(), cfg, lambda *a: None, stop),
+                             daemon=True)
+        t.start()
+        _time.sleep(0.3)
+        stop.set()
+        t.join(timeout=3)
+    finally:
+        nd.grab_frame = original
+
+    assert calls["n"] > 1, "thread stopped retrying after the first failure"
+    assert not t.is_alive()
+
+
+def test_inference_is_serialised_across_cameras() -> None:
+    """One NPU, one session, and an execution provider that corrupts the heap on
+    inputs it dislikes - concurrent Run calls are not worth the risk."""
+    import threading
+    import time as _time
+    from src.python.npu_detector import run_camera
+    import src.python.npu_detector as nd
+
+    concurrent = {"now": 0, "max": 0}
+    guard = threading.Lock()
+
+    class CountingDetector:
+        def detect(self, _frame, _cfg):
+            with guard:
+                concurrent["now"] += 1
+                concurrent["max"] = max(concurrent["max"], concurrent["now"])
+            _time.sleep(0.02)
+            with guard:
+                concurrent["now"] -= 1
+            return []
+
+    cfg = Config(model=Path("unused"), cameras=list("abcd"), interval=0.0, fetch_timeout=1.0)
+    original = nd.grab_frame
+    nd.grab_frame = lambda _u, _c, _t=8.0: object()
+    try:
+        stop = threading.Event()
+        npu_lock = threading.Lock()
+        detector = CountingDetector()
+        threads = [
+            threading.Thread(target=run_camera,
+                             args=(c, detector, npu_lock, cfg, lambda *a: None, stop),
+                             daemon=True)
+            for c in cfg.cameras
+        ]
+        for t in threads:
+            t.start()
+        _time.sleep(0.4)
+        stop.set()
+        for t in threads:
+            t.join(timeout=3)
+    finally:
+        nd.grab_frame = original
+
+    assert concurrent["max"] == 1, f"NPU ran {concurrent['max']} inferences at once"
+
+
+def test_fetch_timeout_is_configurable(monkeypatch) -> None:
+    """A dead camera should be droppable faster than the 8s default."""
+    monkeypatch.setenv("NPU_FETCH_TIMEOUT", "2.5")
+    assert Config.from_env().fetch_timeout == 2.5
+    monkeypatch.delenv("NPU_FETCH_TIMEOUT")
+    assert Config.from_env().fetch_timeout == 8.0
