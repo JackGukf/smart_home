@@ -169,6 +169,12 @@ class Config:
     mqtt_user: str | None = None
     mqtt_password: str | None = None
     base_topic: str = "smarthome/vision"
+    discovery: bool = True
+    discovery_prefix: str = "homeassistant"
+
+    @property
+    def availability_topic(self) -> str:
+        return f"{self.base_topic}/status"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -187,6 +193,8 @@ class Config:
             mqtt_user=os.getenv("MQTT_USER") or None,
             mqtt_password=os.getenv("MQTT_PASSWORD") or None,
             base_topic=os.getenv("NPU_BASE_TOPIC", "smarthome/vision"),
+            discovery=os.getenv("NPU_DISCOVERY", "1").lower() not in {"0", "false", "no"},
+            discovery_prefix=os.getenv("NPU_DISCOVERY_PREFIX", "homeassistant"),
         )
 
 
@@ -237,6 +245,80 @@ def grab_frame(go2rtc_url: str, camera: str, timeout: float = 8.0) -> np.ndarray
     if frame is None:
         LOG.warning("%s: response was not a decodable JPEG", camera)
     return frame
+
+
+def friendly_name(stream: str) -> str:
+    """go2rtc stream name -> something a person wants to see in Home Assistant."""
+    return stream.replace("_", " ").strip().title()
+
+
+def discovery_messages(
+    camera: str,
+    classes: Iterable[str],
+    base_topic: str,
+    availability_topic: str,
+    discovery_prefix: str = "homeassistant",
+) -> list[tuple[str, str]]:
+    """Home Assistant MQTT discovery configs for one camera.
+
+    Each watched class gets a binary_sensor (what an automation triggers on) and
+    a count sensor (how many, for conditions like "more than one person").
+
+    Every entity carries the availability topic. Without it a stopped detector
+    leaves its last retained "person: false" in place forever, so a blind camera
+    is indistinguishable from an empty one - the same silent failure that let the
+    Zigbee bridge sit dead for an hour.
+    """
+    node = f"npu_vision_{camera}"
+    device = {
+        "identifiers": [node],
+        "name": f"{friendly_name(camera)} (NPU)",
+        "manufacturer": "smart_home_AI",
+        "model": "YOLOv8n on Zhouyi NPU",
+    }
+    origin = {"name": "npu-detector"}
+    state_topic = f"{base_topic}/{camera}"
+
+    messages: list[tuple[str, str]] = []
+    for label in sorted(classes):
+        slug = label.replace(" ", "_")
+        common = {
+            "availability_topic": availability_topic,
+            "payload_available": "online",
+            "payload_not_available": "offline",
+            "device": device,
+            "origin": origin,
+            "state_topic": state_topic,
+        }
+        messages.append((
+            f"{discovery_prefix}/binary_sensor/{node}/{slug}/config",
+            json.dumps({
+                **common,
+                "name": friendly_name(label),
+                "unique_id": f"{node}_{slug}",
+                "object_id": f"{node}_{slug}",
+                # "occupancy" rather than "motion": this reports presence in
+                # frame, not that something moved.
+                "device_class": "occupancy",
+                "payload_on": "true",
+                "payload_off": "false",
+                # tojson keeps the booleans as true/false rather than Python's
+                # True/False, which HA would not match.
+                "value_template": "{{ value_json." + slug + " | tojson }}",
+            }),
+        ))
+        messages.append((
+            f"{discovery_prefix}/sensor/{node}/{slug}_count/config",
+            json.dumps({
+                **common,
+                "name": f"{friendly_name(label)} count",
+                "unique_id": f"{node}_{slug}_count",
+                "object_id": f"{node}_{slug}_count",
+                "state_class": "measurement",
+                "value_template": "{{ value_json.counts['" + label + "'] | default(0) }}",
+            }),
+        ))
+    return messages
 
 
 def build_payload(camera: str, detections: Sequence[Detection], wanted: Iterable[str]) -> str:
@@ -291,9 +373,27 @@ def main(argv: list[str] | None = None) -> int:
             client = mqtt.Client()
         if cfg.mqtt_user:
             client.username_pw_set(cfg.mqtt_user, cfg.mqtt_password or "")
+        # Registered before connecting so the broker publishes it if this process
+        # dies without a clean disconnect - which is the case that matters.
+        client.will_set(cfg.availability_topic, "offline", retain=True)
         client.connect(cfg.mqtt_host, cfg.mqtt_port, keepalive=60)
         client.loop_start()
+        client.publish(cfg.availability_topic, "online", retain=True)
         LOG.info("publishing to %s/<camera> on %s:%s", cfg.base_topic, cfg.mqtt_host, cfg.mqtt_port)
+
+        if cfg.discovery:
+            published = 0
+            for camera in cfg.cameras:
+                for topic, payload in discovery_messages(
+                    camera, cfg.classes, cfg.base_topic, cfg.availability_topic,
+                    cfg.discovery_prefix,
+                ):
+                    # Retained: Home Assistant reads these when it starts, which
+                    # is usually long after this service did.
+                    client.publish(topic, payload, retain=True)
+                    published += 1
+            LOG.info("published %d Home Assistant discovery configs under %s/",
+                     published, cfg.discovery_prefix)
 
     running = True
 
@@ -330,6 +430,13 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(slack)
 
     if client is not None:
+        # A clean disconnect suppresses the will, so mark it offline explicitly -
+        # otherwise a deliberate stop leaves the entities looking live.
+        info = client.publish(cfg.availability_topic, "offline", retain=True)
+        try:
+            info.wait_for_publish(timeout=5)
+        except Exception:  # broker already gone; the will covers it
+            pass
         client.loop_stop()
         client.disconnect()
     LOG.info("stopped")

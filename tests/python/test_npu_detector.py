@@ -212,3 +212,97 @@ def test_mqtt_client_supports_paho_2_callback_api() -> None:
     source = (PROJECT_ROOT / "src" / "python" / "npu_detector.py").read_text(encoding="utf-8")
     assert "CallbackAPIVersion" in source
     assert 'hasattr(mqtt, "CallbackAPIVersion")' in source
+
+
+# ------------------------------------------------- Home Assistant MQTT discovery
+
+def _discovery(camera="front_door_camera", classes=("person",)):
+    from src.python.npu_detector import discovery_messages
+
+    return dict(
+        discovery_messages(camera, classes, "smarthome/vision", "smarthome/vision/status")
+    )
+
+
+def test_discovery_publishes_a_binary_sensor_and_a_count_per_class() -> None:
+    msgs = _discovery(classes=("person", "car"))
+    topics = sorted(msgs)
+    assert topics == sorted([
+        "homeassistant/binary_sensor/npu_vision_front_door_camera/person/config",
+        "homeassistant/sensor/npu_vision_front_door_camera/person_count/config",
+        "homeassistant/binary_sensor/npu_vision_front_door_camera/car/config",
+        "homeassistant/sensor/npu_vision_front_door_camera/car_count/config",
+    ])
+
+
+def test_binary_sensor_matches_the_json_the_detector_actually_publishes() -> None:
+    """The template must render the booleans as true/false.
+
+    A bare `value_json.person` renders Python's True/False, which never matches
+    payload_on, so the entity would sit permanently off while detections flowed.
+    """
+    cfg = json.loads(_discovery()["homeassistant/binary_sensor/npu_vision_front_door_camera/person/config"])
+    assert cfg["state_topic"] == "smarthome/vision/front_door_camera"
+    assert cfg["payload_on"] == "true"
+    assert cfg["payload_off"] == "false"
+    assert "tojson" in cfg["value_template"]
+    assert cfg["device_class"] == "occupancy"
+
+
+def test_every_entity_carries_availability() -> None:
+    """Without this a stopped detector leaves a retained "person: false" behind,
+    so a blind camera looks exactly like an empty one."""
+    for payload in _discovery(classes=("person", "car")).values():
+        cfg = json.loads(payload)
+        assert cfg["availability_topic"] == "smarthome/vision/status"
+        assert cfg["payload_available"] == "online"
+        assert cfg["payload_not_available"] == "offline"
+
+
+def test_entities_are_grouped_under_one_device_per_camera() -> None:
+    cfgs = [json.loads(p) for p in _discovery(classes=("person", "car")).values()]
+    devices = {json.dumps(c["device"], sort_keys=True) for c in cfgs}
+    assert len(devices) == 1
+    device = cfgs[0]["device"]
+    assert device["name"] == "Front Door Camera (NPU)"
+    assert device["identifiers"] == ["npu_vision_front_door_camera"]
+
+
+def test_unique_ids_do_not_collide_across_cameras_or_classes() -> None:
+    ids = set()
+    for camera in ("front_door_camera", "family_room_camera"):
+        for payload in _discovery(camera, ("person", "car")).values():
+            ids.add(json.loads(payload)["unique_id"])
+    assert len(ids) == 8
+
+
+def test_count_sensor_defaults_to_zero_when_the_class_is_absent() -> None:
+    """counts only carries labels actually seen, so the template needs a default
+    or the sensor goes unavailable every time nobody is there."""
+    cfg = json.loads(
+        _discovery()["homeassistant/sensor/npu_vision_front_door_camera/person_count/config"]
+    )
+    assert "default(0)" in cfg["value_template"]
+    assert cfg["state_class"] == "measurement"
+
+
+def test_stream_names_become_readable_entity_names() -> None:
+    from src.python.npu_detector import friendly_name
+
+    assert friendly_name("front_door_camera") == "Front Door Camera"
+    assert friendly_name("wyze_camera") == "Wyze Camera"
+
+
+def test_detector_announces_and_retracts_availability() -> None:
+    """The will covers a crash; the explicit offline covers a clean stop."""
+    source = (PROJECT_ROOT / "src" / "python" / "npu_detector.py").read_text(encoding="utf-8")
+    assert "will_set" in source
+    assert 'publish(cfg.availability_topic, "online", retain=True)' in source
+    assert 'publish(cfg.availability_topic, "offline", retain=True)' in source
+
+
+def test_discovery_can_be_turned_off(monkeypatch) -> None:
+    monkeypatch.setenv("NPU_DISCOVERY", "0")
+    assert Config.from_env().discovery is False
+    monkeypatch.setenv("NPU_DISCOVERY", "1")
+    assert Config.from_env().discovery is True
