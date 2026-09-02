@@ -84,3 +84,6 @@ dashboard_areas.json
 deploy/zigbee/zigbee2mqtt/*
 !deploy/zigbee/zigbee2mqtt/configuration.example.yaml
 deploy/zigbee/mosquitto/passwd
+# Local runtime flag: suppresses scripts/zigbee-adapter-watch.sh auto-start.
+deploy/zigbee/.autostart-disabled
+

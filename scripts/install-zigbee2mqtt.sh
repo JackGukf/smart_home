@@ -178,6 +178,35 @@ fi
 
 # ------------------------------------------------------------------- start
 
+# -------------------------------------------------------- hotplug recovery
+
+info "Installing the hotplug watch"
+
+# Without this, unplugging the dongle takes the bridge down permanently:
+# Zigbee2MQTT exits on adapter loss, and Docker cannot re-create a container
+# whose by-id device mapping has disappeared, so restart:unless-stopped never
+# fires.  See scripts/zigbee-adapter-watch.sh.
+WATCH_UNIT="zigbee-adapter-watch.service"
+UNIT_SRC="${PROJECT_ROOT}/deploy/systemd/user/${WATCH_UNIT}"
+UNIT_TARGET_DIR="${HOME}/.config/systemd/user"
+
+if [[ -r "${UNIT_SRC}" ]]; then
+  chmod +x "${PROJECT_ROOT}/scripts/zigbee-adapter-watch.sh"
+  mkdir -p "${UNIT_TARGET_DIR}"
+  install -m 644 "${UNIT_SRC}" "${UNIT_TARGET_DIR}/${WATCH_UNIT}"
+  systemctl --user daemon-reload
+  systemctl --user enable "${WATCH_UNIT}" >/dev/null 2>&1 || true
+  systemctl --user restart "${WATCH_UNIT}"
+  echo "  ${WATCH_UNIT} installed and running"
+  # Lingering is what lets a user unit start at boot with nobody logged in.
+  if [[ "$(loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null)" != "yes" ]]; then
+    warn "User lingering is off, so the watch will not start at boot."
+    warn "Enable it with: sudo loginctl enable-linger $(id -un)"
+  fi
+else
+  warn "${UNIT_SRC} is missing; skipping the hotplug watch."
+fi
+
 info "Starting the stack"
 
 cd "${PROJECT_ROOT}"

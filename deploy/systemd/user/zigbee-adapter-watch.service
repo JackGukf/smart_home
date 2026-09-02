@@ -1,0 +1,17 @@
+[Unit]
+Description=Zigbee Coordinator Hotplug Watch
+# Ordering against docker.service is deliberately omitted: this is a user unit
+# and the user manager cannot order against system units. The watcher tolerates
+# a Docker daemon that is not up yet, because it retries on every loop.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/scripts/zigbee-adapter-watch.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

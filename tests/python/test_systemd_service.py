@@ -78,3 +78,49 @@ def test_matter_server_installer_creates_data_dir_the_chip_stack_needs() -> None
     assert "/data" in script
     assert "python-matter-server[server]" in script
     assert "systemctl enable matter-server" in script
+
+def test_zigbee_adapter_watch_service_runs_project_script_and_restarts() -> None:
+    unit = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "zigbee-adapter-watch.service").read_text(encoding="utf-8")
+
+    assert "WorkingDirectory=/home/orangepi/smart_home_AI" in unit
+    assert "ExecStart=/home/orangepi/smart_home_AI/scripts/zigbee-adapter-watch.sh" in unit
+    assert "Restart=always" in unit
+    assert "WantedBy=default.target" in unit
+    # User units cannot order against system units, so an "After=docker.service"
+    # would look meaningful while doing nothing. Check the directives rather than
+    # the raw text, so the comment explaining this may keep saying so.
+    directives = [line.strip() for line in unit.splitlines() if not line.lstrip().startswith("#")]
+    assert not any("docker.service" in line for line in directives)
+    assert "User=" not in unit
+    assert "Group=" not in unit
+
+
+def test_zigbee_install_script_installs_and_enables_the_hotplug_watch() -> None:
+    script = (PROJECT_ROOT / "scripts" / "install-zigbee2mqtt.sh").read_text(encoding="utf-8")
+
+    assert 'WATCH_UNIT="zigbee-adapter-watch.service"' in script
+    assert 'UNIT_TARGET_DIR="${HOME}/.config/systemd/user"' in script
+    assert 'systemctl --user enable "${WATCH_UNIT}"' in script
+    assert 'systemctl --user restart "${WATCH_UNIT}"' in script
+    assert 'chmod +x "${PROJECT_ROOT}/scripts/zigbee-adapter-watch.sh"' in script
+    # The unit only starts at boot when lingering is on, so the installer has
+    # to say so rather than leaving a watch that silently misses reboots.
+    assert "enable-linger" in script
+
+
+def test_zigbee_adapter_watch_survives_failures_and_uses_the_stable_by_id_path() -> None:
+    script = (PROJECT_ROOT / "scripts" / "zigbee-adapter-watch.sh").read_text(encoding="utf-8")
+
+    # `set -e` here would kill the watcher the first time a docker call fails,
+    # which is exactly when it is needed.
+    assert "set -uo pipefail" in script
+    assert "set -euo pipefail" not in script
+    # The adapter must come from ZIGBEE_ADAPTER (a /dev/serial/by-id path), never
+    # a raw ttyUSBn that moves when USB enumeration order changes.
+    assert "ZIGBEE_ADAPTER" in script
+    assert "/dev/ttyUSB" not in script
+    # A manual stop needs a way to stay stopped.
+    assert ".autostart-disabled" in script
+    assert "udevadm monitor" in script
+    # Polling is the safety net for a missed udev event.
+    assert "ZIGBEE_POLL_SECONDS" in script
