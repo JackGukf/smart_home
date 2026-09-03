@@ -90,11 +90,14 @@ docker compose run --rm dev sh -lc \
 ./scripts/deploy-to-pi.sh             # C++ binary + Python source
 ./scripts/deploy-dashboard.sh         # dashboard + systemd user services
 ./scripts/connect-pi.sh [--check]
+./scripts/backup-smart-home.sh        # Zigbee key, HA config, .env -> ~/orangepi-recovery
 ```
 
 Deploy scripts default to `orangepi@192.168.0.234` and `/home/orangepi/smart_home_AI`. Override with `--host`/`--user`/`--remote-path` (or `PI_HOST`/`PI_USER`/`REMOTE_PATH`) — always confirm the target before deploying, and never assume a default points at the board you mean.
 
 `deploy-dashboard.sh` increments `BUILD_COUNT`, rewrites static cache-busting versions and `web_static/build_info.json`. It mutates the source tree; review the resulting diff.
+
+`backup-smart-home.sh` reads Home Assistant's config through `sudo` — `.storage/auth` is root-owned, and a backup that skips it loses every HA token silently. It verifies the finished archive against a required-members manifest and fails loudly rather than producing a quietly incomplete backup.
 
 ## Python Environment
 

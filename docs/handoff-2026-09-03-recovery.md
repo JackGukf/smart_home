@@ -444,10 +444,30 @@ sudo systemctl restart systemd-journald
   fires. See "Best current theory (revised)". `RuntimeWatchdogUSec=0` is the
   correct state; verify with `systemctl show -p RuntimeWatchdogUSec`.
 
-- **Back up `.storage/auth`.** The 2026-09-03 archive omits it, which cost every
-  Home Assistant token and login session. Whatever produces these archives needs
-  to include the whole `.storage` directory. Until that is fixed, a restore from
-  this archive always requires minting a fresh long-lived token by hand.
+- **~~Back up `.storage/auth`.~~ Fixed 2026-09-03 — `scripts/backup-smart-home.sh`.**
+  There was no backup script; the lost archive was assembled by hand. The new
+  script exists mainly to not repeat the two mistakes that made this incident
+  expensive:
+
+  - It reads the Home Assistant config **through sudo**. `.storage/auth` is mode
+    600 and owned by root because the container writes it, so a backup running as
+    `orangepi` silently skips it — the most likely explanation for the omission,
+    since no error is raised.
+  - It **verifies the finished archive against a manifest of required members**
+    and exits non-zero if any is absent, then separately confirms the Zigbee
+    `network_key` is really present. Parsing the files you did capture cannot
+    detect a file you never captured, which is exactly how the gap passed review.
+
+  Run it from the workstation: `scripts/backup-smart-home.sh`. sudo prompts on
+  your terminal; use `--askpass PATH` for an unattended/cron run. The archive is
+  written mode 600 and holds the network key, tokens and camera credentials.
+
+  Verified by running the new manifest check against the old archive, where it
+  correctly reports `MISSING homeassistant-config/.storage/auth`.
+
+  **The old `nvme-recovery-2026-09-03.tgz` is still missing auth** — it cannot be
+  repaired retroactively. `smart-home-backup-20260903-070721.tgz` supersedes it
+  and does contain a working long-lived token.
 
 - **Ecobee remote sensors were fixed in code, not just in HA.** The two remote
   sensors stopped appearing on the dashboard because an entity-registry *name
