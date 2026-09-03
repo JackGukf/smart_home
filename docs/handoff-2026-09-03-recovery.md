@@ -452,8 +452,24 @@ back after a power cycle.
   fabric is protected from the start. Verified: before the install the backup
   printed `WARNING no matter-server/`; after it, `ok matter-server/`.
 
-  The 9 stale `unavailable` entities in Home Assistant belong to the old fabric.
-  They will not revive, and can be deleted once the devices are re-paired.
+  **The 9 stale entities were deleted 2026-09-03.** They belonged to the destroyed
+  fabric `1C8D7C4FC5CD1FC7` and could never revive. Removal was done by dropping
+  the two old *device* rows from the Matter config entry
+  (`config/device_registry/remove_config_entry`) rather than deleting entities one
+  at a time, so no empty device rows were left behind. The surviving `TEST_PRODUCT`
+  is a separate device row on the new fabric `3836C3D69E18ED12` and was untouched;
+  Matter now reads 6 working / 0 unavailable.
+
+  Deleting them was worth doing *before* re-commissioning, not after: the dashboard's
+  `home_assistant_devices` list in `configs/devices.local.yaml` points at
+  `light.bedroom_north_bedroom_light_switch`. Holding that entity id hostage to a
+  dead fabric would have forced Home Assistant to mint `..._2` on re-pairing and
+  left the dashboard config silently pointing at nothing. The id is now free for
+  the switch to reclaim.
+
+  Registries were backed up to `/config/.storage-bak-<timestamp>/` first, and
+  nothing referenced the deleted entities in automations, scripts, scenes or
+  lovelace.
 
   The C++ Matter *bridge* (our devices → Apple Home) is a separate thing and is
   also not installed; see `docs/matter-bridge.md`.
