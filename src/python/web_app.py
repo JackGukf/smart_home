@@ -3974,14 +3974,24 @@ def _ecobee_payload_from_home_assistant(path: Path) -> dict[str, Any] | None:
     ]
     if not climates:
         return None
+    thermostats = []
+    for entity in climates:
+        device_rooms = _home_assistant_ecobee_sensor_devices(
+            config, token, str(entity.get("entity_id") or "")
+        )
+        thermostats.append(_ecobee_card_from_home_assistant(entity, states, device_rooms))
     return {
         "status": "ok",
         "source": "Home Assistant",
-        "thermostats": [_ecobee_card_from_home_assistant(entity, states) for entity in climates],
+        "thermostats": thermostats,
     }
 
 
-def _ecobee_card_from_home_assistant(entity: dict[str, Any], states: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _ecobee_card_from_home_assistant(
+    entity: dict[str, Any],
+    states: list[dict[str, Any]] | None = None,
+    device_rooms: dict[str, str] | None = None,
+) -> dict[str, Any]:
     entity_id = str(entity.get("entity_id") or "")
     attributes = entity.get("attributes") or {}
     preset_entity = _home_assistant_ecobee_preset_entity(entity, states or [])
@@ -4004,7 +4014,7 @@ def _ecobee_card_from_home_assistant(entity: dict[str, Any], states: list[dict[s
         "desired_cool": attributes.get("target_temp_high") or attributes.get("temperature"),
         "humidity": attributes.get("current_humidity"),
         "online": entity.get("state") not in {"unavailable", "unknown", None},
-        "sensors": _ecobee_sensors_from_ha_states(entity_id, states or []),
+        "sensors": _ecobee_sensors_from_ha_states(entity_id, states or [], device_rooms),
     }
 
 
@@ -4029,17 +4039,94 @@ _ROOM_KEYWORDS: list[tuple[str, str]] = [
 ]
 
 
-def _ecobee_sensors_from_ha_states(climate_entity_id: str, states: list[dict[str, Any]]) -> list[dict[str, Any]]:
+# Renders [[entity_id, device_name], ...] for every sensor/binary_sensor whose
+# device is the thermostat's own device or is linked to it by via_device - how
+# HomeKit and ecobee model remote room sensors. Evaluated by Home Assistant, so
+# the registry is read without the dashboard needing a WebSocket client.
+_ECOBEE_SENSOR_DEVICE_TEMPLATE = """
+{%- set tstat = device_id('__ENTITY__') -%}
+{%- set ns = namespace(rows=[]) -%}
+{%- if tstat -%}
+{%- for e in (states.sensor | list) + (states.binary_sensor | list) -%}
+{%- set d = device_id(e.entity_id) -%}
+{%- if d and (d == tstat or device_attr(d, 'via_device_id') == tstat) -%}
+{%- set ns.rows = ns.rows + [[e.entity_id, device_attr(d, 'name_by_user') or device_attr(d, 'name') or '']] -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{{ ns.rows | tojson }}
+"""
+
+
+def _home_assistant_ecobee_sensor_devices(
+    config: HomeAssistantConfig, token: str, climate_entity_id: str
+) -> dict[str, str] | None:
+    """Map sensor entity_id -> device name for sensors belonging to a thermostat.
+
+    Returns None whenever the lookup cannot be trusted (bad entity id, template
+    API unavailable, unexpected payload) so the caller falls back to matching on
+    room keywords rather than showing an empty card.
+    """
+    if not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", climate_entity_id or ""):
+        return None
+    template = _ECOBEE_SENSOR_DEVICE_TEMPLATE.replace("__ENTITY__", climate_entity_id)
+    try:
+        raw = _home_assistant_post(config, token, "/api/template", {"template": template})
+    except Exception:
+        return None
+    if not isinstance(raw, list):
+        return None
+    mapping: dict[str, str] = {}
+    for row in raw:
+        if isinstance(row, (list, tuple)) and len(row) == 2 and isinstance(row[0], str):
+            mapping[row[0]] = str(row[1] or "")
+    # An empty map means the template ran but matched nothing; treat that as "no
+    # registry information" so the keyword path still gets a chance.
+    return mapping or None
+
+
+def _room_from_keywords(text: str) -> str | None:
+    for keyword, room_name in _ROOM_KEYWORDS:
+        if keyword in text:
+            return room_name
+    return None
+
+
+def _normalize_room_name(raw: str) -> str:
+    """Canonicalise a room label, keeping an unrecognised one rather than dropping it.
+
+    "Family room" becomes "Family Room" so the UI reads consistently, but a label
+    that matches no keyword is kept verbatim - a sensor with an unusual name should
+    still be shown, which is the whole point of matching structurally.
+    """
+    cleaned = (raw or "").strip()
+    for suffix in (" temperature", " occupancy"):
+        if cleaned.lower().endswith(suffix):
+            cleaned = cleaned[: -len(suffix)].strip()
+            break
+    return _room_from_keywords(cleaned.lower()) or cleaned or "Sensor"
+
+
+def _ecobee_sensors_from_ha_states(
+    climate_entity_id: str,
+    states: list[dict[str, Any]],
+    device_rooms: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Find per-room temperature/occupancy sensor entities from HA states for an Ecobee thermostat.
 
-    Matches the ecobee built-in sensor by entity_id prefix, and other room sensors
-    by room keywords in their friendly names (works regardless of integration source).
+    Matches the ecobee built-in sensor by entity_id prefix. Remote room sensors are
+    matched structurally when ``device_rooms`` is supplied - see
+    :func:`_home_assistant_ecobee_sensor_devices` - because names are not reliable:
+    an entity-registry name override that hides the room (e.g. every sensor called
+    "Ecobee temperature and motion sensor Temperature") silently dropped them.
+
+    ``device_rooms`` is None when the registry lookup is unavailable, and the older
+    room-keyword matching is used instead so the card still populates.
     """
     climate_slug = climate_entity_id.split(".", 1)[-1].lower()
 
     occ_by_room: dict[str, bool] = {}
     temp_entries: list[dict[str, Any]] = []
-    seen_rooms: set[str] = set()
 
     for entity in states:
         entity_id = str(entity.get("entity_id") or "")
@@ -4058,12 +4145,14 @@ def _ecobee_sensors_from_ha_states(climate_entity_id: str, states: list[dict[str
             # Ecobee built-in: entity slug starts with the climate entity slug
             if slug.startswith(climate_slug + "_"):
                 room_name = "Living Room"
+            elif device_rooms is not None:
+                # Structural match: the sensor's device is linked to the thermostat
+                # by via_device. Naming plays no part in whether it is included.
+                if entity_id not in device_rooms:
+                    continue
+                room_name = _normalize_room_name(device_rooms[entity_id] or clean)
             else:
-                room_name = None
-                for keyword, rname in _ROOM_KEYWORDS:
-                    if keyword in clean_lower:
-                        room_name = rname
-                        break
+                room_name = _room_from_keywords(clean_lower)
 
             if room_name is None:
                 continue  # not a room sensor we recognize
@@ -4078,20 +4167,27 @@ def _ecobee_sensors_from_ha_states(climate_entity_id: str, states: list[dict[str
 
         if domain == "binary_sensor" and attrs.get("device_class") == "occupancy":
             clean = friendly[: -len(" Occupancy")].strip() if friendly.lower().endswith(" occupancy") else friendly
-            for keyword, rname in _ROOM_KEYWORDS:
-                if keyword in clean.lower():
+            if device_rooms is not None and entity_id in device_rooms:
+                occ_by_room[_normalize_room_name(device_rooms[entity_id] or clean)] = entity.get("state") == "on"
+            else:
+                rname = _room_from_keywords(clean.lower())
+                if rname is not None:
                     occ_by_room[rname] = entity.get("state") == "on"
-                    break
 
     # Built-in sensor wins if the same room appears from multiple sources
     temp_entries.sort(key=lambda e: (0 if e["builtin"] else 1))
 
     sensors = []
+    seen: set[str] = set()
     for entry in temp_entries:
         room = entry["name"]
-        if room in seen_rooms:
+        # Structural mode: two remote sensors are distinct devices even if they
+        # carry the same label, so key on the entity. Keyword mode keys on the
+        # room, letting the built-in win over duplicates from other integrations.
+        key = entry["id"] if (device_rooms is not None and not entry["builtin"]) else room
+        if key in seen:
             continue
-        seen_rooms.add(room)
+        seen.add(key)
         sensors.append({
             "id": entry["id"],
             "name": room,

@@ -1697,3 +1697,139 @@ def test_areas_load_falls_back_to_defaults_on_corrupt_file(tmp_path: Path) -> No
     client = _areas_client(tmp_path)
 
     assert client.get("/api/areas").json() == {"areas": DEFAULT_AREAS, "assignments": {}}
+
+
+def _ecobee_ha_states() -> list[dict]:
+    """Two ecobee remote sensors whose registry names hide the room.
+
+    This mirrors the real board: an entity-registry name override replaced the
+    HomeKit names ("Family room Temperature") with the generic device name, so
+    room-keyword matching found nothing.
+    """
+    return [
+        {
+            "entity_id": "climate.my_ecobee",
+            "state": "heat",
+            "attributes": {"friendly_name": "My ecobee", "current_temperature": 22.8},
+        },
+        {
+            "entity_id": "sensor.my_ecobee_current_temperature",
+            "state": "22.8",
+            "attributes": {
+                "friendly_name": "My ecobee Current Temperature",
+                "device_class": "temperature",
+                "unit_of_measurement": "°C",
+            },
+        },
+        {
+            "entity_id": "sensor.8jt7_temperature",
+            "state": "22.7",
+            "attributes": {
+                "friendly_name": "Ecobee temperature and motion sensor Temperature",
+                "device_class": "temperature",
+                "unit_of_measurement": "°C",
+            },
+        },
+        {
+            "entity_id": "binary_sensor.8jt7_occupancy",
+            "state": "on",
+            "attributes": {
+                "friendly_name": "Ecobee temperature and motion sensor Occupancy",
+                "device_class": "occupancy",
+            },
+        },
+        {
+            "entity_id": "sensor.8k2g_temperature",
+            "state": "22.3",
+            "attributes": {
+                "friendly_name": "Ecobee temperature and motion sensor Temperature",
+                "device_class": "temperature",
+                "unit_of_measurement": "°C",
+            },
+        },
+    ]
+
+
+def test_ecobee_sensors_matched_by_device_link_when_names_hide_the_room() -> None:
+    device_rooms = {
+        "sensor.8jt7_temperature": "Family room",
+        "binary_sensor.8jt7_occupancy": "Family room",
+        "sensor.8k2g_temperature": "Master Bedroom",
+    }
+
+    sensors = web_app_module._ecobee_sensors_from_ha_states(
+        "climate.my_ecobee", _ecobee_ha_states(), device_rooms
+    )
+
+    assert [(s["name"], s["temperature"]) for s in sensors] == [
+        ("Living Room", 22.8),
+        ("Family Room", 22.7),
+        ("Master Bedroom", 22.3),
+    ]
+    # Occupancy is keyed off the same device link, not the masked friendly name.
+    assert next(s for s in sensors if s["name"] == "Family Room")["occupied"] is True
+
+
+def test_ecobee_sensors_dropped_by_keyword_matching_without_device_links() -> None:
+    """Without registry data the old behaviour stands: generic names are skipped."""
+    sensors = web_app_module._ecobee_sensors_from_ha_states("climate.my_ecobee", _ecobee_ha_states())
+
+    assert [s["name"] for s in sensors] == ["Living Room"]
+
+
+def test_ecobee_sensors_keep_unrecognised_room_labels() -> None:
+    """A device name matching no keyword is shown verbatim, never dropped."""
+    states = [
+        {
+            "entity_id": "sensor.abcd_temperature",
+            "state": "19.5",
+            "attributes": {"friendly_name": "abcd Temperature", "device_class": "temperature"},
+        }
+    ]
+
+    sensors = web_app_module._ecobee_sensors_from_ha_states(
+        "climate.my_ecobee", states, {"sensor.abcd_temperature": "Wine Cellar"}
+    )
+
+    assert [(s["name"], s["temperature"]) for s in sensors] == [("Wine Cellar", 19.5)]
+
+
+def test_ecobee_sensors_keep_both_devices_sharing_a_room_label() -> None:
+    """Two distinct remote sensors must both survive, even with identical labels."""
+    states = [
+        {
+            "entity_id": "sensor.one_temperature",
+            "state": "20.0",
+            "attributes": {"friendly_name": "x", "device_class": "temperature"},
+        },
+        {
+            "entity_id": "sensor.two_temperature",
+            "state": "21.0",
+            "attributes": {"friendly_name": "y", "device_class": "temperature"},
+        },
+    ]
+    device_rooms = {"sensor.one_temperature": "Office", "sensor.two_temperature": "Office"}
+
+    sensors = web_app_module._ecobee_sensors_from_ha_states("climate.my_ecobee", states, device_rooms)
+
+    assert [s["temperature"] for s in sensors] == [20.0, 21.0]
+
+
+def test_ecobee_sensor_devices_returns_none_when_template_api_fails(monkeypatch) -> None:
+    def boom(*args, **kwargs):
+        raise RuntimeError("template API unavailable")
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_post", boom)
+    config = web_app_module.HomeAssistantConfig(
+        base_url="http://ha.local", token_env="HOME_ASSISTANT_TOKEN", include_domains=set()
+    )
+
+    assert web_app_module._home_assistant_ecobee_sensor_devices(config, "token", "climate.my_ecobee") is None
+
+
+def test_ecobee_sensor_devices_rejects_malformed_entity_id() -> None:
+    config = web_app_module.HomeAssistantConfig(
+        base_url="http://ha.local", token_env="HOME_ASSISTANT_TOKEN", include_domains=set()
+    )
+
+    assert web_app_module._home_assistant_ecobee_sensor_devices(config, "token", "'; drop") is None
