@@ -1,5 +1,11 @@
 # Smart Home AI (Orange Pi 6 Plus) — Claude Code Context
 
+> **⚠️ ACTIVE INCIDENT (2026-09-03): the board is bare and nothing is running.**
+> It was re-flashed to SD after repeated resets traced to the NVMe. The stack —
+> Home Assistant, Zigbee2MQTT, dashboard, go2rtc — is **not installed** on the
+> current system, and the SSH host key has changed. A verified backup exists.
+> **Read `docs/handoff-2026-09-03-recovery.md` before touching the board.**
+
 ## Project Overview
 
 Smart home controller for an **Orange Pi 6 Plus** targeting TP-Link/Kasa switches, Tuya sensors, Govee/Lepro ambient devices, cameras, Home Assistant entities, a Matter bridge, and a web dashboard. Dual-language: Python for fast automation and C/C++ for long-running services.
@@ -157,6 +163,7 @@ Three things that will waste a day if you do not know them:
 - `docs/docker-development.md`, `docs/WSL_DEVELOPMENT.md` — dev environment
 - `docs/matter-bridge.md` — Matter bridge design and deployment (our devices → Apple Home)
 - `docs/matter-controller.md` — Matter controller setup (third-party Matter devices → dashboard)
+- `docs/handoff-2026-09-03-recovery.md` — **current incident**: NVMe resets, what was ruled out, the backup, and the recovery plan
 - `docs/local-ai.md` — the LLM and NPU stack: services, build flags, NPU op support, benchmarks
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
