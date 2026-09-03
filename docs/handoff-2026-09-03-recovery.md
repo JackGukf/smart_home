@@ -370,9 +370,27 @@ back after a power cycle.
   The Matter *controller* (`python-matter-server`) keeps its operational
   credentials in **`/var/lib/matter`** — on the root filesystem, not in the home
   directory and not in the repo. The reflash destroyed it, and no archive ever
-  contained it. On the board today: `/var/lib/matter` does not exist, the venv at
-  `~/.venvs/matter-server` is gone, the service is `not-found`, and nothing
-  listens on 5580.
+  contained it.
+
+  **The controller was reinstalled 2026-09-03** (`scripts/install-matter-server.sh`):
+  `matter-server.service` is active and enabled, listening on 5580, with
+  `--primary-interface wlp1s0` and `--bluetooth-adapter 1`. The adapter index was
+  resolved from the UB500's MAC, not hardcoded — it came up as **hci1** this boot,
+  with the onboard AX210 as hci0, which is exactly the numbering swap the script
+  guards against. The dashboard's Matter card now reports
+  `{"devices":[],"matter_online":true}`.
+
+  But a reinstalled controller is a **new, empty fabric** — the log says
+  `Allocating new controller with ... FabricId 0x1` and
+  `Loaded 0 nodes from stored configuration`. Installing the server does not get
+  the devices back.
+
+  Harmless startup noise to expect: three
+  `CHIP_ERROR ... Failed to advertise records: Network is unreachable` lines at
+  boot, before the interface is ready. They do not recur, and `avahi-daemon` is
+  active. Note the board has only a link-local IPv6 address and no default IPv6
+  route; if commissioning misbehaves, that is the first thing to look at, since
+  Matter leans on IPv6 and mDNS.
 
   What *did* survive is misleading. Home Assistant still has its `matter` config
   entry pointing at `ws://localhost:5580/ws`, 9 entities sit in the registry
@@ -396,12 +414,17 @@ back after a power cycle.
   integration, so it is not necessarily offline in the house — only its Matter
   path is broken.
 
-  To rebuild: `scripts/install-matter-server.sh`, then re-pair through
-  Dashboard → Matter card → **Add Matter Device** with each device's 11-digit
-  code or QR payload (`docs/matter-controller.md`). A device previously
-  commissioned elsewhere needs a factory reset first. **Run
-  `scripts/backup-smart-home.sh` immediately afterwards** — it now captures
-  `/var/lib/matter`, and warns loudly when that directory is absent.
+  **What is left is the physical step**: factory reset each device, then re-pair
+  through Dashboard → Matter card → **Add Matter Device** with its 11-digit code
+  or QR payload (`docs/matter-controller.md`). A device still commissioned to the
+  old fabric will refuse to pair until it is reset. **Run
+  `scripts/backup-smart-home.sh` immediately afterwards** — it captures
+  `/var/lib/matter` and warns loudly when that directory is absent, so the new
+  fabric is protected from the start. Verified: before the install the backup
+  printed `WARNING no matter-server/`; after it, `ok matter-server/`.
+
+  The 9 stale `unavailable` entities in Home Assistant belong to the old fabric.
+  They will not revive, and can be deleted once the devices are re-paired.
 
   The C++ Matter *bridge* (our devices → Apple Home) is a separate thing and is
   also not installed; see `docs/matter-bridge.md`.
