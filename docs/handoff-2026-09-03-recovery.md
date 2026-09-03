@@ -360,10 +360,39 @@ back after a power cycle.
 
 ### Still outstanding after the rebuild
 
-- **Zigbee** needs the dongle physically attached. Everything else is staged, and
-  the network key, `database.db` and `coordinator_backup.json` went back together,
-  so the 5 devices should rejoin without re-pairing. 35 MQTT entities stay
-  `unavailable` until then, and Home Assistant logs an MQTT connection refusal.
+- **~~Zigbee~~ Done 2026-09-03 — all 5 devices rejoined without re-pairing.**
+  The dongle was reattached and `scripts/install-zigbee2mqtt.sh` run. It enumerated
+  at the *same* by-id path the restored `.env` already held, so no config change
+  was needed:
+
+  ```
+  z2m: zigbee-herdsman started (resumed)
+  z2m: Currently 5 devices are joined.
+  ```
+
+  The restore worked because the network key, `database.db` and
+  `coordinator_backup.json` travelled together in the archive. `configuration.yaml`
+  was left untouched — the installer refuses to overwrite an existing one, and the
+  key was diffed against a pre-install snapshot to confirm it. PAN 38810, channel
+  25, coordinator ZStack3x0.
+
+  Home Assistant MQTT went from **0 working / 35 unavailable to 29 / 6**, and the
+  connection refusal is gone. Live: motion sensor + illumination (12 entities),
+  two temperature/humidity sensors (4 each), two smart buttons (2 each), and the
+  Zigbee2MQTT bridge (5). All four button automations are `on` and reference no
+  unavailable entity.
+
+  The 6 that remain `unavailable` are **all NPU detector** entities
+  (`*_npu_person`, `*_npu_person_count` for three cameras). They belong to
+  `npu-detector`, which is deliberately not installed, and the one automation that
+  uses them is correspondingly `off`. Nothing to fix unless the AI stack comes back.
+
+  `zigbee-adapter-watch.service` is active and enabled — without it, unplugging the
+  dongle takes the bridge down permanently, because Docker cannot recreate a
+  container whose by-id device mapping has vanished. Both containers are
+  `restart=unless-stopped`, and `docker` is enabled at boot, which is what the
+  earlier reboot test proved for the rest of the stack (Zigbee itself has not been
+  reboot-tested).
 - **Matter — the fabric is gone and the devices need re-commissioning.** This is
   the one loss the backup cannot undo, and it is worse than the Zigbee situation.
 
