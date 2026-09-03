@@ -364,7 +364,47 @@ back after a power cycle.
   the network key, `database.db` and `coordinator_backup.json` went back together,
   so the 5 devices should rejoin without re-pairing. 35 MQTT entities stay
   `unavailable` until then, and Home Assistant logs an MQTT connection refusal.
-- **Matter** (9 entities) needs `matter-server`, not yet reinstalled.
+- **Matter — the fabric is gone and the devices need re-commissioning.** This is
+  the one loss the backup cannot undo, and it is worse than the Zigbee situation.
+
+  The Matter *controller* (`python-matter-server`) keeps its operational
+  credentials in **`/var/lib/matter`** — on the root filesystem, not in the home
+  directory and not in the repo. The reflash destroyed it, and no archive ever
+  contained it. On the board today: `/var/lib/matter` does not exist, the venv at
+  `~/.venvs/matter-server` is gone, the service is `not-found`, and nothing
+  listens on 5580.
+
+  What *did* survive is misleading. Home Assistant still has its `matter` config
+  entry pointing at `ws://localhost:5580/ws`, 9 entities sit in the registry
+  reading `unavailable`, and `configs/devices.local.yaml` still lists the nodes:
+
+  ```yaml
+  matter:
+    devices:
+    - {name: Stick S3,                  node_id: 1, room: Office}
+    - {name: North bedroom light switch, node_id: 2, room: Bedroom}
+  ```
+
+  Node ids are useless without the fabric keys. Unlike Zigbee — where the network
+  key plus `coordinator_backup.json` let devices rejoin untouched — a Matter
+  device holds credentials for the fabric it joined, and that fabric's keys no
+  longer exist. **Each device must be factory reset and re-commissioned.**
+
+  Of the two, only `North bedroom light switch` (TP-Link Matter switch) is a real
+  device; `Stick S3` is the ESP32 test node that appears as `TEST_VENDOR /
+  TEST_PRODUCT`. Note the TP-Link switch is also reachable over the `tplink`
+  integration, so it is not necessarily offline in the house — only its Matter
+  path is broken.
+
+  To rebuild: `scripts/install-matter-server.sh`, then re-pair through
+  Dashboard → Matter card → **Add Matter Device** with each device's 11-digit
+  code or QR payload (`docs/matter-controller.md`). A device previously
+  commissioned elsewhere needs a factory reset first. **Run
+  `scripts/backup-smart-home.sh` immediately afterwards** — it now captures
+  `/var/lib/matter`, and warns loudly when that directory is absent.
+
+  The C++ Matter *bridge* (our devices → Apple Home) is a separate thing and is
+  also not installed; see `docs/matter-bridge.md`.
 - Two battery-powered Tuya sensors report only periodically and will read
   `unavailable` until their next check-in.
 

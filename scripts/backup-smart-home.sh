@@ -3,7 +3,14 @@
 #
 # Captures the git-ignored state that exists nowhere else: the Zigbee network
 # key and coordinator database, the Home Assistant config directory, device
-# credentials, and the container spec Home Assistant is recreated from.
+# credentials, the Matter controller fabric, and the container spec Home
+# Assistant is recreated from.
+#
+# The two credential stores are what make an unattended restore possible at all.
+# Zigbee's network key plus coordinator_backup.json let devices rejoin without
+# re-pairing; Matter's /var/lib/matter holds the operational credentials for
+# every commissioned node. Both live outside the repo, and Matter's also lives
+# outside the home directory, so a root-filesystem reflash destroys it.
 #
 # Two things this script exists to get right, both learned from the
 # 2026-09-03 recovery (docs/handoff-2026-09-03-recovery.md):
@@ -24,6 +31,7 @@ PI_USER="${PI_USER:-orangepi}"
 REMOTE_PATH="${REMOTE_PATH:-/home/${PI_USER}/smart_home_AI}"
 HA_CONFIG="${HA_CONFIG:-/home/${PI_USER}/homeassistant-config}"
 HA_CONTAINER="${HA_CONTAINER:-homeassistant}"
+MATTER_STORAGE="${MATTER_STORAGE:-/var/lib/matter}"
 OUT_DIR="${OUT_DIR:-${HOME}/orangepi-recovery}"
 LOCAL=0
 KEEP_REMOTE=0
@@ -44,6 +52,7 @@ Options:
   --out DIR         Local output directory.   Default: ~/orangepi-recovery
   --ha-config PATH  Home Assistant config dir on the board.
   --container NAME  Home Assistant container. Default: homeassistant
+  --matter PATH     Matter controller storage.  Default: /var/lib/matter
   --keep-remote     Leave a copy of the archive on the board as well.
   --local           Run against this machine instead of over SSH.
   --askpass PATH    Path ON THE BOARD to a sudo askpass helper, for unattended
@@ -61,6 +70,7 @@ while [[ $# -gt 0 ]]; do
         --out) OUT_DIR="$2"; shift 2 ;;
         --ha-config) HA_CONFIG="$2"; shift 2 ;;
         --container) HA_CONTAINER="$2"; shift 2 ;;
+        --matter) MATTER_STORAGE="$2"; shift 2 ;;
         --keep-remote) KEEP_REMOTE=1; shift ;;
         --askpass) ASKPASS="$2"; shift 2 ;;
         --local) LOCAL=1; shift ;;
@@ -149,6 +159,16 @@ fi
 \$SUDO cp -a "${HA_CONFIG}" "\$STAGE/homeassistant-config"
 \$SUDO chown -R "\$(id -u):\$(id -g)" "\$STAGE/homeassistant-config"
 
+# Matter controller fabric. /var/lib/matter holds the operational credentials
+# for every commissioned Matter device; without it a rebuilt controller cannot
+# talk to them and each device needs a factory reset and re-commissioning. It is
+# root-owned and lives on the root filesystem, so it does not survive a reflash
+# and is not covered by anything else here.
+if [ -d "${MATTER_STORAGE}" ]; then
+    \$SUDO cp -a "${MATTER_STORAGE}" "\$STAGE/matter-server"
+    \$SUDO chown -R "\$(id -u):\$(id -g)" "\$STAGE/matter-server"
+fi
+
 # Live container spec, so Home Assistant is recreated on the same image digest
 # rather than :latest, which would migrate .storage irreversibly.
 if docker inspect "${HA_CONTAINER}" > "\$STAGE/homeassistant-container-spec.json" 2>/dev/null; then
@@ -216,6 +236,20 @@ if tar xzOf "$LOCAL_ARCHIVE" ./smart_home_AI/deploy/zigbee/zigbee2mqtt/configura
 else
     echo "    MISSING zigbee network_key -- devices would need re-pairing" >&2
     exit 1
+fi
+
+# Matter is checked separately from REQUIRED: the controller is not always
+# installed, so its absence must not fail every backup -- but it must never pass
+# unremarked either, because losing it means re-commissioning every device.
+if grep -q '^matter-server/' <<<"$MEMBERS"; then
+    echo "    ok      matter-server/ (fabric credentials)"
+else
+    echo "    WARNING no matter-server/ in this archive." >&2
+    echo "            ${MATTER_STORAGE} was absent on the board, so no Matter" >&2
+    echo "            fabric was captured. If you later commission Matter" >&2
+    echo "            devices, re-run this backup: those credentials exist" >&2
+    echo "            only there, and losing them means a factory reset and" >&2
+    echo "            re-commissioning of every device." >&2
 fi
 
 SIZE=$(stat -c %s "$LOCAL_ARCHIVE")
