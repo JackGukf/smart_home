@@ -113,13 +113,27 @@ Deploy scripts default to `orangepi@192.168.0.234` and `/home/orangepi/smart_hom
 
 ## Local AI
 
-The board runs Ollama as a system service with `qwen3:4b`, bound to loopback only — that is intentional. Reach it with an SSH tunnel, not by widening the bind address:
+Three services, all loopback-only or local-only on purpose. See `docs/local-ai.md` for the full picture — build flags, NPU op support, benchmarks, and the traps.
+
+| Service | Endpoint | What |
+| --- | --- | --- |
+| `ollama.service` (system) | `127.0.0.1:11434` | Qwen3-4B Q4_K_M, Ollama API. Unloads when idle. |
+| `llama-server.service` (user) | `127.0.0.1:8081` | Qwen3-4B Q4_0, OpenAI API. ~3x faster prompts, holds 5GB always. |
+| `npu-detector.service` (user) | → MQTT `smarthome/vision/<camera>` | YOLOv8n on the Zhouyi NPU |
+
+Reach the LLMs with an SSH tunnel, not by widening the bind address:
 
 ```bash
 ssh -N -L 11434:127.0.0.1:11434 orangepi@192.168.0.234
 ```
 
-Treat model output as untrusted input: validate schema, enforce an allow-list, and keep device control deterministic.
+Treat model output as untrusted input: validate schema, enforce an allow-list, and keep device control deterministic. Never put the model in a trigger path — it is slower and less reliable than the rule it would replace. The useful shape is *LLM authors, rules execute*.
+
+Three things that will waste a day if you do not know them:
+
+- **`-mcpu=native` silently produces a baseline binary.** GCC 13 cannot identify this A720+A520 CPU and emits zero ARM feature macros. Always pass `-DGGML_CPU_ARM_ARCH=armv9-a+i8mm+dotprod+sve+bf16`. Worth 3x on prompt processing.
+- **The A720 cores are interleaved**: `0,1,6,7,8,9,10,11`. CIX's documented taskset list is wrong for this board and costs 31% of generation throughput.
+- **On the NPU, a model that runs is not proof it ran on the NPU.** Unsupported ops fall back to CPU silently — set `session.disable_cpu_ep_fallback` or you are measuring the CPU. SiLU crashes the execution provider outright, which is why stock YOLOv8 cannot run.
 
 ## Secrets / Credentials
 
@@ -143,6 +157,7 @@ Treat model output as untrusted input: validate schema, enforce an allow-list, a
 - `docs/docker-development.md`, `docs/WSL_DEVELOPMENT.md` — dev environment
 - `docs/matter-bridge.md` — Matter bridge design and deployment (our devices → Apple Home)
 - `docs/matter-controller.md` — Matter controller setup (third-party Matter devices → dashboard)
+- `docs/local-ai.md` — the LLM and NPU stack: services, build flags, NPU op support, benchmarks
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
 
