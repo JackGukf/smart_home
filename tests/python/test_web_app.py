@@ -1617,12 +1617,14 @@ def test_areas_endpoint_starts_with_default_areas(tmp_path: Path) -> None:
 def test_areas_create_slugifies_name_and_persists(tmp_path: Path) -> None:
     client = _areas_client(tmp_path)
 
-    response = client.post("/api/areas", json={"name": "Front Yard", "icon": "fence"})
+    # A two-word name that is not one of the seeded defaults, so this exercises
+    # slugification rather than colliding with an existing area.
+    response = client.post("/api/areas", json={"name": "Guest Room", "icon": "fence"})
 
     assert response.status_code == 200
-    assert response.json()["area"] == {"id": "front-yard", "name": "Front Yard", "icon": "fence"}
+    assert response.json()["area"] == {"id": "guest-room", "name": "Guest Room", "icon": "fence"}
     assert client.get("/api/areas").json()["areas"] == DEFAULT_AREAS + [
-        {"id": "front-yard", "name": "Front Yard", "icon": "fence"}
+        {"id": "guest-room", "name": "Guest Room", "icon": "fence"}
     ]
 
 
@@ -1833,3 +1835,26 @@ def test_ecobee_sensor_devices_rejects_malformed_entity_id() -> None:
     )
 
     assert web_app_module._home_assistant_ecobee_sensor_devices(config, "token", "'; drop") is None
+
+
+def test_default_areas_follow_the_house_walkthrough_order() -> None:
+    """DEFAULT_AREAS order is the dashboard's default order everywhere.
+
+    Cameras and devices fall back to it, so this list is not cosmetic.
+    """
+    assert [a["id"] for a in DEFAULT_AREAS] == [
+        "front-yard",
+        "front-door",
+        "living-room",
+        "kitchen",
+        "family-room",
+        "office",
+        "bedroom",
+        "back-yard",
+        "utility-room",
+    ]
+    # "Unassigned" is synthetic (auto:unassigned) and appended by the frontend;
+    # storing it as a real area would render it twice.
+    assert not any(a["id"] == "auto:unassigned" for a in DEFAULT_AREAS)
+    assert not any(a["name"].lower() == "unassigned" for a in DEFAULT_AREAS)
+    assert len({a["id"] for a in DEFAULT_AREAS}) == len(DEFAULT_AREAS)

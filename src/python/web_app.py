@@ -58,13 +58,24 @@ DEFAULT_ZIGBEE_SECRET_PATH = PROJECT_ROOT / "deploy" / "zigbee" / "zigbee2mqtt" 
 # either, so a constant rather than a setting.
 ZIGBEE_FRONTEND_PORT = 8080
 # Mirrors the areas defined in Home Assistant; seeded when no areas file exists yet.
+#
+# The order here is the dashboard's default order everywhere, not just on the
+# Areas view: cameras and devices fall back to it when they have no hand-dragged
+# order (see homeAreaRanker in web_static/app.js). It walks the house front to
+# back - approach, entry, living space, work, private, outside, utility - so the
+# views read the way you move through the place rather than alphabetically.
+#
+# The synthetic "Unassigned" bucket is not listed: the frontend appends it and
+# always sorts it last.
 DEFAULT_AREAS = [
+    {"id": "front-yard", "name": "Front Yard", "icon": "car"},
+    {"id": "front-door", "name": "Front Door", "icon": "door"},
     {"id": "living-room", "name": "Living Room", "icon": "sofa"},
     {"id": "kitchen", "name": "Kitchen", "icon": "chef-hat"},
-    {"id": "bedroom", "name": "Bedroom", "icon": "bed"},
-    {"id": "front-door", "name": "Front Door", "icon": "door"},
     {"id": "family-room", "name": "Family Room", "icon": "sofa"},
     {"id": "office", "name": "Office", "icon": "desk"},
+    {"id": "bedroom", "name": "Bedroom", "icon": "bed"},
+    {"id": "back-yard", "name": "Back Yard", "icon": "flower"},
     {"id": "utility-room", "name": "Utility Room", "icon": "tools"},
 ]
 DEFAULT_DEVICE_GROUPS_PATH = PROJECT_ROOT / "dashboard_device_groups.json"

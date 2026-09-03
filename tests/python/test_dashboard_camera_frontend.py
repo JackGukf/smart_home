@@ -41,3 +41,38 @@ def test_camera_drag_handle_does_not_overlap_edit_button() -> None:
     assert '${cameraTitle(camera)}\n          ${cameraDragHandle(cameraId)}' not in source
     drag_rule = styles[styles.index('.camera-drag-handle {'):styles.index('.camera-drag-handle:hover')]
     assert 'position: absolute' not in drag_rule
+
+def test_default_order_falls_back_to_area_position() -> None:
+    """Cameras and devices with no hand-dragged order sort by their area.
+
+    Both used to return early on an empty saved order, leaving whatever order the
+    backend happened to produce.
+    """
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "function homeAreaRanker()" in source
+    # The early return is what defeated a default order; it must stay gone.
+    assert "const order = savedCameraOrder();\n  if (order.length === 0) return cameras;" not in source
+    assert "const order = savedDeviceOrder(category);\n  if (order.length === 0) return devices;" not in source
+
+    for fn, key_prefix in (("applyCameraOrder", "cam:"), ("applyDeviceOrder", "dev:")):
+        start = source.index(f"function {fn}(")
+        body = source[start:start + 1200]
+        assert "homeAreaRanker()" in body, fn
+        assert f"`{key_prefix}" in body, fn
+        # Saved drag order still wins; area order is only the tie-break.
+        assert "(a.saved - b.saved) || (a.area - b.area) || (a.index - b.index)" in body, fn
+
+
+def test_area_ranker_matches_resolve_home_areas_resolution() -> None:
+    """The ranker must resolve areas the same way the Areas view does.
+
+    If they diverge, an item sorts into one room and renders under another.
+    """
+    source = APP_JS.read_text(encoding="utf-8")
+    start = source.index("function homeAreaRanker()")
+    body = source[start:source.index("function applyDeviceOrder(")]
+
+    assert "assignments[key]" in body          # explicit assignment wins
+    assert "idByName.get(String(room" in body  # then exact room-name match
+    assert "Number.MAX_SAFE_INTEGER" in body   # no area -> last, with Unassigned

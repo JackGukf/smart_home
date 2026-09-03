@@ -48,23 +48,25 @@ def test_areas_seeded_with_home_assistant_defaults(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json() == {"areas": DEFAULT_AREAS, "assignments": {}}
     names = [a["name"] for a in response.json()["areas"]]
+    # This order is the dashboard's default order for cameras and devices too,
+    # not just the Areas view, so it is asserted explicitly.
     assert names == [
-        "Living Room", "Kitchen", "Bedroom", "Front Door",
-        "Family Room", "Office", "Utility Room",
+        "Front Yard", "Front Door", "Living Room", "Kitchen",
+        "Family Room", "Office", "Bedroom", "Back Yard", "Utility Room",
     ]
 
 
 def test_create_area_persists(tmp_path: Path) -> None:
     client, areas_path = _make_client(tmp_path)
-    response = client.post("/api/areas", json={"name": "Front Yard", "icon": "tree"})
+    response = client.post("/api/areas", json={"name": "Guest Room", "icon": "tree"})
     assert response.status_code == 200
-    assert response.json()["area"] == {"id": "front-yard", "name": "Front Yard", "icon": "tree"}
+    assert response.json()["area"] == {"id": "guest-room", "name": "Guest Room", "icon": "tree"}
 
     saved = json.loads(areas_path.read_text(encoding="utf-8"))
-    assert saved["areas"][-1]["id"] == "front-yard"
+    assert saved["areas"][-1]["id"] == "guest-room"
 
     listing = client.get("/api/areas").json()
-    assert listing["areas"] == DEFAULT_AREAS + [{"id": "front-yard", "name": "Front Yard", "icon": "tree"}]
+    assert listing["areas"] == DEFAULT_AREAS + [{"id": "guest-room", "name": "Guest Room", "icon": "tree"}]
 
 
 def test_create_area_rejects_blank_and_duplicate(tmp_path: Path) -> None:

@@ -1024,15 +1024,47 @@ function savedDeviceOrder(category) {
   }
 }
 
+/* The dashboard's default order, shared by the camera, device and area views:
+   the position of the item's area in areasDoc.areas. Resolution mirrors
+   resolveHomeAreas() exactly — an explicit assignment wins, then a room name
+   that matches an area name — so a device cannot sort into one area here and
+   render under another there.
+
+   Returns a closure because the callers sort: building the lookup once per sort
+   rather than once per comparison. Anything with no area ranks last, next to the
+   Unassigned bucket it lands in. Before /api/areas has loaded, areasDoc is empty
+   and every item ranks equal, leaving the incoming order untouched. */
+function homeAreaRanker() {
+  const areas = (areasDoc && areasDoc.areas) || [];
+  const assignments = (areasDoc && areasDoc.assignments) || {};
+  const rankById = new Map(areas.map((area, index) => [area.id, index]));
+  const idByName = new Map(areas.map((area) => [String(area.name).toLowerCase(), area.id]));
+  return (key, room) => {
+    let areaId = assignments[key];
+    if (!areaId || !rankById.has(areaId)) {
+      areaId = idByName.get(String(room || "").trim().toLowerCase());
+    }
+    return rankById.has(areaId) ? rankById.get(areaId) : Number.MAX_SAFE_INTEGER;
+  };
+}
+
+/* Hand-dragged order wins where it exists; everything else falls back to area
+   order. Both are consulted on every sort rather than returning early on an
+   empty saved order, so a newly added device slots into its room instead of
+   landing at whatever position the backend happened to return it in. */
 function applyDeviceOrder(devices, category) {
   const order = savedDeviceOrder(category);
-  if (order.length === 0) return devices;
   const indexByHost = new Map(order.map((host, index) => [host, index]));
-  return [...devices].sort((a, b) => {
-    const aIndex = indexByHost.has(String(a.host)) ? indexByHost.get(String(a.host)) : Number.MAX_SAFE_INTEGER;
-    const bIndex = indexByHost.has(String(b.host)) ? indexByHost.get(String(b.host)) : Number.MAX_SAFE_INTEGER;
-    return aIndex - bIndex;
-  });
+  const rankOf = homeAreaRanker();
+  return [...devices]
+    .map((device, index) => ({
+      device,
+      index,
+      saved: indexByHost.has(String(device.host)) ? indexByHost.get(String(device.host)) : Number.MAX_SAFE_INTEGER,
+      area: rankOf(`dev:${device.host}`, device.room),
+    }))
+    .sort((a, b) => (a.saved - b.saved) || (a.area - b.area) || (a.index - b.index))
+    .map((entry) => entry.device);
 }
 
 function saveDeviceOrderFromDom(grid, category) {
@@ -2740,15 +2772,25 @@ function savedCameraOrder() {
   }
 }
 
+/* Same two-tier ordering as applyDeviceOrder: a hand-dragged order wins, and
+   anything it does not cover falls back to the area order, so the camera wall
+   reads front yard, front door, living room ... by default. */
 function applyCameraOrder(cameras) {
   const order = savedCameraOrder();
-  if (order.length === 0) return cameras;
   const indexById = new Map(order.map((id, index) => [id, index]));
-  return [...cameras].sort((a, b) => {
-    const aIndex = indexById.has(cameraIdFor(a)) ? indexById.get(cameraIdFor(a)) : Number.MAX_SAFE_INTEGER;
-    const bIndex = indexById.has(cameraIdFor(b)) ? indexById.get(cameraIdFor(b)) : Number.MAX_SAFE_INTEGER;
-    return aIndex - bIndex;
-  });
+  const rankOf = homeAreaRanker();
+  return [...cameras]
+    .map((camera, index) => {
+      const id = cameraIdFor(camera);
+      return {
+        camera,
+        index,
+        saved: indexById.has(id) ? indexById.get(id) : Number.MAX_SAFE_INTEGER,
+        area: rankOf(`cam:${id}`, camera.room),
+      };
+    })
+    .sort((a, b) => (a.saved - b.saved) || (a.area - b.area) || (a.index - b.index))
+    .map((entry) => entry.camera);
 }
 
 function saveCameraOrderFromDom() {
