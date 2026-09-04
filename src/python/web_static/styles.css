@@ -2859,20 +2859,109 @@ aside {
 
 .zone-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 
-.zone-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-radius: 12px;
-  padding: 12px 16px;
-  background: var(--t-card-off);
+/* Alarm zone tiles.
+
+   Deliberately the same shape as .temp-sensor-tile in the temperature card:
+   a square grid of small facts reads better than full-width rows, which wasted
+   the card's width and left each entry too small to scan. The two cards sit
+   side by side on the Home view, so matching them is what makes the view look
+   like one design rather than two. */
+.zone-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+  align-content: start;
+  margin-bottom: 4px;
 }
 
-.zone-left { display: flex; align-items: center; gap: 10px; }
-.zone-name { font-size: 13px; color: var(--t-text); }
-.zone-right { display: flex; align-items: center; gap: 6px; }
-.zone-state { font-size: 11px; letter-spacing: 0.04em; }
-.zone-time  { font-size: 10px; color: var(--t-text-dim2); }
+.zone-tile {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--t-card-border);
+  background: rgba(255, 255, 255, 0.03);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.zone-tile:hover { border-color: var(--border-hover); background: rgba(255, 255, 255, 0.05); }
+
+/* An open door is the one thing on this card worth interrupting for, so it is
+   marked by border and ground as well as by the text colour - colour alone
+   fails for colour-blind readers and in screenshots. */
+.zone-tile.breached {
+  border-color: color-mix(in srgb, var(--t-alert) 55%, transparent);
+  background: color-mix(in srgb, var(--t-alert) 10%, transparent);
+}
+
+/* A zone that has never reported is not "closed"; showing it identically to a
+   confirmed-closed zone would overstate what we know. */
+.zone-tile.unknown { opacity: 0.55; }
+
+.zone-tile-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+}
+.zone-tile.breached .zone-tile-icon {
+  background: color-mix(in srgb, var(--t-alert) 16%, transparent);
+}
+
+.zone-tile-state {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+}
+
+.zone-tile-name {
+  max-width: 100%;
+  font-size: 10px;
+  color: var(--t-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sits beside the ZONES label: answers "is anything open?" without reading
+   every tile. */
+.alarm-zone-count {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--t-text-dim2);
+  background: rgba(255, 255, 255, 0.05);
+}
+.alarm-zone-count.breached {
+  color: var(--t-alert);
+  background: color-mix(in srgb, var(--t-alert) 15%, transparent);
+}
+
+/* Scale with the card on desktop, exactly as the temperature tiles do. */
+@media (min-width: 1101px) {
+  #alarmPanel { container-type: inline-size; }
+  #alarmPanel .zone-tile-grid {
+    grid-template-columns: repeat(auto-fill, minmax(clamp(66px, 22cqw, 130px), 1fr));
+    gap: clamp(5px, 1.6cqw, 10px);
+  }
+  #alarmPanel .zone-tile-icon {
+    width: clamp(20px, 9cqw, 44px);
+    height: clamp(20px, 9cqw, 44px);
+  }
+  #alarmPanel .zone-tile-state { font-size: clamp(10px, 4.2cqw, 20px); }
+  #alarmPanel .zone-tile-name  { font-size: clamp(8.5px, 3cqw, 13px); }
+}
 
 .siren-row {
   display: flex;

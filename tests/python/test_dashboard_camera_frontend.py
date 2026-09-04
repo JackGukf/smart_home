@@ -121,3 +121,34 @@ def test_live_refresh_is_debounced_and_reuses_the_normal_refresh() -> None:
     assert "clearTimeout(liveRefreshTimer)" in body
     assert "loadDevices()" in body
     assert "LIVE_REFRESH_DEBOUNCE_MS" in body
+
+
+def test_alarm_zones_render_as_tiles_like_the_temperature_card() -> None:
+    """Zones moved from full-width rows to a square tile grid.
+
+    The two cards sit side by side on Home, so they share a shape deliberately.
+    """
+    source = APP_JS.read_text(encoding="utf-8")
+    css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+
+    assert 'class="zone-tile-grid"' in source
+    assert "zone-tile-icon" in source and "zone-tile-state" in source and "zone-tile-name" in source
+    # The superseded row markup and its rules are gone, not left orphaned.
+    assert "zone-row" not in source and "zone-row" not in css
+    assert ".zone-tile-grid {" in css and ".zone-tile {" in css
+    # Same grid geometry as the temperature tiles is what makes them match.
+    assert "aspect-ratio: 1 / 1" in css[css.index(".zone-tile {"):css.index(".zone-tile {") + 400]
+
+
+def test_breached_zones_sort_first_and_are_not_marked_by_colour_alone() -> None:
+    """An open door is the only thing on this card worth interrupting for."""
+    source = APP_JS.read_text(encoding="utf-8")
+    css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+
+    start = source.index("const zonesSorted")
+    assert "ab - bb" in source[start:start + 400]          # breached first
+    rule = css[css.index(".zone-tile.breached {"):]
+    rule = rule[:rule.index("}")]
+    assert "border-color" in rule and "background" in rule  # not colour alone
+    # A zone that never reported must not look identical to a confirmed-closed one.
+    assert ".zone-tile.unknown" in css

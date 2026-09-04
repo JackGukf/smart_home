@@ -3116,18 +3116,34 @@ function renderAlarmSection(payload = latestAlarmData) {
   }).join("");
 
   const alarmZones = payload?.zones?.length ? payload.zones : ALARM_ZONES;
-  const zonesHtml = alarmZones.map((z) => {
+  /* Tiles rather than rows, matching the temperature card: a zone list is a
+     grid of small facts, and rows wasted the card's width while making each
+     entry too small to read at a glance. Breached zones lead - when something
+     is open, that is the only part of this card anyone is reading. */
+  const zonesSorted = [...alarmZones].sort((a, b) => {
+    const ab = (a.state === "open" || a.state === "motion") ? 0 : 1;
+    const bb = (b.state === "open" || b.state === "motion") ? 0 : 1;
+    return ab - bb || String(a.name).localeCompare(String(b.name));
+  });
+  const zonesHtml = zonesSorted.map((z) => {
     const breached = z.state === "open" || z.state === "motion";
+    const unknown  = z.state === "unknown";
     const color    = breached ? "var(--t-alert)" : "var(--t-text-dim2)";
     const statusTxt = z.type === "motion" ? (breached ? "Motion" : "Clear") : (breached ? "Open" : "Closed");
-    return `<div class="zone-row">
-      <div class="zone-left">${zoneIconSVG(z.type, breached)}<span class="zone-name">${escapeHtml(z.name)}</span></div>
-      <div class="zone-right">
-        <span class="zone-state" style="color:${color}">${statusTxt}</span>
-        <span class="zone-time">· ${escapeHtml(z.time)}</span>
-      </div>
+    return `<div class="zone-tile${breached ? " breached" : ""}${unknown ? " unknown" : ""}"
+                 title="${escapeHtml(z.name)} — ${statusTxt}">
+      <span class="zone-tile-icon">${zoneIconSVG(z.type, breached)}</span>
+      <span class="zone-tile-state" style="color:${color}">${statusTxt}</span>
+      <span class="zone-tile-name">${escapeHtml(z.name)}</span>
     </div>`;
   }).join("");
+  const breachedCount = zonesSorted.filter((z) => z.state === "open" || z.state === "motion").length;
+  /* The count belongs next to the label, not buried in the tiles: it answers
+     "is anything open?" without reading every tile. */
+  const zonesLabel = alarmZones.length
+    ? `ZONES <span class="alarm-zone-count${breachedCount ? " breached" : ""}">${
+         breachedCount ? `${breachedCount} open` : "all clear"}</span>`
+    : "ZONES";
 
   const disarmSilenceBtn = displayState === "alarm"
     ? `<button class="disarm-silence-btn" data-arm-mode="disarmed">DISARM TO SILENCE</button>` : "";
@@ -3164,8 +3180,8 @@ function renderAlarmSection(payload = latestAlarmData) {
     <div class="arm-mode-grid">${modesHtml}</div>
     ${disarmSilenceBtn}
     ${haControlsHtml}
-    <span class="alarm-section-label">ZONES</span>
-    <div class="zone-list">${zonesHtml}</div>
+    <span class="alarm-section-label">${zonesLabel}</span>
+    <div class="zone-tile-grid">${zonesHtml || `<div class="home-empty">No zones reported</div>`}</div>
     <div class="siren-row">
       <span class="siren-label">SIREN</span>
       <button class="siren-test-btn ${sirenTesting ? "testing" : ""}" id="sirenTestBtn">

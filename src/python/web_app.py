@@ -323,6 +323,11 @@ class HomeAssistantConfig:
     base_url: str
     token_env: str
     include_domains: set[str]
+    # Entities to keep out of the alarm card's zone list even though their
+    # device_class qualifies. For a sensor that reports a state it cannot
+    # actually hold, showing it as a zone is worse than not showing it: the card
+    # states "Open" with the same confidence it states anything else.
+    alarm_zone_exclude: frozenset[str] = frozenset()
 
 
 class CameraUpdateRequest(BaseModel):
@@ -3277,7 +3282,11 @@ def _alarm_payload(path: Path) -> dict[str, Any]:
 
     panel = _home_assistant_alarm_panel(states)
     controls = [_home_assistant_alarm_control(entity) for entity in states if _is_home_assistant_alarm_control(entity)]
-    zones = [_home_assistant_alarm_zone(entity) for entity in states if _is_home_assistant_alarm_zone(entity)]
+    zones = [
+        _home_assistant_alarm_zone(entity)
+        for entity in states
+        if _is_home_assistant_alarm_zone(entity, config.alarm_zone_exclude)
+    ]
     controls = [control for control in controls if control]
     zones = [zone for zone in zones if zone]
     controls.sort(key=lambda item: item["name"].lower())
@@ -3361,8 +3370,12 @@ def _home_assistant_alarm_panel_name(controls: list[dict[str, Any]]) -> str:
     return "Tuya alarm system"
 
 
-def _is_home_assistant_alarm_zone(entity: dict[str, Any]) -> bool:
+def _is_home_assistant_alarm_zone(
+    entity: dict[str, Any], exclude: frozenset[str] = frozenset()
+) -> bool:
     entity_id = str(entity.get("entity_id") or "").lower()
+    if entity_id in {excluded.lower() for excluded in exclude}:
+        return False
     domain = _home_assistant_entity_domain(entity_id)
     if domain != "binary_sensor":
         return False
@@ -3435,6 +3448,9 @@ def _load_home_assistant_config(path: Path) -> HomeAssistantConfig:
         base_url=str(config.get("base_url") or "http://127.0.0.1:8123").rstrip("/"),
         token_env=str(config.get("token_env") or "HOME_ASSISTANT_TOKEN"),
         include_domains={str(domain) for domain in domains},
+        alarm_zone_exclude=frozenset(
+            str(entity_id) for entity_id in (config.get("alarm_zone_exclude") or [])
+        ),
     )
 
 

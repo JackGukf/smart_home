@@ -1891,3 +1891,55 @@ def test_event_stream_only_wakes_for_domains_the_dashboard_shows() -> None:
     # A diagnostic sensor ticking would otherwise refresh the page continuously.
     assert "sensor" not in web_app_module._EVENT_WAKE_DOMAINS
     assert "automation" not in web_app_module._EVENT_WAKE_DOMAINS
+
+
+def test_alarm_zone_exclude_drops_a_named_entity(tmp_path: Path, monkeypatch) -> None:
+    """A sensor that cannot hold state is worse than absent from the zone list.
+
+    The alarm card states "Open" with the same confidence it states anything
+    else, so a flapping sensor makes the whole card untrustworthy.
+    """
+    discovery = tmp_path / "tplink_switches.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    config.write_text(
+        "home_assistant:\n"
+        "  base_url: http://127.0.0.1:8123\n"
+        "  alarm_zone_exclude:\n"
+        "    - binary_sensor.flapping_raw\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_get(home_assistant_config, token, path):
+        return [
+            {"entity_id": "binary_sensor.flapping_raw", "state": "on",
+             "attributes": {"friendly_name": "Raw", "device_class": "door"}},
+            {"entity_id": "binary_sensor.front_door", "state": "off",
+             "attributes": {"friendly_name": "Front Door", "device_class": "door"}},
+        ]
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_get)
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+
+    zones = client.get("/api/alarm").json()["zones"]
+
+    assert [z["id"] for z in zones] == ["binary_sensor.front_door"]
+
+
+def test_alarm_zone_exclude_defaults_to_nothing_excluded(tmp_path: Path, monkeypatch) -> None:
+    """Absent config must not quietly hide zones."""
+    discovery = tmp_path / "tplink_switches.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    config.write_text("home_assistant:\n  base_url: http://127.0.0.1:8123\n", encoding="utf-8")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_get(home_assistant_config, token, path):
+        return [{"entity_id": "binary_sensor.a_door", "state": "on",
+                 "attributes": {"friendly_name": "A", "device_class": "door"}}]
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_get)
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+
+    assert [z["id"] for z in client.get("/api/alarm").json()["zones"]] == ["binary_sensor.a_door"]
