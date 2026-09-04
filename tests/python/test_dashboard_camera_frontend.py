@@ -152,3 +152,47 @@ def test_breached_zones_sort_first_and_are_not_marked_by_colour_alone() -> None:
     assert "border-color" in rule and "background" in rule  # not colour alone
     # A zone that never reported must not look identical to a confirmed-closed one.
     assert ".zone-tile.unknown" in css
+
+
+def test_custom_card_renders_sensors_as_tiles_not_rows() -> None:
+    """A custom card is one uniform grid, not tiles stacked above rows."""
+    source = APP_JS.read_text(encoding="utf-8")
+    css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+
+    assert "function customCardSensorTileHtml(item)" in source
+    assert "function customCardRowHtml(item)" not in source
+    assert ".custom-sensor-tile {" in css
+    # Same square geometry as the light tiles it sits beside.
+    block = css[css.index(".custom-sensor-tile {"):css.index(".custom-sensor-tile {") + 400]
+    assert "aspect-ratio: 1 / 1" in block
+
+    # .custom-device-row is still used by the Bluetooth list, so its CSS stays.
+    assert "bt-device-row" in source
+    assert ".custom-device-row" in css
+
+
+def test_custom_card_keeps_the_configured_device_order() -> None:
+    """The old split rendered every light first, reordering what the user picked."""
+    source = APP_JS.read_text(encoding="utf-8")
+    start = source.index("const tiles = items")
+    body = source[start:start + 400]
+
+    assert ".filter((item) => item.kind === \"light\"" not in body
+    assert "customCardTileHtml(item)" in body and "customCardSensorTileHtml(item)" in body
+
+
+def test_alerting_custom_tile_is_not_marked_by_colour_alone() -> None:
+    css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+    rule = css[css.index(".custom-sensor-tile.alert {"):]
+    rule = rule[:rule.index("}")]
+
+    assert "border-color" in rule and "background" in rule
+
+
+def test_jump_to_view_tiles_work_from_the_keyboard() -> None:
+    """They declare role=button and tabindex, so they must answer Enter/Space."""
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "'[data-goto-view][role=\"button\"]'" in source
+    start = source.index("'[data-goto-view][role=\"button\"]'")
+    assert "activateView(goto.dataset.gotoView)" in source[start:start + 300]

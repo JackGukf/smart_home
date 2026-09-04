@@ -4621,28 +4621,36 @@ function customCardTileHtml(item) {
     </div>`;
 }
 
-function customCardRowHtml(item) {
+/* Sensors, cameras and thermostats render as tiles too, so a custom card is
+   one uniform grid rather than tiles stacked above a list of rows.
+
+   An alerting sensor is the whole reason anyone glances at a card like this, so
+   it is marked by border and ground rather than by a small word in the corner -
+   which is also what makes it readable for colour-blind users and in a
+   screenshot. */
+function customCardSensorTileHtml(item) {
   const icon = AREA_KIND_ICONS[item.kind] || "ti-cpu";
   let value = "";
   let goto = "tuya";
+  let alert = false;
   if (item.kind === "thermostat") {
     value = item.data.temperature != null ? `${Math.round(Number(item.data.temperature))}°` : "--";
     goto = "climate";
   } else if (item.kind === "camera") {
-    value = "view";
+    value = "View";
     goto = "cameras";
   } else if (item.kind === "sensor") {
     const reading = item.data.readings.find((r) => String(r.category || "").includes("temperature"));
     const num = reading ? readingMetricNumber(reading) : NaN;
-    value = Number.isFinite(num) ? `${Math.round(num)}°`
-      : item.data.readings.some(isAlertDetected) ? "Alert" : "OK";
+    alert = item.data.readings.some(isAlertDetected);
+    value = Number.isFinite(num) ? `${Math.round(num)}°` : (alert ? "Alert" : "OK");
   }
   return `
-    <div class="custom-device-row" data-goto-view="${goto}" role="button" tabindex="0"
-         title="Open the related view">
-      <span class="assign-device-icon"><i class="ti ${icon}"></i></span>
-      <span class="custom-device-name">${escapeHtml(item.name)}</span>
-      <span class="custom-device-value mono">${escapeHtml(String(value))}</span>
+    <div class="custom-sensor-tile${alert ? " alert" : ""}" data-goto-view="${goto}"
+         role="button" tabindex="0" title="${escapeHtml(item.name)} — open the related view">
+      <span class="custom-sensor-icon"><i class="ti ${icon}" aria-hidden="true"></i></span>
+      <span class="custom-sensor-value mono">${escapeHtml(String(value))}</span>
+      <span class="custom-tile-name">${escapeHtml(item.name)}</span>
     </div>`;
 }
 
@@ -4679,18 +4687,18 @@ function renderCustomHomeCards() {
     const items = (card.devices || [])
       .map((key) => inventoryByKey.get(key))
       .filter(Boolean);
+    /* Kept in the order the card was configured. The old split rendered every
+       light first regardless, which quietly reordered what the user picked. */
     const tiles = items
-      .filter((item) => item.kind === "light" || item.kind === "plug")
-      .map(customCardTileHtml)
-      .join("");
-    const rows = items
-      .filter((item) => item.kind !== "light" && item.kind !== "plug")
-      .map(customCardRowHtml)
+      .map((item) => (item.kind === "light" || item.kind === "plug")
+        ? customCardTileHtml(item)
+        : customCardSensorTileHtml(item))
       .join("");
     renderHtml(
       el.querySelector("[data-custom-body]"),
-      (tiles ? `<div class="custom-tile-grid">${tiles}</div>` : "") + rows ||
-        `<div class="home-empty">No devices linked — click the pencil to pick some.</div>`
+      tiles
+        ? `<div class="custom-tile-grid">${tiles}</div>`
+        : `<div class="home-empty">No devices linked — click the pencil to pick some.</div>`
     );
   }
   applyHomeCardLayout();
@@ -5470,6 +5478,17 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
+
+  /* Anything carrying role="button" and a tabindex promises to work from the
+     keyboard. These jump-to-view tiles declared that and only ever responded to
+     a mouse, which leaves a focus ring sitting on something that does nothing. */
+  const goto = event.target.closest?.('[data-goto-view][role="button"]');
+  if (goto) {
+    event.preventDefault();
+    activateView(goto.dataset.gotoView);
+    return;
+  }
+
   const card = event.target.closest?.(".area-card[data-area-id]");
   if (!card) return;
   event.preventDefault();
