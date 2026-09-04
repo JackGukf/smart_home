@@ -171,14 +171,20 @@ def test_custom_card_renders_sensors_as_tiles_not_rows() -> None:
     assert ".custom-device-row" in css
 
 
-def test_custom_card_keeps_the_configured_device_order() -> None:
-    """The old split rendered every light first, reordering what the user picked."""
-    source = APP_JS.read_text(encoding="utf-8")
-    start = source.index("const tiles = items")
-    body = source[start:start + 400]
+def test_custom_card_orders_controls_by_hand_and_readouts_alphabetically() -> None:
+    """Two orderings, because the two kinds differ in what the user can control.
 
-    assert ".filter((item) => item.kind === \"light\"" not in body
-    assert "customCardTileHtml(item)" in body and "customCardSensorTileHtml(item)" in body
+    Lights and plugs are drag-reorderable and that order is persisted, so it must
+    be respected. Sensors cannot be dragged, so pick order gives neither control
+    nor predictability - alphabetical does.
+    """
+    source = APP_JS.read_text(encoding="utf-8")
+    start = source.index("const controls = items.filter")
+    body = source[start:start + 700]
+
+    assert "localeCompare" in body                       # readouts sorted
+    assert "controls.map(customCardTileHtml)" in body     # controls keep their order
+    assert "readouts.map(customCardSensorTileHtml)" in body
 
 
 def test_alerting_custom_tile_is_not_marked_by_colour_alone() -> None:
@@ -196,3 +202,40 @@ def test_jump_to_view_tiles_work_from_the_keyboard() -> None:
     assert "'[data-goto-view][role=\"button\"]'" in source
     start = source.index("'[data-goto-view][role=\"button\"]'")
     assert "activateView(goto.dataset.gotoView)" in source[start:start + 300]
+
+
+
+def test_custom_sensor_tile_icon_reflects_what_is_measured() -> None:
+    """A door, a smoke alarm and a leak detector must not share one icon."""
+    source = APP_JS.read_text(encoding="utf-8")
+    start = source.index("function customCardSensorIcon(item)")
+    body = source[start:start + 700]
+
+    assert "tuyaHaIcon(" in body
+    # Battery rides along on nearly every device and identifies none of them.
+    assert 'includes("battery")' in body
+
+
+def test_custom_sensor_name_wraps_to_two_lines() -> None:
+    """Sensor names are long; one ellipsised line did not identify the sensor."""
+    css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+    rule = css[css.index(".custom-sensor-name {"):]
+    rule = rule[:rule.index("}")]
+
+    assert "-webkit-line-clamp: 2" in rule
+    assert "overflow-wrap: anywhere" in rule
+
+
+def test_sensor_suffix_stripping_is_left_alone() -> None:
+    """Group names feed `sensor:` inventory keys, which area assignments store.
+
+    Changing the stripping rule renamed 7 groups on the live board and made 6 of
+    them worse ("Smart button at office" -> "Smart button at office Battery"),
+    while silently invalidating stored assignments. The colliding entity was
+    renamed instead.
+    """
+    source = APP_JS.read_text(encoding="utf-8")
+    start = source.index("function groupSensorDevices(devices)")
+    body = source[start:start + 400]
+
+    assert ".map(([name, readings]) => ({ name, readings }))" in body

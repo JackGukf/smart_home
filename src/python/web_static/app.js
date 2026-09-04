@@ -4628,8 +4628,20 @@ function customCardTileHtml(item) {
    it is marked by border and ground rather than by a small word in the corner -
    which is also what makes it readable for colour-blind users and in a
    screenshot. */
+/* Pick the icon from what the sensor actually measures, not from the generic
+   "sensor" kind - a door, a smoke alarm and a leak detector all looked alike.
+   A grouped device carries several readings, so the first non-battery one wins:
+   battery is present on almost everything and identifies nothing. */
+function customCardSensorIcon(item) {
+  if (item.kind !== "sensor") {
+    return `<i class="ti ${AREA_KIND_ICONS[item.kind] || "ti-cpu"}" aria-hidden="true"></i>`;
+  }
+  const readings = item.data.readings || [];
+  const identifying = readings.find((r) => !String(r.category || "").includes("battery"));
+  return tuyaHaIcon(identifying || readings[0] || {});
+}
+
 function customCardSensorTileHtml(item) {
-  const icon = AREA_KIND_ICONS[item.kind] || "ti-cpu";
   let value = "";
   let goto = "tuya";
   let alert = false;
@@ -4648,9 +4660,9 @@ function customCardSensorTileHtml(item) {
   return `
     <div class="custom-sensor-tile${alert ? " alert" : ""}" data-goto-view="${goto}"
          role="button" tabindex="0" title="${escapeHtml(item.name)} — open the related view">
-      <span class="custom-sensor-icon"><i class="ti ${icon}" aria-hidden="true"></i></span>
+      <span class="custom-sensor-icon">${customCardSensorIcon(item)}</span>
       <span class="custom-sensor-value mono">${escapeHtml(String(value))}</span>
-      <span class="custom-tile-name">${escapeHtml(item.name)}</span>
+      <span class="custom-sensor-name">${escapeHtml(item.name)}</span>
     </div>`;
 }
 
@@ -4687,12 +4699,17 @@ function renderCustomHomeCards() {
     const items = (card.devices || [])
       .map((key) => inventoryByKey.get(key))
       .filter(Boolean);
-    /* Kept in the order the card was configured. The old split rendered every
-       light first regardless, which quietly reordered what the user picked. */
-    const tiles = items
-      .map((item) => (item.kind === "light" || item.kind === "plug")
-        ? customCardTileHtml(item)
-        : customCardSensorTileHtml(item))
+    /* Lights and plugs keep the order the card was configured in, because they
+       are drag-reorderable and that order is persisted (see saveCustomCardOrder,
+       which writes them ahead of everything else). Sensors cannot be dragged, so
+       leaving them in pick order gives no control and no predictability -
+       alphabetical does. */
+    const controls = items.filter((item) => item.kind === "light" || item.kind === "plug");
+    const readouts = items
+      .filter((item) => item.kind !== "light" && item.kind !== "plug")
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const tiles = controls.map(customCardTileHtml)
+      .concat(readouts.map(customCardSensorTileHtml))
       .join("");
     renderHtml(
       el.querySelector("[data-custom-body]"),
