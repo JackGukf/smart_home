@@ -700,13 +700,19 @@ function persistDimLock(host, locked) {
 
 async function sendBrightness(host, level) {
   recordManualLightOverride(host, { type: "brightness", level });
+  /* Brightness turns the light on as a side effect, and nothing used to tell
+     the rest of the page: the card that said OFF kept saying OFF until the next
+     60 s poll, even though the lamp was visibly lit. */
+  patchLocalDeviceState(host, { brightness: level, is_on: true });
   if (host.startsWith("matter:")) {
     const nodeId = host.slice(7);
     const resp = await fetch(`/api/matter/devices/${nodeId}/commands/brightness?brightness=${level}`, {
       method: "POST",
     });
     if (!resp.ok) throw new Error("Brightness set failed: " + resp.status);
-    return resp.json();
+    const body = await resp.json();
+    await refreshDeviceSource(host);
+    return body;
   }
   if (host.startsWith("ha:")) {
     const entityId = host.slice(3);
@@ -5001,7 +5007,8 @@ document.addEventListener("click", async (event) => {
       await requestJson(`/api/devices/${host}/commands/${command}`, { method: "POST" });
     }
     logActivity(`${command === "on" ? "Turned on" : "Turned off"} device from card`);
-    await loadDevices();
+    patchLocalDeviceState(host, { is_on: command === "on" });
+    await refreshDeviceSource(host);
   } catch (error) {
     console.error(error);
     btn.classList.toggle("on");
@@ -5793,6 +5800,76 @@ document.addEventListener("change", async (event) => {
 })();
 
 /* ── Send commands ── */
+
+/* Which API owns a device's state, from the host prefix the card carries.
+   "ha:" devices are served by /api/devices, which merges the Home Assistant
+   cards in alongside the TP-Link ones. */
+function deviceSourceOf(host) {
+  const h = String(host || "");
+  if (h.startsWith("matter:")) return "matter";
+  if (h.startsWith("tuya:")) return "tuya";
+  return "switches";
+}
+
+/* Show what we just asked for, before asking the server what happened.
+
+   A Matter brightness command turns the light on as a side effect, and the
+   server's subscription can report the new level a beat after the command
+   returns. Patching the local model first means the repaint below shows the
+   user's own action rather than briefly snapping back to the old value; the
+   60 s poll reconciles if the command did not take. */
+function patchLocalDeviceState(host, patch) {
+  const lists = [latestSwitchDevices, latestMatterDevices];
+  for (const list of lists) {
+    for (const device of list || []) {
+      const deviceHost = device.host ?? (device.node_id != null ? `matter:${device.node_id}` : device.id);
+      if (String(deviceHost) === String(host)) Object.assign(device, patch);
+    }
+  }
+}
+
+/* Re-read only the source that owns the device a command just addressed.
+
+   loadDevices() fans out to nine endpoints and Promise.all-waits for the
+   slowest of them. Measured on the board: /api/matter/devices answers in 5 ms
+   and the cached /api/devices in 3 ms, while /api/tuya/devices takes 2.9 s
+   against Tuya's cloud and /api/weather 0.9 s. So every Stick S3 toggle waited
+   on Tuya's cloud, and a 5 ms device felt like a 3 s one -- next to the Home
+   app, which talks to the device directly, the dashboard looked broken.
+
+   A command only invalidates the device it addressed. Everything else keeps
+   repainting on the 60 s poll and the Home Assistant event stream, unchanged.
+   A failed targeted read falls back to the full refresh rather than leaving
+   the card showing an optimistic value nothing confirmed. */
+async function refreshDeviceSource(host) {
+  const source = deviceSourceOf(host);
+  try {
+    if (source === "matter") {
+      const data = await requestJson("/api/matter/devices");
+      latestMatterDevices = data.devices || [];
+      _updateMatterServerStatus(data.matter_online ?? false);
+      _renderMatterDeviceList(latestMatterDevices);
+    } else if (source === "tuya") {
+      const data = await requestJson("/api/tuya/devices");
+      renderTuyaDevices(data.devices);
+    } else {
+      const data = await requestJson("/api/devices");
+      latestSwitchDevices = data.devices;
+    }
+  } catch (error) {
+    console.error(error);
+    await loadDevices();
+    return;
+  }
+
+  renderDevices(latestSwitchDevices, latestCameras, latestMatterDevices);
+  renderDevicesOverview();
+  renderHomeView();
+  refreshActiveDynamicGroupPanel();
+  if (statusDot) statusDot.classList.add("online");
+  apiStatus.textContent = "Online";
+}
+
 async function sendCommand(host, command, options = {}) {
   apiStatus.textContent = "Sending";
   if (host.startsWith("matter:")) {
@@ -5805,13 +5882,14 @@ async function sendCommand(host, command, options = {}) {
     await requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
   }
   logActivity("Switch " + host.split(".").pop() + " turned " + command);
-  if (options.skipRefresh !== true) await loadDevices();
+  if (command === "on" || command === "off") patchLocalDeviceState(host, { is_on: command === "on" });
+  if (options.skipRefresh !== true) await refreshDeviceSource(host);
 }
 
 async function sendTuyaCommand(deviceId, command) {
   apiStatus.textContent = "Sending";
   await requestJson(`/api/tuya/devices/${deviceId}/commands/${command}`, { method: "POST" });
-  await loadDevices();
+  await refreshDeviceSource("tuya:" + deviceId);
 }
 
 async function sendTuyaCardCommand(deviceId, command, source) {
@@ -5826,7 +5904,7 @@ async function sendHomeAssistantCommand(entityId, command) {
   apiStatus.textContent = "Sending";
   await requestJson(`/api/home-assistant/entities/${encodeURIComponent(entityId)}/commands/${command}`, { method: "POST" });
   logActivity(`HA ${entityId.split(".")[1] || entityId} → ${command}`);
-  await loadDevices();
+  await refreshDeviceSource("ha:" + entityId);
 }
 
 async function renameCamera(cameraId, name) {

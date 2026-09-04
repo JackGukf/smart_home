@@ -316,12 +316,17 @@ is authoritative, and HA's device registry is only a mirror of it:
 | What you see | What it means | Fix |
 | --- | --- | --- |
 | Node with vendor `TP-Link`, serial `ACA7F1B55729` | Commissioned; HA lost the device entry | Reload the Matter config entry (above) |
-| Only node 1, `TEST_VENDOR`/`TEST_PRODUCT` | That is *our own* `matter-bridge`, not the switch. **The S505 is not in the fabric** | Re-commission — see below |
+| Only node 1, `TEST_VENDOR`/`TEST_PRODUCT` | That is the **Stick S3**, not the switch. **The S505 is not in the fabric** | Re-commission — see below |
 
-`TEST_VENDOR`/`TEST_PRODUCT` is the CHIP example-app identity our bridge ships
-with. It is easy to mistake for the switch because it is the only Matter light
-in Home Assistant; it is not, and reloading the config entry will not conjure
-the S505 back.
+`TEST_VENDOR`/`TEST_PRODUCT` is node 1, the office **Stick S3** — it ships with
+the CHIP SDK's placeholder vendor and product strings instead of its own, which
+is also why Home Assistant calls its entity `light.test_product_2`. It is easy
+to mistake for the switch, being the only Matter light Home Assistant lists, and
+easy to mistake for our own `matter-bridge`, which uses the same placeholder
+identity. Two ways to tell them apart: the bridge is `matter-bridge.service` and
+is normally *not* running, and a node reported `available: true` while that unit
+is inactive cannot be the bridge. Either way, reloading the Matter config entry
+will not conjure the S505 back.
 
 Re-commissioning **cannot be done over SSH** — it needs a setup code, which only
 the Apple Home app can mint:
@@ -349,6 +354,46 @@ entity that has vanished used to render as a switch that was simply **off**:
 **UNAVAILABLE** with the reason where the room name goes, and its rocker is
 disabled. "We could not reach Home Assistant" stays a separate, quieter state —
 collapsing the two would cry wolf on every HA restart.
+
+### A command must refresh only the device it addressed
+
+The Stick S3 felt seconds behind the Home app for the same light: press the
+dashboard's toggle and the card sat there; press it in the Home app and it was
+instant. The Matter path was never the problem. Timed on the board with warm
+caches, the endpoints `loadDevices()` fans out to:
+
+| Endpoint | Warm | Why |
+| --- | --- | --- |
+| `/api/tuya/devices` | **2930 ms** | Tuya cloud round-trip |
+| `/api/weather` | 931 ms | upstream API |
+| `/api/ecobee/thermostats` | 106 ms | cloud |
+| `/api/cameras` | 89 ms | reachability checks |
+| `/api/alarm` | 71 ms | |
+| `/api/home-assistant/entities` | 40 ms | local |
+| `/api/matter/devices` | **5 ms** | matter-server's own node cache |
+| `/api/areas` | 4 ms | local file |
+| `/api/devices` | 3 ms | cached, refreshed behind the response |
+
+`loadDevices()` issues all nine in a `Promise.all` and waits for the slowest, so
+every command paid **~3 s of Tuya cloud latency before the card repainted** —
+including commands to a device that answers in 5 ms. That is the whole delay.
+
+Commands now call `refreshDeviceSource(host)`, which re-reads only the API that
+owns the device, and `patchLocalDeviceState()` applies what was just commanded
+so the repaint shows the user's own action even if the server's subscription
+reports the new value a beat later. The 60 s poll and the Home Assistant event
+stream still reconcile everything else, unchanged.
+
+Two things worth keeping in mind if this area is touched again:
+
+- **Reach for the timings before the code.** The Matter client was the obvious
+  suspect and was innocent; the cost was in an endpoint the command had no
+  reason to touch. `tests/python/test_command_refresh_scope.py` pins the scope
+  by running the real function against a stubbed fetch and asserting which URLs
+  it asks for, so a reintroduced fan-out fails the suite.
+- **Brightness turns a Matter light on as a side effect.** Before this, nothing
+  told the rest of the page: a card reading OFF kept reading OFF for up to a
+  minute while the lamp was visibly lit.
 
 ## Bluetooth
 
