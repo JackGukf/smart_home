@@ -76,3 +76,48 @@ def test_area_ranker_matches_resolve_home_areas_resolution() -> None:
     assert "assignments[key]" in body          # explicit assignment wins
     assert "idByName.get(String(room" in body  # then exact room-name match
     assert "Number.MAX_SAFE_INTEGER" in body   # no area -> last, with Unassigned
+
+
+def test_live_updates_are_additive_to_the_poll() -> None:
+    """The 60 s poll must survive alongside the stream.
+
+    It is the reconciliation pass for anything the stream missed, and the only
+    refresh for state Home Assistant does not report (TP-Link, cameras).
+    """
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "/* Auto-refresh every 60 s */" in source
+    assert "}, 60_000);" in source
+    assert 'new EventSource("/api/events/stream")' in source
+
+
+def test_live_updates_never_break_page_load() -> None:
+    """A missing or fake EventSource must not throw during load.
+
+    The node test harness stubs EventSource as a bare function, which is exactly
+    the shape that broke this: the constructor succeeded and addEventListener did
+    not exist.
+    """
+    source = APP_JS.read_text(encoding="utf-8")
+    start = source.index("function connectLiveUpdates()")
+    body = source[start:start + 1800]
+
+    assert 'typeof EventSource !== "function"' in body      # absent entirely
+    assert 'typeof source.addEventListener !== "function"' in body  # present but fake
+    # The wiring, not just the constructor, sits inside the guard.
+    assert body.index("try {") < body.index('addEventListener("changed"')
+
+
+def test_live_refresh_is_debounced_and_reuses_the_normal_refresh() -> None:
+    """A reconnecting bridge republishes everything; that must be one refresh.
+
+    And the stream is a trigger, not a second state feed - it calls the same
+    loadDevices() the poll does, so there is one code path building cards.
+    """
+    source = APP_JS.read_text(encoding="utf-8")
+    start = source.index("function scheduleLiveRefresh()")
+    body = source[start:start + 500]
+
+    assert "clearTimeout(liveRefreshTimer)" in body
+    assert "loadDevices()" in body
+    assert "LIVE_REFRESH_DEBOUNCE_MS" in body

@@ -13,7 +13,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, AsyncIterator, Iterator, Literal
 from urllib.parse import urlencode
 from urllib.parse import quote
 from urllib.parse import quote_plus
@@ -809,6 +809,34 @@ def create_app(
     @app.get("/api/home-assistant/entities")
     async def home_assistant_entities() -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_payload, app.state.config_path)
+
+    @app.get("/api/events/stream")
+    async def events_stream() -> StreamingResponse:
+        """Push notification of Home Assistant state changes, for live updates.
+
+        Additive on purpose: the client keeps its 60 s poll, so if this stream
+        never connects the dashboard behaves exactly as it did before.
+        """
+        ha_config = _load_home_assistant_config(app.state.config_path)
+        token = os.getenv(ha_config.token_env)
+
+        async def body() -> AsyncIterator[str]:
+            if not token:
+                yield 'event: unavailable\ndata: {"reason": "no Home Assistant token"}\n\n'
+                return
+            async for frame in _home_assistant_event_stream(ha_config, token):
+                yield frame
+
+        return StreamingResponse(
+            body(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                # nginx and friends buffer streamed responses by default, which
+                # holds every event until the buffer fills - fatal for SSE.
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/api/network/devices")
     async def network_devices() -> dict[str, Any]:
@@ -3610,6 +3638,79 @@ def _home_assistant_post(config: HomeAssistantConfig, token: str, path: str, bod
     with urlopen(request, timeout=12) as response:
         text = response.read().decode("utf-8")
     return json.loads(text) if text else None
+
+
+# Domains worth waking the dashboard for. A door sensor firing must reach the
+# screen at once; a diagnostic sensor ticking its uptime must not cause a refresh
+# every few seconds. Keep this tight - every domain here costs a reload.
+_EVENT_WAKE_DOMAINS = frozenset({"binary_sensor", "light", "switch", "lock", "cover", "climate"})
+# A burst of state_changed events (a bridge reconnecting republishes everything)
+# would otherwise trigger a reload per event.
+_EVENT_COALESCE_SECONDS = 0.4
+# Proxies and browsers drop an idle event stream. A comment frame is not an
+# event, so it costs the client nothing but keeps the socket alive.
+_EVENT_KEEPALIVE_SECONDS = 20.0
+
+
+async def _home_assistant_event_stream(
+    config: HomeAssistantConfig, token: str
+) -> "AsyncIterator[str]":
+    """Yield SSE frames as Home Assistant reports state changes.
+
+    The dashboard otherwise learns about the world on a 60 s poll, which is fine
+    for a switch and useless for a door sensor. Home Assistant has no SSE, so the
+    push side is its WebSocket API - the path scripts/probe-ha-events.py proved.
+
+    What is streamed is deliberately a *notification*, not the new state: just the
+    entity_id that changed. The browser reacts by re-running its normal refresh,
+    so there is one code path building cards instead of two that can disagree. It
+    costs one extra request per change and removes a whole class of desync bug.
+
+    Every failure here is non-fatal by design. If aiohttp is missing, the token is
+    unset, or Home Assistant is unreachable, this yields a single "unavailable"
+    frame and returns; the client keeps polling and the dashboard is merely as
+    live as it was before.
+    """
+    try:
+        import aiohttp
+    except ImportError:
+        yield 'event: unavailable\ndata: {"reason": "aiohttp not installed"}\n\n'
+        return
+
+    ws_url = config.base_url.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    last_sent = 0.0
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(ws_url, heartbeat=30) as ws:
+                await ws.receive_json()  # auth_required
+                await ws.send_json({"type": "auth", "access_token": token})
+                if (await ws.receive_json()).get("type") != "auth_ok":
+                    yield 'event: unavailable\ndata: {"reason": "auth rejected"}\n\n'
+                    return
+                await ws.send_json({"id": 1, "type": "subscribe_events", "event_type": "state_changed"})
+                await ws.receive_json()  # subscription result
+                yield 'event: ready\ndata: {}\n\n'
+
+                while True:
+                    try:
+                        message = await asyncio.wait_for(ws.receive_json(), timeout=_EVENT_KEEPALIVE_SECONDS)
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+                        continue
+                    if message.get("type") != "event":
+                        continue
+                    entity_id = str(((message.get("event") or {}).get("data") or {}).get("entity_id") or "")
+                    if _home_assistant_entity_domain(entity_id) not in _EVENT_WAKE_DOMAINS:
+                        continue
+                    now = time.monotonic()
+                    if now - last_sent < _EVENT_COALESCE_SECONDS:
+                        continue
+                    last_sent = now
+                    yield f"event: changed\ndata: {json.dumps({'entity_id': entity_id})}\n\n"
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a dead stream must never break the page
+        yield f"event: unavailable\ndata: {json.dumps({'reason': str(exc)[:120]})}\n\n"
 
 
 def _home_assistant_entity_card(entity: dict[str, Any]) -> dict[str, Any]:

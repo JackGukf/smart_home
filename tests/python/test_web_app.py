@@ -1858,3 +1858,36 @@ def test_default_areas_follow_the_house_walkthrough_order() -> None:
     assert not any(a["id"] == "auto:unassigned" for a in DEFAULT_AREAS)
     assert not any(a["name"].lower() == "unassigned" for a in DEFAULT_AREAS)
     assert len({a["id"] for a in DEFAULT_AREAS}) == len(DEFAULT_AREAS)
+
+
+def test_event_stream_reports_unavailable_without_a_token(tmp_path: Path, monkeypatch) -> None:
+    """No token must degrade to a clean 'unavailable' frame, not an error.
+
+    The client stops retrying on that frame and keeps polling; a 500 would make it
+    reconnect forever against a server that can never serve it.
+    """
+    discovery = tmp_path / "tplink_switches.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    config.write_text("home_assistant:\n  base_url: http://127.0.0.1:8123\n", encoding="utf-8")
+    monkeypatch.delenv("HOME_ASSISTANT_TOKEN", raising=False)
+
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+    with client.stream("GET", "/api/events/stream") as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        # Buffering proxies hold SSE frames until the buffer fills.
+        assert response.headers.get("x-accel-buffering") == "no"
+        body = "".join(response.iter_text())
+
+    assert "event: unavailable" in body
+    assert "no Home Assistant token" in body
+
+
+def test_event_stream_only_wakes_for_domains_the_dashboard_shows() -> None:
+    """Every domain in this set costs a full refresh when it changes."""
+    assert "binary_sensor" in web_app_module._EVENT_WAKE_DOMAINS   # the door sensor
+    assert "light" in web_app_module._EVENT_WAKE_DOMAINS
+    # A diagnostic sensor ticking would otherwise refresh the page continuously.
+    assert "sensor" not in web_app_module._EVENT_WAKE_DOMAINS
+    assert "automation" not in web_app_module._EVENT_WAKE_DOMAINS

@@ -20,3 +20,7 @@ python-matter-server[client]
 # The detector itself runs from its own Python 3.11 env on the board, but the
 # post-processing is tested here.
 numpy
+# Used by the /api/events/stream SSE endpoint to hold a WebSocket open to
+# Home Assistant. It arrives transitively today; pinning it here makes the
+# live-update path an explicit dependency rather than a lucky one.
+aiohttp

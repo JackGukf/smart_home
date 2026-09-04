@@ -7053,6 +7053,10 @@ loadDevices().catch((error) => {
 
 loadZigbeeHealthCard().catch((error) => console.error(error));
 
+/* Kept even once the live stream below is connected: this is the reconciliation
+   pass that repairs anything the stream missed while the laptop was asleep or the
+   connection was down, and the only thing refreshing sources Home Assistant does
+   not report (the TP-Link poll, camera reachability). */
 /* Auto-refresh every 60 s */
 setInterval(() => {
   loadDevices().catch(console.error);
@@ -7060,3 +7064,60 @@ setInterval(() => {
      already open still surfaces, rather than only on reload. */
   loadZigbeeHealthCard().catch(console.error);
 }, 60_000);
+
+/* ── Live updates ──────────────────────────────────────────────────────────
+   A door sensor on a 60 s poll is useless: you open the door and the dashboard
+   agrees up to a minute later. /api/events/stream pushes a notification when
+   Home Assistant reports a state change, and we answer it by running the normal
+   refresh. Deliberately a trigger and not a state feed - one code path builds
+   the cards, so the stream cannot leave the page disagreeing with the server.
+
+   Everything here is best-effort. If the stream never opens, the 60 s poll above
+   still runs and the dashboard is exactly as live as it was before. */
+const LIVE_REFRESH_DEBOUNCE_MS = 250;
+/* Two events a second apart should give two refreshes; a burst from a bridge
+   reconnect should give one. A trailing debounce does both. */
+let liveRefreshTimer = null;
+function scheduleLiveRefresh() {
+  if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
+  liveRefreshTimer = setTimeout(() => {
+    liveRefreshTimer = null;
+    loadDevices().catch(console.error);
+  }, LIVE_REFRESH_DEBOUNCE_MS);
+}
+
+function connectLiveUpdates() {
+  if (typeof EventSource !== "function") return;   /* older Safari: poll only */
+  /* The whole wiring is guarded, not just the constructor. This is an
+     enhancement on top of a dashboard that already works, so nothing here may
+     throw during page load - including against an EventSource that exists but
+     is not a real one. */
+  try {
+    const source = new EventSource("/api/events/stream");
+    if (!source || typeof source.addEventListener !== "function") return;
+
+    source.addEventListener("changed", scheduleLiveRefresh);
+
+    source.addEventListener("unavailable", (event) => {
+      /* The server reached a conclusion rather than failing: no token, no
+         aiohttp, Home Assistant down. Retrying in a tight loop would not fix any
+         of those, so stop and leave the poll in charge. */
+      let reason = "";
+      try { reason = (JSON.parse(event.data || "{}").reason) || ""; } catch {}
+      console.info("Live updates unavailable, falling back to polling.", reason);
+      try { source.close(); } catch {}
+    });
+
+    /* EventSource reconnects on its own after a transient drop. It gives up only
+       when the connection is closed, which is the branch worth retrying - slowly,
+       so a dashboard left open against a dead server does not hammer it. */
+    source.addEventListener("error", () => {
+      if (source.readyState === EventSource.CLOSED) {
+        setTimeout(connectLiveUpdates, 30_000);
+      }
+    });
+  } catch {
+    /* Poll-only from here; the dashboard is exactly as live as it was before. */
+  }
+}
+connectLiveUpdates();
