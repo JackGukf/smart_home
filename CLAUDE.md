@@ -1,10 +1,18 @@
 # Smart Home AI (Orange Pi 6 Plus) — Claude Code Context
 
-> **⚠️ ACTIVE INCIDENT (2026-09-03): the board is bare and nothing is running.**
-> It was re-flashed to SD after repeated resets traced to the NVMe. The stack —
-> Home Assistant, Zigbee2MQTT, dashboard, go2rtc — is **not installed** on the
-> current system, and the SSH host key has changed. A verified backup exists.
-> **Read `docs/handoff-2026-09-03-recovery.md` before touching the board.**
+> **Recovered 2026-09-03. The stack is running again**, booted from the NVMe in
+> the PCIe slot: dashboard, go2rtc, Home Assistant, Zigbee (5 devices), Matter
+> controller, resource-logger — all enabled and surviving a reboot. The AI
+> services are deliberately **not** installed.
+>
+> - **To rebuild it: `docs/restore-runbook.md`** — ordered procedure, verification
+>   counts, and the traps that do not announce themselves.
+> - Why it was rebuilt, and the reset investigation: `docs/handoff-2026-09-03-recovery.md`.
+>
+> **Never set `RuntimeWatchdogSec` on this board.** Its SBSA watchdog has a fixed
+> 10 s timeout that cannot be raised, so a 60 s setting resets the board every
+> ~80 s with no kernel panic. That is the prime suspect for the 2026-09-02 reset
+> loop. The default password is also still `orangepi`.
 
 ## Project Overview
 
@@ -166,7 +174,8 @@ Three things that will waste a day if you do not know them:
 - `docs/docker-development.md`, `docs/WSL_DEVELOPMENT.md` — dev environment
 - `docs/matter-bridge.md` — Matter bridge design and deployment (our devices → Apple Home)
 - `docs/matter-controller.md` — Matter controller setup (third-party Matter devices → dashboard)
-- `docs/handoff-2026-09-03-recovery.md` — **current incident**: NVMe resets, what was ruled out, the backup, and the recovery plan
+- `docs/restore-runbook.md` — **rebuild the stack from backup**: ordered steps, expected verification counts, and the traps (container DNS, lost Tuya camera patch, docker disabled at boot, the watchdog)
+- `docs/handoff-2026-09-03-recovery.md` — the 2026-09-02 reset incident: what was ruled out, the watchdog finding, and what the rebuild turned up
 - `docs/local-ai.md` — the LLM and NPU stack: services, build flags, NPU op support, benchmarks
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
