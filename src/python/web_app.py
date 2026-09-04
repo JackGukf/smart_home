@@ -3390,11 +3390,21 @@ def _home_assistant_alarm_zone(entity: dict[str, Any]) -> dict[str, Any] | None:
     device_class = str(attributes.get("device_class") or "").lower()
     state = str(entity.get("state") or "unknown")
     zone_type = "motion" if device_class in {"occupancy", "motion"} else device_class or "zone"
+    # A sensor that is unavailable has not told us it is clear - it has told us
+    # nothing. Reporting "Clear" for it reads identically to a confirmed-clear
+    # zone, which is exactly the overstatement an alarm card must not make. The
+    # frontend dims these rather than showing them as reassurance.
+    if state in {"unavailable", "unknown", "none", ""}:
+        zone_state = "unknown"
+    elif zone_type == "motion":
+        zone_state = "motion" if state == "on" else "clear"
+    else:
+        zone_state = "open" if state == "on" else "closed"
     return {
         "id": entity_id,
         "name": str(attributes.get("friendly_name") or entity_id),
         "type": zone_type,
-        "state": "motion" if zone_type == "motion" and state == "on" else ("open" if state == "on" else "closed" if zone_type != "motion" else "clear"),
+        "state": zone_state,
         "time": "Home Assistant",
     }
 def _load_weather_config(path: Path) -> WeatherConfig | None:

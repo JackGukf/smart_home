@@ -3129,7 +3129,11 @@ function renderAlarmSection(payload = latestAlarmData) {
     const breached = z.state === "open" || z.state === "motion";
     const unknown  = z.state === "unknown";
     const color    = breached ? "var(--t-alert)" : "var(--t-text-dim2)";
-    const statusTxt = z.type === "motion" ? (breached ? "Motion" : "Clear") : (breached ? "Open" : "Closed");
+    /* An unavailable sensor has not reported clear, it has reported nothing.
+       Saying "Clear" for it would read as reassurance the card cannot give. */
+    const statusTxt = unknown ? "No data"
+      : z.type === "motion" ? (breached ? "Motion" : "Clear")
+      : (breached ? "Open" : "Closed");
     return `<div class="zone-tile${breached ? " breached" : ""}${unknown ? " unknown" : ""}"
                  title="${escapeHtml(z.name)} — ${statusTxt}">
       <span class="zone-tile-icon">${zoneIconSVG(z.type, breached)}</span>

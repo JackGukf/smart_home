@@ -1943,3 +1943,39 @@ def test_alarm_zone_exclude_defaults_to_nothing_excluded(tmp_path: Path, monkeyp
     client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
 
     assert [z["id"] for z in client.get("/api/alarm").json()["zones"]] == ["binary_sensor.a_door"]
+
+
+def test_unavailable_alarm_zone_reports_unknown_not_clear(tmp_path: Path, monkeypatch) -> None:
+    """An unavailable sensor has reported nothing, not "clear".
+
+    Rendering it identically to a confirmed-clear zone is the one overstatement
+    an alarm card must not make.
+    """
+    discovery = tmp_path / "tplink_switches.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    config.write_text("home_assistant:\n  base_url: http://127.0.0.1:8123\n", encoding="utf-8")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    def fake_get(home_assistant_config, token, path):
+        return [
+            {"entity_id": "binary_sensor.dead_motion", "state": "unavailable",
+             "attributes": {"friendly_name": "Dead", "device_class": "motion"}},
+            {"entity_id": "binary_sensor.dead_door", "state": "unknown",
+             "attributes": {"friendly_name": "Dead door", "device_class": "door"}},
+            {"entity_id": "binary_sensor.live_motion", "state": "off",
+             "attributes": {"friendly_name": "Live", "device_class": "motion"}},
+            {"entity_id": "binary_sensor.open_door", "state": "on",
+             "attributes": {"friendly_name": "Open", "device_class": "door"}},
+        ]
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", fake_get)
+    client = TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController()))
+
+    zones = {z["id"]: z["state"] for z in client.get("/api/alarm").json()["zones"]}
+
+    assert zones["binary_sensor.dead_motion"] == "unknown"
+    assert zones["binary_sensor.dead_door"] == "unknown"
+    # Live sensors keep their existing vocabulary.
+    assert zones["binary_sensor.live_motion"] == "clear"
+    assert zones["binary_sensor.open_door"] == "open"
