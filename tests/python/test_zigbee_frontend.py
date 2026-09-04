@@ -198,55 +198,78 @@ def test_bridge_payload_shape_is_stable_when_home_assistant_is_absent(
     assert payload["connected"] is None
 
 
-def test_zigbee_health_tile_is_on_the_home_view() -> None:
+def test_zigbee_health_is_surfaced_in_the_bridges_group() -> None:
     """A dead bridge is silent - every Zigbee device simply stops updating.
 
-    The tile has to live on the landing view; on the Zigbee view it would only be
-    seen by someone who already suspected a problem.
+    The coordinator used to get a tile of its own on the landing view. It now
+    lives in the Bridges group under Devices, next to the Tuya gateway, so the
+    radios are read together; the Bridges section is rendered first in a group
+    for the same reason the Home tile existed.
     """
-    index = (STATIC / "index.html").read_text(encoding="utf-8")
-    home = index[index.index('data-view-panel="home"'):index.index('data-view-panel="cameras"')]
-    assert 'data-home-card="zigbeehealth"' in home
-    assert 'id="homeZigbeeBody"' in home
-    assert 'id="homeZigbeeState"' in home
-
-
-def test_zigbee_health_tile_is_registered_as_a_home_card() -> None:
-    """Unregistered cards cannot be hidden or laid out with the others."""
     app_js = (STATIC / "app.js").read_text(encoding="utf-8")
-    assert "zigbeehealth:" in app_js[app_js.index("const DEFAULT_HOME_LAYOUT"):][:600]
-    assert 'zigbeehealth: "Zigbee"' in app_js
+
+    assert 'key: "bridge:zigbee"' in app_js
+    assert "data: zigbeeBridgeDevice()," in app_js
+    start = app_js.index("function genericGroupSectionsHtml")
+    sections = app_js[start:app_js.index("function hydrateGenericGroupBody", start)]
+    assert "bridges.map(bridgeTileHtml)" in sections
+    # First, because a downed bridge is the reason everything below it is stale.
+    assert sections.index("bridges.length") < sections.index("sensors.length")
 
 
-def test_zigbee_health_tile_separates_offline_from_unknown() -> None:
+def test_zigbee_health_is_no_longer_a_home_card() -> None:
+    """Two homes for one reading is how they drift apart. The Home card was
+    removed outright rather than left in place alongside the Bridges tile."""
+    index = (STATIC / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    assert "zigbeehealth" not in index
+    assert "homeZigbeeBody" not in index
+    assert "zigbeehealth" not in app_js
+
+
+def test_bridges_is_a_seeded_group_so_the_tile_has_somewhere_to_land() -> None:
+    from src.python.web_app import DEFAULT_DEVICE_GROUPS
+
+    bridges = next(g for g in DEFAULT_DEVICE_GROUPS if g["id"] == "bridges")
+
+    assert bridges["kinds"] == ["bridge"]
+
+
+def test_zigbee_health_separates_offline_from_unknown() -> None:
     """"Cannot reach Home Assistant" is a different problem from "bridge is down".
 
     Collapsing them would either cry wolf when HA restarts, or stay quiet during
     a real outage.
     """
     app_js = (STATIC / "app.js").read_text(encoding="utf-8")
-    start = app_js.index("async function loadZigbeeHealthCard")
-    body = app_js[start:app_js.index("async function loadZigbeeBridgeCard", start)]
-    assert 'render("offline"' in body
-    assert 'render("unknown"' in body
-    assert 'render("online"' in body
+    start = app_js.index("function zigbeeBridgeDevice")
+    body = app_js[start:app_js.index("function tuyaGatewayBridgeDevice", start)]
+    assert 'state: "offline"' in body
+    assert 'state: "unknown"' in body
+    assert 'state: "online"' in body
     # available is false when HA is unreachable, which must not read as Offline.
     assert "if (!info.available)" in body
+    # A failed fetch stores no payload at all, which must not read as Offline
+    # either -- loadZigbeeHealth sets it to null and this is where that lands.
+    assert "if (!info)" in body
 
 
-def test_zigbee_health_tile_refreshes_without_a_reload() -> None:
+def test_zigbee_health_refreshes_without_a_reload() -> None:
     """The outage this exists for started while the dashboard was already open."""
     app_js = (STATIC / "app.js").read_text(encoding="utf-8")
     start = app_js.index("/* Auto-refresh every 60 s */")
-    assert "loadZigbeeHealthCard()" in app_js[start:start + 400]
+    assert "loadZigbeeHealth()" in app_js[start:start + 400]
 
 
-def test_zigbee_health_tile_does_not_rely_on_colour_alone() -> None:
-    """The dot is paired with a word, for colour-blind readers and screenshots."""
-    css = (STATIC / "styles.css").read_text(encoding="utf-8")
-    assert '.home-zigbee-body[data-state="offline"] .home-zigbee-state' in css
-    index = (STATIC / "index.html").read_text(encoding="utf-8")
-    assert 'class="home-zigbee-state"' in index
+def test_zigbee_health_does_not_rely_on_colour_alone() -> None:
+    """The tint is paired with a word, for colour-blind readers and screenshots."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    start = app_js.index("function bridgeTileHtml")
+    body = app_js[start:app_js.index("\n}", start)]
+
+    assert "escapeHtml(bridge.label)" in body
+    assert "escapeHtml(bridge.meta)" in body
 
 
 def test_unavailable_version_is_not_shown_as_a_version_number(tmp_path: Path, monkeypatch) -> None:

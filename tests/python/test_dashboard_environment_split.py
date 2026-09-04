@@ -15,7 +15,10 @@ def test_environment_and_sensors_are_adjacent_seeded_groups() -> None:
 
     ids = [g["id"] for g in DEFAULT_DEVICE_GROUPS]
 
-    assert ids == ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
+    assert ids == [
+        "lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate",
+        "bridges",
+    ]
     assert ids.index("tuya") == ids.index("environment") + 1
 
 

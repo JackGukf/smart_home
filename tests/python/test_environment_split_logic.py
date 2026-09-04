@@ -299,8 +299,10 @@ def test_distinct_device_count_covers_the_right_universe(tmp_path: Path) -> None
     result = json.loads(out)
 
     # Baseline: switch(1) + ambient(1) + humidifier(1) + thermostat(1) +
-    # one deduplicated Tuya group ("Living Room") = 5.
-    assert result["baseline"] == 5
+    # one deduplicated Tuya group ("Living Room") + the Zigbee coordinator = 6.
+    # The coordinator is always counted: it is a device we own, and it reaches
+    # the dashboard as bridge health rather than on any of the device lists.
+    assert result["baseline"] == 6
     # The Govee environment sensor must be counted.
     assert result["withEnvironmentSensor"] == result["baseline"] + 1
     # The Matter device must be counted.

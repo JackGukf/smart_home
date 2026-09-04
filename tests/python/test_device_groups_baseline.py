@@ -18,6 +18,11 @@ STYLES_CSS = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 
 EXPECTED_ORDER = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
 
+# Bridges is seeded but deliberately not builtin: it has no bespoke panel, so
+# it renders through the dynamic-group path and gets a dynamic overview tile
+# rather than one of the hardcoded builtinTiles entries.
+SEEDED_DYNAMIC = ["bridges"]
+
 
 def _overview_tiles() -> list[tuple[str, str, str]]:
     """(view, icon, label) for each built-in Devices overview tile, in order.
@@ -50,10 +55,11 @@ def _css_group_colors() -> dict[str, str]:
 
 
 def test_seeded_ids_and_order_match_the_overview_tiles() -> None:
-    seeded = [g["id"] for g in DEFAULT_DEVICE_GROUPS]
+    seeded = [g["id"] for g in DEFAULT_DEVICE_GROUPS if g["builtin"]]
 
     assert seeded == EXPECTED_ORDER
     assert [view for view, _icon, _label in _overview_tiles()] == EXPECTED_ORDER
+    assert [g["id"] for g in DEFAULT_DEVICE_GROUPS] == EXPECTED_ORDER + SEEDED_DYNAMIC
 
 
 def test_sensors_group_keeps_the_tuya_id() -> None:
@@ -100,5 +106,19 @@ def test_only_lights_and_plugs_declare_chrome() -> None:
     }
 
 
-def test_every_seeded_group_is_builtin() -> None:
-    assert all(g["builtin"] for g in DEFAULT_DEVICE_GROUPS)
+def test_only_bridges_is_seeded_as_a_dynamic_group() -> None:
+    """Builtin means "has a bespoke panel in index.html". Bridges does not: it
+    renders through renderDynamicGroupPanel, which only repaints panels whose
+    group is not builtin. Marking it builtin would leave it permanently stale."""
+    dynamic = [g["id"] for g in DEFAULT_DEVICE_GROUPS if not g["builtin"]]
+
+    assert dynamic == SEEDED_DYNAMIC
+
+
+def test_bridges_collects_by_rule_because_the_api_cannot_set_kinds() -> None:
+    """POST /api/device-groups hardcodes an empty "kinds", so a group that
+    collects devices by type can only get that rule from this seed."""
+    bridges = next(g for g in DEFAULT_DEVICE_GROUPS if g["id"] == "bridges")
+
+    assert bridges["kinds"] == ["bridge"]
+    assert bridges["name"] == "Bridges"

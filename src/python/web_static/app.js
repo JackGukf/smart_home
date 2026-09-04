@@ -272,6 +272,7 @@ let latestThermostats   = [];
 let latestAmbientLights = [];
 let latestHumidifiers   = [];
 let latestEnvironmentSensors = [];
+let latestZigbeeBridge  = null;
 let areasDoc            = { areas: [], assignments: {} };
 let currentAreaId       = null;
 let doorbellEventsReady = false;
@@ -474,6 +475,9 @@ function distinctDeviceCount() {
   latestTuyaDevices
     .filter((d) => !isTuyaCamera(d))
     .forEach((d) => ids.add(`tuya:${sensorBaseName(String(d.name || d.id || ""))}`));
+  // The coordinator is a device we own, and the only one not on any of the
+  // lists above -- it reaches the dashboard as bridge health, not as a device.
+  ids.add("bridge:zigbee");
   return ids.size;
 }
 
@@ -1635,6 +1639,7 @@ function visibleSensorGroups(mode) {
   const visible = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
   const groupId = sensorTileGroupId(mode);
   return groupSensorDevices(visible)
+    .filter((g) => !isBridgeSensorGroup(g))
     .filter((g) => groupHasViewContent(g, mode))
     .filter((g) => !isExcludedFromGroup(`sensor:${areaSlug(g.name)}`, groupId));
 }
@@ -3367,7 +3372,93 @@ const AREA_KIND_ICONS = {
   ambient: "ti-lamp-2",
   humidifier: "ti-droplet",
   environment: "ti-temperature-celsius",
+  bridge: "ti-router",
 };
+
+/* ── Bridges ──
+
+   A bridge is a radio other devices talk through, not a device in its own
+   right: the Zigbee coordinator, and the Tuya multi-mode gateway. Grouping
+   them matters because a dead bridge is silent -- everything behind it simply
+   stops updating, and nothing on screen says why. One replug went unnoticed
+   for 66 minutes.
+
+   Nothing in a Tuya gateway's payload distinguishes it from a sensor: it
+   reports link state through the same shape a door sensor reports its state.
+   The product name is the only signal available, and it is stable per product,
+   so that is what this matches on. A device caught wrongly can be moved back
+   with Manage, which is exactly what the per-device overrides are for. */
+const BRIDGE_NAME_PATTERN = /\b(gateway|bridge|coordinator|hub)\b/i;
+
+function isBridgeSensorGroup(group) {
+  return BRIDGE_NAME_PATTERN.test(String(group?.name || ""));
+}
+
+/* One shape for both kinds of bridge, so the tile renderer does not have to
+   know whether it is drawing Zigbee2MQTT or a Tuya gateway.
+   state is "online" | "offline" | "unknown" -- "unknown" is a real third case
+   here and must not collapse into "offline": it means we could not reach Home
+   Assistant to ask, which is a different problem with a different fix. */
+function zigbeeBridgeDevice() {
+  const base = { id: "zigbee", name: "Zigbee coordinator", icon: "ti-access-point" };
+  const info = latestZigbeeBridge;
+
+  if (!info) {
+    return { ...base, state: "unknown", label: "Unknown", meta: "Dashboard could not reach the bridge API" };
+  }
+  if (!info.available) {
+    return { ...base, state: "unknown", label: "Unknown", meta: "Home Assistant unreachable, or MQTT not set up" };
+  }
+
+  const since = _zigbeeSince(info.connection_changed);
+  const version = info.version ? `Zigbee2MQTT ${info.version}` : "Zigbee2MQTT";
+  if (info.connected === true) {
+    return { ...base, state: "online", label: "Online", meta: since ? `${version} · up ${since}` : version };
+  }
+  if (info.connected === false) {
+    return { ...base, state: "offline", label: "Offline", meta: since ? `Down for ${since} · ${version}` : version };
+  }
+  return { ...base, state: "unknown", label: "Unknown", meta: `${version} · no connection state published` };
+}
+
+function tuyaGatewayBridgeDevice(group) {
+  const first = group.readings[0] || {};
+  const online = group.readings.some((d) => d.online !== false);
+  /* Tuya reports a gateway's model as its name, so using the model unguarded
+     printed the name twice on the tile. */
+  const model = String(first.model || "");
+  const meta = model && model !== group.name ? model : "Tuya gateway";
+  return {
+    id: areaSlug(group.name),
+    name: group.name,
+    icon: "ti-router",
+    state: online ? "online" : "offline",
+    label: online ? "Online" : "Offline",
+    meta,
+  };
+}
+
+/* The tile, in the same language as the sensor tiles: type-tinted ground, an
+   oversized watermark, one headline word. An offline bridge is the loudest
+   thing on the page on purpose. */
+function bridgeTileHtml(bridge) {
+  const tint = bridge.state === "online" ? "var(--green)"
+    : bridge.state === "offline" ? "var(--red)" : "var(--slate)";
+  const cls = bridge.state === "offline" ? " sdc-tile-alert"
+    : bridge.state === "unknown" ? " sdc-tile-offline" : "";
+  return `<article class="sdc-tile bridge-tile${cls}"
+    data-device-id="${escapeHtml(bridge.name)}" style="--tint:${tint}">
+    <i class="ti ${escapeHtml(bridge.icon)} sdc-tile-mark" aria-hidden="true"></i>
+    <div class="sdc-tile-top">
+      <span class="sdc-tile-badge"><i class="ti ${escapeHtml(bridge.icon)}" aria-hidden="true"></i>Bridge</span>
+    </div>
+    <div class="sdc-tile-read">
+      <div class="sdc-tile-state">${escapeHtml(bridge.label)}</div>
+      <h3 class="sdc-tile-name" title="${escapeHtml(bridge.name)}">${escapeHtml(bridge.name)}</h3>
+      <div class="sdc-tile-sub"><span class="sdc-tile-note">${escapeHtml(bridge.meta)}</span></div>
+    </div>
+  </article>`;
+}
 
 function areaSlug(name) {
   return String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -3388,14 +3479,19 @@ function collectHomeInventory() {
     });
   }
 
+  /* A gateway arrives on the same Tuya feed as the sensors and is grouped with
+     them, so it is separated here rather than at the source -- one place makes
+     the decision, and the key keeps its "sensor:" prefix so an override the
+     user already set does not become orphaned. */
   const visibleSensors = latestTuyaDevices.filter((d) => !isTuyaCamera(d));
   for (const group of groupSensorDevices(visibleSensors)) {
+    const bridge = isBridgeSensorGroup(group);
     inventory.push({
       key: `sensor:${areaSlug(group.name)}`,
-      kind: "sensor",
+      kind: bridge ? "bridge" : "sensor",
       name: group.name,
       room: group.readings[0]?.room || "",
-      data: group,
+      data: bridge ? tuyaGatewayBridgeDevice(group) : group,
     });
   }
 
@@ -3449,6 +3545,16 @@ function collectHomeInventory() {
       data: sensor,
     });
   }
+
+  /* The coordinator is the one device with no list to come from: it reaches
+     the dashboard as bridge health, not as a device. */
+  inventory.push({
+    key: "bridge:zigbee",
+    kind: "bridge",
+    name: "Zigbee coordinator",
+    room: "",
+    data: zigbeeBridgeDevice(),
+  });
 
   return inventory;
 }
@@ -4901,7 +5007,6 @@ const DEFAULT_HOME_LAYOUT = {
   camera:      { x: 5, y: 1,  w: 4, h: 7 },
   tempsensors: { x: 5, y: 8,  w: 4, h: 6 },
   areas:       { x: 9, y: 1,  w: 4, h: 12 },
-  zigbeehealth:{ x: 9, y: 13, w: 4, h: 5 },
 };
 
 function loadHomeLayout() {
@@ -4962,7 +5067,6 @@ const HOME_CARD_LABELS = {
   climate: "Climate",
   bluetooth: "Music",
   areas: "Areas",
-  zigbeehealth: "Zigbee",
 };
 
 function loadHiddenHomeCards() {
@@ -5255,8 +5359,18 @@ function genericGroupSectionsHtml(devices) {
   const ambient     = of("ambient");
   const humidifiers = of("humidifier");
   const environment = of("environment");
+  const bridges     = of("bridge");
 
   const sections = [];
+  /* First: a bridge being down is the reason everything else on the page is
+     stale, so it has to be read before the devices behind it. */
+  if (bridges.length) {
+    sections.push(`
+      <div class="area-subsection">
+        <div class="area-subsection-title"><i class="ti ti-router"></i> Bridges</div>
+        <div class="device-grid bridge-tile-grid">${bridges.map(bridgeTileHtml).join("")}</div>
+      </div>`);
+  }
   if (switches.length) {
     sections.push(`
       <div class="area-subsection">
@@ -6744,53 +6858,29 @@ function _zigbeeSince(iso) {
   return `${Math.floor(hours / 24)} d`;
 }
 
-/* Zigbee health on the Home view.
+/* Zigbee coordinator health.
 
    A dead bridge is silent: every Zigbee device just stops updating, and nothing
-   on screen says why. One replug went unnoticed for 66 minutes. This tile states
-   the coordinator's state outright, and separates "offline" (the bridge is down,
-   act on it) from "unknown" (we cannot reach Home Assistant to ask, which is a
-   different problem). */
-async function loadZigbeeHealthCard() {
-  const body = document.querySelector("#homeZigbeeBody");
-  const stateEl = document.querySelector("#homeZigbeeState");
-  const metaEl = document.querySelector("#homeZigbeeMeta");
-  if (!body) return;
-
-  const render = (state, text, meta) => {
-    body.dataset.state = state;
-    if (stateEl) stateEl.textContent = text;
-    if (metaEl) metaEl.textContent = meta || "";
-  };
-
-  let info;
+   on screen says why. One replug went unnoticed for 66 minutes. This fetch only
+   stores the payload -- zigbeeBridgeDevice() turns it into the coordinator's
+   tile in the Bridges group, which is where it is read. Failure is stored as
+   "no payload", which reads as Unknown rather than Offline: not being able to
+   ask is a different problem from the bridge being down. */
+async function loadZigbeeHealth() {
   try {
-    info = await requestJson("/api/zigbee/bridge");
+    latestZigbeeBridge = await requestJson("/api/zigbee/bridge");
   } catch (error) {
-    render("unknown", "Unknown", "Dashboard could not reach the bridge API");
-    return;
+    latestZigbeeBridge = null;
   }
-
-  if (!info.available) {
-    render("unknown", "Unknown", "Home Assistant unreachable, or MQTT not set up");
-    return;
-  }
-
-  const since = _zigbeeSince(info.connection_changed);
-  const version = info.version ? `Zigbee2MQTT ${info.version}` : "Zigbee2MQTT";
-
-  if (info.connected === true) {
-    render("online", "Online", since ? `${version} · up ${since}` : version);
-  } else if (info.connected === false) {
-    render("offline", "Offline", since ? `Down for ${since} · ${version}` : version);
-  } else {
-    render("unknown", "Unknown", `${version} · no connection state published`);
+  /* The Bridges panel is a dynamic group panel, so it only repaints when
+     something asks it to. Both the overview tile count and an open panel have
+     to see the new state. */
+  renderDevicesOverview();
+  const active = document.querySelector(".view-panel.active");
+  if (active && findDeviceGroup(active.dataset.viewPanel)) {
+    renderDynamicGroupPanel(active.dataset.viewPanel);
   }
 }
-
-document.querySelector("#homeZigbeeOpen")?.addEventListener("click", () => {
-  activateView("zigbee");
-});
 
 /* The coordinator's own controls. Zigbee2MQTT publishes permit join as a switch
    entity, so left alone it lands on the Devices view among the household lights;
@@ -7152,7 +7242,7 @@ loadDevices().catch((error) => {
   console.error(error);
 });
 
-loadZigbeeHealthCard().catch((error) => console.error(error));
+loadZigbeeHealth().catch((error) => console.error(error));
 
 /* Kept even once the live stream below is connected: this is the reconciliation
    pass that repairs anything the stream missed while the laptop was asleep or the
@@ -7163,7 +7253,7 @@ setInterval(() => {
   loadDevices().catch(console.error);
   /* Refreshed on the same cycle so an outage that starts while the dashboard is
      already open still surfaces, rather than only on reload. */
-  loadZigbeeHealthCard().catch(console.error);
+  loadZigbeeHealth().catch(console.error);
 }, 60_000);
 
 /* ── Live updates ──────────────────────────────────────────────────────────

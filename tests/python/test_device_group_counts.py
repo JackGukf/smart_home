@@ -74,9 +74,10 @@ const seed = JSON.parse(process.argv[3]);
 vm.runInContext(`latestTuyaDevices = ${JSON.stringify(seed.tuya)};`, ctx);
 for (const name of ["latestSwitchDevices", "latestMatterDevices", "latestAmbientLights",
                     "latestHumidifiers", "latestThermostats", "latestEnvironmentSensors",
-                    "latestCameras", "latestDeviceGroups"]) {
+                    "latestCameras"]) {
   vm.runInContext(`${name} = [];`, ctx);
 }
+vm.runInContext(`latestDeviceGroups = ${JSON.stringify(seed.groups || [])};`, ctx);
 vm.runInContext(`latestDeviceGroupOverrides = ${JSON.stringify(seed.overrides)};`, ctx);
 
 const tile = ctx.deviceGroupTileData().find((t) => t.view === seed.view);
@@ -84,13 +85,22 @@ console.log(JSON.stringify({ count: tile.count, summary: tile.summary }));
 """
 
 SENSOR_NAMES = [
-    "Multi-Mode Gateway", "Motion Sensor&TH", "Motion Sensor&TH 2", "Door Sensor",
+    "Motion Sensor&TH", "Motion Sensor&TH 2", "Door Sensor",
     "Water Sensor", "Fire alarm detector", "Temperature and humidity sensor",
     "Smart button", "Family room Motion",
 ]
 
+# Arrives on the same Tuya feed as the sensors above, but is classified as a
+# bridge by rule, so it must not be counted by the Sensors tile.
+BRIDGE_NAMES = ["Multi-Mode Gateway"]
 
-def _tile(tmp_path: Path, overrides: dict, view: str = "tuya") -> dict:
+BRIDGES_GROUP = [
+    {"id": "bridges", "name": "Bridges", "icon": "router", "color": "green",
+     "kinds": ["bridge"], "chrome": [], "readingFilter": None, "builtin": False},
+]
+
+
+def _tile(tmp_path: Path, overrides: dict, view: str = "tuya", groups: list | None = None) -> dict:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not available to execute app.js")
@@ -101,9 +111,10 @@ def _tile(tmp_path: Path, overrides: dict, view: str = "tuya") -> dict:
         "tuya": [
             {"id": f"t{i}", "name": name, "category": "tuya_device", "room": "",
              "online": True, "state": "on"}
-            for i, name in enumerate(SENSOR_NAMES)
+            for i, name in enumerate([*SENSOR_NAMES, *BRIDGE_NAMES])
         ],
         "overrides": overrides,
+        "groups": groups or [],
         "view": view,
     }
     result = subprocess.run(
@@ -119,22 +130,35 @@ def test_sensors_tile_counts_every_group_when_nothing_is_reassigned(tmp_path: Pa
 
 
 def test_sensors_tile_drops_a_device_moved_to_another_group(tmp_path: Path) -> None:
-    """The reported bug, with the override exactly as the board persisted it.
+    """The reported bug: the tile said 9 while the panel under it listed 8.
 
-    Moving Multi-Mode Gateway from Sensors to a custom Bridge and hub group left
-    the Sensors tile reading 9.
+    The original report moved Multi-Mode Gateway out of Sensors by hand; the
+    gateway is now classified as a bridge by rule, so this drives the same
+    override through a device that really is a sensor.
     """
     overrides = {
-        "sensor:multi-mode-gateway": {"include": ["bridge-and-hub"], "exclude": ["tuya"]},
+        "sensor:door-sensor": {"include": ["bridges"], "exclude": ["tuya"]},
     }
     tile = _tile(tmp_path, overrides)
     assert tile["count"] == len(SENSOR_NAMES) - 1
     # The summary counts the same universe, so it has to move in step with the
     # count rather than keeping its own tally.
-    assert tile["summary"] == "8 online"
+    assert tile["summary"] == "7 online"
 
 
 def test_exclusion_from_a_different_group_leaves_the_tile_alone(tmp_path: Path) -> None:
     """Membership is multi-valued: leaving Environment is not leaving Sensors."""
-    overrides = {"sensor:multi-mode-gateway": {"include": [], "exclude": ["environment"]}}
+    overrides = {"sensor:door-sensor": {"include": [], "exclude": ["environment"]}}
     assert _tile(tmp_path, overrides)["count"] == len(SENSOR_NAMES)
+
+
+def test_the_gateway_is_counted_by_bridges_and_not_by_sensors(tmp_path: Path) -> None:
+    """A gateway is a radio other devices talk through, not a sensor. It reaches
+    the dashboard on the Tuya feed all the same, so the only thing keeping it out
+    of the Sensors tile is the bridge rule."""
+    assert _tile(tmp_path, {})["count"] == len(SENSOR_NAMES)
+
+    bridges = _tile(tmp_path, {}, view="bridges", groups=BRIDGES_GROUP)
+    # The Tuya gateway, plus the Zigbee coordinator, which reaches the dashboard
+    # as bridge health rather than on any device list.
+    assert bridges["count"] == len(BRIDGE_NAMES) + 1

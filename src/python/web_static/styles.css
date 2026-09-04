@@ -5110,66 +5110,18 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   }
 }
 
-/* ── Zigbee health tile (Home view) ──────────────────────────────────────
-   Colour alone must not carry the state, so the dot is paired with a word.
-   Offline is the case worth noticing, so it gets the ring and the red. */
-.home-zigbee-body {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 1 1 auto;
-  min-height: 0;
-  justify-content: center;
+/* ── Bridge tiles (Bridges group) ────────────────────────────────────────
+   The same tile as the sensors, one column wider: a bridge's meta line is a
+   sentence ("Down for 3 h · Zigbee2MQTT 2.6.2"), not a reading, so it needs
+   room to wrap rather than being clipped to one line. */
+.device-grid.bridge-tile-grid {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
 
-.home-zigbee-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.home-zigbee-dot {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--muted);
-}
-
-.home-zigbee-state {
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-
-.home-zigbee-meta {
-  font-size: 11.5px;
-  color: var(--muted);
-  line-height: 1.45;
-}
-
-.home-zigbee-body[data-state="online"] .home-zigbee-dot { background: var(--green); }
-.home-zigbee-body[data-state="online"] .home-zigbee-state { color: var(--green); }
-
-.home-zigbee-body[data-state="offline"] .home-zigbee-dot {
-  background: var(--red);
-  box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.18);
-}
-.home-zigbee-body[data-state="offline"] .home-zigbee-state { color: var(--red); }
-.home-zigbee-body[data-state="offline"] .home-zigbee-meta { color: var(--orange); }
-
-.home-zigbee-body[data-state="unknown"] .home-zigbee-dot { background: var(--slate); }
-.home-zigbee-body[data-state="unknown"] .home-zigbee-state { color: var(--slate); }
-
-/* Respect a reduced-motion preference: no pulse, the ring alone carries it. */
-@media (prefers-reduced-motion: no-preference) {
-  .home-zigbee-body[data-state="offline"] .home-zigbee-dot {
-    animation: zigbee-offline-pulse 2s ease-in-out infinite;
-  }
-}
-
-@keyframes zigbee-offline-pulse {
-  0%, 100% { box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.18); }
-  50%      { box-shadow: 0 0 0 7px rgba(248, 113, 113, 0.06); }
+.bridge-tile .sdc-tile-note {
+  white-space: normal;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }

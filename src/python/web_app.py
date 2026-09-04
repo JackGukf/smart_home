@@ -158,13 +158,20 @@ DEFAULT_DEVICE_GROUPS = [
      "kinds": ["sensor"], "readingFilter": "sensors", "chrome": [], "builtin": True},
     {"id": "climate", "name": "Climate", "icon": "temperature", "color": "orange",
      "kinds": ["thermostat"], "chrome": [], "builtin": True},
+    # Not builtin: Bridges has no bespoke panel, so it renders and refreshes
+    # through the dynamic-group path like a user-created group, and stays
+    # editable and deletable. Its "kinds" rule is seeded here because the API
+    # only ever creates groups with an empty rule.
+    {"id": "bridges", "name": "Bridges", "icon": "router", "color": "green",
+     "kinds": ["bridge"], "chrome": [], "builtin": False},
 ]
 
 DEVICE_GROUP_COLORS = frozenset(
     {"accent", "amber", "cyan", "green", "indigo", "orange", "pink", "purple", "red", "slate", "teal"}
 )
 DEVICE_GROUP_KINDS = frozenset(
-    {"light", "plug", "sensor", "camera", "thermostat", "ambient", "humidifier", "environment"}
+    {"light", "plug", "sensor", "camera", "thermostat", "ambient", "humidifier",
+     "environment", "bridge"}
 )
 DEVICE_GROUP_READING_FILTERS = frozenset({"environment", "sensors"})
 DEVICE_GROUP_CHROME = frozenset({"lightScenes", "lightDragLock", "plugActions"})

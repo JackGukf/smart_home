@@ -61,8 +61,12 @@ globalThis.latestHumidifiers = [];
 globalThis.latestEnvironmentSensors = [
   { name: 'Govee Thermo-Hygrometer', room: 'Bedroom', temperature: 21.5, humidity: 44 }
 ];
-eval(pick('isTuyaCamera') + pick('sensorBaseName') + pick('areaSlug')
-   + pick('groupSensorDevices') + pick('isAlertDetected') + pick('cameraIdFor')
+globalThis.latestZigbeeBridge = null;
+eval(constOf('BRIDGE_NAME_PATTERN') + constOf('SENSOR_SUFFIXES') + pick('isBridgeSensorGroup')
+   + pick('tuyaGatewayBridgeDevice') + pick('zigbeeBridgeDevice') + pick('_zigbeeSince')
+   + pick('isTuyaCamera') + pick('sensorBaseName') + pick('areaSlug')
+   + pick('groupSensorDevices') + pick('isAlertDetected') + pick('isSensorIncident')
+   + pick('cameraIdFor')
    + pick('tuyaCameraCard') + pick('collectHomeInventory'));
 const inv = collectHomeInventory();
 console.log(JSON.stringify(inv.map((i) => ({ key: i.key, kind: i.kind, name: i.name }))));
@@ -70,8 +74,46 @@ console.log(JSON.stringify(inv.map((i) => ({ key: i.key, kind: i.kind, name: i.n
     inventory = _run_node(script, tmp_path)
 
     assert inventory == [
-        {"key": "env:govee-thermo-hygrometer", "kind": "environment", "name": "Govee Thermo-Hygrometer"}
+        {"key": "env:govee-thermo-hygrometer", "kind": "environment", "name": "Govee Thermo-Hygrometer"},
+        # Always present, with no device list to come from: the coordinator
+        # reaches the dashboard as bridge health.
+        {"key": "bridge:zigbee", "kind": "bridge", "name": "Zigbee coordinator"},
     ]
+
+
+def test_a_gateway_is_inventoried_as_a_bridge_not_a_sensor(tmp_path: Path) -> None:
+    """Nothing in a Tuya gateway's payload distinguishes it from a sensor -- it
+    arrives on the same feed and is grouped with them -- so the product name is
+    what keeps it out of Sensors and in Bridges."""
+    script = """
+globalThis.latestSwitchDevices = [];
+globalThis.latestMatterDevices = [];
+globalThis.latestCameras = [];
+globalThis.latestThermostats = [];
+globalThis.latestAmbientLights = [];
+globalThis.latestHumidifiers = [];
+globalThis.latestEnvironmentSensors = [];
+globalThis.latestZigbeeBridge = null;
+globalThis.latestTuyaDevices = [
+  { id: 'g1', name: 'Multi-Mode Gateway', category: 'tuya_device', online: true, model: 'Multi-Mode Gateway' },
+  { id: 's1', name: 'Door Sensor', category: 'tuya_door', online: true, state: 'off' }
+];
+eval(constOf('BRIDGE_NAME_PATTERN') + constOf('SENSOR_SUFFIXES') + pick('isBridgeSensorGroup')
+   + pick('tuyaGatewayBridgeDevice') + pick('zigbeeBridgeDevice') + pick('_zigbeeSince')
+   + pick('isTuyaCamera') + pick('sensorBaseName') + pick('areaSlug')
+   + pick('groupSensorDevices') + pick('isAlertDetected') + pick('isSensorIncident')
+   + pick('cameraIdFor')
+   + pick('tuyaCameraCard') + pick('collectHomeInventory'));
+const inv = collectHomeInventory();
+console.log(JSON.stringify(inv.map((i) => ({ key: i.key, kind: i.kind }))));
+"""
+    inventory = _run_node(script, tmp_path)
+    by_key = {i["key"]: i["kind"] for i in inventory}
+
+    # The key keeps its "sensor:" prefix so an override the user already set
+    # against it is not orphaned by the reclassification.
+    assert by_key["sensor:multi-mode-gateway"] == "bridge"
+    assert by_key["sensor:door-sensor"] == "sensor"
 
 
 def test_area_kind_icons_has_environment_entry(tmp_path: Path) -> None:
