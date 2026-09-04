@@ -28,6 +28,11 @@ const pick = (name) => {
   }
   throw new Error(`unbalanced ${name}`);
 };
+const constOf = (name) => {
+  const m = src.match(new RegExp(`const ${name}[\\\\s\\\\S]*?;`));
+  if (!m) throw new Error(`missing const ${name}`);
+  return m[0];
+};
 """
 
 
@@ -104,7 +109,9 @@ globalThis.document = {
   querySelector: (sel) => (sel === '#areaDetailBody' ? bodyEl : makeEl()),
 };
 
-eval(pick('escapeHtml') + pick('environmentSensorCard') + pick('genericGroupSectionsHtml')
+eval(constOf('SENSOR_TYPE_META') + pick('sensorTypeMeta') + pick('sensorTileIcon')
+  + pick('sensorTileFacet')
+  + pick('escapeHtml') + pick('environmentSensorCard') + pick('genericGroupSectionsHtml')
    + pick('hydrateGenericGroupBody') + pick('renderAreaDetail'));
 
 const area = {
@@ -128,11 +135,11 @@ console.log(JSON.stringify({ html: bodyEl.innerHTML }));
     assert "Environment" in html
     assert "device-grid" in html
     assert "Govee Thermo-Hygrometer" in html
-    # sdc-card / sdc-gauges-row only come from environmentSensorCard's own
+    # sdc-tile / sdc-tile-big only come from environmentSensorCard's own
     # markup, proving the bucket is rendered via that shared function and
     # not a bespoke renderer.
-    assert "sdc-card" in html
-    assert "sdc-gauges-row" in html
+    assert "sdc-tile" in html
+    assert "sdc-tile-big" in html
 
 
 GROUPS_JS = """

@@ -74,7 +74,9 @@ def _balanced_block_ui(source: str, start: int) -> str:
 def test_generic_sections_render_one_block_per_kind(tmp_path: Path) -> None:
     """One subsection per kind present, and nothing for kinds that are absent."""
     script = """
-eval(pick('escapeHtml') + pick('environmentSensorCard') + pick('genericGroupSectionsHtml'));
+eval(constOf('SENSOR_TYPE_META') + pick('sensorTypeMeta') + pick('sensorTileIcon')
+  + pick('sensorTileFacet')
+  + pick('escapeHtml') + pick('environmentSensorCard') + pick('genericGroupSectionsHtml'));
 const devices = [
   { key: 'env:g', kind: 'environment', name: 'Govee',
     data: { name: 'Govee', room: 'Bedroom', model: 'H5140', online: true, temperature: 21, humidity: 44 } },

@@ -2114,168 +2114,220 @@ aside {
   font-weight: 600;
 }
 
-.sdc-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+/* ── SENSOR DEVICE TILE ──
+   A compact tile tinted by device type. The type icon repeats twice: once
+   small in the badge, once oversized as a watermark, which is what makes the
+   grid readable as a colour-and-shape pattern before any text is read.
+   --tint is set per tile from SENSOR_TYPE_META in app.js. */
+.device-grid.sensor-tile-grid {
+  grid-template-columns: repeat(auto-fill, minmax(186px, 1fr));
+}
+
+.sdc-tile {
+  --tint: var(--slate);
   position: relative;
   overflow: hidden;
-  transition: border-color 0.2s;
-}
-
-.sdc-card:hover { border-color: var(--border-hover); }
-
-.sdc-card.sdc-card-alert {
-  border-color: rgba(255, 138, 122, 0.5);
-  box-shadow: 0 0 0 1px rgba(255, 138, 122, 0.2);
-}
-
-.sdc-card.sdc-card-alert::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 2px;
-  background: var(--t-alert);
-  border-radius: var(--radius) var(--radius) 0 0;
-}
-
-.sdc-header {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background:
+    radial-gradient(120% 90% at 78% 6%, color-mix(in srgb, var(--tint) 22%, transparent), transparent 62%),
+    linear-gradient(180deg, var(--card-2), var(--card));
+  padding: 16px;
+  min-height: 162px;
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  transition: border-color 0.16s, transform 0.16s, box-shadow 0.16s;
+}
+
+.sdc-tile:hover {
+  border-color: color-mix(in srgb, var(--tint) 45%, transparent);
+  transform: translateY(-2px);
+}
+
+.sdc-tile-mark {
+  position: absolute;
+  right: -16px;
+  bottom: -22px;
+  font-size: 108px;
+  line-height: 1;
+  color: var(--tint);
+  opacity: 0.13;
+  pointer-events: none;
+}
+
+.sdc-tile-top {
+  position: relative;
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.sdc-name {
-  font-size: 16px;
+.sdc-tile-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9.5px;
   font-weight: 600;
-  margin: 0;
-  color: var(--text);
-  line-height: 1.3;
-}
-
-.sdc-sub {
-  font-size: 11px;
-  color: var(--muted);
-  margin: 3px 0 0;
-  text-transform: capitalize;
-}
-
-.sdc-badge {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  border: 1px solid var(--border-hover);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tint);
+  background: color-mix(in srgb, var(--tint) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tint) 28%, transparent);
   border-radius: 20px;
-  padding: 2px 8px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  margin-top: 2px;
+  padding: 3px 9px;
+  min-width: 0;
 }
 
-.sdc-gauges-row {
-  display: flex;
-  gap: 20px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  padding: 2px 0;
-}
+.sdc-tile-badge i { font-size: 13px; }
 
-.sdc-reading {
-  display: flex;
-  flex-direction: column;
+.sdc-tile-batt,
+.sdc-tile-live {
+  display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-
-.sdc-val {
-  display: flex;
-  align-items: baseline;
-  gap: 2px;
-}
-
-.sdc-num {
-  font-size: 20px;
-  font-weight: 500;
-  font-family: 'Fraunces', serif;
-  color: var(--text);
-  line-height: 1;
-}
-
-.sdc-unit {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
-}
-
-.sdc-label {
-  font-size: 10px;
-  color: var(--muted);
-  text-align: center;
-  letter-spacing: 0.02em;
-}
-
-.sdc-alert-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sdc-status-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sdc-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 
-.sdc-dot-clear {
-  background: var(--t-glow);
-  box-shadow: 0 0 5px var(--t-glow);
-}
+.sdc-tile-batt i { font-size: 16px; }
 
-.sdc-dot-alert {
-  background: var(--t-alert);
-  box-shadow: 0 0 5px var(--t-alert);
-  animation: motion-pulse 1.2s ease-in-out infinite;
-}
-
-.sdc-status-lbl {
-  font-size: 11px;
+.sdc-tile-live {
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.08em;
+}
+
+/* The compact stand-in for .rocker: a tile has no room for a 48x80 switch. */
+.sdc-tile-power {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-hover);
+  background: var(--surface);
   color: var(--muted);
+  font-size: 15px;
+  transition: color 0.16s, border-color 0.16s, box-shadow 0.16s;
 }
 
-.sdc-status-lbl.is-alert { color: var(--t-alert); }
-
-.sdc-battery {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border);
+.sdc-tile-power.on {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 50%, transparent);
+  box-shadow: 0 0 12px -2px color-mix(in srgb, var(--amber) 55%, transparent);
 }
 
-.sdc-light-row {
+.sdc-tile-power:hover { border-color: var(--tint); }
+.sdc-tile-power:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.sdc-tile-read {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 14px;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: auto;
+  min-width: 0;
+}
+
+.sdc-tile-big {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 40px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
   color: var(--text);
 }
 
-.sdc-rocker { margin-left: auto; }
+.sdc-tile-unit {
+  font-family: var(--font);
+  font-size: 15px;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.sdc-tile-state {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 27px;
+  line-height: 1.05;
+  color: var(--tint);
+  overflow-wrap: anywhere;
+}
+
+/* Two lines, then ellipsis. Sensor names run long ("Kitchen Window Contact")
+   and a single clipped line tells you almost nothing about which one it is. */
+.sdc-tile-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  margin-top: 8px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sdc-tile-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 9px;
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 16px;
+}
+
+.sdc-tile-m {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sdc-tile-m i { font-size: 14px; }
+
+.sdc-tile-note {
+  color: var(--muted);
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.sdc-tile-note-line {
+  position: relative;
+  margin-top: 4px;
+  font-size: 11px;
+  text-transform: none;
+}
+
+/* An alerting sensor is why this view exists: border, ground and the headline
+   word all move together rather than flipping a single dot. */
+.sdc-tile-alert {
+  border-color: color-mix(in srgb, var(--red) 50%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 18%, transparent),
+              0 14px 34px -18px var(--red);
+}
+
+.sdc-tile-alert .sdc-tile-mark { opacity: 0.18; }
+
+.sdc-tile-offline { opacity: 0.55; }
+.sdc-tile-offline .sdc-tile-live { color: var(--red); }
+
+@media (max-width: 560px) {
+  .device-grid.sensor-tile-grid { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+  .sdc-tile { padding: 14px; min-height: 148px; }
+  .sdc-tile-big { font-size: 33px; }
+  .sdc-tile-state { font-size: 23px; }
+  .sdc-tile-mark { font-size: 88px; }
+}
 
 /* ── ANIMATIONS ── */
 @keyframes radar-ping {

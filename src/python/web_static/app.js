@@ -897,6 +897,22 @@ function isAlertDetected(device) {
     ["on", "open", "wet", "detected", "smoke"].includes(String(device.state || "").toLowerCase());
 }
 
+/* A tripped reading that actually warrants attention.
+
+   Motion is ordinary household traffic, not an incident. The old card marked
+   it with one small red dot, which was easy to ignore; the tile marks an
+   incident by lighting the whole card, and a grid that flashes red every time
+   somebody walks down the hall teaches you to ignore red. Battery level is
+   context and has never been an incident either. */
+function isSensorIncident(device) {
+  if (!isAlertDetected(device)) return false;
+  const dc  = String(device.device_class || "").toLowerCase();
+  const cat = String(device.category || "").toLowerCase();
+  if (dc === "battery" || cat.includes("battery")) return false;
+  return !(["occupancy", "motion", "moving"].includes(dc) ||
+           cat.includes("occupancy") || cat.includes("motion"));
+}
+
 function buildAlertRow(device) {
   const dc  = String(device.device_class || "").toLowerCase();
   const cat = String(device.category    || "").toLowerCase();
@@ -1169,26 +1185,38 @@ async function loadEnvironmentSensors() {
   renderDevicesOverview();
 }
 
+/* Govee cloud thermo-hygrometers use the same tile as the grouped sensors, so
+   the Environment grid reads as one set rather than two card designs. */
 function environmentSensorCard(sensor) {
-  const temp = sensor.temperature != null ? `${sensor.temperature}<small>°C</small>` : "–";
-  const hum  = sensor.humidity != null ? `${sensor.humidity}<small>%</small>` : "–";
+  const hasTemp = sensor.temperature != null;
+  const hero = hasTemp
+    ? `<div class="sdc-tile-big">${escapeHtml(String(sensor.temperature))}<span class="sdc-tile-unit">°C</span></div>`
+    : `<div class="sdc-tile-state">No reading</div>`;
+
+  const facets = [];
+  if (sensor.humidity != null) {
+    facets.push(sensorTileFacet({ key: "humidity", text: `${sensor.humidity}%` }));
+  }
+  const place = [sensor.room, sensor.model].filter(Boolean).join(" · ") || "Govee";
+  facets.push(`<span class="sdc-tile-note">${escapeHtml(place)}</span>`);
+
   const note = sensor.note
-    ? `<p class="sdc-sub">${escapeHtml(sensor.note)}</p>`
+    ? `<p class="sdc-tile-note sdc-tile-note-line">${escapeHtml(sensor.note)}</p>`
     : "";
 
-  return `<article class="sdc-card" data-device-id="${escapeHtml(sensor.name)}">
-    <div class="sdc-header">
-      <div>
-        <h3 class="sdc-name">${escapeHtml(sensor.name)}</h3>
-        <p class="sdc-sub">${escapeHtml([sensor.room, sensor.model].filter(Boolean).join(" · ") || "Govee")}</p>
-      </div>
-      <span class="sdc-badge">${sensor.online ? "ONLINE" : "OFFLINE"}</span>
+  return `<article class="sdc-tile${sensor.online ? "" : " sdc-tile-offline"}"
+    data-device-id="${escapeHtml(sensor.name)}" style="--tint:var(--teal)">
+    ${sensorTileIcon("environment", "sdc-tile-mark")}
+    <div class="sdc-tile-top">
+      <span class="sdc-tile-badge">${sensorTileIcon("environment")}Environment</span>
+      <span class="sdc-tile-live">${sensor.online ? "ONLINE" : "OFFLINE"}</span>
     </div>
-    <div class="sdc-gauges-row">
-      <div class="sdc-gauge"><i class="ti ti-temperature"></i><span class="gauge-value">${temp}</span></div>
-      <div class="sdc-gauge"><i class="ti ti-droplet"></i><span class="gauge-value">${hum}</span></div>
+    <div class="sdc-tile-read">
+      ${hero}
+      <h3 class="sdc-tile-name" title="${escapeHtml(sensor.name)}">${escapeHtml(sensor.name)}</h3>
+      <div class="sdc-tile-sub">${facets.join("")}</div>
+      ${note}
     </div>
-    ${note}
   </article>`;
 }
 
@@ -1648,12 +1676,8 @@ function groupSensorDevices(devices) {
   return [...map.entries()]
     .map(([name, readings]) => ({ name, readings }))
     .sort((a, b) => {
-      const aAlert = a.readings.some(
-        (d) => isAlertDetected(d) && !String(d.category || "").includes("battery")
-      );
-      const bAlert = b.readings.some(
-        (d) => isAlertDetected(d) && !String(d.category || "").includes("battery")
-      );
+      const aAlert = a.readings.some(isSensorIncident);
+      const bAlert = b.readings.some(isSensorIncident);
       if (aAlert !== bAlert) return aAlert ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
@@ -1761,6 +1785,57 @@ function expandSensorReadings(readings) {
   return expanded;
 }
 
+/* ── Device-type presentation registry ──
+   One icon and one hue per capability key, so the same device_class always
+   reads the same whether the reading arrived from Zigbee, Tuya direct or
+   Home Assistant. Keys are the ones sensorCapabilityKey() returns, plus
+   "window" (a door-class refinement) and the "sensor" fallback. */
+const SENSOR_TYPE_META = {
+  temperature: { icon: "ti-temperature",    hue: "var(--orange)", label: "Temperature" },
+  humidity:    { icon: "ti-droplet",        hue: "var(--cyan)",   label: "Humidity"    },
+  illuminance: { icon: "ti-sun",            hue: "var(--amber)",  label: "Light level" },
+  motion:      { icon: "ti-radar-2",        hue: "var(--purple)", label: "Motion"      },
+  door:        { icon: "ti-door",           hue: "var(--indigo)", label: "Door"        },
+  window:      { icon: "ti-window",         hue: "var(--indigo)", label: "Window"      },
+  water:       { icon: "ti-droplet-filled", hue: "var(--teal)",   label: "Leak"        },
+  smoke:       { icon: "ti-flame",          hue: "var(--red)",    label: "Smoke"       },
+  tamper:      { icon: "ti-shield-lock",    hue: "var(--slate)",  label: "Tamper"      },
+  problem:     { icon: "ti-alert-hexagon",  hue: "var(--amber)",  label: "Status"      },
+  battery:     { icon: "ti-battery-3",      hue: "var(--green)",  label: "Battery"     },
+  light:       { icon: "ti-bulb",           hue: "var(--amber)",  label: "Light"       },
+  environment: { icon: "ti-temperature",    hue: "var(--teal)",   label: "Environment" },
+  sensor:      { icon: "ti-radar-2",        hue: "var(--slate)",  label: "Sensor"      },
+};
+
+function sensorTypeMeta(key) {
+  return SENSOR_TYPE_META[key] || SENSOR_TYPE_META.sensor;
+}
+
+/* Battery is context on these tiles, never the headline -- it gets an icon
+   that reflects the real level and a hue that only shouts when it should. */
+function batteryMeta(pct) {
+  return {
+    icon: pct > 75 ? "ti-battery-4" : pct > 50 ? "ti-battery-3" : pct > 25 ? "ti-battery-2" : "ti-battery-1",
+    hue:  pct > 50 ? "var(--green)" : pct > 20 ? "var(--amber)" : "var(--red)",
+  };
+}
+
+function sensorTileIcon(key, cls, hue) {
+  const meta = sensorTypeMeta(key);
+  const style = hue ? ` style="color:${hue}"` : "";
+  return `<i class="ti ${meta.icon}${cls ? " " + cls : ""}"${style} aria-hidden="true"></i>`;
+}
+
+/* One small icon-and-value pair in the tile's footer line. */
+function sensorTileFacet(facet) {
+  return `<span class="sdc-tile-m">${sensorTileIcon(facet.key, "", facet.hue || sensorTypeMeta(facet.key).hue)}${escapeHtml(facet.text)}</span>`;
+}
+
+/* ── Sensor device tile ──
+   A device-type-tinted tile: one headline reading, the type icon as an
+   oversized watermark, and everything else as small pairs under the name.
+   Which reading gets to be the headline depends on the view -- Environment
+   opens on a number, Sensors opens on the state that made you look. */
 function renderSensorDeviceCard(group, mode) {
   const { name } = group;
   const readings = filterReadingsForView(expandSensorReadings(group.readings), mode);
@@ -1786,133 +1861,105 @@ function renderSensorDeviceCard(group, mode) {
   const lightDev  = findCat("light");
 
   const alertDevices = [doorDev, moistDev, occDev, smokeDev, tamperDev, problemDev].filter(Boolean);
-  const hasAlert = alertDevices.some((d) => isAlertDetected(d));
+  const hasAlert = alertDevices.some(isSensorIncident);
 
-  // Gauge columns (numeric sensors)
-  const gauges = [];
+  /* Numeric readings, most headline-worthy first. */
+  const numeric = [];
+  const pushNumeric = (device, key, unit, round) => {
+    if (!device) return;
+    const val = readingMetricNumber(device);
+    if (!Number.isFinite(val)) return;
+    const shown = round ? String(Math.round(val)) : val.toFixed(1);
+    numeric.push({ key, value: shown, unit, text: shown + unit });
+  };
+  pushNumeric(tempDev, "temperature", "°C", false);
+  pushNumeric(humDev, "humidity", "%", true);
+  pushNumeric(illumDev, "illuminance", " lx", true);
 
-  if (tempDev) {
-    const val = readingMetricNumber(tempDev);
-    if (Number.isFinite(val)) {
-      const pct = Math.min(100, Math.max(0, ((val - 16) / (30 - 16)) * 100));
-      gauges.push(`<div class="sdc-reading">
-        ${thermoGaugeSVG(val, pct)}
-        <div class="sdc-val"><span class="sdc-num">${val.toFixed(1)}</span><span class="sdc-unit">°C</span></div>
-        <div class="sdc-label">${tempComfortLabel(val)}</div>
-      </div>`);
-    }
-  }
+  /* Binary readings, in the order they deserve attention. */
+  const binary = [];
+  const pushBinary = (device, key, onWord, offWord) => {
+    if (!device) return;
+    const detected = isAlertDetected(device);
+    binary.push({ key, detected, text: detected ? onWord : offWord });
+  };
+  pushBinary(smokeDev, "smoke", "Smoke", "Clear");
+  pushBinary(moistDev, "water", "Leak", "Dry");
+  pushBinary(doorDev,
+    String(doorDev?.device_class || "").toLowerCase() === "window" ? "window" : "door",
+    "Open", "Closed");
+  pushBinary(occDev, "motion", "Motion", "Clear");
+  pushBinary(tamperDev, "tamper", "Tamper", "Secure");
+  pushBinary(problemDev, "problem", "Problem", "OK");
 
-  if (humDev) {
-    const val = readingMetricNumber(humDev);
-    if (Number.isFinite(val)) {
-      gauges.push(`<div class="sdc-reading">
-        ${dropletGaugeSVG(val, val, humDev.id)}
-        <div class="sdc-val"><span class="sdc-num">${Math.round(val)}</span><span class="sdc-unit">%</span></div>
-        <div class="sdc-label">${humidComfortLabel(val)}</div>
-      </div>`);
-    }
-  }
+  /* The headline. A tripped sensor always wins; otherwise Environment leads
+     with its number and Sensors leads with its state. A device we cannot
+     classify at all still gets a headline: whatever it is actually reporting. */
+  const tripped = binary.find((b) => b.detected);
+  const preferred = mode === "environment"
+    ? [...numeric, ...binary]
+    : [...binary, ...numeric];
+  const hero = tripped || preferred[0] ||
+    (lightDev ? { key: "light", text: lightDev.is_on ? "On" : "Off" } : null) || {
+      key: "sensor",
+      text: readings[0] ? primaryTuyaState(readings[0]) : "No reading",
+    };
 
-  if (illumDev) {
-    const val = readingMetricNumber(illumDev);
-    if (Number.isFinite(val)) {
-      const pct = Math.min(100, (val / 1000) * 100);
-      gauges.push(`<div class="sdc-reading">
-        ${sunGaugeSVG(val, pct)}
-        <div class="sdc-val"><span class="sdc-num">${Math.round(val)}</span><span class="sdc-unit">lx</span></div>
-        <div class="sdc-label">${lxComfortLabel(val)}</div>
-      </div>`);
-    }
-  }
+  const heroMeta = sensorTypeMeta(hero.key);
+  const tint = hasAlert && hero.detected ? "var(--red)" : heroMeta.hue;
 
-  // Alert / binary-sensor status rows
-  const alertRows = [];
-  if (occDev) {
-    const det = isAlertDetected(occDev);
-    alertRows.push(`<div class="sdc-status-row">
-      <span class="sdc-dot ${det ? "sdc-dot-alert" : "sdc-dot-clear"}"></span>
-      <span class="sdc-status-lbl${det ? " is-alert" : ""}">${det ? "MOTION DETECTED" : "ALL CLEAR"}</span>
-    </div>`);
-  }
-  if (doorDev) {
-    const det = isAlertDetected(doorDev);
-    alertRows.push(`<div class="sdc-status-row">
-      <span class="sdc-dot ${det ? "sdc-dot-alert" : "sdc-dot-clear"}"></span>
-      <span class="sdc-status-lbl${det ? " is-alert" : ""}">${det ? "OPEN" : "CLOSED"}</span>
-    </div>`);
-  }
-  if (moistDev) {
-    const det = isAlertDetected(moistDev);
-    alertRows.push(`<div class="sdc-status-row">
-      <span class="sdc-dot ${det ? "sdc-dot-alert" : "sdc-dot-clear"}"></span>
-      <span class="sdc-status-lbl${det ? " is-alert" : ""}">${det ? "LEAK DETECTED" : "DRY"}</span>
-    </div>`);
-  }
-  if (smokeDev) {
-    const det = isAlertDetected(smokeDev);
-    alertRows.push(`<div class="sdc-status-row">
-      <span class="sdc-dot ${det ? "sdc-dot-alert" : "sdc-dot-clear"}"></span>
-      <span class="sdc-status-lbl${det ? " is-alert" : ""}">${det ? "SMOKE DETECTED" : "NORMAL"}</span>
-    </div>`);
-  }
-  if (tamperDev) {
-    const det = isAlertDetected(tamperDev);
-    alertRows.push(`<div class="sdc-status-row">
-      <span class="sdc-dot ${det ? "sdc-dot-alert" : "sdc-dot-clear"}"></span>
-      <span class="sdc-status-lbl${det ? " is-alert" : ""}">${det ? "TAMPER ALERT" : "SECURE"}</span>
-    </div>`);
-  }
-  if (problemDev) {
-    const det = isAlertDetected(problemDev);
-    alertRows.push(`<div class="sdc-status-row">
-      <span class="sdc-dot ${det ? "sdc-dot-alert" : "sdc-dot-clear"}"></span>
-      <span class="sdc-status-lbl${det ? " is-alert" : ""}">${det ? "PROBLEM" : "ONLINE"}</span>
-    </div>`);
-  }
+  const heroHtml = hero.value !== undefined
+    ? `<div class="sdc-tile-big">${escapeHtml(hero.value)}<span class="sdc-tile-unit">${escapeHtml(hero.unit)}</span></div>`
+    : `<div class="sdc-tile-state">${escapeHtml(hero.text)}</div>`;
 
-  // Light control (Tuya LED strips exposed as HA lights)
-  let lightHtml = "";
-  if (lightDev) {
-    lightHtml = `<div class="sdc-light-row">
-      <i class="ti ti-bulb" style="color:${lightDev.is_on ? "var(--t-glow)" : "var(--t-text-dim2)"}"></i>
-      <span>${lightDev.is_on ? "On" : "Off"}</span>
-      <button class="rocker ${lightDev.is_on ? "on" : ""} sdc-rocker"
-        data-tuya-command="${lightDev.is_on ? "off" : "on"}"
-        data-device-id="${escapeHtml(lightDev.id)}"
-        data-device-source="${lightDev.source || "direct"}"
-        type="button"><div class="rocker-pad"></div></button>
-    </div>`;
-  }
+  /* Everything the headline did not take, capped so a 4-in-1 sensor stays
+     legible at tile size -- the full breakdown is a tap away. */
+  const rest = [...numeric, ...binary].filter((f) => f !== hero).slice(0, 3);
+  const facets = rest.map(sensorTileFacet).join("");
 
-  // Battery strip
   let battHtml = "";
+  let battFacet = "";
   if (battDev) {
     const bPct = Number(battDev.state);
     if (Number.isFinite(bPct)) {
-      const color = bPct > 50 ? "var(--t-glow)" : bPct > 20 ? "#FFB400" : "var(--t-alert)";
-      const icon  = bPct > 75 ? "ti-battery-4" : bPct > 50 ? "ti-battery-3" : bPct > 25 ? "ti-battery-2" : "ti-battery-1";
-      battHtml = `<div class="sdc-battery">
-        <i class="ti ${icon}" style="color:${color}"></i>
-        <span style="color:${color}">${Math.round(bPct)}%</span>
-      </div>`;
+      const { icon, hue } = batteryMeta(bPct);
+      const pct = Math.round(bPct);
+      battHtml = `<span class="sdc-tile-batt"><i class="ti ${icon}" style="color:${hue}" aria-hidden="true"></i>${pct}</span>`;
+      battFacet = `<span class="sdc-tile-m"><i class="ti ${icon}" style="color:${hue}" aria-hidden="true"></i>${pct}%</span>`;
     }
   }
 
-  const subtitle = sensorDeviceSubtitle(readings);
+  /* A Tuya LED strip surfaced as a light keeps its switch. The full-size
+     rocker is far too big for a tile, so it becomes a compact power button
+     carrying the same data-tuya-command the click handler already listens for. */
+  let lightHtml = "";
+  if (lightDev) {
+    lightHtml = `<button class="sdc-tile-power${lightDev.is_on ? " on" : ""}"
+      data-tuya-command="${lightDev.is_on ? "off" : "on"}"
+      data-device-id="${escapeHtml(lightDev.id)}"
+      data-device-source="${lightDev.source || "direct"}"
+      title="${lightDev.is_on ? "Turn off" : "Turn on"}"
+      aria-label="${lightDev.is_on ? "Turn off" : "Turn on"} ${escapeHtml(name)}"
+      type="button"><i class="ti ti-power" aria-hidden="true"></i></button>`;
+  }
 
-  return `<article class="sdc-card${hasAlert ? " sdc-card-alert" : ""}" data-device-id="${escapeHtml(name)}">
-    <div class="sdc-header">
-      <div>
-        <h3 class="sdc-name">${escapeHtml(name)}</h3>
-        <p class="sdc-sub">${escapeHtml(subtitle)}</p>
-      </div>
-      <span class="sdc-badge">${capN > 1 ? `${capN}-IN-1` : readings[0]?.type || "Sensor"}</span>
+  const subHtml = facets || (lightHtml ? battFacet : "") ||
+    `<span class="sdc-tile-note">${escapeHtml(sensorDeviceSubtitle(readings))}</span>`;
+  const offline = readings.length > 0 && readings.every((d) => d.online === false);
+  const badge = capN > 1 ? `${capN}-in-1` : heroMeta.label;
+
+  return `<article class="sdc-tile${hasAlert ? " sdc-tile-alert" : ""}${offline ? " sdc-tile-offline" : ""}"
+    data-device-id="${escapeHtml(name)}" style="--tint:${tint}">
+    ${sensorTileIcon(hero.key, "sdc-tile-mark")}
+    <div class="sdc-tile-top">
+      <span class="sdc-tile-badge">${sensorTileIcon(hero.key)}${escapeHtml(badge)}</span>
+      ${lightHtml || battHtml}
     </div>
-    ${gauges.length ? `<div class="sdc-gauges-row">${gauges.join("")}</div>` : ""}
-    ${alertRows.length ? `<div class="sdc-alert-rows">${alertRows.join("")}</div>` : ""}
-    ${lightHtml}
-    ${battHtml}
+    <div class="sdc-tile-read">
+      ${heroHtml}
+      <h3 class="sdc-tile-name" title="${escapeHtml(name)}">${escapeHtml(name)}</h3>
+      <div class="sdc-tile-sub">${subHtml}</div>
+    </div>
   </article>`;
 }
 
@@ -1943,9 +1990,7 @@ function renderTuyaDevices(devices) {
 
   const groups = groupSensorDevices(visibleDevices).filter((g) => groupHasViewContent(g, "sensors"));
 
-  const alertGroupCount = groups.filter((g) =>
-    g.readings.some((d) => isAlertDetected(d) && !String(d.category || "").includes("battery"))
-  ).length;
+  const alertGroupCount = groups.filter((g) => g.readings.some(isSensorIncident)).length;
 
   const banner = alertGroupCount
     ? `<div class="sdc-alert-banner"><i class="ti ti-alert-triangle"></i> ${alertGroupCount} device${alertGroupCount > 1 ? "s" : ""} need${alertGroupCount > 1 ? "" : "s"} attention</div>`
@@ -5230,7 +5275,7 @@ function genericGroupSectionsHtml(devices) {
     sections.push(`
       <div class="area-subsection">
         <div class="area-subsection-title"><i class="ti ti-radar-2"></i> Sensors</div>
-        <div class="device-grid">${sensors.map((g) => renderSensorDeviceCard(g, "sensors")).join("")}</div>
+        <div class="device-grid sensor-tile-grid">${sensors.map((g) => renderSensorDeviceCard(g, "sensors")).join("")}</div>
       </div>`);
   }
   if (cameras.length) {
@@ -5258,7 +5303,7 @@ function genericGroupSectionsHtml(devices) {
     sections.push(`
       <div class="area-subsection">
         <div class="area-subsection-title"><i class="ti ti-temperature-celsius"></i> Environment</div>
-        <div class="device-grid">${environment.map(environmentSensorCard).join("")}</div>
+        <div class="device-grid sensor-tile-grid">${environment.map(environmentSensorCard).join("")}</div>
       </div>`);
   }
   return sections.join("");
