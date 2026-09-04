@@ -285,11 +285,31 @@ Ordered by how much time they cost.
   Assistant on the LAN. Change it.
 - **`North bedroom light switch`** is not commissioned on the current Matter
   fabric. Factory reset it, re-pair, then re-run the backup.
-- **Front door sensor (Zbeacon TS0203) does not hold state.** Every movement, in
-  either direction, emits an identical `contact:true` → `contact:false` pair
-  ~140 ms apart, so it settles to "open" and stays there. The level cannot be
-  polled (`No converter available for 'contact'`). Suspected marginal magnet gap;
-  a firmware quirk is not ruled out. **Do not "fix" this with a debounce** — it
-  would pin the sensor to "closed" after every movement and be wrong half the
-  time.
+- **Front door sensor (Zbeacon TS0203) does not hold state — a stopgap is in
+  place, and it must be removed with the sensor.**
+
+  Every movement, in either direction, emits an identical `contact:true` →
+  `contact:false` pair ~140 ms apart, so the raw entity settles to "open" and
+  stays there. The level cannot be polled (`No converter available for
+  'contact'`). The device is sound — held against the magnet by hand it reported
+  "closed" for 17.9 s — the mounted magnet gap is simply marginal.
+
+  A debounce would be the wrong fix: it would pin the sensor to "closed" after
+  every movement and be wrong half the time. What *is* reliable is that each
+  physical movement produces exactly one burst, so the stopgap is a **toggle**:
+
+  1. `template:` block in HA `configuration.yaml` — a trigger-based
+     `binary_sensor.front_door` (device_class door) that flips on each burst.
+     This must live in HA: the corrective "closed" lasts 140 ms, and the
+     dashboard's 60 s poll would never see it.
+  2. `home_assistant.alarm_zone_exclude` in `configs/devices.local.yaml` hides
+     the raw entity, which would otherwise appear beside it permanently wrong.
+
+  **Known failure mode:** a burst lost over the air (link quality has been seen
+  at 40) inverts it and it *stays* inverted until someone toggles it back. To
+  re-seed, fire the trigger by POSTing the raw entity to `off` then `on` — each
+  transition to `off` toggles once.
+
+  **To remove:** delete the `template:` block (HA restart — a reload will not
+  pick up a newly added integration key) and the `alarm_zone_exclude` entry.
 - **SD card is out.** The board boots NVMe-only; there is no fallback root.
