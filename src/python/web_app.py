@@ -1512,10 +1512,16 @@ def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
     config = _load_home_assistant_config(path)
     token = os.getenv(config.token_env)
     states_by_id: dict[str, dict[str, Any]] = {}
+    # Whether the state list was actually read. Without this, "Home Assistant is
+    # down" and "this entity no longer exists in Home Assistant" both arrive as
+    # an empty lookup, and the second one -- the case that needs a human -- is
+    # indistinguishable from a transient outage.
+    states_read = False
     if token:
         try:
             states = _home_assistant_get(config, token, "/api/states")
             states_by_id = {str(e.get("entity_id")): e for e in states}
+            states_read = True
         except Exception:
             states_by_id = {}
 
@@ -1529,6 +1535,9 @@ def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
             continue
         state_entity = states_by_id.get(entity_id)
         attributes: dict[str, Any] = (state_entity or {}).get("attributes") or {}
+        available, unavailable_reason = _home_assistant_card_availability(
+            entity_id, state_entity, states_read
+        )
         cards.append(
             {
                 "id": entity_id,
@@ -1541,9 +1550,39 @@ def _home_assistant_device_cards(path: Path) -> list[dict[str, Any]]:
                 "room": entry.get("room") or "",
                 "is_on": {"on": True, "off": False}.get(state_entity.get("state")) if state_entity else None,
                 "brightness": _home_assistant_brightness_percent(attributes),
+                "available": available,
+                "unavailable_reason": unavailable_reason,
             }
         )
     return cards
+
+
+def _home_assistant_card_availability(
+    entity_id: str, state_entity: dict[str, Any] | None, states_read: bool
+) -> tuple[bool | None, str]:
+    """Can this configured device actually be controlled right now, and if not, why?
+
+    Three outcomes, and collapsing any two of them is how the north bedroom S505
+    stayed broken without anyone noticing. Its Matter node was lost when the
+    fabric was rebuilt, so the entity simply stopped existing in Home Assistant;
+    the card kept rendering as a switch that was merely "off", because a missing
+    entity and an off switch both produced is_on=None. See the S505 section of
+    docs/setup-orangepi6.md.
+
+    None  -- we could not ask. Transient, no action implied.
+    False -- we asked, and the entity is gone or unavailable. Needs a human.
+    True  -- controllable.
+    """
+    if not states_read:
+        return None, "Home Assistant unreachable"
+    if state_entity is None:
+        return False, f"No such entity in Home Assistant: {entity_id}"
+    state = str(state_entity.get("state") or "").lower()
+    if state == "unavailable":
+        return False, "Home Assistant reports the device as unavailable"
+    if state == "unknown":
+        return False, "Home Assistant has no state for this device yet"
+    return True, ""
 
 
 def _camera_cards(path: Path, check_ports: bool = True) -> list[dict[str, Any]]:

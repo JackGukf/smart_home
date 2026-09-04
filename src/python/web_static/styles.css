@@ -5110,6 +5110,33 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   }
 }
 
+/* ── Unavailable device card ─────────────────────────────────────────────
+   A device we know we cannot control. It has to look different from one that
+   is merely off: the rocker is dead, so it must not invite a press, and the
+   reason takes the room's place because the reason is the actionable part. */
+.device-card.device-unavailable {
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  background: color-mix(in srgb, var(--red) 4%, var(--card));
+}
+
+.device-card.device-unavailable .device-status {
+  color: var(--red);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.device-card.device-unavailable .dial-center {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+.rocker[disabled] {
+  cursor: not-allowed;
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
 /* ── Bridge tiles (Bridges group) ────────────────────────────────────────
    The same tile as the sensors, one column wider: a bridge's meta line is a
    sentence ("Down for 3 h · Zigbee2MQTT 2.6.2"), not a reading, so it needs

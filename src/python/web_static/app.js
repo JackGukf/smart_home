@@ -1417,6 +1417,32 @@ function humidifierCard(humidifier) {
   ].join("");
 }
 
+/* A device that cannot be controlled must not render as one that is simply off.
+
+   `available` is three-valued and comes from the backend: false means we asked
+   and the device is not controllable, null means we could not ask, absent means
+   the source does not report availability (TP-Link switches poll their own
+   state). Only false is worth shouting about, and it has to be shouted -- the
+   north bedroom S505 lost its Matter node, its Home Assistant entity stopped
+   existing, and the card went on drawing a live-looking rocker over "OFF" for
+   days. See _home_assistant_card_availability() in web_app.py. */
+function deviceUnavailability(device) {
+  const dead = device.available === false;
+  return { dead, reason: device.unavailable_reason || "Unavailable" };
+}
+
+function deviceStatusLine(device, dead, reason) {
+  return dead
+    ? `<i class="ti ti-alert-triangle" aria-hidden="true"></i> ${escapeHtml(reason)}`
+    : escapeHtml(device.room || "");
+}
+
+function rockerAttrs(device, dead, reason, isOn) {
+  return dead
+    ? `disabled title="${escapeHtml(reason)}" aria-label="${escapeHtml(device.name)} is unavailable"`
+    : `aria-label="${isOn ? "Turn off" : "Turn on"} ${escapeHtml(device.name)}"`;
+}
+
 function renderPlugSection(devices) {
   devices = applyDeviceOrder(devices, "smart_plug");
   const plugActionsEl = document.querySelector("#plugActions");
@@ -1443,16 +1469,17 @@ function renderPlugSection(devices) {
     const maxWatts = Number(device.max_watts ?? 1500);
     const kwhToday = Number(device.kwh_today  ?? device.total_energy_today ?? 0);
     const nextCmd  = isOn ? "off" : "on";
+    const { dead, reason } = deviceUnavailability(device);
 
     return `
-      <div class="device-card new-style ${isOn ? "on" : ""}"
+      <div class="device-card new-style ${isOn ? "on" : ""}${dead ? " device-unavailable" : ""}"
            draggable="true"
            data-host="${device.host}"
            data-category="${escapeHtml(device.category || "")}">
         <div class="device-top">
           <div>
             <h3 class="device-name">${escapeHtml(device.name)}${device.provider === "matter" ? '<span class="matter-badge">MATTER</span>' : ""}</h3>
-            <p class="device-status">${escapeHtml(device.room || "")}</p>
+            <p class="device-status">${deviceStatusLine(device, dead, reason)}</p>
           </div>
           <div class="device-top-right">
             ${deviceDragHandle(device.host)}
@@ -1461,7 +1488,7 @@ function renderPlugSection(devices) {
               data-host="${device.host}"
               type="button"
               aria-pressed="${isOn}"
-              aria-label="${isOn ? "Turn off" : "Turn on"} ${escapeHtml(device.name)}">
+              ${rockerAttrs(device, dead, reason, isOn)}>
               <div class="rocker-pad"></div>
             </button>
           </div>
@@ -1472,8 +1499,8 @@ function renderPlugSection(devices) {
         <div class="device-footer">
           <span>TODAY</span>
           <span style="color:var(--t-text-dim)">${kwhToday.toFixed(1)} kWh</span>
-          <span style="color:${isOn ? "var(--t-accent)" : "var(--t-text-dim2)"}">
-            ${isOn ? "ON" : "OFF"}
+          <span style="color:${dead ? "var(--red)" : isOn ? "var(--t-accent)" : "var(--t-text-dim2)"}">
+            ${dead ? "UNAVAILABLE" : isOn ? "ON" : "OFF"}
           </span>
         </div>
       </div>`;
@@ -1494,9 +1521,10 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
     const dimmable    = plug ? false : (device.is_dimmable !== false);
     const brightness  = device.brightness ?? (isOn ? 100 : 10);
     const dimLocked   = dimmable && isDimLocked(device.host);
+    const { dead, reason } = deviceUnavailability(device);
 
     return `
-      <div class="device-card new-style ${isOn ? "on" : ""}"
+      <div class="device-card new-style ${isOn ? "on" : ""}${dead ? " device-unavailable" : ""}"
            draggable="false"
            data-drag-locked="true"
            data-host="${device.host}"
@@ -1507,7 +1535,7 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
         <div class="device-top">
           <div>
             <h3 class="device-name">${escapeHtml(device.name)}${device.provider === "matter" ? '<span class="matter-badge">MATTER</span>' : ""}</h3>
-            <p class="device-status">${escapeHtml(device.room || "")}</p>
+            <p class="device-status">${deviceStatusLine(device, dead, reason)}</p>
           </div>
           <div class="device-top-right">
             ${deviceDragHandle(device.host)}
@@ -1523,7 +1551,7 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
               data-host="${device.host}"
               type="button"
               aria-pressed="${isOn}"
-              aria-label="${isOn ? "Turn off" : "Turn on"} ${escapeHtml(device.name)}">
+              ${rockerAttrs(device, dead, reason, isOn)}>
               <div class="rocker-pad"></div>
             </button>
           </div>
@@ -1533,8 +1561,8 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
         </div>
         <div class="device-footer">
           <span>${plug ? "TODAY" : (dimmable ? "DIM" : "FIXED")}</span>
-          <span style="color:${isOn ? "var(--t-accent)" : "var(--t-text-dim2)"}">
-            ${isOn ? "ON" : "OFF"}
+          <span style="color:${dead ? "var(--red)" : isOn ? "var(--t-accent)" : "var(--t-text-dim2)"}">
+            ${dead ? "UNAVAILABLE" : isOn ? "ON" : "OFF"}
           </span>
           <span>${plug ? escapeHtml(device.model || device.type || "") : (dimmable ? "BRIGHT" : "100%")}</span>
         </div>

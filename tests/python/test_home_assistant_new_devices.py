@@ -271,6 +271,10 @@ def test_home_assistant_device_cards_shapes_card_from_config_and_live_state(tmp_
             "room": "North Bedroom",
             "is_on": True,
             "brightness": None,
+            # A live entity is explicitly available: the card carries the answer
+            # rather than leaving it to be inferred from is_on.
+            "available": True,
+            "unavailable_reason": "",
         }
     ]
 
@@ -385,6 +389,10 @@ def test_devices_endpoint_includes_confirmed_home_assistant_light_switch(tmp_pat
             "room": "North Bedroom",
             "is_on": True,
             "brightness": None,
+            # A live entity is explicitly available: the card carries the answer
+            # rather than leaving it to be inferred from is_on.
+            "available": True,
+            "unavailable_reason": "",
         }
     ]
 

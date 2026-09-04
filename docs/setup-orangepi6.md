@@ -278,6 +278,78 @@ curl -X POST -H "Authorization: Bearer $HOME_ASSISTANT_TOKEN" \
   http://localhost:8123/api/config/config_entries/entry/<matter_entry_id>/reload
 ```
 
+#### When the north bedroom switch stops working
+
+It has stopped twice. Both times **the switch was fine and on the network**, and
+both times the dashboard showed nothing wrong — but the causes were different,
+and so are the fixes, which is why step 3 below is the one that matters:
+
+- **2026-08-26** — the Home Assistant *device entry* was deleted by mistake. The
+  node was still commissioned, so reloading the Matter config entry rebuilt it.
+- **2026-09-04** — the *node itself* was gone. Rebuilding the Matter fabric
+  during the 2026-09-02 recovery does not re-commission the nodes in it: only
+  our own Matter bridge came back, the S505 did not, and
+  `light.bedroom_north_bedroom_light_switch` stopped existing. Reloading the
+  config entry cannot fix this one — there is nothing in the fabric to rebuild
+  from.
+
+Diagnose in this order. The first three take seconds and rule out everything
+that is *not* the fabric:
+
+```bash
+# 1. Is the switch on the LAN? (MAC aca7f1b55729 == serial ACA7F1B55729)
+ping -c2 192.168.0.163 && ip neigh show 192.168.0.163
+
+# 2. Does the entity exist in Home Assistant? "Entity not found" is the symptom.
+curl -s -H "Authorization: Bearer $HOME_ASSISTANT_TOKEN" \
+  http://127.0.0.1:8123/api/states/light.bedroom_north_bedroom_light_switch
+
+# 3. Is the node in the fabric? matter-server is a SYSTEM unit, not a user one -
+#    `systemctl --user status matter-server` says "could not be found" even when
+#    it is running perfectly.
+systemctl status matter-server
+```
+
+Step 3 is the answer. Ask matter-server what it actually holds — its node list
+is authoritative, and HA's device registry is only a mirror of it:
+
+| What you see | What it means | Fix |
+| --- | --- | --- |
+| Node with vendor `TP-Link`, serial `ACA7F1B55729` | Commissioned; HA lost the device entry | Reload the Matter config entry (above) |
+| Only node 1, `TEST_VENDOR`/`TEST_PRODUCT` | That is *our own* `matter-bridge`, not the switch. **The S505 is not in the fabric** | Re-commission — see below |
+
+`TEST_VENDOR`/`TEST_PRODUCT` is the CHIP example-app identity our bridge ships
+with. It is easy to mistake for the switch because it is the only Matter light
+in Home Assistant; it is not, and reloading the config entry will not conjure
+the S505 back.
+
+Re-commissioning **cannot be done over SSH** — it needs a setup code, which only
+the Apple Home app can mint:
+
+1. Home app → the switch → accessory settings → *Turn On Pairing Mode*.
+2. Home Assistant → Settings → Devices → Matter → *Add device* → enter the code.
+   Matter devices hold several fabrics at once, so this does not disturb Apple Home.
+3. Read the new entity id back and reconcile `configs/devices.local.yaml`:
+
+```bash
+curl -s -H "Authorization: Bearer $HOME_ASSISTANT_TOKEN" \
+  http://127.0.0.1:8123/api/states | \
+  python3 -c 'import json,sys; [print(e["entity_id"]) for e in json.load(sys.stdin) if e["entity_id"].startswith("light.")]'
+```
+
+The entity may come back under a different id — a re-added node gets a `_2`
+suffix when the old registry entry is still there — so **check it rather than
+assuming**, and update `home_assistant_devices.entity_id` to match.
+
+The dashboard no longer hides this. `_home_assistant_card_availability()` in
+`web_app.py` separates three states that used to be one, because a configured
+entity that has vanished used to render as a switch that was simply **off**:
+`is_on` was `None` for both, and the front end drew a live-looking rocker over
+"OFF". A card whose entity Home Assistant does not have now reads
+**UNAVAILABLE** with the reason where the room name goes, and its rocker is
+disabled. "We could not reach Home Assistant" stays a separate, quieter state —
+collapsing the two would cry wolf on every HA restart.
+
 ## Bluetooth
 
 The board has **two** Bluetooth controllers:
