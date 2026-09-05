@@ -36,6 +36,7 @@ OUT_DIR="${OUT_DIR:-${HOME}/orangepi-recovery}"
 LOCAL=0
 KEEP_REMOTE=0
 ASKPASS=""
+VERIFY_ONLY=""
 
 usage() {
     cat <<'USAGE'
@@ -43,6 +44,7 @@ Usage:
   scripts/backup-smart-home.sh [--host HOST] [--user USER] [--out DIR]
                                [--ha-config PATH] [--container NAME]
                                [--keep-remote] [--local]
+  scripts/backup-smart-home.sh --verify-only ARCHIVE.tgz
 
 Writes <out>/smart-home-backup-<UTC date>.tgz and verifies it.
 
@@ -57,6 +59,7 @@ Options:
   --local           Run against this machine instead of over SSH.
   --askpass PATH    Path ON THE BOARD to a sudo askpass helper, for unattended
                     runs (cron).  Without it sudo prompts on your terminal.
+  --verify-only PATH  Verify an existing archive and exit.  Touches no board.
 
 The archive contains the Zigbee network key, API tokens and camera
 credentials.  Treat it as secret; it is written mode 600.
@@ -73,6 +76,7 @@ while [[ $# -gt 0 ]]; do
         --matter) MATTER_STORAGE="$2"; shift 2 ;;
         --keep-remote) KEEP_REMOTE=1; shift ;;
         --askpass) ASKPASS="$2"; shift 2 ;;
+        --verify-only) VERIFY_ONLY="$2"; shift 2 ;;
         --local) LOCAL=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -115,6 +119,92 @@ REQUIRED=(
     "homeassistant-config/automations.yaml"
     "homeassistant-container-spec.json"
 )
+
+# Verification is a function so it can also be run on its own against an
+# archive made earlier -- which is how the .storage/auth gap was confirmed
+# in the first place, by re-checking the old archive against a new manifest.
+verify_archive() {
+    local MEMBERS missing SIZE COUNT
+    echo "==> Verifying ${1}"
+    gzip -t "$1" || { echo "FAIL: archive is not readable gzip" >&2; exit 1; }
+    MEMBERS="$(tar tzf "$1" | sed 's#^\./##')"
+
+    missing=0
+    for want in "${REQUIRED[@]}"; do
+        if grep -qxF "$want" <<<"$MEMBERS"; then
+            printf '    ok      %s\n' "$want"
+        else
+            printf '    MISSING %s\n' "$want" >&2
+            missing=1
+        fi
+    done
+
+    if [[ "$missing" -ne 0 ]]; then
+        echo >&2
+        echo "FAIL: required files are absent from the archive." >&2
+        echo "Do not rely on this backup. If .storage/* is missing, the most likely" >&2
+        echo "cause is that sudo did not grant access to the Home Assistant config." >&2
+        exit 1
+    fi
+
+    # The Zigbee network key is the one item that makes a restore possible without
+    # re-pairing every device, so confirm it is actually present rather than
+    # assuming the file's existence means it carries a key.
+    if tar xzOf "$1" ./smart_home_AI/deploy/zigbee/zigbee2mqtt/configuration.yaml 2>/dev/null \
+            | grep -q "network_key"; then
+        echo "    ok      zigbee network_key present in configuration.yaml"
+    else
+        echo "    MISSING zigbee network_key -- devices would need re-pairing" >&2
+        exit 1
+    fi
+
+    # Matter cannot go in the REQUIRED list literally: the controller is not
+    # installed on every host, and a board without one still has a valid backup.
+    # What must never pass is the case that actually bites -- the controller is
+    # installed and its credentials did not reach the archive.  The collector
+    # records which of the two it was, so this distinguishes them instead of
+    # warning about both and being ignored.
+    if grep -qxF 'matter-server-absent' <<<"$MEMBERS"; then
+        echo "    ok      no Matter controller on this host (${MATTER_STORAGE} absent)"
+    elif ! grep -q '^matter-server/' <<<"$MEMBERS"; then
+        echo "    MISSING matter-server/ -- the controller is installed on the board" >&2
+        echo "            but its fabric did not reach the archive. Most likely sudo" >&2
+        echo "            did not grant access to ${MATTER_STORAGE}." >&2
+        missing=1
+    # The directory alone proves nothing.  The fabric is a single
+    # <compressed-fabric-id>.json beside chip.json, and an archive holding only
+    # chip.json restores a controller that has never been commissioned -- the same
+    # shape of gap as a configuration.yaml with no network_key.
+    elif ! grep -qE '^matter-server/[0-9]+\.json$' <<<"$MEMBERS"; then
+        echo "    MISSING matter-server/<fabric-id>.json -- no fabric credentials in" >&2
+        echo "            the archive. Losing these means a factory reset and" >&2
+        echo "            re-commissioning of every Matter device." >&2
+        missing=1
+    else
+        echo "    ok      matter-server/ fabric credentials"
+    fi
+
+    if [[ "$missing" -ne 0 ]]; then
+        echo >&2
+        echo "FAIL: the Matter fabric is absent from the archive." >&2
+        exit 1
+    fi
+
+    SIZE=$(stat -c %s "$1")
+    COUNT=$(wc -l <<<"$MEMBERS")
+    echo
+    echo "Backup OK: ${1}"
+    echo "  ${COUNT} entries, ${SIZE} bytes, mode 600"
+    echo "  sha256 $(sha256sum "$1" | cut -d' ' -f1)"
+    echo
+    echo "Contains the Zigbee network key, API tokens and camera credentials."
+    echo "Keep a second copy somewhere off this machine."
+}
+
+if [[ -n "$VERIFY_ONLY" ]]; then
+    verify_archive "$VERIFY_ONLY"
+    exit 0
+fi
 
 echo "==> Collecting on ${PI_HOST} (HA config read as root so .storage is complete)"
 
@@ -178,6 +268,11 @@ fi
 if [ -d "${MATTER_STORAGE}" ]; then
     \$SUDO cp -a "${MATTER_STORAGE}" "\$STAGE/matter-server"
     \$SUDO chown -R "\$(id -u):\$(id -g)" "\$STAGE/matter-server"
+else
+    # Recorded so the verifier can tell "this host has no Matter controller",
+    # which is fine, from "the controller is here and its credentials did not
+    # reach the archive", which is the .storage/auth failure all over again.
+    : > "\$STAGE/matter-server-absent"
 fi
 
 # Live container spec, so Home Assistant is recreated on the same image digest
@@ -216,59 +311,4 @@ else
     echo "    kept on board at ~/${ARCHIVE}"
 fi
 
-echo "==> Verifying ${LOCAL_ARCHIVE}"
-gzip -t "$LOCAL_ARCHIVE" || { echo "FAIL: archive is not readable gzip" >&2; exit 1; }
-MEMBERS="$(tar tzf "$LOCAL_ARCHIVE" | sed 's#^\./##')"
-
-missing=0
-for want in "${REQUIRED[@]}"; do
-    if grep -qxF "$want" <<<"$MEMBERS"; then
-        printf '    ok      %s\n' "$want"
-    else
-        printf '    MISSING %s\n' "$want" >&2
-        missing=1
-    fi
-done
-
-if [[ "$missing" -ne 0 ]]; then
-    echo >&2
-    echo "FAIL: required files are absent from the archive." >&2
-    echo "Do not rely on this backup. If .storage/* is missing, the most likely" >&2
-    echo "cause is that sudo did not grant access to the Home Assistant config." >&2
-    exit 1
-fi
-
-# The Zigbee network key is the one item that makes a restore possible without
-# re-pairing every device, so confirm it is actually present rather than
-# assuming the file's existence means it carries a key.
-if tar xzOf "$LOCAL_ARCHIVE" ./smart_home_AI/deploy/zigbee/zigbee2mqtt/configuration.yaml 2>/dev/null \
-        | grep -q "network_key"; then
-    echo "    ok      zigbee network_key present in configuration.yaml"
-else
-    echo "    MISSING zigbee network_key -- devices would need re-pairing" >&2
-    exit 1
-fi
-
-# Matter is checked separately from REQUIRED: the controller is not always
-# installed, so its absence must not fail every backup -- but it must never pass
-# unremarked either, because losing it means re-commissioning every device.
-if grep -q '^matter-server/' <<<"$MEMBERS"; then
-    echo "    ok      matter-server/ (fabric credentials)"
-else
-    echo "    WARNING no matter-server/ in this archive." >&2
-    echo "            ${MATTER_STORAGE} was absent on the board, so no Matter" >&2
-    echo "            fabric was captured. If you later commission Matter" >&2
-    echo "            devices, re-run this backup: those credentials exist" >&2
-    echo "            only there, and losing them means a factory reset and" >&2
-    echo "            re-commissioning of every device." >&2
-fi
-
-SIZE=$(stat -c %s "$LOCAL_ARCHIVE")
-COUNT=$(wc -l <<<"$MEMBERS")
-echo
-echo "Backup OK: ${LOCAL_ARCHIVE}"
-echo "  ${COUNT} entries, ${SIZE} bytes, mode 600"
-echo "  sha256 $(sha256sum "$LOCAL_ARCHIVE" | cut -d' ' -f1)"
-echo
-echo "Contains the Zigbee network key, API tokens and camera credentials."
-echo "Keep a second copy somewhere off this machine."
+verify_archive "$LOCAL_ARCHIVE"
