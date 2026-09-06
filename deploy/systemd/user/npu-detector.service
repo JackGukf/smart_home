@@ -11,6 +11,11 @@ Restart=always
 # Compiling the graph for the NPU takes ~14s on start, so a crash loop would
 # otherwise hammer the device. Back off further than the usual 5s.
 RestartSec=15
+# Bounded for the same reason as llama-server: no swap, so an unbounded process
+# takes Home Assistant with it rather than just failing. The detector holds one
+# model and a frame buffer, so 2G is generous.
+MemoryMax=2G
+OOMPolicy=stop
 
 [Install]
 WantedBy=default.target

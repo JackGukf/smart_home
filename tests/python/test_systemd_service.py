@@ -152,3 +152,22 @@ def test_resource_logger_cannot_fill_the_disk() -> None:
     assert "BOOT uptime=" in script
     # Records the biggest consumers, so a growing process is identifiable.
     assert "--sort=-rss" in script
+
+
+def test_ai_services_are_memory_capped_because_the_board_has_no_swap() -> None:
+    """The board has 15 GiB and no swap, so memory pressure does not degrade --
+    it hits a wall, and the kernel kills whichever process asks for memory next.
+    That is very likely Home Assistant rather than the model that caused it.
+
+    llama-server holds ~5.0 GiB resident for the life of the process, so a cap is
+    the difference between "the model died" and "the house stopped working".
+    Enforceable here: the board runs cgroup v2 with the memory controller
+    delegated to user.slice, checked before these were added.
+    """
+    for name in ("llama-server.service", "npu-detector.service"):
+        unit = (PROJECT_ROOT / "deploy" / "systemd" / "user" / name).read_text(encoding="utf-8")
+
+        assert "MemoryMax=" in unit, f"{name} has no memory cap"
+        # Without this the unit restarts straight back into the wall it just hit.
+        assert "OOMPolicy=stop" in unit, f"{name} would restart-loop on OOM"
+

@@ -12,6 +12,16 @@ RestartSec=5
 # The model is 2.3GB and Ollama may hold its own copy; letting both be reclaimed
 # under pressure is preferable to the OOM killer picking the dashboard.
 OOMPolicy=stop
+# The board has 15 GiB and NO SWAP, so memory pressure does not degrade -- it
+# hits a wall, and the process the kernel kills is whichever asks next, which is
+# very likely Home Assistant. This caps the cgroup so a runaway model is killed
+# here instead. llama-server holds ~5.0 GiB resident for the life of the process
+# (docs/local-ai.md), so 6G is headroom rather than a working limit; if it is
+# ever hit, something is wrong and stopping is the right answer.
+#
+# Verified enforceable: the board runs cgroup v2 with the memory controller
+# delegated to user.slice, so this is a real limit and not a silent no-op.
+MemoryMax=6G
 
 [Install]
 WantedBy=default.target
