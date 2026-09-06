@@ -173,6 +173,7 @@ Three things that will waste a day if you do not know them:
 - `docs/orangepi6-cross-compile-deploy.md` — build and deploy workflow (both boards)
 - `docs/docker-development.md`, `docs/WSL_DEVELOPMENT.md` — dev environment
 - `docs/matter-bridge.md` — Matter bridge design and deployment (our devices → Apple Home)
+- `docs/matter-bridge-runbook.md` — **build and commission the bridge from scratch**: ordered steps, the values that prove it is conformant, and the twelve traps
 - `docs/matter-controller.md` — Matter controller setup (third-party Matter devices → dashboard)
 - `docs/restore-runbook.md` — **rebuild the stack from backup**: ordered steps, expected verification counts, and the traps (container DNS, lost Tuya camera patch, docker disabled at boot, the watchdog)
 - `docs/handoff-2026-09-03-recovery.md` — the 2026-09-02 reset incident: what was ruled out, the watchdog finding, and what the rebuild turned up

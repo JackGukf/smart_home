@@ -1,5 +1,9 @@
 # Matter Bridge — Implementation Status
 
+> **Building or commissioning it? Use `docs/matter-bridge-runbook.md`** — the
+> ordered procedure, the verification values, and every trap found on the
+> 2026-09-06 rebuild. This file is the design record.
+
 **Status:** Working. Apple Home commissioning confirmed on 2026-06-27.
 **Deployment:** systemd user unit since 2026-07-08 (the original Docker deployment was retired — the published image was amd64 and failed on the Pi with `exec format error`).
 
@@ -196,7 +200,7 @@ Two things worth knowing if this area moves:
 ```bash
 # Inside Docker dev container:
 bash scripts/build-matter-bridge.sh
-# Output: build/matter-bridge/chip-bridge-app  (~10 MB stripped)
+# Output: build/matter-bridge/chip-bridge-app  (~1.5 MB stripped)
 
 PI_HOST=192.168.0.176 SKIP_BUILD=1 bash scripts/deploy-matter-bridge.sh
 ```
