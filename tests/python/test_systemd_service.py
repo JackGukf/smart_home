@@ -171,3 +171,51 @@ def test_ai_services_are_memory_capped_because_the_board_has_no_swap() -> None:
         # Without this the unit restarts straight back into the wall it just hit.
         assert "OOMPolicy=stop" in unit, f"{name} would restart-loop on OOM"
 
+
+
+def test_ollama_dropin_caps_memory_and_stays_on_loopback() -> None:
+    """Ollama is a system unit installed by a vendor script that rewrites
+    /etc/systemd/system/ollama.service on every update, so everything this board
+    needs lives in a drop-in instead -- an upgrade cannot silently drop it.
+
+    Same no-swap reasoning as the user units: the kernel kills whichever process
+    asks for memory next, which is very likely Home Assistant rather than the
+    model that caused the pressure.
+    """
+    dropin = (
+        PROJECT_ROOT / "deploy" / "systemd" / "system" / "ollama.service.d" / "override.conf"
+    ).read_text(encoding="utf-8")
+
+    assert "MemoryMax=5G" in dropin, "no memory cap; a runaway model takes Home Assistant with it"
+    assert "OOMPolicy=stop" in dropin, "would restart straight back into the wall it just hit"
+    # Loopback only: there is no authentication in front of the model endpoint.
+    assert 'Environment="OLLAMA_HOST=127.0.0.1:11434"' in dropin
+    # The property that makes Ollama the right first LLM here -- an idle model is
+    # unloaded and the memory comes back.
+    assert 'Environment="OLLAMA_KEEP_ALIVE=5m"' in dropin
+    assert 'Environment="OLLAMA_MAX_LOADED_MODELS=1"' in dropin
+    # The A720 big cores, which are interleaved on this SoC. CIX's documented
+    # 0,5,6,7,8,9,10,11 includes a little core and drops a fast one.
+    assert "CPUAffinity=0 1 6 7 8 9 10 11" in dropin
+    assert "RuntimeWatchdogSec" not in dropin
+
+
+def test_ollama_installer_refuses_the_two_conditions_that_broke_this_board() -> None:
+    """The installer is the place both failures get caught, because it is what
+    someone runs months from now without re-reading the handoff.
+
+    A non-zero RuntimeWatchdogSec against this SoC's fixed 10 s SBSA timer reset
+    the board every ~80 s on 2026-09-02 and cost a full rebuild.  Two LLMs at
+    once do not fit in 15 GiB beside the house services with no swap.
+    """
+    script = (PROJECT_ROOT / "scripts" / "install-ollama.sh").read_text(encoding="utf-8")
+
+    assert "RuntimeWatchdogUSec" in script, "installer does not check the watchdog"
+    # Checked again afterwards: the vendor installer writes system units.
+    assert script.count("RuntimeWatchdogUSec") >= 2, "watchdog is not re-checked after install"
+    assert "llama-server.service" in script, "installer does not refuse a second LLM"
+
+    # A setting systemd ignores looks identical in the file to one it enforces,
+    # so the installer asks systemd what it actually applied.
+    assert "systemctl show ollama.service -p MemoryMax" in script
+    assert "5368709120" in script

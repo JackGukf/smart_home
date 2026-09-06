@@ -4,6 +4,35 @@ Everything the board runs locally: two LLM endpoints on the CPU, and camera
 object detection on the Zhouyi NPU. All measured on the board 2026-09-02 —
 where a number appears here it was observed, not quoted from a spec sheet.
 
+## Where this stands (2026-09-06)
+
+The 2026-09-03 rebuild restored the house services but not the AI stack, and the
+old NVMe was reflashed, so **every AI artifact on the board was lost** — the
+tuned llama.cpp build, the GGUF weights, `~/npu-venv`, and `~/npu-test/` with the
+finetuned PReLU YOLOv8n and its INT8 quant. The backups are config-only and
+never contained them. Anything below that describes a model file describes
+something that has to be rebuilt, not restored.
+
+The restore is staged one service at a time, with a soak between each, so an
+unexpected reset points at a single change rather than three:
+
+| Step | Service | State |
+| --- | --- | --- |
+| 1 | `ollama.service` | **installed 2026-09-06**, soaking |
+| 2 | `npu-detector.service` | not started — the model must be re-created first |
+| 3 | `llama-server.service` | deferred; only on evidence that something needs the latency |
+
+**Run one LLM, not both.** `llama-server` holds ~5.0 GiB for the life of the
+process and Ollama loading a model is ~3.5 GiB more. Together they leave roughly
+0.4 GiB for Home Assistant, Zigbee2MQTT, go2rtc, matter-server and the dashboard
+on a board with **no swap**, where pressure does not degrade — it hits a wall and
+the kernel kills whichever process asks for memory next. `install-ollama.sh`
+refuses to start beside a running `llama-server` for that reason.
+
+Ollama goes first despite being the slower of the two because it **unloads an
+idle model and gives the memory back**, which outranks throughput on a box whose
+day job is running the house.
+
 ## What runs
 
 | Service | Scope | Endpoint | What |
@@ -21,13 +50,18 @@ ssh -N -L 11434:127.0.0.1:11434 orangepi@<board>   # ollama
 ssh -N -L  8081:127.0.0.1:8081  orangepi@<board>   # llama-server
 ```
 
-Install with `scripts/install-ai-services.sh` (safe to re-run).
+Install Ollama with `scripts/install-ollama.sh`, and the two user units with
+`scripts/install-ai-services.sh`. Both are safe to re-run. `install-ollama.sh`
+asserts `RuntimeWatchdogUSec=0` before *and* after the vendor installer runs,
+because that installer writes system units and the watchdog is the one setting
+on this board that must never come back.
 
 ### Ollama or llama-server?
 
-They run side by side deliberately. Ollama bundles its own llama.cpp, so
-replacing its runner would be undone by the next Ollama update; a separate
-service is reversible.
+They *can* run side by side — Ollama bundles its own llama.cpp, so replacing its
+runner would be undone by the next Ollama update, and a separate service is
+reversible. But on this board, **do not run both at once**: see "Where this
+stands". They did coexist before the rebuild; that was measured, not safe.
 
 | | Ollama | llama-server |
 | --- | --- | --- |
