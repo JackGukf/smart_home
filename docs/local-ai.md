@@ -244,10 +244,23 @@ sudo sed -i 's/^#\?Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
 sudo systemctl restart systemd-journald
 ```
 
-**The hard lockup detector is disabled**, so a hang will not self-recover.
-`/dev/watchdog` exists; enabling `RuntimeWatchdogSec=60s` in
-`/etc/systemd/system.conf` would let the board reboot itself instead of waiting
-for a power cycle.
+**⚠️ Never set `RuntimeWatchdogSec` on this board.** An earlier revision of this
+section told you to enable `RuntimeWatchdogSec=60s` so a hang would self-recover.
+Do not. This board's SBSA Generic Watchdog has a **fixed 10-second timeout that
+`SETTIMEOUT` cannot raise**, so a 60 s setting makes systemd ping every 30 s
+against a timer that fires at 10 — it resets the board roughly every 80 s, with
+no kernel panic and an empty `pstore`, which is exactly the 2026-09-02 loop that
+cost a full rebuild. `RuntimeWatchdogUSec=0` is the correct state:
+
+```bash
+systemctl show -p RuntimeWatchdogUSec    # must print 0
+```
+
+The full analysis, including why the AI services and the NVMe were both wrongly
+suspected, is in `docs/handoff-2026-09-03-recovery.md` under "Best current
+theory (revised)". The hard lockup detector stays disabled, so a genuine hang
+still needs a power cycle — that is the accepted trade, because the alternative
+on this hardware is a guaranteed reset loop.
 
 `resource-logger.service` records memory, load, temperature and the three
 largest processes to `~/resource-history.log` every 30s with `BOOT` markers, so
