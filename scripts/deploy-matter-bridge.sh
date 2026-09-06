@@ -45,7 +45,11 @@ fi
 # 2. Sync the binary and unit file to the Pi
 # --------------------------------------------------------------------------- #
 echo "==> Syncing Matter bridge binary to ${REMOTE}:${REMOTE_DIR} ..."
-ssh "${REMOTE}" "mkdir -p '${REMOTE_DIR}/build/matter-bridge' ~/.config/systemd/user"
+# The KVS directory is where the bridge keeps its own commissioning state, and
+# the unit file points --KVS at a file inside it. CHIP does not create the
+# parent, so on a clean install the bridge starts, fails to open its key-value
+# store and restart-loops -- with the real reason buried in the log.
+ssh "${REMOTE}" "mkdir -p '${REMOTE_DIR}/build/matter-bridge' ~/.config/systemd/user ~/matter-bridge-kvs"
 rsync -az --progress "$BINARY" "${REMOTE}:${REMOTE_DIR}/build/matter-bridge/"
 rsync -az "$PROJECT_ROOT/configs/$UNIT_NAME" "${REMOTE}:.config/systemd/user/$UNIT_NAME"
 

@@ -15,13 +15,21 @@ def test_rescan_does_not_restart_commissioned_bridge_on_device_count_change() ->
     assert "keeping existing Matter endpoints stable" in source
 
 
-def test_named_debug_bridge_uses_four_dynamic_devices_and_project_config() -> None:
+def test_bridge_capacity_is_derived_from_the_endpoint_table_and_project_config() -> None:
+    """kMaxDynamicDevices was hardcoded to 4 while the endpoint table held 16 --
+    the two values sat in adjacent assertions here, which is exactly how they
+    drifted. RegisterDevices() loops to kMaxDynamicDevices, so the fifth bridged
+    device was dropped with nothing logged: adding the Stick S3 registered four
+    endpoints and simply omitted it. Deriving the bound keeps them in step."""
     source = MAIN_CPP.read_text(encoding="utf-8")
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
     config = CONFIG_H.read_text(encoding="utf-8")
     app_config = APP_CONFIG_H.read_text(encoding="utf-8")
 
-    assert "kMaxDynamicDevices    = 4" in source
+    assert "kMaxDynamicDevices    = CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT" in source
+    # A device that cannot be bridged must say so; silence is what made the
+    # missing Stick S3 look like a Python-side problem for three restarts.
+    assert "will NOT be bridged" in source
     assert "CHIPProjectAppConfig.h" in script
     assert "examples/tv-app/tv-common/include/CHIPProjectAppConfig.h" not in script
     assert 'chip_project_config_include="<CHIPProjectConfig.h>"' in script

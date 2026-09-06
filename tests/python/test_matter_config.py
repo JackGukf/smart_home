@@ -64,3 +64,49 @@ def test_matter_bridge_config_raises_linux_packet_buffer_capacity():
 
     assert "#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 0" in content
     assert "#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_CAPACITY_MAX 9050" in content
+
+
+def test_matter_bridge_keeps_the_example_dac_vendor_and_product_ids():
+    """The bridge is named for the humans reading Apple Home, Home Assistant and
+    matter-server -- all three showed it as the SDK's placeholder TEST_VENDOR /
+    TEST_PRODUCT, which is also what the office Stick S3 advertises, and that
+    collision put a wrong identification into the runbook on 2026-09-04.
+
+    The IDs are a different matter: the example DAC attests VID 0xFFF1, so
+    overriding CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID would fail attestation and
+    stop commissioning at "Pairing failed" (Bug 3, docs/matter-bridge.md).
+    """
+    content = Path("src/cpp/matter_bridge/CHIPProjectConfig.h").read_text()
+
+    assert 'CHIP_DEVICE_CONFIG_DEVICE_VENDOR_NAME  "Smart Home AI"' in content
+    assert 'CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_NAME "Dashboard Bridge"' in content
+    # A #define, not a mention: the comment above those lines names both IDs to
+    # explain why they are deliberately left alone.
+    defines = [
+        line.split()[1]
+        for line in content.splitlines()
+        if line.startswith("#define") and len(line.split()) > 1
+    ]
+    assert "CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID" not in defines
+    assert "CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_ID" not in defines
+
+
+def test_deploy_creates_the_kvs_directory_the_bridge_needs():
+    """--KVS names a file inside ~/matter-bridge-kvs. CHIP does not create the
+    parent directory, so on a clean install the bridge restart-loops on a
+    key-value store it cannot open."""
+    unit = Path("configs/matter-bridge.service").read_text()
+    deploy = Path("scripts/deploy-matter-bridge.sh").read_text()
+
+    assert "--KVS /home/orangepi/matter-bridge-kvs/kvs" in unit
+    assert "matter-bridge-kvs" in deploy, "deploy script must create the KVS dir"
+
+
+def test_matter_bridge_unit_uses_the_orange_pi_interface_name():
+    """Ubuntu's predictable names, not the Pi 4's wlan0. A wrong interface makes
+    commissioning fail silently rather than loudly."""
+    unit = Path("configs/matter-bridge.service").read_text()
+
+    assert "--interface wlp1s0" in unit
+    assert "--interface wlan0" not in unit
+
