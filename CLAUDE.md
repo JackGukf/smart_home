@@ -2,8 +2,13 @@
 
 > **Recovered 2026-09-03. The stack is running again**, booted from the NVMe in
 > the PCIe slot: dashboard, go2rtc, Home Assistant, Zigbee (5 devices), Matter
-> controller, resource-logger — all enabled and surviving a reboot. The AI
-> services are deliberately **not** installed.
+> controller, resource-logger — all enabled and surviving a reboot.
+>
+> **Local AI is being restored in stages** (2026-09-06): Ollama first and alone,
+> then the NPU detector, with `llama-server` deferred. **Run one LLM, not both** —
+> there is no swap. The rebuild's reflash destroyed every AI artifact, including
+> the finetuned NPU model, so step 2 is a rebuild rather than a restore. See
+> `docs/local-ai.md`, "Where this stands".
 >
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
 > *user* unit), exposing 5 devices and commissioned into three fabrics —
@@ -140,9 +145,9 @@ Three services, all loopback-only or local-only on purpose. See `docs/local-ai.m
 
 | Service | Endpoint | What |
 | --- | --- | --- |
-| `ollama.service` (system) | `127.0.0.1:11434` | Qwen3-4B Q4_K_M, Ollama API. Unloads when idle. |
-| `llama-server.service` (user) | `127.0.0.1:8081` | Qwen3-4B Q4_0, OpenAI API. ~3x faster prompts, holds 5GB always. |
-| `npu-detector.service` (user) | → MQTT `smarthome/vision/<camera>` | YOLOv8n on the Zhouyi NPU |
+| `ollama.service` (system) | `127.0.0.1:11434` | Qwen3-4B Q4_K_M, Ollama API. Unloads when idle. **Live** — `scripts/install-ollama.sh`. |
+| `npu-detector.service` (user) | → MQTT `smarthome/vision/<camera>` | YOLOv8n on the Zhouyi NPU. **Not installed** — the model was lost and must be re-created. |
+| `llama-server.service` (user) | `127.0.0.1:8081` | Qwen3-4B Q4_0, OpenAI API. ~3x faster prompts, holds 5GB always. **Deferred** — do not run it beside Ollama. |
 
 Reach the LLMs with an SSH tunnel, not by widening the bind address:
 
