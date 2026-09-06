@@ -150,6 +150,48 @@ This uses the example test DAC (VID=0xFFF1) which Apple Home accepts for develop
 
 ## Building the Bridge Binary
 
+### The SDK bootstrap fails on CIPD auth (fixed by our setup script)
+
+A fresh `setup-matter-sdk.sh` used to die here, on any machine without a
+terminal — CI, a container, an ssh session:
+
+```
+Not logged in to CIPD and no anonymous access to the following CIPD paths:
+  fuchsia/third_party/zap
+Attempting CIPD login
+Login failed: interactive login flow requires the stdout to be attached to a terminal
+CIPD login failed
+```
+
+It reads like a credentials problem. It is not — the packages are anonymously
+readable, and `cipd resolve fuchsia/third_party/zap/linux-amd64` succeeds. It is
+a bug in pigweed's pre-flight check, `pw_env_setup/cipd_setup/update.py`:
+
+```python
+parts = entry['path'].split('/')
+while '${' in parts[-1]:
+    parts.pop(-1)          # fuchsia/third_party/zap/${platform} → fuchsia/third_party/zap
+```
+
+Having stripped the placeholder it probes `fuchsia/third_party/zap`, which is a
+*prefix*, not a package. `cipd ls` returns "No matching packages" because
+anonymous users cannot list that prefix, and `cipd instances` errors because a
+prefix has no instances. From those two answers pigweed concludes the path is
+inaccessible and tries to log in.
+
+`scripts/setup-matter-sdk.sh` now runs `scripts/fix_zap_cipd_paths.py` before
+bootstrapping, which rewrites the one placeholder entry into one concrete entry
+per platform. Same packages installed; nothing left for the check to mangle. It
+is idempotent, so re-running setup is safe.
+
+Two things worth knowing if this area moves:
+
+- **A fresh checkout does not fix it.** The failure is deterministic and
+  upstream, so "start again from scratch" reproduces it exactly.
+- **A partially bootstrapped `.environment` looks like a working one.** If it
+  holds `cipd/` and `pigweed.json` but no `python-venv/`, bootstrap never
+  finished, and `scripts/activate.sh` will silently try again on the next build.
+
 ### Production (arm64, for Pi)
 ```bash
 # Inside Docker dev container:
