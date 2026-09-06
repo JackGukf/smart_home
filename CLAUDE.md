@@ -189,6 +189,8 @@ Three things that will waste a day if you do not know them:
 - `docs/restore-runbook.md` — **rebuild the stack from backup**: ordered steps, expected verification counts, and the traps (container DNS, lost Tuya camera patch, docker disabled at boot, the watchdog)
 - `docs/handoff-2026-09-03-recovery.md` — the 2026-09-02 reset incident: what was ruled out, the watchdog finding, and what the rebuild turned up
 - `docs/local-ai.md` — the LLM and NPU stack: services, build flags, NPU op support, benchmarks
+- `docs/npu-model-pipeline.md` — **rebuild the NPU detection model**: the PReLU swap, the
+  exact decomposition, INT8 quantisation, and scoring (`scripts/npu-model/`)
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
 
