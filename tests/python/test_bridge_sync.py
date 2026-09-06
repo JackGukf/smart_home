@@ -283,3 +283,74 @@ def test_a_malformed_matter_id_raises_keyerror_not_valueerror(monkeypatch):
 
     with pytest.raises(KeyError):
         asyncio.run(web_app._bridge_execute_command("matter:not-a-number", "on"))
+
+
+# ── Endpoint pinning ──────────────────────────────────────────────────────────
+#
+# The endpoint number *is* the accessory identity to a Matter controller, so it
+# must not move when the device list changes. Before this, endpoints came from
+# position in the list: adding a Kasa switch that sat earlier in
+# tplink_switches.json inserted it mid-list and shifted every endpoint after it.
+
+def test_endpoints_are_pinned_and_survive_an_insertion(tmp_path):
+    import src.python.web_app as web_app
+
+    path = tmp_path / "bridge_endpoints.json"
+    first = web_app._assign_bridge_endpoints(["kasa:a", "kasa:b", "matter:1"], path)
+    assert first == {"kasa:a": 3, "kasa:b": 4, "matter:1": 5}
+
+    # A device that would sort into the middle must not displace anyone.
+    second = web_app._assign_bridge_endpoints(
+        ["kasa:a", "kasa:INSERTED", "kasa:b", "matter:1"], path
+    )
+    assert second["kasa:a"] == 3
+    assert second["kasa:b"] == 4
+    assert second["matter:1"] == 5
+    assert second["kasa:INSERTED"] == 6, "a new device takes the lowest free endpoint"
+
+
+def test_removing_a_device_does_not_renumber_the_others(tmp_path):
+    import src.python.web_app as web_app
+
+    path = tmp_path / "bridge_endpoints.json"
+    web_app._assign_bridge_endpoints(["kasa:a", "kasa:b", "kasa:c"], path)
+    after = web_app._assign_bridge_endpoints(["kasa:a", "kasa:c"], path)
+
+    assert after == {"kasa:a": 3, "kasa:c": 5}, "c keeps 5; it does not slide into 4"
+
+    # The freed endpoint is available again for something new.
+    later = web_app._assign_bridge_endpoints(["kasa:a", "kasa:c", "kasa:new"], path)
+    assert later["kasa:new"] == 4
+
+
+def test_assignments_survive_a_restart(tmp_path):
+    """They are only stable if they are persisted -- an in-memory map would
+    renumber everything the next time the dashboard restarted."""
+    import src.python.web_app as web_app
+
+    path = tmp_path / "bridge_endpoints.json"
+    web_app._assign_bridge_endpoints(["kasa:a", "kasa:b"], path)
+    assert path.exists()
+    assert web_app._load_bridge_endpoints(path) == {"kasa:a": 3, "kasa:b": 4}
+
+
+def test_a_corrupt_assignment_file_does_not_break_the_bridge(tmp_path):
+    import src.python.web_app as web_app
+
+    path = tmp_path / "bridge_endpoints.json"
+    path.write_text("not json", encoding="utf-8")
+
+    assert web_app._assign_bridge_endpoints(["kasa:a"], path) == {"kasa:a": 3}
+
+
+def test_running_out_of_endpoints_is_survivable(tmp_path):
+    """16 slots. The 17th device gets none rather than an out-of-range endpoint
+    the bridge would refuse -- and the bridge logs what it could not register."""
+    import src.python.web_app as web_app
+
+    path = tmp_path / "bridge_endpoints.json"
+    ids = [f"kasa:{i}" for i in range(web_app.BRIDGE_MAX_ENDPOINTS + 1)]
+    assigned = web_app._assign_bridge_endpoints(ids, path)
+
+    assert len(assigned) == web_app.BRIDGE_MAX_ENDPOINTS
+    assert max(assigned.values()) == web_app.BRIDGE_FIRST_ENDPOINT + web_app.BRIDGE_MAX_ENDPOINTS - 1

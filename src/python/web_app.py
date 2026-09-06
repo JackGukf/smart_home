@@ -79,6 +79,13 @@ DEFAULT_AREAS = [
     {"id": "utility-room", "name": "Utility Room", "icon": "tools"},
 ]
 DEFAULT_DEVICE_GROUPS_PATH = PROJECT_ROOT / "dashboard_device_groups.json"
+# Which Matter endpoint each bridged device owns. See _assign_bridge_endpoints().
+DEFAULT_BRIDGE_ENDPOINTS_PATH = PROJECT_ROOT / "bridge_endpoints.json"
+# Endpoints 0 and 1 are the root node and the aggregator; 2 is reserved by the
+# bridge-app ZAP config. Bridged devices start at 3, and the endpoint table
+# holds 16 (CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT in CHIPProjectAppConfig.h).
+BRIDGE_FIRST_ENDPOINT = 3
+BRIDGE_MAX_ENDPOINTS = 16
 
 # python-kasa waits ~5s for a switch that has dropped off WiFi. The dashboard
 # used to pay that serially for every switch, so a single dead device added 5s
@@ -5139,6 +5146,76 @@ def _bridge_allowlist() -> set[str] | None:
     return {s.strip() for s in raw.split(",") if s.strip()}
 
 
+def _load_bridge_endpoints(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+    assignments = payload.get("assignments") if isinstance(payload, dict) else None
+    if not isinstance(assignments, dict):
+        return {}
+    return {
+        str(k): int(v)
+        for k, v in assignments.items()
+        if isinstance(v, int) and BRIDGE_FIRST_ENDPOINT <= v < BRIDGE_FIRST_ENDPOINT + BRIDGE_MAX_ENDPOINTS
+    }
+
+
+def _save_bridge_endpoints(path: Path, assignments: dict[str, int]) -> None:
+    try:
+        path.write_text(
+            json.dumps({"assignments": dict(sorted(assignments.items()))}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        _matter_log.warning("Could not persist bridge endpoint assignments to %s", path)
+
+
+def _assign_bridge_endpoints(
+    device_ids: list[str], path: Path = DEFAULT_BRIDGE_ENDPOINTS_PATH
+) -> dict[str, int]:
+    """Pin each bridged device to an endpoint, for the life of the install.
+
+    The endpoint number *is* the accessory's identity to a Matter controller.
+    Deriving it from position in the device list meant that inserting or
+    removing one device renumbered every endpoint after it -- so a controller
+    tracking accessories by endpoint would see them swap identities, and the
+    Home app would need re-pairing after an ordinary config change.
+
+    A device therefore keeps the first endpoint it is given. New devices take
+    the lowest free one. Removing a device frees its endpoint for a future
+    device but never moves anybody else.
+    """
+    assignments = _load_bridge_endpoints(path)
+    known = set(assignments)
+    # Drop assignments whose device is gone, so the endpoint can be reused --
+    # but only after the surviving devices have kept theirs.
+    assignments = {k: v for k, v in assignments.items() if k in set(device_ids)}
+    used = set(assignments.values())
+
+    changed = known != set(assignments)
+    for device_id in device_ids:
+        if device_id in assignments:
+            continue
+        for candidate in range(BRIDGE_FIRST_ENDPOINT, BRIDGE_FIRST_ENDPOINT + BRIDGE_MAX_ENDPOINTS):
+            if candidate not in used:
+                assignments[device_id] = candidate
+                used.add(candidate)
+                changed = True
+                break
+        else:
+            _matter_log.warning(
+                "No free Matter endpoint for %s; the bridge holds %d",
+                device_id, BRIDGE_MAX_ENDPOINTS,
+            )
+
+    if changed:
+        _save_bridge_endpoints(path, assignments)
+    return assignments
+
+
 async def _bridge_device_list(controller: KasaLightSwitchController | None = None) -> list[dict]:
     """Return bridgeable dashboard devices without doing live device I/O.
 
@@ -5213,6 +5290,14 @@ async def _bridge_device_list(controller: KasaLightSwitchController | None = Non
 
     if allowlist is not None:
         devices = [d for d in devices if d["device_id"] in allowlist]
+
+    # Pin endpoints so an added or removed device cannot renumber the others.
+    endpoints = _assign_bridge_endpoints([d["device_id"] for d in devices])
+    for device in devices:
+        device["endpoint"] = endpoints.get(device["device_id"], 0)
+    # The C++ side registers in list order; emitting in endpoint order keeps the
+    # fallback path (an older bridge that ignores "endpoint") consistent too.
+    devices.sort(key=lambda d: d["endpoint"] or 999)
     return devices
 
 

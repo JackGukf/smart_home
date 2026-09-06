@@ -110,6 +110,7 @@ std::vector<DeviceInfo> SyncClient::FetchDevices() {
         d.room      = item.value("room", "");
         d.category  = item.at("category").get<std::string>();
         d.dimmable  = item.value("dimmable", false);
+        d.endpoint  = static_cast<uint16_t>(item.value("endpoint", 0));
         if (item.contains("state") && item["state"].is_object()) {
             for (const auto& [k, v] : item["state"].items()) {
                 d.state[k] = v.is_string() ? v.get<std::string>() : v.dump();

@@ -97,9 +97,10 @@ Unset means "expose everything". A **blank** value also means everything, not
 nothing — deliberately, so a stray `BRIDGE_DEVICE_ALLOWLIST=` cannot unregister
 every endpoint on the next restart.
 
-Endpoints are allocated from 3 upward **in list order**, so changing the order
-renumbers them. Do this **before** commissioning; endpoint topology changes need
-a re-pair.
+Endpoints are **pinned per device** in `bridge_endpoints.json`, so the order here
+does not decide them and adding a device cannot renumber the others — see
+**Trap 5b**. A device keeps the first endpoint it is given; new ones take the
+lowest free slot. Adding still needs a bridge restart, not a re-pair.
 
 Restart the dashboard so it re-reads `.env`:
 
@@ -292,6 +293,51 @@ shape appears, audit everything `ChipLinuxAppMainLoop()` does that we skip.**
 **What does not work:** setting `chip_enable_wifi=false` /
 `chip_enable_openthread=false` in the gn args. Those choose which driver gets
 *compiled*; nothing was initialising one. They were tried and reverted.
+
+### Trap 5b — adding a device used to renumber the others
+
+**Do you need to re-pair after adding a device to the bridge?** In principle no
+— a bridge is designed to gain and lose endpoints at runtime, and controllers
+re-read `PartsList`. Two things qualify that here.
+
+**You need a bridge restart.** `RegisterDevices()` runs only at startup. The
+poll loop deliberately refuses to re-register, because `/bridge/devices` goes
+partial during dashboard restarts and re-registering under a paired bridge is
+what caused No Response historically. The fabric survives a restart, so the
+commissioning does not need redoing:
+
+```bash
+ssh orangepi@192.168.0.234 systemctl --user restart smart-home-dashboard
+ssh orangepi@192.168.0.234 systemctl --user restart matter-bridge
+scripts/verify-matter-bridge.sh
+```
+
+**The endpoint number is the accessory's identity**, and it used to come from
+position in the device list. That list is built in a fixed order — Kasa (in
+`tplink_switches.json` order) → Tuya → Matter (by node id) — and the allowlist
+only *filters*, it does not reorder. So adding a Kasa switch that sits *earlier*
+in `tplink_switches.json` inserted it mid-list and shifted every endpoint after
+it. A controller tracking accessories by endpoint then sees them swap
+identities, and you would have to re-pair after an ordinary config change.
+
+**Fixed** by `bridge_endpoints.json` and `_assign_bridge_endpoints()`: a device
+keeps the first endpoint it is ever given, new devices take the lowest free one,
+and removing a device frees its endpoint without moving anybody. `/bridge/devices`
+carries an `endpoint` field and `RegisterDevices()` honours it, falling back to
+positional only when the field is absent.
+
+Demonstrated against the live assignments — inserting `kasa:192.168.0.165`,
+which sorts fourth in `tplink_switches.json`, gives it **ep8** and leaves ep3–7
+untouched:
+
+```
+before: .110→3  .143→4  .61→5  .73→6  matter:1→7
+after:  .110→3  .143→4  .61→5  .73→6  matter:1→7  .165→8
+```
+
+**Do not hand-edit `bridge_endpoints.json` on a paired bridge.** Changing a
+number there renames an accessory as far as every controller is concerned. If
+you must reset it, delete the file and re-pair everything.
 
 ### Trap 6 — TEST_VENDOR / TEST_PRODUCT identity collision
 

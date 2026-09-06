@@ -10,6 +10,9 @@ struct DeviceInfo {
     std::string room;
     std::string category;
     bool dimmable = false;
+    // Endpoint the dashboard has pinned this device to, or 0 when it did not
+    // send one (older dashboard). See RegisterDevices() in main.cpp.
+    uint16_t endpoint = 0;
     std::map<std::string, std::string> state;
 };
 

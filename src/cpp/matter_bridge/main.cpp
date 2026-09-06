@@ -409,8 +409,9 @@ static void RegisterDevices(const std::vector<DeviceInfo>& infos) {
     }
     old_devices.clear(); // destructors run here, outside the lock
 
-    // ep_slot only advances for successfully registered devices, so endpoint IDs
-    // are contiguous even when Unknown-category entries are skipped.
+    // ep_slot is only the fallback when the dashboard pinned no endpoint. It
+    // advances only for successfully registered devices, so those stay
+    // contiguous even when Unknown-category entries are skipped.
     if (infos.size() > kMaxDynamicDevices) {
         // Never silently: a dropped device just looks missing in Apple Home,
         // with nothing anywhere saying why.
@@ -431,8 +432,27 @@ static void RegisterDevices(const std::vector<DeviceInfo>& infos) {
             continue;
         }
 
-        auto ep_id = static_cast<EndpointId>(kDynamicEndpointStart + ep_slot);
-        auto dev   = std::make_unique<BridgeDevice>(ep_slot, ep_id, info);
+        // Prefer the endpoint the dashboard pinned. Deriving it from list
+        // position instead meant inserting or removing a device renumbered
+        // every endpoint after it, and a controller that tracks accessories by
+        // endpoint then sees them swap identities. bridge_endpoints.json keeps
+        // each device on the endpoint it was first given, for the life of the
+        // install. Falls back to positional for an older dashboard that sends
+        // no "endpoint" field.
+        uint8_t slot = ep_slot;
+        if (info.endpoint >= kDynamicEndpointStart &&
+            info.endpoint < kDynamicEndpointStart + kMaxDynamicDevices) {
+            slot = static_cast<uint8_t>(info.endpoint - kDynamicEndpointStart);
+        } else if (info.endpoint != 0) {
+            ChipLogError(AppServer,
+                         "Device '%s' asked for endpoint %u, outside %u..%u; using %u",
+                         info.name.c_str(), info.endpoint, kDynamicEndpointStart,
+                         kDynamicEndpointStart + kMaxDynamicDevices - 1,
+                         kDynamicEndpointStart + ep_slot);
+        }
+
+        auto ep_id = static_cast<EndpointId>(kDynamicEndpointStart + slot);
+        auto dev   = std::make_unique<BridgeDevice>(slot, ep_id, info);
 
         // CHIP SDK calls (Register, UpdateOnOff, SetReachable) must NOT be made
         // while holding gDevicesMutex — they can trigger callbacks that acquire
