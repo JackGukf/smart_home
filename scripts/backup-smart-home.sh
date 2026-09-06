@@ -228,10 +228,14 @@ mkdir -p "\$STAGE/smart_home_AI"
 # dashboard_areas.json matters as much as the credentials: it holds the area
 # list and every device-to-area assignment, all made by hand in the UI. Nothing
 # regenerates it, and a rebuild without it silently drops every device into
-# "Unassigned". The other two are recoverable by re-running discovery, but cost
-# nothing to carry.
+# "Unassigned". bridge_endpoints.json is the same shape of loss for Matter: it
+# pins each bridged device to an endpoint, the endpoint is the accessory's
+# identity to a controller, and restoring without it renumbers everything and
+# forces a re-pair of the Home app. The rest are recoverable by re-running
+# discovery, but cost nothing to carry.
 for rel in .env configs/devices.local.yaml go2rtc/go2rtc.yaml \
            dashboard_areas.json dashboard_device_groups.json \
+           bridge_endpoints.json \
            home_assistant_known_entities.json tplink_switches.json; do
     if [ -e "${REMOTE_PATH}/\$rel" ]; then
         mkdir -p "\$STAGE/smart_home_AI/\$(dirname "\$rel")"

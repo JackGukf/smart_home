@@ -335,6 +335,10 @@ before: .110→3  .143→4  .61→5  .73→6  matter:1→7
 after:  .110→3  .143→4  .61→5  .73→6  matter:1→7  .165→8
 ```
 
+`bridge_endpoints.json` is per-install state that nothing regenerates, so it is
+gitignored and carried by `scripts/backup-smart-home.sh`. Restoring a board
+without it renumbers every accessory and forces a re-pair.
+
 **Do not hand-edit `bridge_endpoints.json` on a paired bridge.** Changing a
 number there renames an accessory as far as every controller is concerned. If
 you must reset it, delete the file and re-pair everything.
