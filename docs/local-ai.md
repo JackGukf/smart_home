@@ -37,7 +37,7 @@ day job is running the house.
 
 | Service | Scope | Endpoint | What |
 | --- | --- | --- | --- |
-| `ollama.service` | system | `127.0.0.1:11434` | Qwen3-4B Q4_K_M, Ollama's own API |
+| `ollama.service` | system | `127.0.0.1:11434` | `qwen3:4b-house` (Qwen3-4B Q4_K_M), Ollama's own API |
 | `llama-server.service` | user | `127.0.0.1:8081` | Qwen3-4B **Q4_0**, OpenAI-compatible API |
 | `npu-detector.service` | user | → MQTT | YOLOv8n on the NPU, publishes detections |
 | `resource-logger.service` | user | → `~/resource-history.log` | memory/thermal history that survives a reboot |
@@ -76,6 +76,42 @@ different request and response shapes, so it is not a drop-in swap.
 **Qwen3 is a thinking model.** A small `max_tokens` returns an *empty* reply
 because reasoning consumed the budget. Pass
 `"chat_template_kwargs": {"enable_thinking": false}` for direct answers.
+
+### Two traps that are specific to Ollama
+
+Both were hit on 2026-09-06 bringing it back, and neither announces itself.
+
+**Pinning the cgroup without also fixing the thread count makes it stop
+answering.** There is no `OLLAMA_NUM_THREADS`; Ollama's bundled llama-server
+picks a thread count from the *machine's* CPUs, not from the cgroup's cpuset. So
+`CPUAffinity=0 1 6 7 8 9 10 11` in the unit pinned it to 8 cores while it still
+started enough compute threads to oversubscribe them — and llama.cpp spin-waits
+at every graph barrier, so it burned **720% CPU and emitted zero tokens in 200
+seconds**. No error, no timeout, no log line: it simply never finishes.
+
+`run-llama-server.sh` never had this problem because it passes `taskset` **and**
+`-t 8` together. The thread count is the other half of the pinning, and it is
+the half that is easy to forget.
+
+The board therefore serves **`qwen3:4b-house`**, which carries `num_thread 8`
+baked in, and the un-parameterised `qwen3:4b` tag is deleted so nothing can
+reach the stall. `install-ollama.sh` derives that 8 from `CPUAffinity` rather
+than repeating it, and its smoke test is time-bounded so the fault reports
+itself instead of hanging. Measured after the fix: **15.6 tok/s generation,
+66 tok/s prompt** — the generation figure matches the tuned llama-server build.
+
+**Do not disable thinking the way you would on llama-server.** The two need
+opposite handling, measured on Ollama 0.33.3 with Qwen3-4B:
+
+| Request | `message.content` | |
+| --- | --- | --- |
+| `"think": false` | the reasoning text | ✗ stops separating it and returns it *as* the answer |
+| `/no_think` suffix | empty | ✗ Qwen3 treats it as part of the question |
+| default, `num_predict` 400 | `ready` | ✓ reasoning in `message.thinking` |
+
+So: leave thinking on, read `message.content`, and give it a **generous
+`num_predict`** — a small budget is spent reasoning and returns empty content.
+Budget for it: a one-word answer cost 194 tokens and 17 s.
 
 ## CPU: getting the LLM fast
 

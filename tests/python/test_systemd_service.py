@@ -219,3 +219,48 @@ def test_ollama_installer_refuses_the_two_conditions_that_broke_this_board() -> 
     # so the installer asks systemd what it actually applied.
     assert "systemctl show ollama.service -p MemoryMax" in script
     assert "5368709120" in script
+
+
+def test_ollama_thread_count_is_derived_from_the_pinned_cores() -> None:
+    """The pinning has two halves and only one of them is a systemd setting.
+
+    Ollama has no OLLAMA_NUM_THREADS; its llama-server picks a thread count from
+    the machine's CPUs, not from the cgroup's cpuset.  Pinned to 8 cores it still
+    oversubscribed them, and llama.cpp spin-waits at every graph barrier, so it
+    burned 720% CPU and emitted zero tokens in 200s.  It never errors -- it just
+    never finishes, which is the worst possible failure on a board whose day job
+    is running the house.
+
+    So num_thread is computed from CPUAffinity rather than written down beside
+    it, because two numbers that must be equal will not stay equal.
+    """
+    script = (PROJECT_ROOT / "scripts" / "install-ollama.sh").read_text(encoding="utf-8")
+
+    assert "cpuset_count" in script, "thread count is not derived from the cpuset"
+    assert 'affinity="$(systemctl show ollama.service -p CPUAffinity --value)"' in script
+    assert "PARAMETER num_thread ${THREADS}" in script
+
+    # An un-parameterised tag left reachable is a caller-facing footgun.
+    assert 'ollama rm "${BASE_MODEL}"' in script, "the unpinned base tag is not retired"
+
+    # A stalled runner returns no error, so the smoke test must be time-bounded
+    # or it hangs the installer instead of reporting the fault.
+    assert "--max-time" in script, "the smoke test could hang instead of failing"
+
+
+def test_ollama_guidance_does_not_repeat_the_llama_server_thinking_trick() -> None:
+    """Qwen3 reasons before answering, and the two servers need opposite handling.
+
+    llama-server's OpenAI endpoint takes chat_template_kwargs enable_thinking
+    false.  Ollama does not: measured on 0.33.3, "think": false stops separating
+    the reasoning and returns it AS the answer, and Qwen3 ignores a /no_think
+    suffix.  What works is the default -- reasoning goes to message.thinking,
+    the answer to message.content -- with a generous num_predict, because a
+    small budget is spent reasoning and content comes back empty.
+    """
+    script = (PROJECT_ROOT / "scripts" / "install-ollama.sh").read_text(encoding="utf-8")
+
+    assert '"think": false' not in script.split("Do NOT pass")[0], \
+        "installer recommends think:false, which returns reasoning as the answer"
+    assert "num_predict" in script, "no budget guidance for a thinking model"
+    assert "message.content" in script

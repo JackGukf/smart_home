@@ -25,7 +25,11 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DROPIN_SRC="${PROJECT_ROOT}/deploy/systemd/system/ollama.service.d/override.conf"
 DROPIN_DIR="/etc/systemd/system/ollama.service.d"
-MODEL="${OLLAMA_MODEL:-qwen3:4b}"
+# The tag Ollama pulls, and the tag this board actually serves.  They differ
+# because the served one carries a num_thread that MUST match the pinned core
+# count -- see "the model" below for what happens when it does not.
+BASE_MODEL="${OLLAMA_BASE_MODEL:-qwen3:4b}"
+MODEL="${OLLAMA_MODEL:-qwen3:4b-house}"
 INSTALLER_URL="https://ollama.com/install.sh"
 
 # Same sudo resolution as backup-smart-home.sh: passwordless if the host allows
@@ -37,6 +41,21 @@ elif [[ -n "${SUDO_ASKPASS:-}" && -x "${SUDO_ASKPASS}" ]]; then
 else
   SUDO="sudo"
 fi
+
+# systemd prints CPUAffinity as ranges, e.g. "0-1 6-11".  Count them, so the
+# thread count is derived from the pinning rather than repeated beside it.
+cpuset_count() {
+  local spec="$1" total=0 part lo hi
+  for part in ${spec//,/ }; do
+    if [[ "${part}" == *-* ]]; then
+      lo="${part%%-*}"; hi="${part##*-}"
+      total=$(( total + hi - lo + 1 ))
+    elif [[ -n "${part}" ]]; then
+      total=$(( total + 1 ))
+    fi
+  done
+  printf '%s' "${total}"
+}
 
 info() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$*"; }
@@ -166,13 +185,93 @@ ok "RuntimeWatchdogUSec still 0"
 
 # ------------------------------------------------------------------- the model
 
-info "Fetching ${MODEL}"
+info "Fetching ${BASE_MODEL}"
 if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "${MODEL}"; then
-  ok "${MODEL} already present"
+  ok "${MODEL} already built"
+elif ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "${BASE_MODEL}"; then
+  ok "${BASE_MODEL} already present"
 else
-  ollama pull "${MODEL}" || die "could not pull ${MODEL}"
-  ok "pulled ${MODEL}"
+  ollama pull "${BASE_MODEL}" || die "could not pull ${BASE_MODEL}"
+  ok "pulled ${BASE_MODEL}"
 fi
+
+# The thread count is the other half of the pinning, and the half that is easy
+# to forget.  Ollama has no OLLAMA_NUM_THREADS: llama-server picks its own count
+# from the machine's CPUs, not from the cgroup's cpuset.  Pinned to 8 cores it
+# still oversubscribed them, and llama.cpp spin-waits at every graph barrier --
+# so it burned 720% CPU and emitted ZERO tokens in 200s.  It does not fail, it
+# simply never finishes.
+#
+# num_thread must therefore equal the number of pinned cores.  Derived here
+# rather than written down twice, so the two cannot drift apart.
+info "Matching the thread count to the pinned cores"
+affinity="$(systemctl show ollama.service -p CPUAffinity --value)"
+if [[ -n "${affinity}" ]]; then
+  THREADS="$(cpuset_count "${affinity}")"
+  ok "CPUAffinity=${affinity} -> num_thread ${THREADS}"
+else
+  THREADS="$(nproc)"
+  warn "no CPUAffinity set; using num_thread ${THREADS} (all cores)"
+fi
+(( THREADS > 0 )) || die "computed a thread count of ${THREADS} from '${affinity}'"
+
+if [[ "$(ollama show "${MODEL}" --parameters 2>/dev/null | awk '$1=="num_thread"{print $2}')" != "${THREADS}" ]]; then
+  modelfile="$(mktemp /tmp/Modelfile.XXXXXX)"
+  {
+    echo "FROM ${BASE_MODEL}"
+    echo "# Must equal the core count in the ollama.service drop-in CPUAffinity."
+    echo "PARAMETER num_thread ${THREADS}"
+  } > "${modelfile}"
+  ollama create "${MODEL}" -f "${modelfile}" >/dev/null 2>&1 || die "could not build ${MODEL}"
+  rm -f "${modelfile}"
+  ok "built ${MODEL} with num_thread=${THREADS}"
+else
+  ok "${MODEL} already carries num_thread=${THREADS}"
+fi
+
+# Retire the un-parameterised tag.  Leaving it reachable is a footgun: a caller
+# who names it gets the 720%-CPU stall described above.  The blobs are shared
+# and refcounted, so this frees no disk and costs no re-download.
+if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "${BASE_MODEL}"; then
+  ollama rm "${BASE_MODEL}" >/dev/null 2>&1 && ok "retired the unpinned ${BASE_MODEL} tag"
+fi
+
+# -------------------------------------------------------------- does it answer
+
+# The regression guard for all of the above.  A stalled runner returns no error,
+# it simply never responds, so this asserts an answer arrives in bounded time.
+info "Smoke test"
+started="$(date +%s)"
+if ! curl -sS --max-time 180 http://127.0.0.1:11434/api/chat -o /tmp/ollama-smoke.json -d "{
+      \"model\": \"${MODEL}\", \"stream\": false,
+      \"options\": {\"num_predict\": 400},
+      \"messages\": [{\"role\":\"user\",\"content\":\"Reply with the single word: ready\"}]
+    }"; then
+  die "no answer within 180s.
+
+That is the oversubscription stall, not a slow board: check that num_thread
+matches the CPUAffinity core count.
+  systemctl show ollama.service -p CPUAffinity
+  ollama show ${MODEL} --parameters"
+fi
+elapsed=$(( $(date +%s) - started ))
+
+SMOKE_ELAPSED="${elapsed}" python3 -c '
+import json, os, sys
+d = json.load(open("/tmp/ollama-smoke.json"))
+m = d.get("message", {})
+gen = d.get("eval_count") or 0
+dur = (d.get("eval_duration") or 1) / 1e9
+content = (m.get("content") or "").strip()
+print("  ok   answered in %ss: %r" % (os.environ["SMOKE_ELAPSED"], content[:40]))
+print("  ok   %d tokens at %.1f tok/s" % (gen, gen / dur))
+# Qwen3 reasons first. With a generous budget the reasoning lands in
+# message.thinking and the answer in message.content; with a small one the
+# budget is spent reasoning and content comes back EMPTY.
+if not content:
+    print("  !    content was empty - num_predict too small for a thinking model")
+    sys.exit(1)
+' || die "the model did not return usable content"
 
 # --------------------------------------------------------------------- summary
 
@@ -180,14 +279,21 @@ cat <<EOF
 
 $(printf '\033[1mDone. Ollama is the only LLM on the board.\033[0m')
 
-Smoke test (thinking off, or a short budget returns an empty reply -- Qwen3
-reasons first and the reasoning consumes the token budget):
+Call it like this.  Qwen3 reasons before answering and the reasoning is
+separated into message.thinking, so read message.content -- and give it a
+generous num_predict, because a small budget is spent reasoning and returns an
+EMPTY content.  Do NOT pass "think": false; on this version it stops separating
+the reasoning and returns it AS the answer.
 
   curl -s http://127.0.0.1:11434/api/chat -d '{
     "model": "${MODEL}", "stream": false,
-    "think": false,
+    "options": {"num_predict": 400},
     "messages": [{"role":"user","content":"Reply with the single word: ready"}]
   }' | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["content"])'
+
+${MODEL} carries num_thread=${THREADS} to match the pinned cores.  If you ever
+add a model, give it the same parameter -- an unpinned tag stalls at 720% CPU
+without ever answering.
 
 Then soak it for 24 h before adding anything else.  The one thing to prove is
 that an idle model is actually unloaded and the memory comes back:
