@@ -5,6 +5,12 @@
 > controller, resource-logger — all enabled and surviving a reboot. The AI
 > services are deliberately **not** installed.
 >
+> **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
+> *user* unit), exposing 5 devices and commissioned into three fabrics —
+> chip-tool, Home Assistant, and Apple Home. Build or re-commission it with
+> `docs/matter-bridge-runbook.md`; do not improvise, the traps are subtle and
+> several present as a different problem than they are.
+>
 > - **To rebuild it: `docs/restore-runbook.md`** — ordered procedure, verification
 >   counts, and the traps that do not announce themselves.
 > - Why it was rebuilt, and the reset investigation: `docs/handoff-2026-09-03-recovery.md`.

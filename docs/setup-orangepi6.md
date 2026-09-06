@@ -291,7 +291,20 @@ and so are the fixes, which is why step 3 below is the one that matters:
   our own Matter bridge came back, the S505 did not, and
   `light.bedroom_north_bedroom_light_switch` stopped existing. Reloading the
   config entry cannot fix this one — there is nothing in the fabric to rebuild
-  from.
+  from. **Resolved 2026-09-06** by re-commissioning from the Home app, which
+  put it back at node 2 — the id `configs/devices.local.yaml` already expected,
+  so no config change was needed:
+
+  ```
+  node 2: TP-Link / Smart Wi-Fi Switch  available=True
+  ```
+
+  It is now configured **twice**: once under `home_assistant_devices` as
+  `light.bedroom_north_bedroom_light_switch`, and once under `matter.devices` as
+  node 2. Both work, so the dashboard shows two cards for one light. Keep the
+  Matter entry — `/api/matter/devices` answers in 5 ms from the controller's own
+  node cache and does not depend on Home Assistant being up — and delete the
+  `home_assistant_devices` entry.
 
 Diagnose in this order. The first three take seconds and rule out everything
 that is *not* the fabric:
