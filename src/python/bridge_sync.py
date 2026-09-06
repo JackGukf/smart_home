@@ -119,10 +119,23 @@ class CommandBody(BaseModel):
 
 @router.get("/devices")
 async def list_devices() -> list[dict[str, Any]]:
-    """Return all bridgeable devices with their current state."""
+    """Return the bridgeable devices with their current state.
+
+    The C++ bridge registers one Matter dynamic endpoint per entry here, so this
+    list *is* the endpoint topology. Apple Home tolerates state changing under a
+    commissioned bridge; it does not tolerate the set of endpoints changing, and
+    responds by marking accessories No Response.
+
+    BRIDGE_DEVICE_ALLOWLIST is applied by the injected get_devices_fn --
+    web_app._bridge_device_list() filters Kasa and Tuya entries and then the
+    whole list. Applying it again here is deliberate belt-and-braces: the
+    invariant belongs to this boundary, so any future get_devices_fn that
+    forgets cannot silently widen the endpoint set under a paired bridge.
+    """
     if _get_devices_fn is None:
         return []
-    return await _get_devices_fn()
+    devices = await _get_devices_fn()
+    return [d for d in devices if _is_exposed_device(str(d.get("device_id", "")))]
 
 
 @router.get("/state/all")

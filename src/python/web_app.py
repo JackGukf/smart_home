@@ -5183,6 +5183,34 @@ async def _bridge_device_list(controller: KasaLightSwitchController | None = Non
             "state": {"on": False},
         })
 
+    # Matter devices already commissioned into the dashboard's own controller.
+    # Bridging one re-exposes it to a *different* fabric -- Apple Home, or
+    # chip-tool -- without commissioning it there directly. The round trip is
+    # Matter in and Matter out; commissioning the device into that fabric
+    # directly is the shorter path where it is an option.
+    #
+    # State comes from the bridge cache rather than a live read, for the same
+    # reason as Tuya above: a blocking read here can stall /bridge/state/all
+    # long enough for Apple Home to mark the whole bridge No Response. Commands
+    # update the cache authoritatively, and a change made elsewhere shows up on
+    # the next one.
+    for node_id, meta in sorted(_matter_device_meta.items()):
+        device_id = f"matter:{node_id}"
+        if allowlist is not None and device_id not in allowlist:
+            continue
+        state = bridge_sync.cached_state_for(device_id) or {"on": False}
+        bridge_sync.update_state_cache(device_id, state)
+        devices.append({
+            "device_id": device_id,
+            "name": meta.get("name") or f"Matter Device {node_id}",
+            "room": meta.get("room") or "",
+            # light_switch maps to OnOffLight in DeviceMapper. A Matter node we
+            # cannot classify is better exposed as a switch than not at all.
+            "category": meta.get("category") or "light_switch",
+            "dimmable": False,
+            "state": state,
+        })
+
     if allowlist is not None:
         devices = [d for d in devices if d["device_id"] in allowlist]
     return devices
@@ -5216,6 +5244,24 @@ async def _bridge_execute_command(device_id: str, command: str, controller: Kasa
                 pass
         else:
             raise ValueError(f"Unknown command: {command}")
+        return
+
+    if device_id.startswith("matter:"):
+        raw = device_id[len("matter:"):]
+        try:
+            node_id = int(raw)
+        except ValueError:
+            raise KeyError(device_id) from None
+        if command not in {"on", "off", "toggle"}:
+            raise ValueError(f"Unknown command: {command}")
+        await _matter_client.send_command(node_id, command)
+        if command == "toggle":
+            was_on = bool((bridge_sync.cached_state_for(device_id) or {}).get("on"))
+            bridge_sync.update_state_cache(device_id, {"on": not was_on}, authoritative=True)
+        else:
+            bridge_sync.update_state_cache(
+                device_id, {"on": command == "on"}, authoritative=True
+            )
         return
 
     # Tuya

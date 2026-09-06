@@ -97,6 +97,72 @@ def test_list_devices_returns_bridge_device_list(client):
     assert data[0]["category"] == "light_switch"
 
 
+def _three_devices() -> list:
+    return [
+        {"device_id": "kasa:192.168.0.110", "name": "Kitchen light switch",
+         "room": "Kitchen", "category": "light_switch", "dimmable": False,
+         "state": {"on": True}},
+        {"device_id": "kasa:192.168.0.143", "name": "Master bedroom light",
+         "room": "Master Bedroom", "category": "light_switch", "dimmable": False,
+         "state": {"on": False}},
+        {"device_id": "kasa:192.168.0.61", "name": "Family room switch",
+         "room": "Family Room", "category": "light_switch", "dimmable": False,
+         "state": {"on": False}},
+    ]
+
+
+def test_list_devices_respects_the_allowlist(client, monkeypatch):
+    """The device list *is* the Matter endpoint topology: the C++ bridge
+    registers one dynamic endpoint per entry. Apple Home tolerates state
+    changing under a commissioned bridge but not the endpoint set changing --
+    it answers that with No Response.
+
+    web_app._bridge_device_list() already applies the allowlist before handing
+    the list over; this pins the same invariant at the router boundary, so a
+    future get_devices_fn that forgets cannot widen the endpoint set.
+    """
+    monkeypatch.setenv(
+        "BRIDGE_DEVICE_ALLOWLIST", "kasa:192.168.0.110,kasa:192.168.0.61"
+    )
+
+    async def fake_get() -> list:
+        return _three_devices()
+
+    register_handlers(get_devices_fn=fake_get, execute_command_fn=None)
+    data = client.get("/bridge/devices").json()
+
+    assert [d["device_id"] for d in data] == [
+        "kasa:192.168.0.110",
+        "kasa:192.168.0.61",
+    ]
+
+
+def test_list_devices_returns_everything_when_no_allowlist_is_set(client, monkeypatch):
+    """An unset allowlist must stay "expose everything", not "expose nothing" --
+    the bridge would otherwise register zero endpoints on a normal install."""
+    monkeypatch.delenv("BRIDGE_DEVICE_ALLOWLIST", raising=False)
+
+    async def fake_get() -> list:
+        return _three_devices()
+
+    register_handlers(get_devices_fn=fake_get, execute_command_fn=None)
+
+    assert len(client.get("/bridge/devices").json()) == 3
+
+
+def test_an_empty_allowlist_is_treated_as_unset(client, monkeypatch):
+    """A blank or whitespace value in .env must not silently unregister every
+    endpoint on the next bridge restart."""
+    monkeypatch.setenv("BRIDGE_DEVICE_ALLOWLIST", "   ")
+
+    async def fake_get() -> list:
+        return _three_devices()
+
+    register_handlers(get_devices_fn=fake_get, execute_command_fn=None)
+
+    assert len(client.get("/bridge/devices").json()) == 3
+
+
 # ── Regression test for the toggle-then-"No Response" bug ──────────────────
 # Root cause: a command from Apple Home reports its new value optimistically,
 # but the physical device takes time to actually flip. If a concurrent status
@@ -165,3 +231,55 @@ def test_state_cache_ignores_non_allowlisted_devices(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.json() == {"kasa:192.168.0.73": {"on": True}}
     assert set(_state_cache) == {"kasa:192.168.0.73"}
+
+
+# ── Matter devices re-exposed through the bridge ──────────────────────────────
+
+def test_matter_device_reaches_the_bridge_list(monkeypatch):
+    """The Stick S3 is commissioned into the dashboard's own controller, which is
+    a different fabric from the one the bridge serves. Bridging it is how it
+    reaches Apple Home without being commissioned there directly."""
+    import src.python.web_app as web_app
+
+    monkeypatch.setattr(web_app, "_matter_device_meta",
+                        {1: {"name": "Stick S3", "room": "Office"}})
+    monkeypatch.setenv("BRIDGE_DEVICE_ALLOWLIST", "matter:1")
+
+    import asyncio
+    devices = asyncio.run(web_app._bridge_device_list())
+
+    assert [d["device_id"] for d in devices] == ["matter:1"]
+    assert devices[0]["name"] == "Stick S3"
+    # light_switch is what DeviceMapper turns into an OnOffLight endpoint.
+    assert devices[0]["category"] == "light_switch"
+
+
+def test_matter_command_is_routed_and_cached_authoritatively(monkeypatch):
+    """A command must update the cache authoritatively, or the next poll can
+    overwrite it with a stale read and Apple Home shows the old state."""
+    import src.python.web_app as web_app
+    import asyncio
+
+    sent = []
+
+    class _FakeClient:
+        async def send_command(self, node_id, command, brightness=None):
+            sent.append((node_id, command))
+
+    monkeypatch.setattr(web_app, "_matter_client", _FakeClient())
+    monkeypatch.setenv("BRIDGE_DEVICE_ALLOWLIST", "matter:1")
+
+    asyncio.run(web_app._bridge_execute_command("matter:1", "on"))
+
+    assert sent == [(1, "on")]
+    assert cached_state_for("matter:1") == {"on": True}
+
+
+def test_a_malformed_matter_id_raises_keyerror_not_valueerror(monkeypatch):
+    """/bridge/command turns KeyError into "unknown device"; an uncaught
+    ValueError from int() would surface as a 500 instead."""
+    import src.python.web_app as web_app
+    import asyncio
+
+    with pytest.raises(KeyError):
+        asyncio.run(web_app._bridge_execute_command("matter:not-a-number", "on"))
