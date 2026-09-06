@@ -26,6 +26,10 @@ static constexpr chip::DeviceTypeId kDeviceTypeIdHumiditySensor = 0x0307;
 
 static constexpr uint16_t kNodeLabelMaxSize    = 64;
 static constexpr uint16_t kProductNameMaxSize  = 64;
+static constexpr uint16_t kVendorNameMaxSize   = 32;
+// The device id doubles as the serial: it is already unique per bridged device
+// ("kasa:192.168.0.110", "matter:1") and is what UniqueID reports.
+static constexpr uint16_t kSerialNumberMaxSize = 32;
 static constexpr uint16_t kDescriptorArraySize = 254;
 
 class BridgeDevice {

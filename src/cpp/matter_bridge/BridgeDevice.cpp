@@ -20,6 +20,10 @@ namespace _bdns = chip::app::Clusters;
 
 #define ZCL_ON_OFF_ATTRIBUTE_ID \
     _bdns::OnOff::Attributes::OnOff::Id
+#define ZCL_VENDOR_NAME_ATTRIBUTE_ID \
+    _bdns::BridgedDeviceBasicInformation::Attributes::VendorName::Id
+#define ZCL_SERIAL_NUMBER_ATTRIBUTE_ID \
+    _bdns::BridgedDeviceBasicInformation::Attributes::SerialNumber::Id
 #define ZCL_PRODUCT_NAME_ATTRIBUTE_ID \
     _bdns::BridgedDeviceBasicInformation::Attributes::ProductName::Id
 #define ZCL_NODE_LABEL_ATTRIBUTE_ID \
@@ -89,6 +93,12 @@ DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sOnOffAttribs)
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(sBridgedBasicAttribs)
+    // VendorName and SerialNumber are optional on this cluster, but Apple Home
+    // renders them as Manufacturer and Serial Number -- omitting them showed
+    // every bridged accessory as "Unknown" for both, while the standalone
+    // Matter devices beside them showed real values.
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_VENDOR_NAME_ATTRIBUTE_ID, CHAR_STRING, kVendorNameMaxSize, 0),
+    DECLARE_DYNAMIC_ATTRIBUTE(ZCL_SERIAL_NUMBER_ATTRIBUTE_ID, CHAR_STRING, kSerialNumberMaxSize, 0),
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_PRODUCT_NAME_ATTRIBUTE_ID, CHAR_STRING, kProductNameMaxSize, 0),
     DECLARE_DYNAMIC_ATTRIBUTE(ZCL_NODE_LABEL_ATTRIBUTE_ID, CHAR_STRING, kNodeLabelMaxSize,
                               ZAP_ATTRIBUTE_MASK(WRITABLE)),

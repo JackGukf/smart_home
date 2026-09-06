@@ -20,6 +20,7 @@
 #include <lib/support/ZclString.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/Linux/NetworkCommissioningDriver.h>
+#include <app/clusters/network-commissioning/network-commissioning.h>
 #include <system/SystemConfig.h>
 
 // Bridge-specific headers must come after SDK headers so chip:: types are resolved
@@ -58,7 +59,14 @@ static constexpr uint16_t kDeviceRescanIntervalSeconds = 60;
 // LevelControl) — starting at 3 avoids that LevelControl data leaking into our
 // OnOffLight devices and confusing Apple Home into treating them as DimmableLight.
 static constexpr EndpointId kDynamicEndpointStart = 3;
-static constexpr uint8_t    kMaxDynamicDevices    = 4;
+// Capacity of the dynamic endpoint table, which CHIPProjectAppConfig.h sizes.
+// This was hardcoded to 4 while the table held 16, so the fifth bridged device
+// was dropped by the loop in RegisterDevices() with nothing logged -- it simply
+// never appeared in Apple Home. Derive it so the two cannot drift again.
+#ifndef CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT
+#define CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT 16
+#endif
+static constexpr uint8_t    kMaxDynamicDevices    = CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT;
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -331,9 +339,19 @@ IMStatus emberAfExternalAttributeReadCallback(EndpointId endpoint,
         }
         if (am->attributeId == BridgedDeviceBasicInformation::Attributes::ProductName::Id ||
             am->attributeId == BridgedDeviceBasicInformation::Attributes::NodeLabel::Id ||
+            am->attributeId == BridgedDeviceBasicInformation::Attributes::VendorName::Id ||
+            am->attributeId == BridgedDeviceBasicInformation::Attributes::SerialNumber::Id ||
             am->attributeId == BridgedDeviceBasicInformation::Attributes::UniqueID::Id) {
-            const auto& value =
-                (am->attributeId == BridgedDeviceBasicInformation::Attributes::UniqueID::Id)
+            // Apple Home shows VendorName as Manufacturer and SerialNumber as
+            // Serial Number. Declaring an attribute and not backing it is the
+            // habit that produced the ep0 NetworkCommissioning fault, so every
+            // attribute in sBridgedBasicAttribs is answered here.
+            static const std::string kVendorName = "Smart Home AI";
+            const std::string& value =
+                (am->attributeId == BridgedDeviceBasicInformation::Attributes::VendorName::Id)
+                    ? kVendorName
+                : (am->attributeId == BridgedDeviceBasicInformation::Attributes::UniqueID::Id ||
+                   am->attributeId == BridgedDeviceBasicInformation::Attributes::SerialNumber::Id)
                     ? dev->GetUniqueId()
                     : dev->GetName();
             size_t cap = (maxReadLength > 1) ? (maxReadLength - 1) : 0;
@@ -393,6 +411,16 @@ static void RegisterDevices(const std::vector<DeviceInfo>& infos) {
 
     // ep_slot only advances for successfully registered devices, so endpoint IDs
     // are contiguous even when Unknown-category entries are skipped.
+    if (infos.size() > kMaxDynamicDevices) {
+        // Never silently: a dropped device just looks missing in Apple Home,
+        // with nothing anywhere saying why.
+        ChipLogError(AppServer,
+                     "Device list has %zu entries but only %u endpoint slots; "
+                     "%zu device(s) will NOT be bridged",
+                     infos.size(), kMaxDynamicDevices,
+                     infos.size() - kMaxDynamicDevices);
+    }
+
     uint8_t ep_slot = 0;
     for (size_t i = 0; i < infos.size() && ep_slot < kMaxDynamicDevices; ++i) {
         const auto& info = infos[i];
@@ -454,6 +482,30 @@ static void ApplyOnOffUpdate(intptr_t ctx) {
         }
     }
 }
+
+// ── NetworkCommissioning on the root node ─────────────────────────────────────
+//
+// The SDK wires this up in InitNetworkCommissioning(), which is called from
+// ChipLinuxAppMainLoop() (examples/platform/linux/AppMain.cpp). We call
+// ChipLinuxAppInit() and then run our own event loop, so that never happened --
+// the same trap as Bug 3 in docs/matter-bridge.md, where the DAC provider went
+// unset for exactly this reason and commissioning failed at attestation.
+//
+// Left uninitialised, no driver backs the cluster: FeatureMap kept the ZAP
+// static value 2 (Thread) on a board with no Thread radio, MaxNetworks read 0,
+// and Networks returned UNSUPPORTED_READ. Home Assistant does not check the
+// root node's clusters and rendered the bridge fine; Apple Home is strict about
+// them and showed every bridged accessory No Response after a clean commission.
+//
+// Ethernet is the correct driver here whether or not the board is on Wi-Fi:
+// NetworkCommissioning exists to *provision* network credentials during
+// commissioning, and this device is commissioned over IP while already on the
+// network. It reports FeatureMap 4 and answers every attribute it declares.
+namespace {
+DeviceLayer::NetworkCommissioning::LinuxEthernetDriver gEthernetDriver;
+app::Clusters::NetworkCommissioning::Instance
+    gEthernetNetworkCommissioningInstance(chip::kRootEndpointId, &gEthernetDriver);
+} // namespace
 
 // ── Background poll thread ────────────────────────────────────────────────────
 
@@ -594,6 +646,15 @@ int main(int argc, char* argv[]) {
     err = InteractionModelEngine::GetInstance()->RegisterCommandHandler(&gDynamicOnOffCommandHandler);
     VerifyOrDie(err == CHIP_NO_ERROR);
     ChipLogDetail(AppServer, "Registered dynamic OnOff command handler");
+
+    // Must follow Server::Init(): the cluster Instance registers attribute
+    // access and needs the data model up. See the note beside the declaration.
+    err = gEthernetNetworkCommissioningInstance.Init();
+    if (err != CHIP_NO_ERROR) {
+        ChipLogError(AppServer, "NetworkCommissioning init failed: %s", ErrorStr(err));
+    } else {
+        ChipLogDetail(AppServer, "NetworkCommissioning (Ethernet) initialised on ep0");
+    }
 
     // Disable the static example DimmableLight from the bridge-app ZAP config
     // (ep=2). If left enabled it appears in the aggregator PartsList with an
