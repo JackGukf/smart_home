@@ -18,7 +18,7 @@ unexpected reset points at a single change rather than three:
 
 | Step | Service | State |
 | --- | --- | --- |
-| 1 | `ollama.service` | **installed 2026-09-06**, soaking |
+| 1 | `ollama.service` | **installed 2026-09-06**, idle-unload verified, soaking |
 | 2 | `npu-detector.service` | not started — the model must be re-created first |
 | 3 | `llama-server.service` | deferred; only on evidence that something needs the latency |
 
@@ -31,7 +31,10 @@ refuses to start beside a running `llama-server` for that reason.
 
 Ollama goes first despite being the slower of the two because it **unloads an
 idle model and gives the memory back**, which outranks throughput on a box whose
-day job is running the house.
+day job is running the house. Measured on the rebuilt board, going idle
+after a request: the service cgroup falls from **3.30 GiB to 0.05 GiB** and the
+board's available memory rises from 5543 MiB to 8895 MiB. It really does hand
+back all of it, which is the whole basis for choosing it.
 
 ## What runs
 
