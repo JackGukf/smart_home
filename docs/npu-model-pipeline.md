@@ -102,7 +102,44 @@ two rows is the graph.
 Scores come from the CPU provider, so they measure the quantisation, not the
 NPU. Device throughput needs the board.
 
-For reference, the lost model measured (on its own, unreproducible split):
+### Measured 2026-09-07 — the rebuilt model
+
+Trained on this workstation (CPU only): 20 epochs over 8,000 COCO images, 12.0 h.
+All three rows scored by `evaluate.py` on the same 1,000-image held-out split
+(`--seed 0`), through the same inference and decode, so the rows are comparable
+to each other.
+
+| Model | mAP50 | mAP50-95 | person AP50 | % of stock mAP50 | % of stock person |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stock YOLOv8n (SiLU) | 0.4468 | 0.3219 | 0.7158 | 100% | 100% |
+| PReLU finetuned, FP32, decomposed | 0.3770 | 0.2583 | 0.6716 | 84.4% | 93.8% |
+| **PReLU finetuned, INT8, Conv-only** | **0.3223** | 0.2136 | **0.6190** | 72.1% | 86.5% |
+
+**Person AP holds up far better than mean mAP**, which is the whole point for a
+camera: 86.5% of stock against 72.1% overall.
+
+Two cautions on reading these:
+
+- **They are lower in absolute terms than published YOLOv8n figures** because
+  the decode here is `argmax` over classes — one label per box, matching
+  `npu_detector.py` — while ultralytics' own validation is multi-label and
+  scores higher. Ultralytics reported mAP50 0.4332 for the same FP32 weights
+  that score 0.3770 here. Neither is wrong; this one measures the deployed
+  pipeline, and stock is measured the same way, so the comparison holds.
+- **Scores come from the CPU provider**, so they measure the quantisation, not
+  the device. Throughput on the NPU needs the board.
+
+**Quantisation costs more here than it did before**: -0.0547 mAP50 and -0.0526
+person AP50 from FP32, against roughly -0.045 for the lost model. Per-tensor
+MinMax calibration is the likely reason. Per-channel weight scales
+(`quantize.py --per-channel`) and entropy calibration are the untried levers —
+per-channel usually recovers most of a gap like this, but it needs a
+broadcasting scale the Zhouyi compiler has not been shown to accept, so it has
+to be verified on the device rather than assumed.
+
+### The lost model, for reference only
+
+Measured on its own, unreproducible split:
 
 | Model | mAP50 | mAP50-95 | person AP50 | NPU fps |
 | --- | ---: | ---: | ---: | ---: |
@@ -115,6 +152,11 @@ For reference, the lost model measured (on its own, unreproducible split):
 **Prefer Conv-only.** Person AP is what a camera needs and it holds up far
 better; the all-ops variant buys frames the detector does not need, since frames
 arrive twice a second.
+
+Relative to stock on its *own* split, the lost model retained 67.9% of mAP50 and
+89.3% of person AP50; the rebuilt one retains 72.1% and 86.5%. Slightly better
+overall, slightly worse on person — not the clean win more training should have
+bought, which points at the quantisation step rather than the finetune.
 
 ## Deploying
 
