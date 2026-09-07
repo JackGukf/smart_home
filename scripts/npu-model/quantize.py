@@ -74,6 +74,11 @@ def main() -> int:
     ap.add_argument("--all-ops", action="store_true", help="quantise everything, not just Conv")
     ap.add_argument("--per-channel", action="store_true",
                     help="per-channel weight scales; narrower device support")
+    ap.add_argument("--symmetric", action="store_true",
+                    help="symmetric int8 activations with zero_point 0. ORT defaults to "
+                         "asymmetric uint8, which the Zhouyi provider appears to mishandle: "
+                         "the graph runs on the NPU and produces saturated scores and "
+                         "box coordinates hundreds of pixels out")
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -83,6 +88,8 @@ def main() -> int:
     from onnxruntime.quantization.shape_inference import quant_pre_process
 
     suffix = "all" if args.all_ops else "conv"
+    if args.symmetric:
+        suffix += "-sym"
     out = args.out or args.model.with_name(f"{args.model.stem}.int8-{suffix}.onnx")
 
     images = sorted(p for p in args.calib_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
@@ -106,6 +113,14 @@ def main() -> int:
     print(f"quantising ({'all ops' if args.all_ops else 'Conv only'}, "
           f"{'per-channel' if args.per_channel else 'per-tensor'})")
 
+    # Symmetric puts zero_point at 0 for both activations and weights, which is
+    # what a device that assumes symmetric quantisation needs. Asymmetric uint8
+    # activations are ORT's default and score well on the CPU provider, so this
+    # difference is invisible until the model reaches the board.
+    extra: dict[str, bool] = {}
+    if args.symmetric:
+        extra = {"ActivationSymmetric": True, "WeightSymmetric": True}
+
     quantize_static(
         model_input=str(prepped),
         model_output=str(out),
@@ -113,9 +128,10 @@ def main() -> int:
         quant_format=QuantFormat.QDQ,
         op_types_to_quantize=op_types,
         per_channel=args.per_channel,
-        activation_type=QuantType.QUInt8,
+        activation_type=QuantType.QInt8 if args.symmetric else QuantType.QUInt8,
         weight_type=QuantType.QInt8,
         calibrate_method=CalibrationMethod.MinMax,
+        extra_options=extra or None,
     )
     prepped.unlink(missing_ok=True)
 

@@ -158,6 +158,107 @@ Relative to stock on its *own* split, the lost model retained 67.9% of mAP50 and
 overall, slightly worse on person — not the clean win more training should have
 bought, which points at the quantisation step rather than the finetune.
 
+## Verified on the device, 2026-09-07 — and it does not work yet
+
+The model was deployed to the board and checked on the NPU. **Placement and
+speed are fine; the numbers it computes are not.** This section is the evidence,
+because it overturns an assumption the rest of this document was written under.
+
+### Placement is not correctness
+
+`verify_on_npu.py` creates the session with
+`session.disable_cpu_ep_fallback=1`, so a graph that cannot be placed entirely
+on the NPU fails hard. Both variants pass that test and run at full speed:
+
+| Variant | Compile | NPU speed | Verdict |
+| --- | ---: | ---: | --- |
+| INT8 Conv-only | 18.1 s | 15.9 fps | placed, **computes garbage** |
+| INT8 all-ops | 6.7 s | 32.9 fps | placed, agrees with CPU, but the model itself is dead |
+
+So the device will happily run a graph at the documented speed and return
+numbers unrelated to the model. `disable_cpu_ep_fallback` proves *where* the
+graph ran and says nothing about *what it computed* — a distinction this project
+had not previously drawn, and the reason `verify_on_npu.py --compare-cpu` and
+`probe_npu_ops.py` exist.
+
+Conv-only on the NPU, same input as the CPU provider:
+
+```
+class scores  NPU max 0.9995  mean 0.0034  | 284 values saturated at 1.0
+class scores  CPU max 0.1085  mean 0.0000  |   0 saturated
+box coords    NPU max 874.0              | CPU max 643.2
+worst abs diff over 3 inputs: 626.5
+```
+
+On a real office frame it returned 100 detections at confidence 1.00 — zebra,
+parking meter, surfboard, bed. Those reached MQTT and Home Assistant as person
+detections before the service was stopped.
+
+### The model is fine; the device is computing it wrong
+
+Worth isolating carefully, because "the model is bad" and "the device is bad"
+lead to completely different work. Same model, same frame, **the board's own CPU
+provider**:
+
+| Variant | CPU score max | CPU detections |
+| --- | ---: | --- |
+| Conv-only | 0.2559 | 2 weak (vase 0.26, tv 0.25) — plausible for an empty office |
+| all-ops | **0.0000** | 0 |
+
+Conv-only is correct on two independent CPU runtimes (the workstation's ORT
+1.23 and the board's ORT 1.20) and wrong only on the Zhouyi provider. This also
+eliminates the obvious version explanation: the board's ORT 1.20 reads the
+1.23-produced QDQ graph correctly, so the graph is not the problem.
+
+All-ops is a *separate* fault — dead on the CPU too, so its quantisation is
+broken upstream of the device. Per-tensor MinMax across the detection head
+(Softmax, Div, Sigmoid) destroys the score range.
+
+### Why: Conv-only leaves FP32 in the graph, and this device cannot do FP32
+
+`docs/local-ai.md` already says INT8 QDQ only, and that an FP32 graph corrupts
+the heap rather than being rejected. What was not obvious is that **Conv-only
+quantisation is partly FP32** — it quantises the convolutions and leaves the
+PReLU decomposition's `Relu`/`Mul`/`Sub` in float. Those float sections are what
+the NPU miscomputes.
+
+Confirmed by probing FP32 micro-graphs, which is also a warning not to:
+
+```
+relu     placed on NPU, max abs diff 0.000975 vs CPU   (not exact)
+sigmoid  ZHOUYI graph execute error. Error code: 81
+         [ERROR][aipu_finish_job_umd:113][UMD].Timeout on polling job's status
+```
+
+So do not probe this device with FP32 graphs. It errors and times out the job
+queue. It is recoverable — the NPU worked again immediately afterwards, and the
+board never reset — but nothing useful is learned.
+
+The all-ops variant, having no float sections, is the only one whose NPU output
+tracked the CPU. **That is the shape the device can compute**, which makes fixing
+all-ops quantisation the path forward rather than Conv-only.
+
+### One claim in this document is now in doubt
+
+The lost model's table lists Conv-only at 15.7 fps and mAP50 0.3774. Our
+Conv-only reproduces the speed almost exactly (15.9 fps) and is garbage on the
+device. The accuracy figures were almost certainly measured on the CPU, as ours
+were, and there is no record of the old model's *output* ever being verified on
+the NPU. Treat "Conv-only worked on the device" as unverified rather than
+established.
+
+### Next steps
+
+1. Re-quantise all-ops with the detection head handled properly — entropy or
+   percentile calibration, and per-channel weights — until it scores sanely on
+   the CPU. It already agrees with the NPU, so a correct all-ops model is
+   probably a working model.
+2. Re-verify with `verify_on_npu.py --compare-cpu --frame-from <camera>` before
+   enabling the service. Do not trust a mAP number measured off-device.
+3. `npu-detector.service` is installed but **stopped and disabled**, and the
+   retained `smarthome/vision/*` topics were cleared, so Home Assistant shows
+   the entities unavailable rather than falsely occupied.
+
 ## Deploying
 
 `npu_detector.py` expects a `[1, 3, 640, 640]` input and a `[1, 84, 8400]`
