@@ -41,6 +41,8 @@ from src.python.matter_device import (
     DEFAULT_COMMISSION_TIMEOUT,
     DashboardMatterClient,
     MatterServerUnavailable,
+    is_bridge_node,
+    node_display_name,
     node_to_device,
 )
 from src.python import bridge_sync
@@ -1130,13 +1132,19 @@ def create_app(
                 meta = _matter_device_meta.get(node.node_id, {})
                 info = node_to_device(
                     node,
-                    name=meta.get("name", f"Matter Device {node.node_id}"),
+                    # A name the user set wins; otherwise ask the node what it
+                    # calls itself before falling back to its number.
+                    name=meta.get("name") or node_display_name(node),
                     room=meta.get("room"),
                     category_override=meta.get("category"),
                 )
                 devices.append({
                     "host": f"matter:{info.node_id}",
                     "name": info.name,
+                    # A bridge is not a device to switch on -- it is the thing
+                    # publishing the devices. The dashboard groups it with the
+                    # other radios rather than listing it among the lights.
+                    "is_bridge": is_bridge_node(node),
                     "room": info.room,
                     "is_on": info.is_on,
                     "is_dimmable": info.is_dimmable,

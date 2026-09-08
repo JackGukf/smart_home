@@ -19,6 +19,10 @@ _DEVICE_TYPE_MAP: dict[int, tuple[str, bool]] = {
     0x0302: ("tuya_sensor",  False),   # Temperature Sensor
 }
 
+_BASIC_INFO_CLUSTER = 40   # 0x0028 Basic Information, on endpoint 0
+_BASIC_VENDOR_NAME = 1
+_BASIC_PRODUCT_NAME = 3
+_BASIC_NODE_LABEL = 5
 _ONOFF_CLUSTER = 6
 _LEVEL_CLUSTER = 8
 _ONOFF_ATTR = 0        # OnOff.onOff
@@ -80,6 +84,52 @@ def _detect_category(endpoint: Any) -> tuple[str, bool]:
     return ("smart_plug", has_level)
 
 
+def is_bridge_node(node: Any) -> bool:
+    """Is this node a bridge rather than a device?
+
+    Our own chip-bridge-app answers yes, and it should not appear in the
+    dashboard as a light to switch on: it is the thing publishing the lights.
+    """
+    return bool(getattr(node, "is_bridge", False))
+
+
+def node_display_name(node: Any) -> str:
+    """The best name the node itself offers.
+
+    In order: the label its owner set, then vendor and product from Basic
+    Information, then the node number. The number was the only fallback, which
+    is how the bridge came to be listed as "Matter Device 3" while announcing
+    "Smart Home AI / Dashboard Bridge" in an attribute nobody read.
+    """
+    endpoints: dict[int, Any] = getattr(node, "endpoints", None) or {}
+    root = endpoints.get(0)
+    node_id = getattr(node, "node_id", "?")
+    if root is None:
+        return f"Matter Device {node_id}"
+
+    def basic(attribute_id: int) -> str:
+        value = _endpoint_attribute(root, _BASIC_INFO_CLUSTER, attribute_id)
+        return str(value).strip() if value not in (None, "") else ""
+
+    label = basic(_BASIC_NODE_LABEL)
+    if label:
+        return label
+
+    vendor, product = basic(_BASIC_VENDOR_NAME), basic(_BASIC_PRODUCT_NAME)
+    # The CHIP SDK ships TEST_VENDOR/TEST_PRODUCT placeholders, and more than
+    # one device here still advertises them. A name shared by several nodes is
+    # worse than a numbered one, so those fall through.
+    if vendor.startswith("TEST_") or product.startswith("TEST_"):
+        vendor = product = ""
+    if vendor and product:
+        # "TP-Link TP-Link Smart Switch" reads badly; the product often already
+        # carries the maker.
+        return product if product.lower().startswith(vendor.lower()) else f"{vendor} {product}"
+    if product or vendor:
+        return product or vendor
+    return f"Matter Device {node_id}"
+
+
 def primary_endpoint(node: Any) -> Any:
     """Pick the endpoint that represents the controllable device.
 
@@ -111,6 +161,10 @@ def node_to_device(
     detected_category, detected_dimmable = (
         _detect_category(endpoint) if endpoint is not None else ("smart_plug", False)
     )
+    # A bridge's own node exposes an Aggregator endpoint, which _detect_category
+    # cannot classify and would otherwise call a plug.
+    if is_bridge_node(node):
+        detected_category, detected_dimmable = ("bridge", False)
     category = category_override or detected_category
     is_dimmable = detected_dimmable and category in ("light_switch", "smart_plug")
 

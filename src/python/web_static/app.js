@@ -3771,6 +3771,26 @@ function zigbeeBridgeDevice() {
   return { ...base, state: "unknown", label: "Unknown", meta: `${version} · no connection state published` };
 }
 
+function isMatterBridgeDevice(device) {
+  return device?.is_bridge === true || device?.category === "bridge";
+}
+
+/* Same tile shape as the Zigbee coordinator and the Tuya gateway, so the three
+   radios read as one set. A Matter bridge has no "connected" flag of its own --
+   matter-server either reaches the node or does not -- so availability is the
+   whole of its health. */
+function matterBridgeDevice(device) {
+  const online = device.available !== false && device.online !== false;
+  return {
+    id: String(device.host || "matter-bridge"),
+    name: device.name || "Matter bridge",
+    icon: "ti-topology-star-3",
+    state: online ? "online" : "offline",
+    label: online ? "Online" : "Offline",
+    meta: "Matter bridge · publishes this dashboard's devices",
+  };
+}
+
 function tuyaGatewayBridgeDevice(group) {
   const first = group.readings[0] || {};
   const online = group.readings.some((d) => d.online !== false);
@@ -3820,6 +3840,20 @@ function collectHomeInventory() {
   const inventory = [];
 
   for (const device of [...latestSwitchDevices, ...latestMatterDevices]) {
+    /* Our own chip-bridge-app is a node in the fabric like any other, so it
+       arrived here as a light to switch on. It is the thing publishing the
+       lights; it belongs with the other radios, and the key keeps its "dev:"
+       prefix so an area assignment already made against it survives. */
+    if (isMatterBridgeDevice(device)) {
+      inventory.push({
+        key: `dev:${device.host}`,
+        kind: "bridge",
+        name: device.name,
+        room: device.room || "",
+        data: matterBridgeDevice(device),
+      });
+      continue;
+    }
     inventory.push({
       key: `dev:${device.host}`,
       kind: device.category === "smart_plug" ? "plug" : "light",
