@@ -3285,6 +3285,83 @@ function zoneIconSVG(type, breached) {
   return `<svg width="16" height="16" viewBox="0 0 22 22"><circle cx="11" cy="11" r="2.2" fill="${color}"/><circle cx="11" cy="11" r="6" fill="none" stroke="${color}" stroke-width="1.3" opacity="0.45"/></svg>`;
 }
 
+/* Zone rendering, shared by the Alarm view and the Home alarm card.
+
+   Two surfaces showing the same zones from two copies of this markup is how
+   they drift: one gains a state the other renders as "Closed". */
+function sortedAlarmZones(zones) {
+  /* Breached first -- when something is open, that is the only part anyone is
+     reading -- then alphabetical so the rest do not reshuffle on every poll. */
+  return [...zones].sort((a, b) => {
+    const ab = (a.state === "open" || a.state === "motion") ? 0 : 1;
+    const bb = (b.state === "open" || b.state === "motion") ? 0 : 1;
+    return ab - bb || String(a.name).localeCompare(String(b.name));
+  });
+}
+
+function alarmZoneTilesHtml(zones) {
+  return sortedAlarmZones(zones).map((z) => {
+    const breached = z.state === "open" || z.state === "motion";
+    const unknown  = z.state === "unknown";
+    const color    = breached ? "var(--t-alert)" : "var(--t-text-dim2)";
+    /* An unavailable sensor has not reported clear, it has reported nothing.
+       Saying "Clear" for it would read as reassurance the card cannot give. */
+    const statusTxt = unknown ? "No data"
+      : z.type === "motion" ? (breached ? "Motion" : "Clear")
+      : (breached ? "Open" : "Closed");
+    return `<div class="zone-tile${breached ? " breached" : ""}${unknown ? " unknown" : ""}"
+                 title="${escapeHtml(z.name)} — ${statusTxt}">
+      <span class="zone-tile-icon">${zoneIconSVG(z.type, breached)}</span>
+      <span class="zone-tile-state" style="color:${color}">${statusTxt}</span>
+      <span class="zone-tile-name">${escapeHtml(z.name)}</span>
+    </div>`;
+  }).join("");
+}
+
+function alarmBreachedCount(zones) {
+  return zones.filter((z) => z.state === "open" || z.state === "motion").length;
+}
+
+/* The Alarm card on Home.
+
+   A built-in card rather than a custom one, because everything about custom
+   cards -- the cards themselves, their layout, and which are hidden -- lives in
+   localStorage, so a card made on a PC cannot appear on a phone. There is
+   nothing to sync it. Being built-in is what makes it show everywhere by
+   default.
+
+   Deliberately not the whole Alarm view: no arm buttons, because arming from a
+   card you scroll past is not something to make easy, and the zones are what
+   answers "is the house shut" at a glance. The header arrow opens the full
+   view. */
+function renderHomeAlarmCard(payload = latestAlarmData) {
+  const body = document.querySelector("#homeAlarmBody");
+  if (!body) return;
+
+  const haState = payload?.panel?.entity_id ? normalizeAlarmPanelState(payload.panel.state) : null;
+  const displayState = haState || alarmState;
+  const statusText =
+    displayState === "disarmed" ? "Disarmed" :
+    displayState === "arming"   ? "Arming" :
+    displayState === "home"     ? "Armed · Home" :
+    displayState === "away"     ? "Armed · Away" :
+    "SOS ALARM ACTIVE";
+
+  const zones = payload?.zones?.length ? payload.zones : ALARM_ZONES;
+  const breached = alarmBreachedCount(zones);
+  const summary = !zones.length ? "No zones reported"
+    : breached ? `${breached} open` : "all clear";
+
+  body.innerHTML = `
+    <div class="home-alarm-state${displayState === "alarm" ? " alarm-active" : ""}">
+      <span class="home-alarm-status">${escapeHtml(statusText)}</span>
+      <span class="home-alarm-zones-count${breached ? " breached" : ""}">${escapeHtml(summary)}</span>
+    </div>
+    <div class="zone-tile-grid">${
+      alarmZoneTilesHtml(zones) || '<div class="home-empty">No zones reported</div>'
+    }</div>`;
+}
+
 function renderAlarmSection(payload = latestAlarmData) {
   const panel = document.querySelector("#alarmPanel");
   if (!panel) return;
@@ -3323,31 +3400,8 @@ function renderAlarmSection(payload = latestAlarmData) {
   }).join("");
 
   const alarmZones = payload?.zones?.length ? payload.zones : ALARM_ZONES;
-  /* Tiles rather than rows, matching the temperature card: a zone list is a
-     grid of small facts, and rows wasted the card's width while making each
-     entry too small to read at a glance. Breached zones lead - when something
-     is open, that is the only part of this card anyone is reading. */
-  const zonesSorted = [...alarmZones].sort((a, b) => {
-    const ab = (a.state === "open" || a.state === "motion") ? 0 : 1;
-    const bb = (b.state === "open" || b.state === "motion") ? 0 : 1;
-    return ab - bb || String(a.name).localeCompare(String(b.name));
-  });
-  const zonesHtml = zonesSorted.map((z) => {
-    const breached = z.state === "open" || z.state === "motion";
-    const unknown  = z.state === "unknown";
-    const color    = breached ? "var(--t-alert)" : "var(--t-text-dim2)";
-    /* An unavailable sensor has not reported clear, it has reported nothing.
-       Saying "Clear" for it would read as reassurance the card cannot give. */
-    const statusTxt = unknown ? "No data"
-      : z.type === "motion" ? (breached ? "Motion" : "Clear")
-      : (breached ? "Open" : "Closed");
-    return `<div class="zone-tile${breached ? " breached" : ""}${unknown ? " unknown" : ""}"
-                 title="${escapeHtml(z.name)} — ${statusTxt}">
-      <span class="zone-tile-icon">${zoneIconSVG(z.type, breached)}</span>
-      <span class="zone-tile-state" style="color:${color}">${statusTxt}</span>
-      <span class="zone-tile-name">${escapeHtml(z.name)}</span>
-    </div>`;
-  }).join("");
+  const zonesSorted = sortedAlarmZones(alarmZones);
+  const zonesHtml = alarmZoneTilesHtml(alarmZones);
   const breachedCount = zonesSorted.filter((z) => z.state === "open" || z.state === "motion").length;
   /* The count belongs next to the label, not buried in the tiles: it answers
      "is anything open?" without reading every tile. */
@@ -3378,6 +3432,8 @@ function renderAlarmSection(payload = latestAlarmData) {
     </div>` : "";
 
   const panelName = payload?.panel?.name || "Local alarm panel";
+
+  renderHomeAlarmCard(payload);
 
   const alarmBadgeEl = document.querySelector("#alarmBadge");
   if (alarmBadgeEl) alarmBadgeEl.textContent = displayState === "alarm" ? "!" : displayState === "disarmed" ? "–" : "ON";
@@ -4875,6 +4931,9 @@ document.addEventListener("click", async (event) => {
   const closeModal = () => { if (modal) modal.hidden = true; };
 
   document.querySelector("#btScanNav")?.addEventListener("click", openModal);
+  /* Same modal from the Entertainment view, so the Music panel is not a
+     dead end once it no longer sits on Home beside the Bluetooth nav item. */
+  document.querySelector("#btScanFromEntertainment")?.addEventListener("click", openModal);
   document.querySelector("#closeBtModal")?.addEventListener("click", closeModal);
   modal?.addEventListener("click", (event) => {
     if (event.target === modal) closeModal();
@@ -5154,14 +5213,16 @@ const HOME_GRID_GAP = 16;
 
      Weather   Camera         Areas
      Climate   Temperatures
-     Music
+     Alarm
 
    Only applies to a browser with no saved layout - an existing one is left
-   alone, and Reset Layout is what adopts this. */
+   alone, and Reset Layout is what adopts this. A browser that already has a
+   layout still gets the Alarm card, because cardLayoutOf() falls back to this
+   table for any card the saved layout has never heard of. */
 const DEFAULT_HOME_LAYOUT = {
   weather:     { x: 1, y: 1,  w: 4, h: 5 },
   climate:     { x: 1, y: 6,  w: 4, h: 9 },
-  bluetooth:   { x: 1, y: 15, w: 4, h: 6 },
+  alarm:       { x: 1, y: 15, w: 4, h: 8 },
   camera:      { x: 5, y: 1,  w: 4, h: 7 },
   tempsensors: { x: 5, y: 8,  w: 4, h: 6 },
   areas:       { x: 9, y: 1,  w: 4, h: 12 },
@@ -5223,7 +5284,7 @@ const HOME_CARD_LABELS = {
   weather: "Weather",
   camera: "Camera",
   climate: "Climate",
-  bluetooth: "Music",
+  alarm: "Alarm",
   areas: "Areas",
 };
 
@@ -6077,6 +6138,9 @@ function activateView(viewName) {
   }
   if (viewName === "environment") {
     loadEnvironmentSensors().catch((error) => console.error(error));
+  }
+  if (viewName === "entertainment") {
+    refreshBluetooth().catch((error) => console.error(error));
   }
   if (viewName === "zigbee") {
     loadZigbeeFrame().catch((error) => console.error(error));

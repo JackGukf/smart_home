@@ -43,7 +43,10 @@ def test_sidebar_is_exactly_the_top_level_views() -> None:
     views = html[views_start:discovery_start]
 
     found = re.findall(r'<li[^>]*\bdata-view="([^"]+)"', views)
-    assert found == ["home", "cameras", "devices", "homeassistant", "alarm", "status"]
+    # Entertainment sits between Alarm and Status: it is a place things are
+    # played, not a system readout, so it belongs above the diagnostics.
+    assert found == ["home", "cameras", "devices", "homeassistant", "alarm",
+                     "entertainment", "status"]
 
 
 def test_top_level_views_are_untouched() -> None:

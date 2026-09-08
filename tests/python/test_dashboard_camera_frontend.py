@@ -145,13 +145,59 @@ def test_breached_zones_sort_first_and_are_not_marked_by_colour_alone() -> None:
     source = APP_JS.read_text(encoding="utf-8")
     css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
 
-    start = source.index("const zonesSorted")
+    start = source.index("function sortedAlarmZones")
     assert "ab - bb" in source[start:start + 400]          # breached first
     rule = css[css.index(".zone-tile.breached {"):]
     rule = rule[:rule.index("}")]
     assert "border-color" in rule and "background" in rule  # not colour alone
     # A zone that never reported must not look identical to a confirmed-closed one.
     assert ".zone-tile.unknown" in css
+
+
+def test_the_alarm_view_and_the_home_card_render_zones_from_one_place() -> None:
+    """Two surfaces showing the same zones from two copies of the markup is how
+    they drift -- one gains a state the other renders as "Closed"."""
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "function alarmZoneTilesHtml(zones)" in source
+    # Both call the helper; neither builds a tile itself.
+    for fn in ("renderAlarmSection", "renderHomeAlarmCard"):
+        body = source.split(f"function {fn}(")[1].split("\nfunction ")[0]
+        assert "alarmZoneTilesHtml(" in body, f"{fn} does not use the shared renderer"
+        # Both still own a .zone-tile-grid container; what neither may own is
+        # the tile itself, and zoneIconSVG is only called when building one.
+        assert "zoneIconSVG(" not in body, f"{fn} builds its own tile markup"
+
+
+def test_the_home_alarm_card_is_builtin_so_it_reaches_every_device() -> None:
+    """A custom card cannot: custom cards, their layout and their hidden state
+    all live in localStorage, so one made on a PC has nothing to carry it to a
+    phone. Being built-in is what makes it show up everywhere by default."""
+    html = (PROJECT_ROOT / "src" / "python" / "web_static" / "index.html").read_text(encoding="utf-8")
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert 'data-home-card="alarm"' in html
+    assert 'id="homeAlarmBody"' in html
+    # In the default layout, so a browser with a saved layout still places it:
+    # cardLayoutOf() falls back to this table for an unknown card.
+    layout = source.split("const DEFAULT_HOME_LAYOUT = {")[1].split("};")[0]
+    assert "alarm:" in layout
+    # Music has left Home for its own view; it must not still be laid out here.
+    assert "bluetooth:" not in layout
+    assert 'data-home-card="bluetooth"' not in html
+
+
+def test_music_moved_to_the_entertainment_view_intact() -> None:
+    """The panel moved wholesale rather than being rebuilt: #btDeviceList is
+    what refreshBluetooth() writes into, and it is queried at call time."""
+    html = (PROJECT_ROOT / "src" / "python" / "web_static" / "index.html").read_text(encoding="utf-8")
+
+    panel = html.split('data-view-panel="entertainment"')[1].split("</div>\n\n")[0]
+    assert 'id="btDeviceList"' in panel
+    assert "Music" in panel
+    # Reachable: the view exists in the sidebar and the scan modal is not orphaned.
+    assert 'data-view="entertainment"' in html
+    assert 'id="btScanFromEntertainment"' in html
 
 
 def test_custom_card_renders_sensors_as_tiles_not_rows() -> None:

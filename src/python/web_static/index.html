@@ -90,6 +90,10 @@
         Alarm
         <span class="room-badge" id="alarmBadge">–</span>
       </li>
+      <li class="room-item" data-view="entertainment">
+        <span class="room-icon"><i class="ti ti-device-speaker"></i></span>
+        Entertainment
+      </li>
       <li class="room-item" data-view="status">
         <span class="room-icon"><i class="ti ti-dashboard"></i></span>
         Status
@@ -509,13 +513,16 @@
             </div>
             <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
           </div>
-          <div class="panel home-panel home-card" id="homeBluetoothPanel" data-home-card="bluetooth">
+          <div class="panel home-panel home-card" id="homeAlarmCard" data-home-card="alarm">
             <div class="home-panel-head">
               <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
-              <span class="panel-title"><i class="ti ti-music"></i> Music</span>
+              <span class="panel-title"><i class="ti ti-shield-lock"></i> Alarm</span>
+              <button class="home-gear-btn" data-goto-view="alarm" type="button" title="Open the alarm system">
+                <i class="ti ti-arrow-up-right"></i>
+              </button>
             </div>
-            <div class="home-bt-body" id="btDeviceList">
-              <div class="home-empty">Checking Bluetooth…</div>
+            <div class="home-alarm-body" id="homeAlarmBody">
+              <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
             </div>
             <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
           </div>
@@ -555,6 +562,27 @@
       </div>
       <div class="camera-grid" id="cameraGrid">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── ENTERTAINMENT VIEW ── -->
+    <div class="view-panel" data-view-panel="entertainment">
+      <div class="section-header">
+        <span class="section-title">Entertainment</span>
+        <span class="section-meta">Audio &amp; media</span>
+      </div>
+      <div class="entertainment-grid">
+        <div class="panel" id="homeBluetoothPanel">
+          <div class="home-panel-head">
+            <span class="panel-title"><i class="ti ti-music"></i> Music</span>
+            <button class="home-gear-btn" id="btScanFromEntertainment" type="button" title="Scan for Bluetooth speakers">
+              <i class="ti ti-bluetooth"></i>
+            </button>
+          </div>
+          <div class="home-bt-body" id="btDeviceList">
+            <div class="home-empty">Checking Bluetooth…</div>
+          </div>
+        </div>
       </div>
     </div>
 

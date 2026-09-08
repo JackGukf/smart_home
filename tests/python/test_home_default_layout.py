@@ -18,9 +18,11 @@ STYLES = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 # Below 740px this list is the literal top-to-bottom order. Zigbee health used
 # to sit above Music here; it now lives in the Bridges group under Devices,
 # alongside the Tuya gateway, so the coordinator is read next to the other
-# radios rather than as a lone tile on the landing view.
+# radios rather than as a lone tile on the landing view. Music left too, for
+# the Entertainment view, and Alarm took its slot -- a phone should show
+# whether the house is shut before it shows what is playing.
 PHONE_ORDER = [
-    "weather", "camera", "climate", "tempsensors", "areas", "bluetooth",
+    "weather", "camera", "climate", "tempsensors", "areas", "alarm",
 ]
 
 # Grid columns are 4 wide, so these are the three column starts.
@@ -44,7 +46,7 @@ def test_phone_order_is_markup_order() -> None:
 def test_desktop_columns_hold_the_intended_cards() -> None:
     cells = _defaults()
 
-    assert [n for n, c in cells.items() if c["x"] == LEFT] == ["weather", "climate", "bluetooth"]
+    assert [n for n, c in cells.items() if c["x"] == LEFT] == ["weather", "climate", "alarm"]
     assert [n for n, c in cells.items() if c["x"] == MIDDLE] == ["camera", "tempsensors"]
     assert [n for n, c in cells.items() if c["x"] == RIGHT] == ["areas"]
 

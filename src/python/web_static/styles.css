@@ -3087,6 +3087,7 @@ aside {
 
 /* sidebar icon colour for alarm */
 .room-item[data-view="alarm"] { --group-color: var(--red); }
+.room-item[data-view="entertainment"] { --group-color: var(--purple); }
 
 .doorbell-live-media,
 .doorbell-live-placeholder {
@@ -5230,3 +5231,65 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   .motion-row { grid-template-columns: 64px 8px minmax(0, 1fr); row-gap: 2px; }
   .motion-event { grid-column: 3; justify-self: start; }
 }
+
+
+/* ── Home: the Alarm card ──
+   Compact by design. The state line answers "is it armed" and the zone grid
+   answers "is anything open"; arming lives in the Alarm view, which the header
+   arrow opens. Reuses .zone-tile-grid so the tiles are the same object here as
+   there. */
+.home-alarm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+}
+.home-alarm-state {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.home-alarm-status {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--t-text);
+  letter-spacing: -0.01em;
+}
+.home-alarm-state.alarm-active .home-alarm-status { color: var(--t-alert); }
+.home-alarm-zones-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--border-hover);
+  color: var(--t-text-dim2);
+  white-space: nowrap;
+}
+.home-alarm-zones-count.breached {
+  color: var(--t-alert);
+  border-color: rgba(255, 138, 122, 0.45);
+  background: rgba(255, 138, 122, 0.10);
+}
+/* The card is narrower than the Alarm view, so the tiles need their own
+   container query rather than inheriting that panel's sizing. */
+#homeAlarmBody { container-type: inline-size; }
+#homeAlarmBody .zone-tile-grid {
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+}
+#homeAlarmBody .zone-tile-state { font-size: clamp(10px, 4.2cqw, 15px); }
+#homeAlarmBody .zone-tile-name  { font-size: clamp(8.5px, 3cqw, 12px); }
+
+/* ── Entertainment view ──
+   One card today; a grid because the point of the view is that video and
+   others join it, and a single centred panel would have to be rebuilt when
+   they do. */
+.entertainment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.entertainment-grid .home-panel-head { margin-bottom: 10px; }
