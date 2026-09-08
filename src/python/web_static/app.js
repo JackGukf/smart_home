@@ -3281,6 +3281,8 @@ function alarmShieldSVG(color, pulsing) {
 function zoneIconSVG(type, breached) {
   const color = breached ? "var(--t-alert)" : "var(--t-text-dim2)";
   if (type === "door")   return `<svg width="16" height="16" viewBox="0 0 22 22"><rect x="5" y="2" width="12" height="18" rx="1" fill="none" stroke="${color}" stroke-width="1.5"/><circle cx="13.5" cy="11" r="1" fill="${color}"/></svg>`;
+  if (type === "smoke")  return `<svg width="16" height="16" viewBox="0 0 22 22"><path d="M11 2.5c2.2 3 1 4.6.2 5.8-.9 1.3-1.6 2.4-.6 4 .5.8 1.5 1.2 1.5 1.2s-.4-1.6.5-2.6c1-1.1 3-1.8 3.4 1.1.2 1.3-.1 2.6-.8 3.6a5.6 5.6 0 01-9.6-1.2C4.4 11 7 8.4 8.6 6.6 10 5 11 3.9 11 2.5z" fill="none" stroke="${color}" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+  if (type === "moisture") return `<svg width="16" height="16" viewBox="0 0 22 22"><path d="M11 3s5.2 5.6 5.2 9.1A5.2 5.2 0 0111 17.3a5.2 5.2 0 01-5.2-5.2C5.8 8.6 11 3 11 3z" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
   if (type === "window") return `<svg width="16" height="16" viewBox="0 0 22 22"><rect x="3" y="3" width="16" height="16" rx="1" fill="none" stroke="${color}" stroke-width="1.5"/><line x1="11" y1="3" x2="11" y2="19" stroke="${color}" stroke-width="1.5"/><line x1="3" y1="11" x2="19" y2="11" stroke="${color}" stroke-width="1.5"/></svg>`;
   return `<svg width="16" height="16" viewBox="0 0 22 22"><circle cx="11" cy="11" r="2.2" fill="${color}"/><circle cx="11" cy="11" r="6" fill="none" stroke="${color}" stroke-width="1.3" opacity="0.45"/></svg>`;
 }
@@ -3289,25 +3291,30 @@ function zoneIconSVG(type, breached) {
 
    Two surfaces showing the same zones from two copies of this markup is how
    they drift: one gains a state the other renders as "Closed". */
+function zoneIsBreached(zone) {
+  return zone.state === "open" || zone.state === "motion" || zone.state === "alert";
+}
+
 function sortedAlarmZones(zones) {
   /* Breached first -- when something is open, that is the only part anyone is
      reading -- then alphabetical so the rest do not reshuffle on every poll. */
   return [...zones].sort((a, b) => {
-    const ab = (a.state === "open" || a.state === "motion") ? 0 : 1;
-    const bb = (b.state === "open" || b.state === "motion") ? 0 : 1;
+    const ab = zoneIsBreached(a) ? 0 : 1;
+    const bb = zoneIsBreached(b) ? 0 : 1;
     return ab - bb || String(a.name).localeCompare(String(b.name));
   });
 }
 
 function alarmZoneTilesHtml(zones) {
   return sortedAlarmZones(zones).map((z) => {
-    const breached = z.state === "open" || z.state === "motion";
+    const breached = z.state === "open" || z.state === "motion" || z.state === "alert";
     const unknown  = z.state === "unknown";
     const color    = breached ? "var(--t-alert)" : "var(--t-text-dim2)";
     /* An unavailable sensor has not reported clear, it has reported nothing.
        Saying "Clear" for it would read as reassurance the card cannot give. */
     const statusTxt = unknown ? "No data"
       : z.type === "motion" ? (breached ? "Motion" : "Clear")
+      : (z.type === "smoke" || z.type === "moisture") ? (breached ? "Detected" : "Clear")
       : (breached ? "Open" : "Closed");
     return `<div class="zone-tile${breached ? " breached" : ""}${unknown ? " unknown" : ""}"
                  title="${escapeHtml(z.name)} — ${statusTxt}">
@@ -3319,7 +3326,7 @@ function alarmZoneTilesHtml(zones) {
 }
 
 function alarmBreachedCount(zones) {
-  return zones.filter((z) => z.state === "open" || z.state === "motion").length;
+  return zones.filter(zoneIsBreached).length;
 }
 
 /* The Alarm card on Home.
@@ -3347,7 +3354,14 @@ function renderHomeAlarmCard(payload = latestAlarmData) {
     displayState === "away"     ? "Armed · Away" :
     "SOS ALARM ACTIVE";
 
-  const zones = payload?.zones?.length ? payload.zones : ALARM_ZONES;
+  /* The card shows a chosen subset; the Alarm view still shows everything.
+     Nine motion sensors made the card a list to read rather than a glance, so
+     the default is doors, smoke and leaks -- the things worth interrupting for. */
+  const allZones = payload?.zones?.length ? payload.zones : ALARM_ZONES;
+  const chosen = homeAlarmSelection;
+  const zones = chosen === null
+    ? allZones.filter((z) => z.type !== "motion")
+    : allZones.filter((z) => chosen.includes(String(z.id)));
   const breached = alarmBreachedCount(zones);
   const summary = !zones.length ? "No zones reported"
     : breached ? `${breached} open` : "all clear";
@@ -3358,9 +3372,132 @@ function renderHomeAlarmCard(payload = latestAlarmData) {
       <span class="home-alarm-zones-count${breached ? " breached" : ""}">${escapeHtml(summary)}</span>
     </div>
     <div class="zone-tile-grid">${
-      alarmZoneTilesHtml(zones) || '<div class="home-empty">No zones reported</div>'
+      alarmZoneTilesHtml(zones) ||
+      '<div class="home-empty">No sensors chosen. Use the list button to pick some.</div>'
     }</div>`;
 }
+
+/* ── Which sensors the Home alarm card shows ──
+
+   Server-side, unlike the rest of the Home card state, and deliberately: the
+   card is builtin so that it reaches every device, and a per-browser choice of
+   contents would put the inconsistency straight back. null means the user has
+   never chosen, and the default rule applies. */
+let homeAlarmSelection = null;
+let homeAlarmAvailable = [];
+
+async function loadHomeAlarmSelection() {
+  try {
+    const payload = await requestJson("/api/home-alarm-card");
+    homeAlarmAvailable = payload.available || [];
+    homeAlarmSelection = payload.using_default ? null : (payload.sensors || []);
+  } catch (err) {
+    // The card still renders on the default rule; only the choice is missing.
+    console.error(err);
+  }
+  renderHomeAlarmCard();
+}
+
+function renderHomeAlarmPicker() {
+  const list = document.querySelector("#homeAlarmSensorList");
+  if (!list) return;
+  const selected = homeAlarmSelection === null
+    ? homeAlarmAvailable.filter((z) => z.type !== "motion").map((z) => String(z.id))
+    : homeAlarmSelection;
+
+  if (!homeAlarmAvailable.length) {
+    list.innerHTML = '<div class="home-empty">No sensors reported yet.</div>';
+    return;
+  }
+  /* Grouped by kind, because picking is a different task from reading: you come
+     here knowing you want "the leak sensors", not a particular entity id. */
+  const groups = [
+    ["Doors & windows", ["door", "window"]],
+    ["Smoke & gas", ["smoke"]],
+    ["Water", ["moisture"]],
+    ["Motion & presence", ["motion"]],
+  ];
+  const seen = new Set();
+  let html = "";
+  for (const [label, types] of groups) {
+    const rows = homeAlarmAvailable.filter((z) => types.includes(String(z.type)));
+    if (!rows.length) continue;
+    html += `<div class="net-modal-group">${escapeHtml(label)}</div>`;
+    for (const zone of rows) {
+      seen.add(String(zone.id));
+      const on = selected.includes(String(zone.id));
+      html += `<label class="net-modal-row">
+        <input type="checkbox" data-home-alarm-sensor="${escapeHtml(String(zone.id))}" ${on ? "checked" : ""}>
+        <span>${escapeHtml(zone.name)}</span>
+      </label>`;
+    }
+  }
+  const rest = homeAlarmAvailable.filter((z) => !seen.has(String(z.id)));
+  if (rest.length) {
+    html += `<div class="net-modal-group">Other</div>`;
+    for (const zone of rest) {
+      const on = selected.includes(String(zone.id));
+      html += `<label class="net-modal-row">
+        <input type="checkbox" data-home-alarm-sensor="${escapeHtml(String(zone.id))}" ${on ? "checked" : ""}>
+        <span>${escapeHtml(zone.name)}</span>
+      </label>`;
+    }
+  }
+  list.innerHTML = html;
+}
+
+async function saveHomeAlarmSelection(sensors) {
+  homeAlarmSelection = sensors;
+  renderHomeAlarmCard();
+  try {
+    await requestJson("/api/home-alarm-card", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sensors }),
+    });
+    logActivity(`Alarm card → ${sensors.length} sensor${sensors.length === 1 ? "" : "s"}`);
+  } catch (err) {
+    console.error(err);
+    logActivity("Could not save the alarm card sensors", "error");
+    await loadHomeAlarmSelection();
+  }
+}
+
+(function initHomeAlarmPicker() {
+  const modal = document.querySelector("#homeAlarmModal");
+  if (!modal) return;
+  const open = () => {
+    renderHomeAlarmPicker();          // paint from what we have, then refresh
+    modal.hidden = false;
+    // A sensor added since page load should be pickable without a reload.
+    loadHomeAlarmSelection().then(renderHomeAlarmPicker).catch(console.error);
+  };
+  const close = () => { modal.hidden = true; };
+
+  document.querySelector("#homeAlarmPickButton")?.addEventListener("click", (event) => {
+    event.stopPropagation();   // the card header is draggable
+    open();
+  });
+  document.querySelector("#closeHomeAlarmModal")?.addEventListener("click", close);
+  modal.addEventListener("click", (event) => { if (event.target === modal) close(); });
+
+  document.querySelector("#homeAlarmSave")?.addEventListener("click", () => {
+    const picked = [...modal.querySelectorAll("[data-home-alarm-sensor]")]
+      .filter((box) => box.checked)
+      .map((box) => box.dataset.homeAlarmSensor);
+    saveHomeAlarmSelection(picked).catch(console.error);
+    close();
+  });
+
+  /* Back to the rule rather than to a snapshot of it, so a sensor added later
+     still appears without coming back here. */
+  document.querySelector("#homeAlarmUseDefault")?.addEventListener("click", () => {
+    saveHomeAlarmSelection(
+      homeAlarmAvailable.filter((z) => z.type !== "motion").map((z) => String(z.id))
+    ).catch(console.error);
+    close();
+  });
+})();
 
 function renderAlarmSection(payload = latestAlarmData) {
   const panel = document.querySelector("#alarmPanel");
@@ -3402,7 +3539,7 @@ function renderAlarmSection(payload = latestAlarmData) {
   const alarmZones = payload?.zones?.length ? payload.zones : ALARM_ZONES;
   const zonesSorted = sortedAlarmZones(alarmZones);
   const zonesHtml = alarmZoneTilesHtml(alarmZones);
-  const breachedCount = zonesSorted.filter((z) => z.state === "open" || z.state === "motion").length;
+  const breachedCount = alarmBreachedCount(zonesSorted);
   /* The count belongs next to the label, not buried in the tiles: it answers
      "is anything open?" without reading every tile. */
   const zonesLabel = alarmZones.length
@@ -7537,6 +7674,7 @@ loadDevices().catch((error) => {
 
 loadZigbeeHealth().catch((error) => console.error(error));
 loadMotionLog().catch((error) => console.error(error));
+loadHomeAlarmSelection().catch((error) => console.error(error));
 
 /* Kept even once the live stream below is connected: this is the reconciliation
    pass that repairs anything the stream missed while the laptop was asleep or the

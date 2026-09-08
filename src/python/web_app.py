@@ -85,6 +85,11 @@ DEFAULT_DEVICE_GROUPS_PATH = PROJECT_ROOT / "dashboard_device_groups.json"
 # matters because deploy-dashboard.sh restarts this service on every deploy, so
 # an in-memory log would be empty most of the time it was wanted.
 DEFAULT_MOTION_LOG_PATH = PROJECT_ROOT / "motion_log.jsonl"
+# Which zones the Home alarm card shows. Server-side, not localStorage, for the
+# reason the card is builtin at all: a choice made on the desktop has to reach
+# the phone. Absent means "use the default rule", so a fresh install and a
+# never-touched one behave identically.
+DEFAULT_HOME_ALARM_PATH = PROJECT_ROOT / "dashboard_home_alarm.json"
 # Long enough to answer "was anyone in the kitchen on Tuesday", short enough that
 # the file stays small: ~40 events a day is a few hundred KB a fortnight.
 MOTION_LOG_MAX_DAYS = 14
@@ -372,6 +377,10 @@ class HomeAssistantConfig:
     alarm_zone_exclude: frozenset[str] = frozenset()
 
 
+class HomeAlarmCardRequest(BaseModel):
+    sensors: list[str]
+
+
 class CameraUpdateRequest(BaseModel):
     name: str
 
@@ -438,6 +447,7 @@ def create_app(
     areas_path: Path = DEFAULT_AREAS_PATH,
     device_groups_path: Path = DEFAULT_DEVICE_GROUPS_PATH,
     motion_log_path: Path | None = None,
+    home_alarm_path: Path | None = None,
     zigbee_secret_path: Path = DEFAULT_ZIGBEE_SECRET_PATH,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
@@ -448,6 +458,7 @@ def create_app(
     app.state.areas_path = areas_path
     app.state.device_groups_path = device_groups_path
     app.state.motion_log_path = motion_log_path or DEFAULT_MOTION_LOG_PATH
+    app.state.home_alarm_path = home_alarm_path or DEFAULT_HOME_ALARM_PATH
     app.state.zigbee_secret_path = zigbee_secret_path
     # Last known device list, served instantly while a refresh runs behind it.
     app.state.device_cache = {"cards": None, "at": 0.0, "task": None}
@@ -858,6 +869,33 @@ def create_app(
     @app.get("/api/home-assistant/entities")
     async def home_assistant_entities() -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_payload, app.state.config_path)
+
+    @app.get("/api/home-alarm-card")
+    async def home_alarm_card() -> dict[str, Any]:
+        """Which zones the Home alarm card shows, and everything it could show.
+
+        Returns the resolved selection rather than making the browser apply the
+        default rule, so every device shows the same card without each having to
+        agree on what "default" means.
+        """
+        payload = await asyncio.to_thread(_alarm_payload, app.state.config_path)
+        zones = payload.get("zones") or []
+        chosen = await asyncio.to_thread(load_home_alarm_selection, app.state.home_alarm_path)
+        using_default = chosen is None
+        if using_default:
+            chosen = default_home_alarm_sensors(zones)
+        known = {str(z["id"]) for z in zones}
+        return {
+            "sensors": [s for s in chosen if s in known],
+            "available": zones,
+            "using_default": using_default,
+        }
+
+    @app.put("/api/home-alarm-card")
+    async def set_home_alarm_card(request: HomeAlarmCardRequest) -> dict[str, Any]:
+        sensors = [str(s) for s in request.sensors]
+        await asyncio.to_thread(save_home_alarm_selection, app.state.home_alarm_path, sensors)
+        return {"sensors": sensors, "using_default": False}
 
     @app.get("/api/motion/log")
     async def motion_log(limit: int = MOTION_LOG_DEFAULT_LIMIT) -> dict[str, Any]:
@@ -3465,6 +3503,22 @@ def _home_assistant_alarm_panel_name(controls: list[dict[str, Any]]) -> str:
     return "Tuya alarm system"
 
 
+# What an alarm system is watching. Fire and water were missing, which made the
+# Alarm view a door-and-motion list rather than a safety one -- and left the
+# Home card unable to show the smoke and leak sensors that are the whole reason
+# anyone glances at it.
+ALARM_ZONE_CLASSES = frozenset({
+    "door", "window", "garage_door", "opening",
+    "smoke", "moisture", "gas", "carbon_monoxide", "safety",
+    "occupancy", "motion",
+})
+
+# The Home card's default: everything except presence. A motion sensor tripping
+# is normal life in an occupied house; a door, a leak or smoke is the thing you
+# want to see without opening a view.
+HOME_ALARM_DEFAULT_EXCLUDED_TYPES = frozenset({"motion"})
+
+
 def _is_home_assistant_alarm_zone(
     entity: dict[str, Any], exclude: frozenset[str] = frozenset()
 ) -> bool:
@@ -3476,7 +3530,7 @@ def _is_home_assistant_alarm_zone(
         return False
     attributes = entity.get("attributes") or {}
     device_class = str(attributes.get("device_class") or "").lower()
-    return device_class in {"door", "window", "occupancy", "motion"}
+    return device_class in ALARM_ZONE_CLASSES
 
 
 def _home_assistant_alarm_zone(entity: dict[str, Any]) -> dict[str, Any] | None:
@@ -3484,7 +3538,14 @@ def _home_assistant_alarm_zone(entity: dict[str, Any]) -> dict[str, Any] | None:
     attributes = entity.get("attributes") or {}
     device_class = str(attributes.get("device_class") or "").lower()
     state = str(entity.get("state") or "unknown")
-    zone_type = "motion" if device_class in {"occupancy", "motion"} else device_class or "zone"
+    if device_class in {"occupancy", "motion"}:
+        zone_type = "motion"
+    elif device_class in {"garage_door", "opening"}:
+        zone_type = "door"
+    elif device_class in {"gas", "carbon_monoxide"}:
+        zone_type = "smoke"
+    else:
+        zone_type = device_class or "zone"
     # A sensor that is unavailable has not told us it is clear - it has told us
     # nothing. Reporting "Clear" for it reads identically to a confirmed-clear
     # zone, which is exactly the overstatement an alarm card must not make. The
@@ -3493,6 +3554,9 @@ def _home_assistant_alarm_zone(entity: dict[str, Any]) -> dict[str, Any] | None:
         zone_state = "unknown"
     elif zone_type == "motion":
         zone_state = "motion" if state == "on" else "clear"
+    elif zone_type in {"smoke", "moisture"}:
+        # A leak is not "open". The frontend maps this to Detected / Clear.
+        zone_state = "alert" if state == "on" else "clear"
     else:
         zone_state = "open" if state == "on" else "closed"
     return {
@@ -3832,6 +3896,33 @@ async def _home_assistant_event_stream(
         raise
     except Exception as exc:  # noqa: BLE001 - a dead stream must never break the page
         yield f"event: unavailable\ndata: {json.dumps({'reason': str(exc)[:120]})}\n\n"
+
+
+def default_home_alarm_sensors(zones: list[dict[str, Any]]) -> list[str]:
+    """Everything that is not a presence sensor, newest rule rather than a list.
+
+    A fixed list of entity ids would have to be edited every time a door or leak
+    sensor is added, and would be wrong on any other house. A rule picks new
+    ones up on its own.
+    """
+    return [str(z["id"]) for z in zones
+            if str(z.get("type")) not in HOME_ALARM_DEFAULT_EXCLUDED_TYPES]
+
+
+def load_home_alarm_selection(path: Path) -> list[str] | None:
+    """The chosen entity ids, or None when the user has never chosen."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    sensors = payload.get("sensors")
+    if not isinstance(sensors, list):
+        return None
+    return [str(s) for s in sensors]
+
+
+def save_home_alarm_selection(path: Path, sensors: list[str]) -> None:
+    path.write_text(json.dumps({"sensors": sensors}, indent=2) + "\n", encoding="utf-8")
 
 
 def _motion_log_prune(lines: list[str], now: float) -> list[str]:

@@ -96,3 +96,6 @@ automation-proposals/
 
 # Motion log written by the dashboard at runtime.
 motion_log.jsonl
+
+# Alarm card sensor choice, written by the dashboard at runtime.
+dashboard_home_alarm.json
