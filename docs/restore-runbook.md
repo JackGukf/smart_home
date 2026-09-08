@@ -305,31 +305,22 @@ Ordered by how much time they cost.
   surfaces things that are legitimately stateless — Tuya scenes, a TTS service,
   a Cast player — so read it, do not pipe it.
 
-- **Front door sensor (Zbeacon TS0203) does not hold state — a stopgap is in
-  place, and it must be removed with the sensor.**
+- **~~Front door sensor stopgap~~ Removed 2026-09-07.** The Zbeacon TS0203
+  (`0xffffdc2350fe16ab`) could not hold state — every movement, in either
+  direction, emitted an identical `contact:true` → `contact:false` pair ~140 ms
+  apart, so the raw entity settled on "open" and stayed there. The workaround
+  was a trigger-based `template:` binary_sensor that toggled on each burst,
+  plus an `alarm_zone_exclude` entry hiding the raw entity.
 
-  Every movement, in either direction, emits an identical `contact:true` →
-  `contact:false` pair ~140 ms apart, so the raw entity settles to "open" and
-  stays there. The level cannot be polled (`No converter available for
-  'contact'`). The device is sound — held against the magnet by hand it reported
-  "closed" for 17.9 s — the mounted magnet gap is simply marginal.
+  Both are gone. That sensor has moved to the office window and is now
+  `Door sensor office window R` in the Office area, and the front door has a
+  real sensor, `0xa4c138813abdffff` "Door sensor front door", in the Front door
+  area. Both now report as ordinary alarm zones.
 
-  A debounce would be the wrong fix: it would pin the sensor to "closed" after
-  every movement and be wrong half the time. What *is* reliable is that each
-  physical movement produces exactly one burst, so the stopgap is a **toggle**:
+  **Worth knowing if a stopgap like this is ever added again:** it kept working
+  after the sensor was repurposed, so the dashboard showed a "Front Door Sensor"
+  that was actually being driven by the office window. A template that mirrors
+  one entity into another name survives the entity changing meaning, and nothing
+  warns you. Tie the removal to the hardware change, not to a later tidy-up.
 
-  1. `template:` block in HA `configuration.yaml` — a trigger-based
-     `binary_sensor.front_door` (device_class door) that flips on each burst.
-     This must live in HA: the corrective "closed" lasts 140 ms, and the
-     dashboard's 60 s poll would never see it.
-  2. `home_assistant.alarm_zone_exclude` in `configs/devices.local.yaml` hides
-     the raw entity, which would otherwise appear beside it permanently wrong.
-
-  **Known failure mode:** a burst lost over the air (link quality has been seen
-  at 40) inverts it and it *stays* inverted until someone toggles it back. To
-  re-seed, fire the trigger by POSTing the raw entity to `off` then `on` — each
-  transition to `off` toggles once.
-
-  **To remove:** delete the `template:` block (HA restart — a reload will not
-  pick up a newly added integration key) and the `alarm_zone_exclude` entry.
 - **SD card is out.** The board boots NVMe-only; there is no fallback root.
