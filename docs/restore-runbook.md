@@ -292,9 +292,14 @@ Ordered by how much time they cost.
 
   `Motion Sensor&TH`, `Motion Sensor&TH 2` and `Door Sensor` were disabled
   2026-09-07 with `scripts/disable-orphan-ha-devices.py`, each confirmed
-  superseded by a live Zigbee equivalent. Still present and still dead:
-  `WATER SENSOR` and `Temperature and humidity sensor`, both on the `tuya`
-  platform — check they were re-paired before disabling them too.
+  superseded by a live Zigbee equivalent.
+
+  **`WATER SENSOR` and `Temperature and humidity sensor` are NOT orphans — do
+  not disable them.** They are on the Tuya gateway, working, and were flat as of
+  2026-09-08; they come back when the batteries are replaced. They look
+  identical to the three above in every way Home Assistant exposes, which is the
+  point: "no live entity" does not mean "left behind". `last_changed` cannot
+  separate them either, because a restart resets it for everything.
 
   Disabled rather than deleted: HA 2026.6 has no
   `remove_config_entry_from_device` WebSocket command, and a disabled device's

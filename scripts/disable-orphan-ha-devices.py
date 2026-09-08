@@ -18,6 +18,13 @@ and unlike deletion it can be undone from the Home Assistant UI.
 entity is not an orphan, whatever its name suggests, and the check is on state
 rather than on the name.
 
+**`--list` is not a to-do list.** A device with no live entity may be an
+integration entry left behind by a migration, or it may be a working sensor with
+a flat battery -- this board has had both at once, and nothing in Home Assistant
+distinguishes them. `last_changed` looks like it would and does not: a restart
+resets it for every entity. So the tool never acts on its own listing; a human
+names the device.
+
     # what would happen
     python3 scripts/disable-orphan-ha-devices.py --list
     python3 scripts/disable-orphan-ha-devices.py "Motion Sensor&TH"
@@ -104,7 +111,12 @@ async def run(args: argparse.Namespace) -> int:
                 return name, mine, live
 
             if args.list:
-                print("Devices with no live entity (candidates):\n")
+                print("Devices with no live entity.\n")
+                print("  A device lands here for more than one reason, and this cannot tell them")
+                print("  apart: an integration entry left behind when the device moved to another")
+                print("  radio, a flat battery, or something simply switched off. The first two")
+                print("  have both happened here. Confirm what a device actually is before naming")
+                print("  it -- `last_changed` will not help, a restart resets it for everything.\n")
                 found = 0
                 for device in sorted(devices, key=lambda d: (d.get("name_by_user") or d.get("name") or "")):
                     if device.get("disabled_by"):
@@ -117,7 +129,8 @@ async def run(args: argparse.Namespace) -> int:
                     for entity in mine:
                         print(f"      {entity['entity_id']}")
                     found += 1
-                print(f"\n{found} candidate device(s). Nothing changed.")
+                print(f"\n{found} device(s) listed. Nothing changed, and nothing here is a "
+                      f"recommendation.")
                 return 0
 
             failures = 0
