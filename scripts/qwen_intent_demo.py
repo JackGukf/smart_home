@@ -72,7 +72,11 @@ def parse_args() -> argparse.Namespace:
         default="Turn on the kitchen light",
         help="Natural-language request to parse.",
     )
-    parser.add_argument("--model", default="qwen3:4b", help="Installed Ollama model.")
+    # The board serves qwen3:4b-house, not the stock tag: it carries a num_thread
+    # matching the service's CPUAffinity, and the unpinned tag is deleted because
+    # naming it stalls the runner at 720% CPU without ever answering.
+    # See docs/local-ai.md, "Two traps that are specific to Ollama".
+    parser.add_argument("--model", default="qwen3:4b-house", help="Installed Ollama model.")
     parser.add_argument(
         "--endpoint",
         default="http://127.0.0.1:11434/api/chat",
