@@ -117,3 +117,30 @@ def test_the_card_filters_zones_while_the_view_keeps_all_of_them() -> None:
     assert 'z.type !== "motion"' in card
     # The view is untouched: it still renders whatever the payload holds.
     assert "chosen" not in view, "the Alarm view should still show every zone"
+
+
+def test_the_security_label_is_display_only_and_the_ids_stay_alarm() -> None:
+    """Renamed in the UI, not in the identifiers, and deliberately.
+
+    Home card positions live in localStorage keyed by data-home-card, so
+    renaming that id would orphan the saved position of every Alarm card
+    anyone had dragged -- it would silently jump back to its default cell.
+    The same argument covers data-view, which a saved default-view points at.
+    """
+    html = (PROJECT_ROOT / "src" / "python" / "web_static" / "index.html").read_text(encoding="utf-8")
+    app = APP_JS.read_text(encoding="utf-8")
+
+    # What the user reads.
+    assert "\n        Security\n" in html, "the sidebar item is not labelled Security"
+    assert '<span class="section-title">Security</span>' in html
+    assert 'alarm: "Security",' in app
+
+    # What the code and the browser's stored state key on.
+    assert 'data-view="alarm"' in html
+    assert 'data-view-panel="alarm"' in html
+    assert 'data-home-card="alarm"' in html
+    assert "alarm:" in app.split("const DEFAULT_HOME_LAYOUT = {")[1].split("};")[0]
+
+    # "Alarm" as a bare visible label should be gone from the sidebar and titles.
+    assert "\n        Alarm\n" not in html
+    assert "Alarm System" not in html

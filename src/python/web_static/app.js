@@ -3329,7 +3329,7 @@ function alarmBreachedCount(zones) {
   return zones.filter(zoneIsBreached).length;
 }
 
-/* The Alarm card on Home.
+/* The Security card on Home.
 
    A built-in card rather than a custom one, because everything about custom
    cards -- the cards themselves, their layout, and which are hidden -- lives in
@@ -3455,7 +3455,7 @@ async function saveHomeAlarmSelection(sensors) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sensors }),
     });
-    logActivity(`Alarm card → ${sensors.length} sensor${sensors.length === 1 ? "" : "s"}`);
+    logActivity(`Security card → ${sensors.length} sensor${sensors.length === 1 ? "" : "s"}`);
   } catch (err) {
     console.error(err);
     logActivity("Could not save the alarm card sensors", "error");
@@ -5462,7 +5462,7 @@ const HOME_CARD_LABELS = {
   weather: "Weather",
   camera: "Camera",
   climate: "Climate",
-  alarm: "Alarm",
+  alarm: "Security",
   areas: "Areas",
 };
 
