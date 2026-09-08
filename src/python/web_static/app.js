@@ -5382,20 +5382,27 @@ const HOME_GRID_GAP = 16;
 
 /* Three columns of four on the grid:
 
-     Weather   Camera         Areas
-     Climate   Temperatures
-     Alarm
+     Weather        Camera    Areas
+     Climate        Alarm
+     Temperatures
+
+   Alarm sits directly under Camera, matching the phone order in index.html:
+   a camera view and "is anything open" answer the same question, so they are
+   read together. Temperatures moved left to make room, which also evens the
+   columns out - Alarm on the left had made that column half again as tall as
+   the others.
 
    Only applies to a browser with no saved layout - an existing one is left
    alone, and Reset Layout is what adopts this. A browser that already has a
-   layout still gets the Alarm card, because cardLayoutOf() falls back to this
-   table for any card the saved layout has never heard of. */
+   layout still gets a card it has never seen, because cardLayoutOf() falls
+   back to this table for any card the saved layout has no entry for; what it
+   will not do is move a card the user has already placed. */
 const DEFAULT_HOME_LAYOUT = {
   weather:     { x: 1, y: 1,  w: 4, h: 5 },
   climate:     { x: 1, y: 6,  w: 4, h: 9 },
-  alarm:       { x: 1, y: 15, w: 4, h: 8 },
+  tempsensors: { x: 1, y: 15, w: 4, h: 6 },
   camera:      { x: 5, y: 1,  w: 4, h: 7 },
-  tempsensors: { x: 5, y: 8,  w: 4, h: 6 },
+  alarm:       { x: 5, y: 8,  w: 4, h: 8 },
   areas:       { x: 9, y: 1,  w: 4, h: 12 },
 };
 

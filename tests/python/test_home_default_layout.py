@@ -56,9 +56,34 @@ def test_phone_order_is_markup_order() -> None:
 def test_desktop_columns_hold_the_intended_cards() -> None:
     cells = _defaults()
 
-    assert [n for n, c in cells.items() if c["x"] == LEFT] == ["weather", "climate", "alarm"]
-    assert [n for n, c in cells.items() if c["x"] == MIDDLE] == ["camera", "tempsensors"]
+    assert [n for n, c in cells.items() if c["x"] == LEFT] == ["weather", "climate", "tempsensors"]
+    assert [n for n, c in cells.items() if c["x"] == MIDDLE] == ["camera", "alarm"]
     assert [n for n, c in cells.items() if c["x"] == RIGHT] == ["areas"]
+
+
+def test_alarm_sits_directly_under_camera_on_the_desktop_grid() -> None:
+    """The same pairing the phone order makes, held here too: a camera view and
+    "is anything open" answer the same question."""
+    cells = _defaults()
+    camera, alarm = cells["camera"], cells["alarm"]
+
+    assert alarm["x"] == camera["x"], "alarm is not in the camera's column"
+    assert alarm["y"] == camera["y"] + camera["h"], "alarm does not start where camera ends"
+
+
+def test_no_two_cards_overlap_and_none_runs_off_the_grid() -> None:
+    """Placements are hand-written, and a wrong y silently stacks two cards on
+    the same cells -- which renders as one card on top of the other rather than
+    as an error."""
+    cells = _defaults()
+    occupied: dict[tuple[int, int], str] = {}
+    for name, cell in cells.items():
+        assert cell["x"] >= 1 and cell["x"] + cell["w"] - 1 <= 12, f"{name} runs off the grid"
+        for col in range(cell["x"], cell["x"] + cell["w"]):
+            for row in range(cell["y"], cell["y"] + cell["h"]):
+                clash = occupied.get((col, row))
+                assert clash is None, f"{name} overlaps {clash} at column {col}, row {row}"
+                occupied[(col, row)] = name
 
 
 def test_no_two_default_cards_overlap() -> None:
