@@ -4,11 +4,11 @@
 > the PCIe slot: dashboard, go2rtc, Home Assistant, Zigbee (5 devices), Matter
 > controller, resource-logger — all enabled and surviving a reboot.
 >
-> **Local AI is being restored in stages** (2026-09-06): Ollama first and alone,
-> then the NPU detector, with `llama-server` deferred. **Run one LLM, not both** —
-> there is no swap. The rebuild's reflash destroyed every AI artifact, including
-> the finetuned NPU model, so step 2 is a rebuild rather than a restore. See
-> `docs/local-ai.md`, "Where this stands".
+> **Local AI, staged** — Ollama is live and alone; **run one LLM, not both**,
+> there is no swap. The NPU detector is **blocked**: the model was retrained and
+> the graph runs on the device at full speed but computes the wrong answer, and
+> `disable_cpu_ep_fallback` proves only *where* a graph ran, not *what* it
+> computed. Start here: **`docs/handoff-2026-09-08-local-ai.md`**.
 >
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
 > *user* unit), exposing 5 devices and commissioned into three fabrics —
@@ -191,6 +191,8 @@ Three things that will waste a day if you do not know them:
 - `docs/local-ai.md` — the LLM and NPU stack: services, build flags, NPU op support, benchmarks
 - `docs/npu-model-pipeline.md` — **rebuild the NPU detection model**: the PReLU swap, the
   exact decomposition, INT8 quantisation, and scoring (`scripts/npu-model/`)
+- `docs/handoff-2026-09-08-local-ai.md` — **pick the AI work up cold**: what runs,
+  the NPU blocker and what it rules out, where the artefacts are, what to try next
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
 

@@ -20,7 +20,7 @@ unexpected reset points at a single change rather than three:
 | --- | --- | --- |
 | 1 | `ollama.service` | **installed 2026-09-06**, idle-unload verified, soaking |
 | 2 | `npu-detector.service` | **installed, stopped** — model trained and on the board, but the NPU
-        miscomputes it; see `docs/npu-model-pipeline.md`, "Verified on the device" |
+        miscomputes it. Start at `docs/handoff-2026-09-08-local-ai.md` |
 | 3 | `llama-server.service` | deferred; only on evidence that something needs the latency |
 
 **Run one LLM, not both.** `llama-server` holds ~5.0 GiB for the life of the
