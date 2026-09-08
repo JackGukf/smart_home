@@ -445,6 +445,9 @@ globalThis.tuyaGrid = {{ innerHTML: "" }};
 globalThis.tuyaCount = {{ textContent: "" }};
 globalThis.renderForeignKinds = () => {{}};
 globalThis.sensorGroupCount = () => 0;
+// Sensors, Environment and Motion all read latestTuyaDevices, so renderTuyaDevices
+// repaints all three; only Sensors is under test here.
+globalThis.renderMotionSensors = () => {{}};
 eval(pick('findDeviceGroup') + pick('groupMemberData') + pick('renderTuyaDevices'));
 
 const results = {{}};
@@ -1141,8 +1144,8 @@ run();
 def test_device_group_tile_data_includes_dynamic_groups_and_keeps_builtins(tmp_path: Path) -> None:
     """Regression test for Fix 2. The overview grid must gain a tile for every
     group resolveDeviceGroups() returns -- a user-created group and the
-    synthetic auto:unassigned bucket -- while the seven built-in tiles keep
-    their exact existing label/icon/count/summary."""
+    synthetic auto:unassigned bucket -- while the built-in tiles keep their
+    exact existing label/icon/count/summary."""
     script = f"""
 {RESOLVE_JS}
 globalThis.latestDeviceGroups = [
@@ -1167,6 +1170,7 @@ globalThis.latestEnvironmentSensors = [];
 globalThis.sensorGroupCount = () => 0;
 globalThis.sensorsTileGroups = () => [];
 globalThis.environmentSummary = () => 'No readings';
+globalThis.motionSummary = () => 'All clear';
 
 eval(constOf('GROUP_COLOR_VARS') + constOf('GROUP_ICON_PATTERN') + constOf('BUILTIN_TILE_VIEWS')
    + pick('isExcludedFromGroup')
@@ -1183,8 +1187,9 @@ console.log(JSON.stringify({{
 """
     result = _run_node(script, tmp_path)
 
-    assert result["views"][:7] == [
-        "lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate",
+    assert result["views"][:8] == [
+        "lights", "plugs", "ambient", "humidifier", "motion", "environment", "tuya",
+        "climate",
     ]
     assert "movie-night" in result["views"]
     assert "auto:unassigned" in result["views"]

@@ -16,10 +16,13 @@ def test_environment_and_sensors_are_adjacent_seeded_groups() -> None:
     ids = [g["id"] for g in DEFAULT_DEVICE_GROUPS]
 
     assert ids == [
-        "lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate",
-        "bridges",
+        "lights", "plugs", "ambient", "humidifier", "motion", "environment", "tuya",
+        "climate", "bridges",
     ]
     assert ids.index("tuya") == ids.index("environment") + 1
+    # Motion is a third reading filter over the same sensor groups, so it is
+    # seeded beside the other two rather than among the device-kind groups.
+    assert ids.index("motion") == ids.index("environment") - 1
 
 
 def test_environment_panel_and_badge_exist() -> None:

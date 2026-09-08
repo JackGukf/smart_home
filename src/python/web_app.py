@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -79,6 +80,18 @@ DEFAULT_AREAS = [
     {"id": "utility-room", "name": "Utility Room", "icon": "tools"},
 ]
 DEFAULT_DEVICE_GROUPS_PATH = PROJECT_ROOT / "dashboard_device_groups.json"
+# One JSON object per line, appended. A log is append-only and read newest-first,
+# which is exactly what JSONL is good at, and it survives a restart -- which
+# matters because deploy-dashboard.sh restarts this service on every deploy, so
+# an in-memory log would be empty most of the time it was wanted.
+DEFAULT_MOTION_LOG_PATH = PROJECT_ROOT / "motion_log.jsonl"
+# Long enough to answer "was anyone in the kitchen on Tuesday", short enough that
+# the file stays small: ~40 events a day is a few hundred KB a fortnight.
+MOTION_LOG_MAX_DAYS = 14
+MOTION_LOG_DEFAULT_LIMIT = 200
+# The three device_classes this house's motion sensors actually use. The Zigbee
+# units report occupancy; the two Tuya ones report motion and occupancy both.
+MOTION_DEVICE_CLASSES = frozenset({"occupancy", "motion", "moving"})
 # Which Matter endpoint each bridged device owns. See _assign_bridge_endpoints().
 DEFAULT_BRIDGE_ENDPOINTS_PATH = PROJECT_ROOT / "bridge_endpoints.json"
 # Endpoints 0 and 1 are the root node and the aggregator; 2 is reserved by the
@@ -125,7 +138,13 @@ async def _lifespan(app: FastAPI):
     pay it at startup rather than making the first page load wait for it.
     """
     _schedule_device_refresh(app)
-    yield
+    recorder = asyncio.create_task(_motion_log_recorder(app))
+    try:
+        yield
+    finally:
+        recorder.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await recorder
 
 
 class _CachedStaticFiles(StaticFiles):
@@ -158,6 +177,15 @@ DEFAULT_DEVICE_GROUPS = [
      "kinds": ["ambient"], "chrome": [], "builtin": True},
     {"id": "humidifier", "name": "Humidifiers", "icon": "droplet", "color": "cyan",
      "kinds": ["humidifier"], "chrome": [], "builtin": True},
+    # Motion is a reading filter, not a device kind, for the same reason
+    # Environment and Sensors are: five of the motion sensors here are combined
+    # units that also report temperature and humidity. Classifying the *device*
+    # as motion would pull those readings out of Environment. Filtering the
+    # readings lets one physical sensor appear in both, showing what each group
+    # is about. It is builtin because it needs the sensor-card renderer, which
+    # the generic dynamic-group panel does not have.
+    {"id": "motion", "name": "Motion", "icon": "walk", "color": "amber",
+     "kinds": ["sensor"], "readingFilter": "motion", "chrome": [], "builtin": True},
     {"id": "environment", "name": "Environment", "icon": "temperature-celsius",
      "color": "teal", "kinds": ["sensor", "environment"],
      "readingFilter": "environment", "chrome": [], "builtin": True},
@@ -180,7 +208,7 @@ DEVICE_GROUP_KINDS = frozenset(
     {"light", "plug", "sensor", "camera", "thermostat", "ambient", "humidifier",
      "environment", "bridge"}
 )
-DEVICE_GROUP_READING_FILTERS = frozenset({"environment", "sensors"})
+DEVICE_GROUP_READING_FILTERS = frozenset({"environment", "sensors", "motion"})
 DEVICE_GROUP_CHROME = frozenset({"lightScenes", "lightDragLock", "plugActions"})
 DEVICE_GROUP_ICON_PATTERN = re.compile(r"^[a-z0-9-]{1,32}$")
 STATIC_DIR = PROJECT_ROOT / "src" / "python" / "web_static"
@@ -409,6 +437,7 @@ def create_app(
     check_camera_ports: bool = True,
     areas_path: Path = DEFAULT_AREAS_PATH,
     device_groups_path: Path = DEFAULT_DEVICE_GROUPS_PATH,
+    motion_log_path: Path | None = None,
     zigbee_secret_path: Path = DEFAULT_ZIGBEE_SECRET_PATH,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
@@ -418,6 +447,7 @@ def create_app(
     app.state.check_camera_ports = check_camera_ports
     app.state.areas_path = areas_path
     app.state.device_groups_path = device_groups_path
+    app.state.motion_log_path = motion_log_path or DEFAULT_MOTION_LOG_PATH
     app.state.zigbee_secret_path = zigbee_secret_path
     # Last known device list, served instantly while a refresh runs behind it.
     app.state.device_cache = {"cards": None, "at": 0.0, "task": None}
@@ -828,6 +858,18 @@ def create_app(
     @app.get("/api/home-assistant/entities")
     async def home_assistant_entities() -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_payload, app.state.config_path)
+
+    @app.get("/api/motion/log")
+    async def motion_log(limit: int = MOTION_LOG_DEFAULT_LIMIT) -> dict[str, Any]:
+        """Recent motion transitions, newest first.
+
+        Reads the file rather than any in-memory state, so it answers correctly
+        on the first request after a restart -- which is the whole reason the log
+        is on disk.
+        """
+        capped = max(1, min(int(limit), 1000))
+        events = await asyncio.to_thread(read_motion_log, app.state.motion_log_path, capped)
+        return {"events": events, "retention_days": MOTION_LOG_MAX_DAYS}
 
     @app.get("/api/events/stream")
     async def events_stream() -> StreamingResponse:
@@ -3790,6 +3832,160 @@ async def _home_assistant_event_stream(
         raise
     except Exception as exc:  # noqa: BLE001 - a dead stream must never break the page
         yield f"event: unavailable\ndata: {json.dumps({'reason': str(exc)[:120]})}\n\n"
+
+
+def _motion_log_prune(lines: list[str], now: float) -> list[str]:
+    """Drop entries older than the retention window, keeping order."""
+    cutoff = now - MOTION_LOG_MAX_DAYS * 86400
+    kept = []
+    for line in lines:
+        try:
+            if float(json.loads(line).get("ts", 0)) >= cutoff:
+                kept.append(line)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            continue  # a torn final line from a hard kill must not poison the log
+    return kept
+
+
+def _append_motion_event(path: Path, record: dict[str, Any]) -> None:
+    """Append one event, rotating the file when it outgrows the window.
+
+    Rewrites only when pruning actually removes something, so the common path is
+    a single append.
+    """
+    line = json.dumps(record, separators=(",", ":"))
+    try:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except OSError:
+        _matter_log.exception("Could not append to the motion log")
+        return
+
+    # Amortised: only look at the whole file when it is big enough to be worth it.
+    try:
+        if path.stat().st_size < 512_000:
+            return
+        lines = path.read_text(encoding="utf-8").splitlines()
+        kept = _motion_log_prune(lines, time.time())
+        if len(kept) != len(lines):
+            path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    except OSError:
+        _matter_log.exception("Could not rotate the motion log")
+
+
+def read_motion_log(path: Path, limit: int = MOTION_LOG_DEFAULT_LIMIT) -> list[dict[str, Any]]:
+    """Most recent events first."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    events = []
+    for line in reversed(lines):
+        if len(events) >= limit:
+            break
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return events
+
+
+def motion_event_from_state_change(data: dict[str, Any], last_on: dict[str, float]) -> dict[str, Any] | None:
+    """Turn a Home Assistant state_changed payload into a log entry, or None.
+
+    Only transitions are logged. Home Assistant re-emits a state_changed when an
+    attribute moves -- battery percentage, illuminance -- and logging those would
+    bury the handful of events anyone cares about under hundreds that say nothing
+    happened.
+    """
+    entity_id = str(data.get("entity_id") or "")
+    if not entity_id.startswith("binary_sensor."):
+        return None
+
+    new_state = data.get("new_state") or {}
+    old_state = data.get("old_state") or {}
+    attributes = new_state.get("attributes") or {}
+    if str(attributes.get("device_class") or "").lower() not in MOTION_DEVICE_CLASSES:
+        return None
+
+    new_value = str(new_state.get("state") or "").lower()
+    old_value = str(old_state.get("state") or "").lower()
+    if new_value not in ("on", "off") or new_value == old_value:
+        return None
+
+    now = time.time()
+    record: dict[str, Any] = {
+        "ts": round(now, 3),
+        "entity_id": entity_id,
+        "name": str(attributes.get("friendly_name") or entity_id),
+        "state": new_value,
+    }
+    if new_value == "on":
+        last_on[entity_id] = now
+    else:
+        started = last_on.pop(entity_id, None)
+        if started is not None:
+            # How long it saw someone, which is the part a bare "cleared" loses.
+            record["duration_s"] = round(now - started, 1)
+    return record
+
+
+async def _motion_log_recorder(app: FastAPI) -> None:
+    """Record motion transitions for as long as the dashboard is running.
+
+    Deliberately NOT built on /api/events/stream. That stream exists per browser
+    connection, coalesces bursts into one notification every 0.4 s, and carries
+    only the entity_id -- all correct for waking a page up, and all wrong for a
+    log, which must record every transition whether or not anyone is looking.
+    """
+    try:
+        import aiohttp
+    except ImportError:
+        _matter_log.info("Motion log disabled: aiohttp is not installed")
+        return
+
+    path: Path = app.state.motion_log_path
+    backoff = 5.0
+    last_on: dict[str, float] = {}
+
+    while True:
+        try:
+            config = _load_home_assistant_config(app.state.config_path)
+            token = os.getenv(config.token_env)
+            if not token:
+                _matter_log.info("Motion log idle: %s is not set", config.token_env)
+                await asyncio.sleep(60)
+                continue
+
+            ws_url = config.base_url.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(ws_url, heartbeat=30) as ws:
+                    await ws.receive_json()
+                    await ws.send_json({"type": "auth", "access_token": token})
+                    if (await ws.receive_json()).get("type") != "auth_ok":
+                        _matter_log.warning("Motion log: Home Assistant rejected the token")
+                        await asyncio.sleep(60)
+                        continue
+                    await ws.send_json({"id": 1, "type": "subscribe_events", "event_type": "state_changed"})
+                    await ws.receive_json()
+                    backoff = 5.0  # a working connection resets the retry delay
+
+                    async for message in ws:
+                        if message.type is not aiohttp.WSMsgType.TEXT:
+                            continue
+                        payload = json.loads(message.data)
+                        if payload.get("type") != "event":
+                            continue
+                        data = (payload.get("event") or {}).get("data") or {}
+                        record = motion_event_from_state_change(data, last_on)
+                        if record is not None:
+                            await asyncio.to_thread(_append_motion_event, path, record)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a dead recorder must not take the dashboard with it
+            _matter_log.warning("Motion log recorder reconnecting after: %s", str(exc)[:160])
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, 300.0)
 
 
 def _home_assistant_entity_card(entity: dict[str, Any]) -> dict[str, Any]:

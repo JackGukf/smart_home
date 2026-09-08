@@ -118,6 +118,8 @@ const lightDragLock     = document.querySelector("#lightDragLock");
 const plugGrid          = document.querySelector("#plugGrid");
 const ambientGrid       = document.querySelector("#ambientGrid");
 const tuyaGrid          = document.querySelector("#tuyaGrid");
+const motionGrid        = document.querySelector("#motionGrid");
+const motionLog         = document.querySelector("#motionLog");
 const thermostatGrid    = document.querySelector("#thermostatGrid");
 const homeAssistantFrame = document.querySelector("#homeAssistantFrame");
 const homeAssistantOpen = document.querySelector("#homeAssistantOpen");
@@ -127,6 +129,7 @@ const lightCount        = document.querySelector("#lightCount");
 const plugCount         = document.querySelector("#plugCount");
 const ambientCount      = document.querySelector("#ambientCount");
 const tuyaCount         = document.querySelector("#tuyaCount");
+const motionCount       = document.querySelector("#motionCount");
 const thermostatCount   = document.querySelector("#thermostatCount");
 const haCount           = document.querySelector("#haCount");
 const cameraTabCount    = document.querySelector("#cameraTabCount");
@@ -338,7 +341,7 @@ function logActivity(text, type = "normal") {
 /* ── Devices sidebar group ── */
 /* Seeded to the built-in groups so the sidebar works before the group document
    loads; replaced by the loaded ids once it arrives. */
-let DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"];
+let DEVICE_GROUP_VIEWS = ["lights", "plugs", "ambient", "humidifier", "motion", "environment", "tuya", "climate"];
 let latestDeviceGroups = [];
 let latestDeviceGroupOverrides = {};
 
@@ -356,7 +359,7 @@ function setDevicesBackVisible(show) {
 /* The seven built-in views already covered by the hardcoded tiles below. Any
    other id resolveDeviceGroups() returns — a user-created group, or the
    synthetic auto:unassigned bucket — gets a dynamic tile appended instead. */
-const BUILTIN_TILE_VIEWS = new Set(["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]);
+const BUILTIN_TILE_VIEWS = new Set(["lights", "plugs", "ambient", "humidifier", "motion", "environment", "tuya", "climate"]);
 
 /* Tile for a user-created group or auto:unassigned. name/icon/color are
    user-supplied via the API, so the name is escaped at render time (like every
@@ -409,6 +412,7 @@ function deviceGroupTileData() {
     { view: "plugs",      label: "Plugs",       icon: "ti-plug",       count: plugs.length,                  summary: onOf(plugs) },
     { view: "ambient",    label: "Ambient",     icon: "ti-lamp-2",     count: ambient.length,                summary: onlineOf(ambient) },
     { view: "humidifier", label: "Humidifiers", icon: "ti-droplet",    count: humidifiers.length,            summary: onlineOf(humidifiers) },
+    { view: "motion",     label: "Motion",      icon: "ti-walk",       count: sensorGroupCount("motion"),    summary: motionSummary() },
     { view: "environment", label: "Environment", icon: "ti-temperature-celsius", count: sensorGroupCount("environment") + envSensors.length, summary: environmentSummary() },
     { view: "tuya",       label: "Sensors",     icon: "ti-radar-2",    count: sensorGroupCount("sensors"),   summary: onlineOf(sensorsTileGroups()) },
     { view: "climate",    label: "Climate",     icon: "ti-temperature",count: thermostats.length,            summary: onlineOf(thermostats) },
@@ -1628,10 +1632,15 @@ const KNOWN_SENSOR_CAPABILITIES = new Set([
 ]);
 
 function filterReadingsForView(readings, mode) {
-  if (mode !== "environment" && mode !== "sensors") return readings;
+  if (mode !== "environment" && mode !== "sensors" && mode !== "motion") return readings;
   return readings.filter((reading) => {
     const key = sensorCapabilityKey(reading);
     if (key === "battery") return true;
+    /* Motion is a narrowing of Sensors, not a slice alongside it: the same
+       reading still appears there. A combined "Motion sensor and TH" therefore
+       shows occupancy here and temperature in Environment, rather than being
+       moved out of one to appear in the other. */
+    if (mode === "motion") return key === "motion";
     return mode === "environment"
       ? ENVIRONMENT_CAPABILITIES.has(key)
       : !ENVIRONMENT_CAPABILITIES.has(key);
@@ -1655,6 +1664,11 @@ function groupHasViewContent(group, mode) {
   });
   if (hasOwnedCapability) return true;
 
+  /* Sensors is the catch-all, so it also takes anything unclassifiable. Motion
+     is the opposite: no motion reading, no tile, or every temperature sensor in
+     the house would appear here holding only a battery percentage. */
+  if (mode === "motion") return false;
+
   const hasAnyKnownCapability = expanded.some((reading) =>
     KNOWN_SENSOR_CAPABILITIES.has(sensorCapabilityKey(reading))
   );
@@ -1666,7 +1680,9 @@ function groupHasViewContent(group, mode) {
    moved a sensor out of. "sensors" is the tuya group's id for historical
    reasons; the tile is labelled Sensors. */
 function sensorTileGroupId(mode) {
-  return mode === "environment" ? "environment" : "tuya";
+  if (mode === "environment") return "environment";
+  if (mode === "motion") return "motion";
+  return "tuya";
 }
 
 function visibleSensorGroups(mode) {
@@ -2015,6 +2031,7 @@ function renderTuyaDevices(devices) {
       : "No Tuya devices found from Home Assistant yet.";
     tuyaGrid.innerHTML = `<div class="empty">${message}</div>`;
     renderForeignKinds("tuya", ["sensor"], "#tuyaGrid");
+    renderMotionSensors();
     return;
   }
 
@@ -2038,7 +2055,113 @@ function renderTuyaDevices(devices) {
   tuyaGrid.innerHTML = banner + groups.map((g) => renderSensorDeviceCard(g, "sensors")).join("");
   renderDevicesOverview();
   renderEnvironmentSensors();
+  renderMotionSensors();
   renderForeignKinds("tuya", ["sensor"], "#tuyaGrid");
+}
+
+/* ── Motion ──
+
+   A narrowing of the same sensor groups the Sensors view draws, filtered to the
+   motion capability. sensorCapabilityKey() already folds occupancy, motion and
+   moving into one key, so a sensor added later is picked up with no
+   configuration -- which is the point, since more of them are coming. */
+function motionDetectedIn(group) {
+  return filterReadingsForView(expandSensorReadings(group.readings), "motion")
+    .some((reading) => sensorCapabilityKey(reading) === "motion" && isAlertDetected(reading));
+}
+
+function motionSummary() {
+  const groups = visibleSensorGroups("motion");
+  if (groups.length === 0) return "No sensors";
+  const active = groups.filter(motionDetectedIn).length;
+  return active ? `${active} detecting` : "All clear";
+}
+
+function renderMotionSensors() {
+  if (!motionGrid) return;
+  const groups = visibleSensorGroups("motion");
+  if (motionCount) motionCount.textContent = String(groups.length);
+
+  if (groups.length === 0) {
+    motionGrid.innerHTML =
+      '<div class="empty">No motion sensors found. Sensors reporting occupancy or motion appear here automatically.</div>';
+    renderForeignKinds("motion", ["sensor"], "#motionGrid");
+    return;
+  }
+
+  /* Detecting first, then alphabetical: the one that just tripped is the reason
+     anyone opened this view, and a stable order underneath keeps the rest from
+     jumping around as states change. */
+  const ordered = [...groups].sort((a, b) => {
+    const diff = Number(motionDetectedIn(b)) - Number(motionDetectedIn(a));
+    return diff || String(a.name).localeCompare(String(b.name));
+  });
+
+  const active = ordered.filter(motionDetectedIn).length;
+  const banner = active
+    ? `<div class="sdc-alert-banner motion-banner"><i class="ti ti-walk"></i> ${active} sensor${active > 1 ? "s" : ""} detecting motion</div>`
+    : "";
+
+  motionGrid.innerHTML = banner + ordered.map((g) => renderSensorDeviceCard(g, "motion")).join("");
+  renderForeignKinds("motion", ["sensor"], "#motionGrid");
+}
+
+function motionLogRowHtml(event) {
+  const detected = String(event.state) === "on";
+  const when = new Date((Number(event.ts) || 0) * 1000);
+  const time = Number.isFinite(when.getTime())
+    ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : "--:--:--";
+  const held = Number(event.duration_s);
+  const detail = detected
+    ? "Detected"
+    : Number.isFinite(held) ? `Cleared · ${formatMotionDuration(held)}` : "Cleared";
+  return `<div class="motion-row${detected ? "" : " cleared"}">
+      <span class="motion-time">${escapeHtml(time)}</span>
+      <span class="motion-dot" aria-hidden="true"></span>
+      <span class="motion-name">${escapeHtml(String(event.name || event.entity_id || ""))}</span>
+      <span class="motion-event">${escapeHtml(detail)}</span>
+    </div>`;
+}
+
+function formatMotionDuration(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 60) return `${total}s`;
+  const mins = Math.floor(total / 60);
+  if (mins < 60) return `${mins}m ${String(total % 60).padStart(2, "0")}s`;
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+}
+
+function renderMotionLog(events) {
+  if (!motionLog) return;
+  if (!events.length) {
+    motionLog.innerHTML =
+      '<div class="empty">No motion recorded yet. Events appear here as sensors trip.</div>';
+    return;
+  }
+  /* Grouped by day, because "19:58" means nothing without knowing which day,
+     and the log keeps a fortnight. */
+  let lastDay = "";
+  const rows = events.map((event) => {
+    const day = new Date((Number(event.ts) || 0) * 1000).toDateString();
+    const header = day === lastDay ? "" : `<div class="motion-day">${escapeHtml(day)}</div>`;
+    lastDay = day;
+    return header + motionLogRowHtml(event);
+  });
+  motionLog.innerHTML = rows.join("");
+}
+
+async function loadMotionLog() {
+  if (!motionLog) return;
+  try {
+    const payload = await requestJson("/api/motion/log?limit=100");
+    renderMotionLog(payload.events || []);
+  } catch (err) {
+    /* The tiles above are still useful without the history, so a failed log
+       reports itself in place instead of blanking the view. */
+    motionLog.innerHTML = '<div class="empty">Motion log unavailable.</div>';
+    console.error(err);
+  }
 }
 
 /* ── Environment (temperature & humidity) ── */
@@ -7349,6 +7472,7 @@ loadDevices().catch((error) => {
 });
 
 loadZigbeeHealth().catch((error) => console.error(error));
+loadMotionLog().catch((error) => console.error(error));
 
 /* Kept even once the live stream below is connected: this is the reconciliation
    pass that repairs anything the stream missed while the laptop was asleep or the
@@ -7380,6 +7504,9 @@ function scheduleLiveRefresh() {
   liveRefreshTimer = setTimeout(() => {
     liveRefreshTimer = null;
     loadDevices().catch(console.error);
+    /* A detection is exactly the kind of event this stream exists for, so the
+       log follows the same push rather than waiting for the 60s poll. */
+    loadMotionLog().catch(console.error);
   }, LIVE_REFRESH_DEBOUNCE_MS);
 }
 

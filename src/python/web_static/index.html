@@ -295,6 +295,35 @@
     </div>
 
     <!-- ── ENVIRONMENT VIEW ── -->
+    <!-- ── MOTION VIEW ── -->
+    <div class="view-panel" data-view-panel="motion">
+      <div class="section-header">
+        <span class="section-title">Motion</span>
+        <div class="section-actions">
+          <button class="command device-back-btn" type="button" data-back-to-devices hidden>
+            <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <button class="command" type="button" data-manage-group="motion">
+            <i class="ti ti-list-check" aria-hidden="true"></i> Manage
+          </button>
+          <button class="command" type="button" data-edit-group="motion">
+            <i class="ti ti-pencil" aria-hidden="true"></i> Edit
+          </button>
+          <span class="section-meta">Occupancy &amp; motion</span>
+        </div>
+      </div>
+      <div class="device-grid sensor-tile-grid" id="motionGrid">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+      <div class="section-header motion-log-header">
+        <span class="section-title">Motion log</span>
+        <span class="section-meta">Last 14 days</span>
+      </div>
+      <div class="motion-log" id="motionLog">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
     <div class="view-panel" data-view-panel="environment">
       <div class="section-header">
         <span class="section-title">Environment</span>

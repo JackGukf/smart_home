@@ -16,7 +16,11 @@ INDEX_HTML = PROJECT_ROOT / "src" / "python" / "web_static" / "index.html"
 APP_JS = PROJECT_ROOT / "src" / "python" / "web_static" / "app.js"
 STYLES_CSS = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 
-EXPECTED_ORDER = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
+# Motion sits before Environment because a sensor that just tripped is more
+# urgent than a temperature, and because the two reading-filtered groups
+# (Motion, Environment) then read together ahead of the Sensors catch-all.
+EXPECTED_ORDER = ["lights", "plugs", "ambient", "humidifier", "motion",
+                  "environment", "tuya", "climate"]
 
 # Bridges is seeded but deliberately not builtin: it has no bespoke panel, so
 # it renders through the dynamic-group path and gets a dynamic overview tile

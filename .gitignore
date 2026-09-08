@@ -93,3 +93,6 @@ deploy/zigbee/.autostart-disabled
 
 # Drafts from scripts/author_automation.py - review artefacts, not source.
 automation-proposals/
+
+# Motion log written by the dashboard at runtime.
+motion_log.jsonl
