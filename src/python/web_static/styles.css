@@ -5178,6 +5178,32 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   border-radius: var(--radius);
   overflow: hidden;
 }
+/* Expanded, the log scrolls inside itself rather than lengthening the page:
+   a fortnight of a busy house is hundreds of rows. */
+.motion-log.expanded {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.motion-log-more {
+  display: block;
+  width: 100%;
+  padding: 11px 14px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: .85rem;
+  cursor: pointer;
+}
+.motion-log-more:hover { color: var(--text); background: var(--border); }
+/* Sticks to the bottom of the scroll box so "Show fewer" is always reachable
+   without scrolling back through everything you just opened. */
+.motion-log.expanded .motion-log-more {
+  position: sticky;
+  bottom: 0;
+  background: var(--card);
+}
 .motion-row {
   display: grid;
   grid-template-columns: 78px 10px minmax(0, 1fr) auto;

@@ -2132,24 +2132,50 @@ function formatMotionDuration(seconds) {
   return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
 }
 
+/* How many rows the log shows before you ask for more. The fortnight of history
+   is still fetched and still there - but rendering all of it pushed everything
+   below the log off the bottom of the page, and grew as the house did. */
+const MOTION_LOG_COLLAPSED = 8;
+let motionLogEvents = [];
+let motionLogExpanded = false;
+
 function renderMotionLog(events) {
   if (!motionLog) return;
+  motionLogEvents = events;
   if (!events.length) {
     motionLog.innerHTML =
       '<div class="empty">No motion recorded yet. Events appear here as sensors trip.</div>';
     return;
   }
+
+  const shown = motionLogExpanded ? events : events.slice(0, MOTION_LOG_COLLAPSED);
   /* Grouped by day, because "19:58" means nothing without knowing which day,
      and the log keeps a fortnight. */
   let lastDay = "";
-  const rows = events.map((event) => {
+  const rows = shown.map((event) => {
     const day = new Date((Number(event.ts) || 0) * 1000).toDateString();
     const header = day === lastDay ? "" : `<div class="motion-day">${escapeHtml(day)}</div>`;
     lastDay = day;
     return header + motionLogRowHtml(event);
   });
-  motionLog.innerHTML = rows.join("");
+
+  const hidden = events.length - shown.length;
+  const toggle = motionLogExpanded
+    ? `<button class="motion-log-more" type="button" data-motion-log-toggle>Show fewer</button>`
+    : hidden > 0
+      ? `<button class="motion-log-more" type="button" data-motion-log-toggle>Show ${hidden} older</button>`
+      : "";
+
+  motionLog.classList.toggle("expanded", motionLogExpanded);
+  motionLog.innerHTML = rows.join("") + toggle;
 }
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-motion-log-toggle]")) return;
+  motionLogExpanded = !motionLogExpanded;
+  /* Re-rendered from what was already fetched, so expanding costs no request. */
+  renderMotionLog(motionLogEvents);
+});
 
 async function loadMotionLog() {
   if (!motionLog) return;

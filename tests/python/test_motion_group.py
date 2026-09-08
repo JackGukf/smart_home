@@ -290,3 +290,24 @@ def test_the_orphan_tool_disables_rather_than_deletes_and_spares_live_devices() 
     # Nothing changes without an explicit flag and an explicit device name.
     assert "--apply" in source
     assert 'ap.error("give device names, or --list to see the candidates")' in source
+
+
+def test_motion_log_is_collapsed_until_asked_to_expand() -> None:
+    """The log renders a fortnight of history. Drawing all of it pushed the rest
+    of the view off the bottom of the page and grew as the house did, so only a
+    handful of rows are drawn until the toggle is pressed."""
+    app_js = (PROJECT_ROOT / "src" / "python" / "web_static" / "app.js").read_text(encoding="utf-8")
+
+    assert "const MOTION_LOG_COLLAPSED = 8;" in app_js
+    assert "events.slice(0, MOTION_LOG_COLLAPSED)" in app_js
+    assert "data-motion-log-toggle" in app_js
+    # Expanding must not re-fetch: the rows are already in hand.
+    assert app_js.count('requestJson("/api/motion/log') == 1
+
+
+def test_the_expanded_motion_log_scrolls_instead_of_growing_the_page() -> None:
+    styles = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+
+    expanded = styles.split(".motion-log.expanded {")[1].split("}")[0]
+    assert "max-height" in expanded
+    assert "overflow-y: auto" in expanded
