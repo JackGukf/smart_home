@@ -267,3 +267,26 @@ def test_the_recorder_does_not_ride_the_browser_event_stream() -> None:
     # It must outlive any single failure, or one Home Assistant restart ends the log.
     assert "while True" in recorder
     assert "backoff" in recorder
+
+
+def test_the_orphan_tool_disables_rather_than_deletes_and_spares_live_devices() -> None:
+    """Moving sensors between radios leaves the old integration's entries behind.
+
+    Two properties make this safe to point at a live house: it refuses any
+    device that still reports, judging on state rather than on how dead the name
+    looks; and it disables rather than deletes, which is both the only thing
+    Home Assistant 2026.6 offers over the WebSocket API and the reversible
+    option. A disabled device's entities leave the state machine, so they
+    disappear from /api/states and everything built on it.
+    """
+    source = (PROJECT_ROOT / "scripts" / "disable-orphan-ha-devices.py").read_text(encoding="utf-8")
+
+    assert 'DEAD_STATES = {None, "unavailable", "unknown"}' in source
+    assert "REFUSING" in source, "no guard against disabling a device that still reports"
+    assert '"disabled_by": "user"' in source
+    # Deleting a registry entry takes its history with it and cannot be undone
+    # from the UI.
+    assert "remove_config_entry_from_device" not in source.split('"""')[2]
+    # Nothing changes without an explicit flag and an explicit device name.
+    assert "--apply" in source
+    assert 'ap.error("give device names, or --list to see the candidates")' in source

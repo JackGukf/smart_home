@@ -285,6 +285,26 @@ Ordered by how much time they cost.
   Assistant on the LAN. Change it.
 - **`North bedroom light switch`** is not commissioned on the current Matter
   fabric. Factory reset it, re-pair, then re-run the backup.
+- **Stale Tuya devices linger after a sensor moves to the Zigbee dongle.**
+  Home Assistant keeps the old integration's device, whose entities sit at
+  `unavailable` forever and render as dead tiles in every view built on
+  `/api/states`. Five accumulated this way.
+
+  `Motion Sensor&TH`, `Motion Sensor&TH 2` and `Door Sensor` were disabled
+  2026-09-07 with `scripts/disable-orphan-ha-devices.py`, each confirmed
+  superseded by a live Zigbee equivalent. Still present and still dead:
+  `WATER SENSOR` and `Temperature and humidity sensor`, both on the `tuya`
+  platform — check they were re-paired before disabling them too.
+
+  Disabled rather than deleted: HA 2026.6 has no
+  `remove_config_entry_from_device` WebSocket command, and a disabled device's
+  entities leave the state machine anyway, which is the effect wanted. The state
+  lives in `.storage/core.device_registry`, so it is in the backup and survives a
+  restore. `--list` shows candidates; it will not act without an explicit name
+  and `--apply`, and refuses any device still reporting. Note that `--list` also
+  surfaces things that are legitimately stateless — Tuya scenes, a TTS service,
+  a Cast player — so read it, do not pipe it.
+
 - **Front door sensor (Zbeacon TS0203) does not hold state — a stopgap is in
   place, and it must be removed with the sensor.**
 
