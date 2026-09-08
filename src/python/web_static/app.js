@@ -5592,18 +5592,66 @@ function resetHomeLayout() {
   });
 })();
 
+/* Two cards on the same cells do not error or reflow -- CSS grid stacks them,
+   and the one painted second simply hides the other. That is how the Security
+   card went missing on a tablet: its default cell is the one Temperatures used
+   to hold, so any browser with a *saved* Temperatures position (a resize writes
+   x and y unchanged) put the new card underneath it.
+
+   So placement resolves collisions. A card the user has positioned keeps
+   exactly where they put it; a card falling back to a default moves down until
+   it is clear. Only the second kind can move, because the first kind is
+   somebody's decision. */
+function cellsOf(lay) {
+  const cells = [];
+  for (let col = lay.x; col < lay.x + lay.w; col++) {
+    for (let row = lay.y; row < lay.y + lay.h; row++) cells.push(`${col},${row}`);
+  }
+  return cells;
+}
+
+function firstFreeBelow(lay, taken) {
+  const found = { ...lay };
+  // Bounded: the grid has no bottom, but a runaway loop would hang the page.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    if (!cellsOf(found).some((cell) => taken.has(cell))) return found;
+    found.y += 1;
+  }
+  return found;
+}
+
 function applyHomeCardLayout() {
   const grid = document.querySelector("#homeCardGrid");
   if (!grid) return;
   const layout = loadHomeLayout();
   const hidden = loadHiddenHomeCards();
   let changed = false;
+
+  const visible = [];
   for (const card of grid.querySelectorAll(".home-card")) {
     const id = card.dataset.homeCard;
-    // A hidden card keeps its stored layout; it is only taken off the screen.
+    // A hidden card keeps its stored layout; it is only taken off the screen,
+    // and it reserves no cells, so what is left can close over the hole.
     card.hidden = hidden.has(id);
     if (card.hidden) continue;
-    let lay = layout[id] || DEFAULT_HOME_LAYOUT[id];
+    visible.push(card);
+  }
+  const taken = new Set();
+
+  // Pass one: positions the user chose. These are never moved.
+  for (const card of visible) {
+    const lay = layout[card.dataset.homeCard];
+    if (!lay) continue;
+    setCardCell(card, lay);
+    cellsOf(lay).forEach((cell) => taken.add(cell));
+  }
+
+  // Pass two: everything else, in DOM order so the result is stable.
+  for (const card of visible) {
+    const id = card.dataset.homeCard;
+    if (layout[id]) continue;
+
+    let lay = DEFAULT_HOME_LAYOUT[id];
     if (!lay) {
       // New (custom) card: park it below everything currently placed.
       const placed = Object.entries(DEFAULT_HOME_LAYOUT)
@@ -5612,10 +5660,19 @@ function applyHomeCardLayout() {
         .concat(Object.values(layout));
       const bottom = placed.reduce((max, l) => Math.max(max, l.y + l.h), 1);
       lay = { x: 1, y: bottom, w: 4, h: 6 };
-      layout[id] = lay;
+    }
+
+    const resolved = firstFreeBelow(lay, taken);
+    setCardCell(card, resolved);
+    cellsOf(resolved).forEach((cell) => taken.add(cell));
+
+    /* Persist only when the card actually had to move, or was custom. Writing
+       every default back would freeze this browser's layout against future
+       changes to DEFAULT_HOME_LAYOUT, which Reset Layout is supposed to adopt. */
+    if (!DEFAULT_HOME_LAYOUT[id] || resolved.y !== lay.y) {
+      layout[id] = resolved;
       changed = true;
     }
-    setCardCell(card, lay);
   }
   if (changed) saveHomeLayout(layout);
 }

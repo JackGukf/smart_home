@@ -123,3 +123,77 @@ def test_home_header_buttons_wrap_to_two_lines_on_a_phone() -> None:
     assert "grid-template-columns: 1fr 1fr" in body
     # Grid gap, not flex gap: older Safari ignores the latter entirely.
     assert "display: grid" in body
+
+
+# ── Placement against a browser that already has a saved layout ──
+
+import json
+import shutil
+import subprocess
+
+import pytest
+
+HARNESS = """
+const src = require('fs').readFileSync(process.argv[2], 'utf8');
+const pick = (name) => {
+  const at = src.indexOf(`function ${name}`);
+  if (at < 0) throw new Error(`missing function ${name}`);
+  let depth = 0, i = src.indexOf('{', at);
+  for (; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(at, i + 1); }
+  }
+  throw new Error(`unbalanced ${name}`);
+};
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_a_default_placement_moves_clear_of_a_card_the_user_positioned(tmp_path) -> None:
+    """Two cards on the same cells do not error -- CSS grid stacks them and the
+    one painted second hides the other.
+
+    This is not hypothetical: the Security card's default cell is the one
+    Temperatures used to hold, so a browser with a saved Temperatures position
+    (a resize writes x and y unchanged) put the new card underneath it and it
+    vanished. A card the user placed must not move; a card falling back to a
+    default must.
+    """
+    script = HARNESS + """
+eval(pick('cellsOf') + pick('firstFreeBelow'));
+
+// Temperatures, as a saved layout would hold it: the old default cell.
+const taken = new Set(cellsOf({ x: 5, y: 8, w: 4, h: 6 }));
+// Security, arriving on its default -- exactly the same cell.
+const moved = firstFreeBelow({ x: 5, y: 8, w: 4, h: 8 }, taken);
+
+const clear = firstFreeBelow({ x: 1, y: 1, w: 4, h: 5 }, taken);
+console.log(JSON.stringify({ moved, clear }));
+"""
+    harness = tmp_path / "harness.js"
+    harness.write_text(HARNESS and script, encoding="utf-8")
+    out = subprocess.run(["node", str(harness), str(APP_JS)],
+                         capture_output=True, text=True, check=True)
+    result = json.loads(out.stdout)
+
+    # Pushed below the saved card rather than left on top of it.
+    assert result["moved"]["y"] == 14, result["moved"]
+    assert result["moved"]["x"] == 5, "it should stay in its column"
+    # A cell nobody holds is left exactly where the default put it.
+    assert result["clear"] == {"x": 1, "y": 1, "w": 4, "h": 5}
+
+
+def test_user_positions_are_claimed_before_defaults_are_placed() -> None:
+    """Order is the whole guarantee: pass one claims what the user chose, pass
+    two fits the rest around it. Reversed, a default could push a card the user
+    deliberately placed."""
+    source = APP_JS.read_text(encoding="utf-8")
+    body = source.split("function applyHomeCardLayout()")[1].split("\n/* ")[0]
+
+    user_pass = body.index("Pass one")
+    default_pass = body.index("Pass two")
+    assert user_pass < default_pass
+
+    # A default that had to move is remembered; one that did not is left alone,
+    # or this browser freezes against future DEFAULT_HOME_LAYOUT changes.
+    assert "resolved.y !== lay.y" in body
