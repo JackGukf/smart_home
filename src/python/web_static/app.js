@@ -708,6 +708,10 @@ async function sendBrightness(host, level) {
      the rest of the page: the card that said OFF kept saying OFF until the next
      60 s poll, even though the lamp was visibly lit. */
   patchLocalDeviceState(host, { brightness: level, is_on: true });
+  /* A level the user just chose is the best possible answer to "what will this
+     light come back on at", so it is remembered and held like any command. */
+  rememberBrightness(host, level);
+  notePendingCommand(host, { is_on: true, brightness: level });
   if (host.startsWith("matter:")) {
     const nodeId = host.slice(7);
     const resp = await fetch(`/api/matter/devices/${nodeId}/commands/brightness?brightness=${level}`, {
@@ -1529,7 +1533,11 @@ function renderDeviceGroup(targetGrid, devices, emptyText) {
     const nextCommand = isOn ? "off" : "on";
     const plug        = isPlug(device);
     const dimmable    = plug ? false : (device.is_dimmable !== false);
-    const brightness  = device.brightness ?? (isOn ? 100 : 10);
+    /* Home Assistant reports no brightness for a light that is off, so without
+       the recalled level the dial would open at a placeholder and then jump to
+       the real one a second later. */
+    rememberBrightness(device.host, device.brightness);
+    const brightness  = device.brightness ?? recalledBrightness(device.host) ?? (isOn ? 100 : 10);
     const dimLocked   = dimmable && isDimLocked(device.host);
     const { dead, reason } = deviceUnavailability(device);
 
@@ -1845,22 +1853,34 @@ function expandSensorReadings(readings) {
    reads the same whether the reading arrived from Zigbee, Tuya direct or
    Home Assistant. Keys are the ones sensorCapabilityKey() returns, plus
    "window" (a door-class refinement) and the "sensor" fallback. */
+/* Icon and wording per sensor type. Deliberately no colour: the type is
+   carried by the icon and the label, which say it precisely, where a hue only
+   hints at it. Nine hues across fourteen types turned a grid of these tiles
+   into a colour chart nobody could read. */
 const SENSOR_TYPE_META = {
-  temperature: { icon: "ti-temperature",    hue: "var(--orange)", label: "Temperature" },
-  humidity:    { icon: "ti-droplet",        hue: "var(--cyan)",   label: "Humidity"    },
-  illuminance: { icon: "ti-sun",            hue: "var(--amber)",  label: "Light level" },
-  motion:      { icon: "ti-radar-2",        hue: "var(--purple)", label: "Motion"      },
-  door:        { icon: "ti-door",           hue: "var(--indigo)", label: "Door"        },
-  window:      { icon: "ti-window",         hue: "var(--indigo)", label: "Window"      },
-  water:       { icon: "ti-droplet-filled", hue: "var(--teal)",   label: "Leak"        },
-  smoke:       { icon: "ti-flame",          hue: "var(--red)",    label: "Smoke"       },
-  tamper:      { icon: "ti-shield-lock",    hue: "var(--slate)",  label: "Tamper"      },
-  problem:     { icon: "ti-alert-hexagon",  hue: "var(--amber)",  label: "Status"      },
-  battery:     { icon: "ti-battery-3",      hue: "var(--green)",  label: "Battery"     },
-  light:       { icon: "ti-bulb",           hue: "var(--amber)",  label: "Light"       },
-  environment: { icon: "ti-temperature",    hue: "var(--teal)",   label: "Environment" },
-  sensor:      { icon: "ti-radar-2",        hue: "var(--slate)",  label: "Sensor"      },
+  temperature: { icon: "ti-temperature",    label: "Temperature" },
+  humidity:    { icon: "ti-droplet",        label: "Humidity"    },
+  illuminance: { icon: "ti-sun",            label: "Light level" },
+  motion:      { icon: "ti-radar-2",        label: "Motion"      },
+  door:        { icon: "ti-door",           label: "Door"        },
+  window:      { icon: "ti-window",         label: "Window"      },
+  water:       { icon: "ti-droplet-filled", label: "Leak"        },
+  smoke:       { icon: "ti-flame",          label: "Smoke"       },
+  tamper:      { icon: "ti-shield-lock",    label: "Tamper"      },
+  problem:     { icon: "ti-alert-hexagon",  label: "Status"      },
+  battery:     { icon: "ti-battery-3",      label: "Battery"     },
+  light:       { icon: "ti-bulb",           label: "Light"       },
+  environment: { icon: "ti-temperature",    label: "Environment" },
+  sensor:      { icon: "ti-radar-2",        label: "Sensor"      },
 };
+
+/* The whole palette these tiles may use, and there are only two entries:
+   red means something wants attention, the theme accent means everything else.
+   A reading's *type* is never coloured - only its urgency is - so a wall of
+   sensors reads as calm until one of them is not. */
+function sensorTileHue(needsAttention) {
+  return needsAttention ? "var(--red)" : "var(--t-accent)";
+}
 
 function sensorTypeMeta(key) {
   return SENSOR_TYPE_META[key] || SENSOR_TYPE_META.sensor;
@@ -1871,7 +1891,9 @@ function sensorTypeMeta(key) {
 function batteryMeta(pct) {
   return {
     icon: pct > 75 ? "ti-battery-4" : pct > 50 ? "ti-battery-3" : pct > 25 ? "ti-battery-2" : "ti-battery-1",
-    hue:  pct > 50 ? "var(--green)" : pct > 20 ? "var(--amber)" : "var(--red)",
+    /* The level is already in the icon and the number beside it, so colour is
+       spent only on the one case worth interrupting for. */
+    hue: pct > 20 ? "" : "var(--red)",
   };
 }
 
@@ -1883,7 +1905,8 @@ function sensorTileIcon(key, cls, hue) {
 
 /* One small icon-and-value pair in the tile's footer line. */
 function sensorTileFacet(facet) {
-  return `<span class="sdc-tile-m">${sensorTileIcon(facet.key, "", facet.hue || sensorTypeMeta(facet.key).hue)}${escapeHtml(facet.text)}</span>`;
+  /* Only a tripped facet is coloured; the rest inherit the tile's text colour. */
+  return `<span class="sdc-tile-m">${sensorTileIcon(facet.key, "", facet.detected ? sensorTileHue(true) : "")}${escapeHtml(facet.text)}</span>`;
 }
 
 /* ── Sensor device tile ──
@@ -1961,7 +1984,7 @@ function renderSensorDeviceCard(group, mode) {
     };
 
   const heroMeta = sensorTypeMeta(hero.key);
-  const tint = hasAlert && hero.detected ? "var(--red)" : heroMeta.hue;
+  const tint = sensorTileHue(hasAlert && Boolean(hero.detected));
 
   const heroHtml = hero.value !== undefined
     ? `<div class="sdc-tile-big">${escapeHtml(hero.value)}<span class="sdc-tile-unit">${escapeHtml(hero.unit)}</span></div>`
@@ -3706,6 +3729,7 @@ async function loadDevices() {
   latestAlarmData     = alarmData;
   latestSwitchDevices = deviceData.devices;
   latestMatterDevices = matterData.devices || [];
+  applyPendingCommands();
   latestThermostats   = ecobeeData?.thermostats || [];
   areasDoc            = areasData;
 
@@ -6263,6 +6287,73 @@ function deviceSourceOf(host) {
    returns. Patching the local model first means the repaint below shows the
    user's own action rather than briefly snapping back to the old value; the
    60 s poll reconciles if the command did not take. */
+/* ── A command is not believed until something confirms it ──
+
+   /api/devices is a cache served instantly while a re-poll runs behind it, and
+   a Home Assistant entity needs a moment before HA's own integration has
+   polled the device and updated the state machine. So the read taken straight
+   after a command usually still reports the state from *before* it: the card
+   painted the new state, snapped back to the old one, and then flipped a
+   second time when the truth arrived two or more seconds later.
+
+   The expected state is therefore held until a read agrees with it, or until
+   the window closes - whichever comes first. A command that genuinely failed
+   still reverts at once, because the HTTP error does that separately; a switch
+   that is offline settles on the truth when the window closes, having flickered
+   nought times on the way there instead of twice. */
+const PENDING_COMMAND_MS = 12000;
+const pendingCommands = new Map();
+
+function deviceHostKey(device) {
+  return String(device.host ?? (device.node_id != null ? `matter:${device.node_id}` : device.id));
+}
+
+function notePendingCommand(host, patch) {
+  if (!host) return;
+  pendingCommands.set(String(host), { patch, until: Date.now() + PENDING_COMMAND_MS });
+}
+
+/* Re-assert anything a command asked for that the server has not caught up
+   with yet. Called after every read, before anything is painted from it. */
+function applyPendingCommands() {
+  if (!pendingCommands.size) return;
+  const now = Date.now();
+  for (const [host, pending] of pendingCommands) {
+    if (pending.until <= now) pendingCommands.delete(host);
+  }
+  for (const list of [latestSwitchDevices, latestMatterDevices, latestTuyaDevices]) {
+    for (const device of list || []) {
+      const pending = pendingCommands.get(deviceHostKey(device));
+      if (!pending) continue;
+      if (Object.entries(pending.patch).every(([key, value]) => device[key] === value)) {
+        // The server agrees now, so stop overriding it.
+        pendingCommands.delete(deviceHostKey(device));
+        continue;
+      }
+      Object.assign(device, pending.patch);
+    }
+  }
+}
+
+/* ── What brightness a light comes back on at ──
+
+   Home Assistant reports no brightness at all for a light that is off, so the
+   card fell back to a placeholder - and the dial jumped to that placeholder the
+   instant you switched on, then again to the real level when the device
+   answered. Remembering the last level actually observed lets the dial open
+   where the light is about to be. */
+const lastKnownBrightness = new Map();
+
+function rememberBrightness(host, brightness) {
+  const level = Number(brightness);
+  if (!host || !Number.isFinite(level) || level <= 0) return;
+  lastKnownBrightness.set(String(host), Math.round(level));
+}
+
+function recalledBrightness(host) {
+  return lastKnownBrightness.get(String(host));
+}
+
 function patchLocalDeviceState(host, patch) {
   const lists = [latestSwitchDevices, latestMatterDevices];
   for (const list of lists) {
@@ -6296,7 +6387,9 @@ async function refreshDeviceSource(host) {
       _renderMatterDeviceList(latestMatterDevices);
     } else if (source === "tuya") {
       const data = await requestJson("/api/tuya/devices");
-      renderTuyaDevices(data.devices);
+      latestTuyaDevices = data.devices;
+      applyPendingCommands();
+      renderTuyaDevices(latestTuyaDevices);
     } else {
       const data = await requestJson("/api/devices");
       latestSwitchDevices = data.devices;
@@ -6307,6 +6400,7 @@ async function refreshDeviceSource(host) {
     return;
   }
 
+  applyPendingCommands();
   renderDevices(latestSwitchDevices, latestCameras, latestMatterDevices);
   renderDevicesOverview();
   renderHomeView();
@@ -6327,13 +6421,17 @@ async function sendCommand(host, command, options = {}) {
     await requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
   }
   logActivity("Switch " + host.split(".").pop() + " turned " + command);
-  if (command === "on" || command === "off") patchLocalDeviceState(host, { is_on: command === "on" });
+  if (command === "on" || command === "off") {
+    patchLocalDeviceState(host, { is_on: command === "on" });
+    notePendingCommand(host, { is_on: command === "on" });
+  }
   if (options.skipRefresh !== true) await refreshDeviceSource(host);
 }
 
 async function sendTuyaCommand(deviceId, command) {
   apiStatus.textContent = "Sending";
   await requestJson(`/api/tuya/devices/${deviceId}/commands/${command}`, { method: "POST" });
+  if (command === "on" || command === "off") notePendingCommand(deviceId, { is_on: command === "on" });
   await refreshDeviceSource("tuya:" + deviceId);
 }
 
@@ -6349,6 +6447,10 @@ async function sendHomeAssistantCommand(entityId, command) {
   apiStatus.textContent = "Sending";
   await requestJson(`/api/home-assistant/entities/${encodeURIComponent(entityId)}/commands/${command}`, { method: "POST" });
   logActivity(`HA ${entityId.split(".")[1] || entityId} → ${command}`);
+  if (command === "on" || command === "off") {
+    notePendingCommand("ha:" + entityId, { is_on: command === "on" });
+    notePendingCommand(entityId, { is_on: command === "on" });
+  }
   await refreshDeviceSource("ha:" + entityId);
 }
 
@@ -6444,7 +6546,13 @@ function updateCardDial(card, isNowOn) {
   if (dialCenter) {
     const isPlug   = card.dataset.category === "smart_plug";
     const locked   = card.dataset.dimmable === "false";
-    const brightness = locked ? 100 : (parseInt(card.dataset.brightness, 10) || (isNowOn ? 100 : 10));
+    /* The card's own data-brightness first - it is what the device last
+       reported - then the level remembered for this host, and only then a
+       default. Reaching the default means we have genuinely never seen this
+       light on. */
+    const brightness = locked ? 100 : (parseInt(card.dataset.brightness, 10)
+      || recalledBrightness(card.dataset.host)
+      || (isNowOn ? 100 : 10));
     dialCenter.innerHTML = isPlug
       ? buildPowerGauge(isNowOn, 0, 1500)
       : buildDimControlDial(brightness, isNowOn, !locked);

@@ -52,9 +52,18 @@ def test_dimmable_step_controls_survive_dial_refresh() -> None:
 
 
 def test_fixed_light_optimistic_on_always_uses_full_brightness() -> None:
+    """A non-dimmable light is always drawn at 100: it has no other level.
+
+    The dimmable branch falls back in order - what the device last reported,
+    then the level remembered for this host, and only then a default - so that
+    switching a light on opens the dial where the light is about to be rather
+    than at a placeholder it will correct a second later.
+    """
     source = APP_JS.read_text(encoding="utf-8")
 
-    assert 'const brightness = locked ? 100 : (parseInt(card.dataset.brightness, 10) || (isNowOn ? 100 : 10));' in source
+    assert 'const brightness = locked ? 100 : (parseInt(card.dataset.brightness, 10)' in source
+    assert '|| recalledBrightness(card.dataset.host)' in source
+    assert '|| (isNowOn ? 100 : 10));' in source
     assert 'buildDimControlDial(brightness, isNowOn, !locked)' in source
 
 
