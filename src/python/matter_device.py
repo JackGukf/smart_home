@@ -84,13 +84,27 @@ def _detect_category(endpoint: Any) -> tuple[str, bool]:
     return ("smart_plug", has_level)
 
 
+_AGGREGATOR_DEVICE_TYPE = 14   # 0x000E, what a bridge puts on endpoint 1
+
+
 def is_bridge_node(node: Any) -> bool:
     """Is this node a bridge rather than a device?
 
     Our own chip-bridge-app answers yes, and it should not appear in the
     dashboard as a light to switch on: it is the thing publishing the lights.
+
+    Three sources, because the first one is not stable. python-matter-server's
+    MatterNode calls it ``is_bridge_device``; the raw WebSocket payload calls
+    the same thing ``is_bridge``. Guessing wrong is silent -- getattr simply
+    returns the default and the bridge goes back to being a light -- so the
+    Aggregator device type is checked too. That one is protocol, not client
+    naming, and cannot drift with a library upgrade.
     """
-    return bool(getattr(node, "is_bridge", False))
+    for attribute in ("is_bridge_device", "is_bridge"):
+        if bool(getattr(node, attribute, False)):
+            return True
+    endpoint = (getattr(node, "endpoints", None) or {}).get(1)
+    return endpoint is not None and _AGGREGATOR_DEVICE_TYPE in _endpoint_device_type_ids(endpoint)
 
 
 def node_display_name(node: Any) -> str:

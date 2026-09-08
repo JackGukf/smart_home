@@ -27,12 +27,19 @@ class _Endpoint:
 
 
 def _node(node_id: int, *, vendor="", product="", label="", is_bridge=False, extra=None):
+    """A stand-in for python-matter-server's MatterNode.
+
+    The flag is `is_bridge_device`, which is what the real object exposes -- an
+    earlier version of this fake said `is_bridge`, so the test agreed with the
+    bug instead of catching it, and the bridge shipped as a light switch.
+    """
     root = _Endpoint({(BASIC_INFO, VENDOR): vendor,
                       (BASIC_INFO, PRODUCT): product,
                       (BASIC_INFO, NODE_LABEL): label})
     endpoints = {0: root}
     endpoints.update(extra or {})
-    return SimpleNamespace(node_id=node_id, endpoints=endpoints, is_bridge=is_bridge, available=True)
+    return SimpleNamespace(node_id=node_id, endpoints=endpoints,
+                           is_bridge_device=is_bridge, available=True)
 
 
 def test_a_node_is_named_from_what_it_announces() -> None:
@@ -60,6 +67,24 @@ def test_the_chip_sdk_placeholders_do_not_become_names() -> None:
     assert node_display_name(_node(9)) == "Matter Device 9"
     # No endpoints at all is still a name, not a crash.
     assert node_display_name(SimpleNamespace(node_id=4, endpoints={})) == "Matter Device 4"
+
+
+def test_a_bridge_is_recognised_however_the_client_spells_the_flag() -> None:
+    """python-matter-server says is_bridge_device; the raw WebSocket payload
+    says is_bridge. Reading the wrong one fails silently -- getattr returns the
+    default and the bridge is a light again -- so the Aggregator device type on
+    endpoint 1 is the backstop. That is protocol, not client naming."""
+    from src.python.matter_device import is_bridge_node
+
+    aggregator = {1: _Endpoint({}, device_types=(14,))}
+
+    assert is_bridge_node(SimpleNamespace(node_id=3, endpoints={}, is_bridge_device=True))
+    assert is_bridge_node(SimpleNamespace(node_id=3, endpoints={}, is_bridge=True))
+    # Neither flag present: the endpoint still gives it away.
+    assert is_bridge_node(SimpleNamespace(node_id=3, endpoints=aggregator))
+    # And a plain light is not swept up by any of the three.
+    light = {1: _Endpoint({(6, 0): True}, device_types=(256,))}
+    assert not is_bridge_node(SimpleNamespace(node_id=2, endpoints=light))
 
 
 def test_our_own_bridge_is_not_a_light_to_switch_on() -> None:
