@@ -19,10 +19,16 @@ STYLES = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 # to sit above Music here; it now lives in the Bridges group under Devices,
 # alongside the Tuya gateway, so the coordinator is read next to the other
 # radios rather than as a lone tile on the landing view. Music left too, for
-# the Media view, and Alarm took its slot -- a phone should show
-# whether the house is shut before it shows what is playing.
+# the Media view, and Alarm took its slot -- a phone should show whether the
+# house is shut before it shows what is playing.
+#
+# Alarm sits directly after Camera so the two are read together on a phone
+# without scrolling: a camera view and "is anything open" answer the same
+# question. This is markup order only -- above 740px the grid places cards from
+# DEFAULT_HOME_LAYOUT, where Alarm is still in the left column, so the two
+# orders differ on purpose.
 PHONE_ORDER = [
-    "weather", "camera", "climate", "tempsensors", "areas", "alarm",
+    "weather", "camera", "alarm", "climate", "tempsensors", "areas",
 ]
 
 # Grid columns are 4 wide, so these are the three column starts.
@@ -40,7 +46,11 @@ def _defaults() -> dict[str, dict[str, int]]:
 
 def test_phone_order_is_markup_order() -> None:
     html = HTML.read_text(encoding="utf-8")
-    assert re.findall(r'data-home-card="([^"]+)"', html) == PHONE_ORDER
+    order = re.findall(r'data-home-card="([^"]+)"', html)
+    assert order == PHONE_ORDER
+    # The pairing that motivated this order, stated so a later reshuffle has to
+    # break it deliberately rather than by accident.
+    assert order.index("alarm") == order.index("camera") + 1
 
 
 def test_desktop_columns_hold_the_intended_cards() -> None:
