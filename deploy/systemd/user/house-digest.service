@@ -1,0 +1,23 @@
+[Unit]
+Description=Morning digest of the house, written by the local LLM
+# Both are loopback-only, and the digest needs Home Assistant for the entity
+# states and Ollama for the prose. Neither is a hard dependency: the script
+# exits cleanly with facts and no prose if the model is unreachable.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/.venv/bin/python /home/orangepi/smart_home_AI/scripts/house_digest.py
+# The model can take a couple of minutes on eight A720 cores. Well under the
+# timer's interval, and bounded so a wedged request cannot sit on the cores
+# until morning.
+TimeoutStartSec=600
+# It is a background report; nothing waits for it. Yielding to the house
+# services costs the digest a few seconds and costs the house nothing.
+Nice=15
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

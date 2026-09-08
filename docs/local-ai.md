@@ -344,6 +344,215 @@ Mistakes it makes that are worth recognising, all caught mechanically now: a
 `from == to` (loads, never fires), and `at: sunset` on a time trigger (a
 restriction is a condition; as a trigger it also fires at sunset on its own).
 
+## Wiring the LLM into the house
+
+Until 2026-09-08 the model was an island: Ollama ran, and nothing in the house
+could reach it. The dashboard had no LLM endpoint at all, Home Assistant's
+`ollama` integration was not configured, and `author_automation.py` was
+reachable only over SSH. That is now closed, in three pieces.
+
+Everything below is set up by `scripts/setup-ha-ollama.py`, which is idempotent
+and refuses to guess:
+
+```bash
+~/smart_home_AI/.venv/bin/python scripts/setup-ha-ollama.py            # dry run
+~/smart_home_AI/.venv/bin/python scripts/setup-ha-ollama.py --apply
+~/smart_home_AI/.venv/bin/python scripts/setup-ha-ollama.py --apply --reconfigure
+```
+
+`--reconfigure` pushes the settings in the script onto subentries that already
+exist. Without it the script only creates, so a setting changed in the file
+would never reach a board where the subentry was made by an earlier run.
+
+**Home Assistant runs on the host network**, so it reaches `127.0.0.1:11434`
+directly. The loopback bind did not have to be widened for any of this.
+
+### What it creates
+
+| Entity | Sees the house? | Where it is used |
+| --- | --- | --- |
+| `conversation.local_qwen` | no | the **default** Assist pipeline, as a fallback |
+| `conversation.local_qwen_control` | yes, `llm_hass_api: assist` | its own "Local Qwen (control)" pipeline |
+| `ai_task.local_qwen_task` | no | available to `ai_task.generate_data` from automations |
+
+### Two agents, because `prefer_local_intents` is not what it sounds like
+
+The default pipeline has `prefer_local_intents` on, so Home Assistant's own
+sentence matcher answers first and the model only sees what it could not
+parse. But the filter narrows as soon as the agent advertises CONTROL — which
+it does the moment it is given `llm_hass_api`. Then
+`_async_local_fallback_intent_filter` restricts the local-first path to
+`GetState` and `MediaSearchAndPlay`, and everything else, "turn on the office
+light" included, goes to the model.
+
+On this board that is exactly backwards, so the default pipeline gets the agent
+*without* house access. Measured through a real pipeline with
+`scripts/check-assist-routing.py`:
+
+| Sentence | Handled by | Time |
+| --- | --- | ---: |
+| "is the door sensor front door open" | local matcher | **0.03 s** |
+| "how many lights are on" | local matcher | **0.01 s** |
+| "what humidity should a bedroom be at night" | `conversation.local_qwen` | 22.3 s |
+
+That is the whole design in three lines: the house stays instant, and the model
+only costs time on questions nothing else could answer.
+
+**The matcher matches names and aliases, not paraphrases.** "is the front door
+open" does *not* match, because the entity is called "Door sensor front door";
+it falls through to the model, which correctly says it cannot check. Anything
+you want answered instantly needs an alias that matches how you actually say
+it. That is a bigger win than any model setting.
+
+### The controlling agent is not practical on this board
+
+It exists, on its own pipeline, opt-in. It is also unusable, and the reason is
+structural rather than a tuning problem: Home Assistant allows
+`MAX_TOOL_ITERATIONS = 10`, and each iteration is a full pass over a prompt
+carrying every exposed entity. With this house's ~45 exposed entities, one
+question — "how many lights are on" — ran for **over 18 minutes** without
+finishing with thinking on, and still exceeded 5.5 minutes with thinking off.
+
+So `think` is set per agent, not globally:
+
+| Agent | `think` | Why |
+| --- | --- | --- |
+| `local_qwen` | **on** | free-form prose; with it off, Ollama returns the reasoning *as* the answer |
+| `local_qwen_control` | **off** | it pays per tool iteration, up to ten of them |
+| `local_qwen_task` | on | free-form prose again |
+
+If you want the controlling agent to be usable, the lever is **exposing fewer
+entities to Assist**, not a model setting. Nothing else on this board moves it.
+
+### Two Home Assistant defaults that are wrong here
+
+**`keep_alive` defaults to `-1`** — keep the model loaded for ever. That pins
+~3.3 GiB and destroys the single property Ollama was chosen for on a swapless
+board. The script sends 300 seconds; verified by watching available memory
+return from 4591 MiB to 8877 MiB after a conversation went idle.
+
+**`think` defaults to `False`**, and that is the trap already documented above,
+reached through a different door. The integration handles thinking correctly
+when it is *on* — it files the reasoning under `thinking_content` and leaves
+`content` clean.
+
+⚠️ **`num_ctx` is 8192 and the cgroup measures 4.55 GiB against
+`MemoryMax=5G`.** That is a narrow margin, and `OOMPolicy=stop` means crossing
+it stops Ollama rather than degrading it. Lower `NUM_CTX` in the script to 4096
+if anything ever trips it; the KV cache is most of the difference.
+
+### Four things about the config-entry API that are not documented
+
+Found the hard way, all in `setup-ha-ollama.py`:
+
+- **The REST entry listing serialises `subentries` as `null`** however many the
+  entry has. Idempotency checks must use the websocket
+  `config_entries/subentries/list`, or the script creates a duplicate on every
+  run.
+- **Creating a subentry reloads the config entry**, and a flow opened before
+  that reload is discarded — the next POST returns "Invalid flow specified".
+  Wait for the entry to be `loaded` before opening each flow.
+- **An `ai_task_data` subentry takes no `prompt`.** `prompt` and `llm_hass_api`
+  are only added to the schema for `subentry_type == "conversation"`; sending
+  one is rejected with "extra keys not allowed".
+- Assist pipelines are a storage collection, so the commands are
+  `assist_pipeline/pipeline/{list,create,update,set_preferred}`, and `update`
+  requires every field, not just the changed one.
+
+## Drafting automations from the dashboard
+
+`author_automation.py`'s drafting now lives in `src/python/automation_author.py`
+so the command line and the dashboard produce the same proposal from the same
+sentence. The dashboard's **Automations** view is the same three layers
+described above, with a button on the end:
+
+| Endpoint | |
+| --- | --- |
+| `POST /api/automations/draft` | draft, validate, save a proposal file |
+| `GET /api/automations/proposals` | list them |
+| `POST /api/automations/proposals/{name}/install` | hand it to Home Assistant |
+| `DELETE /api/automations/proposals/{name}` | discard it |
+
+Installing goes through Home Assistant's own
+`POST /api/config/automation/config/{id}`, not an append to `automations.yaml`.
+That gets the same validator the UI uses — a second, authoritative check after
+ours — and Home Assistant writes the file and reloads automations itself. A
+draft that passes our checker can still be refused there, and that refusal is
+the one to believe.
+
+Drafting holds a lock: one at a time. Ollama serialises requests anyway, so a
+second concurrent draft would not start sooner, it would just hold a worker
+thread for a minute to find that out.
+
+## The morning digest
+
+`house-digest.timer` fires at 04:00 — the quietest hour on this board — and
+writes `house_digest.json`, which the dashboard serves at `/api/digest` and
+shows on the **Status** view. Install it with
+`scripts/install-house-digest.sh`.
+
+This is the shape a slow local model is genuinely good at, and the division of
+labour is the opposite of the usual one:
+
+> **Python computes every number, and decides which ones are worth saying.**
+
+The model is never asked how many times the front door opened. It cannot be
+wrong about a figure it did not calculate — which was meant to turn its
+unreliability from a correctness problem into a style problem, and in the end
+removed the need for it altogether (see below). The full fact sheet is stored
+beside the notes in the same file and is one click away in the UI.
+
+What it computes, all in `src/python/house_digest.py`:
+
+- **Motion**, per sensor, against *its own* previous days rather than against
+  the other sensors.
+- **Batteries** below 50%.
+- **What is not reporting**, grouped by device rather than listed as 49 entity
+  ids nobody can act on.
+- **The board**: lowest free memory, peak temperature, peak load, and any
+  reboots the resource logger recorded.
+
+### Qwen3-4B could not write the summary, four ways
+
+This is the one part of the plan that did not work, and it is worth recording
+precisely because the failures were varied and none of them looked like a
+failure. Measured on this board, asking it to turn the computed notes into a
+short briefing:
+
+| Attempt | Result |
+| --- | --- |
+| free-form, thinking **on** | 3000 tokens generated, **content empty** (`done_reason=length` — all of it was reasoning) |
+| schema, thinking **off** | it wrote its **reasoning into the `summary` field** |
+| schema, thinking **on** | 2500 tokens on a **206-token** prompt, **empty again** |
+| schema, thinking off, short notes | **copied the notes back verbatim** |
+
+Two conclusions, and the first corrects something stated earlier in this file:
+
+- **"A schema makes `think: false` safe" holds only when the schema's fields
+  are typed tightly enough to leave no room for prose.** That is true of
+  `author_automation.py`, whose schema is a dozen typed automation fields. It
+  is not true of a single free-text string, which accepts reasoning just as
+  happily as an answer.
+- **When the thing you want *is* prose, there is nothing left to constrain.**
+  The model reasons without bound about a task that needs no reasoning, and
+  more budget only buys more of it.
+
+So **prose is off by default** (`--prose` turns it on). The path stays in the
+code for a larger model, and `headlines()` — which picks the handful of things
+worth saying — is the briefing in the meantime. That is not a consolation
+prize: the notes are what the model was only ever going to reword, and they are
+correct by construction.
+
+Two things the digest deliberately refuses to do:
+
+- **It will not invent a baseline.** The motion log was only added recently, so
+  until there is more than a day of history before the window every sensor
+  reports "no baseline yet" rather than an average of 0.0/day — against which
+  any activity at all would look like an anomaly.
+- **It will not fail because the model did.** If Ollama is unreachable or slow,
+  the digest is still written with the facts and no prose, and the UI says so.
+  A morning report must not depend on the least reliable component in it.
+
 ## Operational notes
 
 **Memory is the binding constraint.** `llama-server` holds ~5.0 GiB for the life

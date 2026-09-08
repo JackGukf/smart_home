@@ -45,8 +45,10 @@ def test_sidebar_is_exactly_the_top_level_views() -> None:
     found = re.findall(r'<li[^>]*\bdata-view="([^"]+)"', views)
     # Media sits between Alarm and Status: it is a place things are
     # played, not a system readout, so it belongs above the diagnostics.
+    # Automations sits last before Status for the same reason - it is
+    # somewhere you go to make something, not to read a gauge.
     assert found == ["home", "cameras", "devices", "homeassistant", "alarm",
-                     "media", "status"]
+                     "media", "automations", "status"]
 
 
 def test_top_level_views_are_untouched() -> None:

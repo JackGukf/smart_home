@@ -8,16 +8,7 @@ the real house, not a hypothetical.
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-spec = importlib.util.spec_from_file_location(
-    "author_automation", PROJECT_ROOT / "scripts" / "author_automation.py"
-)
-author = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(author)
+from src.python import automation_author as author
 
 ENTITIES = {"binary_sensor.hall_motion", "light.family_room", "switch.office_switch",
             "sensor.bedroom_humidity"}

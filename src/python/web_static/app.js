@@ -6377,6 +6377,12 @@ function activateView(viewName) {
   if (viewName === "media") {
     refreshBluetooth().catch((error) => console.error(error));
   }
+  if (viewName === "automations") {
+    loadAutomationProposals().catch((error) => console.error(error));
+  }
+  if (viewName === "status") {
+    loadHouseDigest().catch((error) => console.error(error));
+  }
   if (viewName === "zigbee") {
     loadZigbeeFrame().catch((error) => console.error(error));
     loadZigbeeBridgeCard().catch((error) => console.error(error));
@@ -6808,6 +6814,188 @@ document.addEventListener("click", (event) => {
   applyTheme(id);
   renderPalettePicker();
   try { localStorage.setItem("palette_theme", id); } catch {}
+});
+
+/* ── Morning digest ──
+   Served from a file the 04:00 timer wrote, so this is a plain read and never
+   waits on the model. The facts are collapsed but present: the prose is the
+   model's retelling, and when a sentence reads oddly the numbers behind it are
+   the thing you actually want. */
+async function loadHouseDigest() {
+  const card = document.querySelector("#digestCard");
+  if (!card) return;
+  let digest;
+  try {
+    digest = await requestJson("/api/digest");
+  } catch {
+    card.hidden = true;
+    return;
+  }
+  if (!digest.available) {
+    card.hidden = true;
+    return;
+  }
+
+  const when = document.querySelector("#digestWhen");
+  if (when) {
+    const at = new Date((digest.generated_at || 0) * 1000);
+    when.textContent = Number.isNaN(at.getTime()) ? "" : at.toLocaleString();
+  }
+
+  const body = document.querySelector("#digestBody");
+  if (body) {
+    /* The notes are what Python decided was worth saying, and they are always
+       there. The model's prose is shown above them when it managed to write
+       any - a nicety on top, never the thing the digest depends on. */
+    const notes = (digest.notes || [])
+      .map((note) => `<li>${escapeHtml(note)}</li>`).join("");
+    const prose = digest.summary
+      ? `<p>${escapeHtml(digest.summary)}</p>`
+      : "";
+    body.innerHTML = prose + (notes ? `<ul class="digest-notes">${notes}</ul>` : "")
+      || `<p class="digest-noprose">Nothing to report.</p>`;
+  }
+
+  const facts = document.querySelector("#digestFacts");
+  if (facts) facts.textContent = digest.facts_text || "";
+  card.hidden = false;
+}
+
+/* ── Automations: the LLM authors, Home Assistant executes ──
+   Drafting is slow by nature - a 4B model on eight CPU cores takes tens of
+   seconds - so the button reports progress rather than pretending to be fast,
+   and only one draft runs at a time (the server enforces that too; Ollama
+   serialises requests regardless). Nothing here installs anything: a draft
+   becomes a proposal file, and installing it is a separate, explicit press. */
+let automationDrafting = false;
+
+async function loadAutomationProposals() {
+  const host = document.querySelector("#automationProposals");
+  if (!host) return;
+  let payload;
+  try {
+    payload = await requestJson("/api/automations/proposals");
+  } catch (error) {
+    host.innerHTML = `<div class="home-empty">Could not load proposals — ${escapeHtml(apiErrorDetail(error))}</div>`;
+    return;
+  }
+  renderAutomationProposals(payload.proposals || []);
+}
+
+function renderAutomationProposals(proposals) {
+  const host = document.querySelector("#automationProposals");
+  const badge = document.querySelector("#proposalCount");
+  if (badge) badge.textContent = proposals.length ? String(proposals.length) : "–";
+  if (!host) return;
+
+  if (!proposals.length) {
+    host.innerHTML = `<div class="home-empty">No proposals yet. Describe a rule above and press Draft.</div>`;
+    return;
+  }
+
+  host.innerHTML = proposals.map((proposal) => {
+    /* The hints are the reason a human is in the loop: each one is a defect
+       this model actually produced, that validation cannot catch because it is
+       about intent rather than syntax. They are shown, never hidden. */
+    const hints = (proposal.hints || []).map((hint) =>
+      `<li><i class="ti ti-alert-triangle" aria-hidden="true"></i> ${escapeHtml(hint)}</li>`).join("");
+    return `
+      <div class="panel automation-proposal" data-proposal="${escapeHtml(proposal.name)}">
+        <div class="home-panel-head">
+          <span class="panel-title"><i class="ti ti-file-text"></i> ${escapeHtml(proposal.alias)}</span>
+          <span class="section-meta">${escapeHtml(proposal.request)}</span>
+        </div>
+        ${hints ? `<ul class="automation-hints">${hints}</ul>` : ""}
+        <pre class="automation-yaml">${escapeHtml(proposal.yaml)}</pre>
+        <div class="automation-actions">
+          <button class="btn-primary" type="button" data-install-proposal="${escapeHtml(proposal.name)}">Install</button>
+          <button class="btn-secondary" type="button" data-delete-proposal="${escapeHtml(proposal.name)}">Discard</button>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function setAutomationStatus(message, kind = "info") {
+  const box = document.querySelector("#automationStatus");
+  if (!box) return;
+  box.hidden = !message;
+  box.className = `automation-status automation-status-${kind}`;
+  box.innerHTML = message;
+}
+
+async function draftAutomation() {
+  if (automationDrafting) return;
+  const input = document.querySelector("#automationRequest");
+  const button = document.querySelector("#automationDraftBtn");
+  const request = (input?.value || "").trim();
+  if (!request) {
+    setAutomationStatus("Say what the automation should do.", "warn");
+    return;
+  }
+
+  automationDrafting = true;
+  if (button) { button.disabled = true; button.textContent = "Drafting…"; }
+  setAutomationStatus('<i class="ti ti-loader-2 spin"></i> Asking the local model — this takes about a minute.');
+
+  try {
+    const draft = await requestJson("/api/automations/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request }),
+    });
+    if (!draft.ok) {
+      /* Validation failed against the real house, so there is no proposal to
+         show. Say what was wrong rather than offering a broken automation. */
+      const problems = (draft.problems || []).map((p) => `<li>${escapeHtml(p)}</li>`).join("");
+      setAutomationStatus(
+        `The draft did not check out after ${draft.attempts} attempt(s):<ul>${problems}</ul>` +
+        `Try naming the entity you mean.`, "warn");
+      return;
+    }
+    setAutomationStatus(
+      `Drafted in ${draft.elapsed}s. Review it below — it is not running yet.`, "ok");
+    if (input) input.value = "";
+    await loadAutomationProposals();
+  } catch (error) {
+    setAutomationStatus(escapeHtml(apiErrorDetail(error)), "warn");
+  } finally {
+    automationDrafting = false;
+    if (button) { button.disabled = false; button.textContent = "Draft"; }
+  }
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#automationDraftBtn")) {
+    draftAutomation().catch((error) => console.error(error));
+    return;
+  }
+
+  const install = event.target.closest("[data-install-proposal]");
+  if (install) {
+    const name = install.dataset.installProposal;
+    install.disabled = true;
+    install.textContent = "Installing…";
+    requestJson(`/api/automations/proposals/${encodeURIComponent(name)}/install`, { method: "POST" })
+      .then((result) => {
+        setAutomationStatus(
+          `Installed “${escapeHtml(result.alias || name)}”. Home Assistant reloaded its automations.`, "ok");
+        return loadAutomationProposals();
+      })
+      .catch((error) => {
+        setAutomationStatus(escapeHtml(apiErrorDetail(error)), "warn");
+        install.disabled = false;
+        install.textContent = "Install";
+      });
+    return;
+  }
+
+  const discard = event.target.closest("[data-delete-proposal]");
+  if (discard) {
+    const name = discard.dataset.deleteProposal;
+    requestJson(`/api/automations/proposals/${encodeURIComponent(name)}`, { method: "DELETE" })
+      .then(() => loadAutomationProposals())
+      .catch((error) => setAutomationStatus(escapeHtml(apiErrorDetail(error)), "warn"));
+  }
 });
 
 /* Sidebar navigation — delegated, so nav items added at runtime work without

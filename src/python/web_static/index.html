@@ -94,6 +94,11 @@
         <span class="room-icon"><i class="ti ti-device-speaker"></i></span>
         Media
       </li>
+      <li class="room-item" data-view="automations">
+        <span class="room-icon"><i class="ti ti-wand"></i></span>
+        Automations
+        <span class="room-badge" id="proposalCount">–</span>
+      </li>
       <li class="room-item" data-view="status">
         <span class="room-icon"><i class="ti ti-dashboard"></i></span>
         Status
@@ -166,6 +171,22 @@
       <div class="section-header">
         <span class="section-title">Status</span>
         <span class="section-meta">Home overview</span>
+      </div>
+
+      <!-- Morning digest: written at 04:00 by house-digest.timer. The prose is
+           the local model retelling figures Python computed; the figures
+           themselves are one click away, because that is what you check when a
+           sentence looks wrong. -->
+      <div class="panel digest-card" id="digestCard" hidden>
+        <div class="home-panel-head">
+          <span class="panel-title"><i class="ti ti-sun"></i> Morning digest</span>
+          <span class="section-meta" id="digestWhen">–</span>
+        </div>
+        <div class="digest-body" id="digestBody"></div>
+        <details class="digest-facts">
+          <summary>The figures it was given</summary>
+          <pre id="digestFacts"></pre>
+        </details>
       </div>
 
       <!-- STAT ROW -->
@@ -586,6 +607,39 @@
             <div class="home-empty">Checking Bluetooth…</div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── AUTOMATIONS VIEW ──
+         Describe a rule; the local model drafts it; you install it. The draft
+         is checked against the real house before it is ever shown, and it is
+         a file on disk until the Install button is pressed - nothing here
+         reaches Home Assistant on its own. -->
+    <div class="view-panel" data-view-panel="automations">
+      <div class="section-header">
+        <span class="section-title">Automations</span>
+        <span class="section-meta">Drafted locally, installed by you</span>
+      </div>
+
+      <div class="panel automation-composer">
+        <div class="home-panel-head">
+          <span class="panel-title"><i class="ti ti-wand"></i> Describe a rule</span>
+          <span class="section-meta" id="automationModelNote">Qwen3-4B, on this board</span>
+        </div>
+        <div class="automation-compose-row">
+          <textarea id="automationRequest" rows="2" maxlength="500"
+            placeholder="turn off the office switch every night at 11pm"></textarea>
+          <button class="btn-primary" id="automationDraftBtn" type="button">Draft</button>
+        </div>
+        <div class="automation-status" id="automationStatus" hidden></div>
+      </div>
+
+      <div class="section-header">
+        <span class="section-title">Proposals</span>
+        <span class="section-meta">Nothing here is running yet</span>
+      </div>
+      <div id="automationProposals">
+        <div class="home-empty">Loading…</div>
       </div>
     </div>
 

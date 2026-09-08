@@ -5337,3 +5337,112 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
 .net-modal-row:hover { border-color: var(--border-hover); }
 .net-modal-row input { accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
 .net-modal-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Automations view ──
+   The composer is one row so the eye goes textarea → button; the proposal
+   cards below are deliberately plain, because what matters on them is the
+   YAML and the hints, not the chrome. */
+.automation-compose-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  padding: 12px 16px 16px;
+}
+.automation-compose-row textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 46px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  background: var(--input-bg, rgba(255, 255, 255, 0.04));
+  color: inherit;
+  font: inherit;
+  line-height: 1.4;
+}
+.automation-compose-row button { align-self: flex-start; white-space: nowrap; }
+
+.automation-status {
+  margin: 0 16px 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  background: var(--input-bg, rgba(255, 255, 255, 0.04));
+}
+.automation-status ul { margin: 6px 0 0; padding-left: 18px; }
+.automation-status-ok   { border-left: 3px solid var(--ok, #37b26c); }
+.automation-status-warn { border-left: 3px solid var(--warn, #d99a2b); }
+
+.automation-proposal { margin-bottom: 14px; }
+
+/* Amber, and never collapsed: every hint is a defect the model actually made,
+   and the reason a person is reviewing this at all. */
+.automation-hints {
+  margin: 0 16px 12px;
+  padding: 10px 12px 10px 30px;
+  border-radius: 10px;
+  border-left: 3px solid var(--warn, #d99a2b);
+  background: rgba(217, 154, 43, 0.08);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+.automation-hints li { margin: 2px 0; }
+
+.automation-yaml {
+  margin: 0 16px 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--code-bg, rgba(0, 0, 0, 0.25));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  /* A long entity_id must not widen the page. */
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.automation-actions {
+  display: flex;
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+
+/* ── Morning digest ──
+   Prose first and comfortable to read; the figures behind it collapsed but
+   one click away, because checking them is the point of keeping them. */
+.digest-card { margin-bottom: 18px; }
+.digest-body {
+  padding: 4px 16px 12px;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  max-width: 70ch;
+}
+.digest-body p { margin: 0; }
+.digest-noprose { opacity: 0.75; font-style: italic; }
+.digest-facts { padding: 0 16px 14px; }
+.digest-facts summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+.digest-facts pre {
+  margin: 10px 0 0;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--code-bg, rgba(0, 0, 0, 0.25));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+/* The computed notes. Always present, with the model's prose above them when
+   there is any - so the card is useful with the LLM switched off entirely. */
+.digest-notes {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.digest-notes li { margin: 3px 0; }

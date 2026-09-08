@@ -157,6 +157,20 @@ ssh -N -L 11434:127.0.0.1:11434 orangepi@192.168.0.234
 
 Treat model output as untrusted input: validate schema, enforce an allow-list, and keep device control deterministic. Never put the model in a trigger path — it is slower and less reliable than the rule it would replace. The useful shape is *LLM authors, rules execute*.
 
+**The LLM is wired into the house since 2026-09-08** — before that it ran and nothing could reach it. Three ways in, all set up by `scripts/setup-ha-ollama.py` (idempotent; `--reconfigure` also updates what already exists):
+
+| | |
+| --- | --- |
+| **Assist** | `conversation.local_qwen` is the *fallback* on the default pipeline, which has `prefer_local_intents` on. Home Assistant's matcher answers what it knows in ~0.02 s; only what it cannot parse waits ~22 s on the model. `conversation.local_qwen_control` can drive the house but is **not practical** — up to 10 tool iterations, over 5 minutes a question. Opt-in, on its own pipeline. |
+| **Dashboard** | The **Automations** view drafts a rule from a sentence, validates it against the real house, and writes a proposal. Installing is a separate press and goes through Home Assistant's own config API, which validates and reloads. |
+| **Digest** | `house-digest.timer` at 04:00 writes `house_digest.json`, shown on the Status view. **Python computes the figures and picks the few worth saying** — that list is the briefing. The model's prose is `--prose`, off by default: Qwen3-4B failed the job four different ways (`src/python/house_digest.py`). |
+
+Three settings that are not Home Assistant's defaults, and must not be reverted:
+
+- **`keep_alive` must be finite** (300 s). HA defaults to `-1`, "loaded for ever", which pins ~3.3 GiB and destroys the one property Ollama was chosen for on a swapless board.
+- **`think` differs per agent.** On for prose (with it off, Ollama returns the reasoning *as* the answer); off for the controlling agent, which pays it once per tool iteration.
+- **Giving a conversation agent `llm_hass_api` makes commands slow**, because HA then narrows local-intent matching to GetState and MediaSearchAndPlay. That is why there are two agents rather than one.
+
 Three things that will waste a day if you do not know them:
 
 - **`-mcpu=native` silently produces a baseline binary.** GCC 13 cannot identify this A720+A520 CPU and emits zero ARM feature macros. Always pass `-DGGML_CPU_ARM_ARCH=armv9-a+i8mm+dotprod+sve+bf16`. Worth 3x on prompt processing.

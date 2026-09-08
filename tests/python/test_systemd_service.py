@@ -264,3 +264,38 @@ def test_ollama_guidance_does_not_repeat_the_llama_server_thinking_trick() -> No
         "installer recommends think:false, which returns reasoning as the answer"
     assert "num_predict" in script, "no budget guidance for a thinking model"
     assert "message.content" in script
+
+
+def test_house_digest_units_run_the_project_interpreter_on_a_schedule() -> None:
+    """The digest runs from the dashboard virtualenv, not the system Python:
+    the system one has neither the project's dependencies nor its src path."""
+    service = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "house-digest.service").read_text(encoding="utf-8")
+
+    assert "Type=oneshot" in service
+    assert "WorkingDirectory=/home/orangepi/smart_home_AI" in service
+    assert "/home/orangepi/smart_home_AI/.venv/bin/python" in service
+    assert "/home/orangepi/smart_home_AI/scripts/house_digest.py" in service
+    # A wedged model request must not sit on the big cores until morning.
+    assert "TimeoutStartSec=" in service
+    # A oneshot report has no business competing with the house services.
+    assert "Nice=15" in service
+
+
+def test_house_digest_timer_survives_a_reboot_and_a_logout() -> None:
+    timer = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "house-digest.timer").read_text(encoding="utf-8")
+
+    assert "OnCalendar=*-*-* 04:00:00" in timer
+    # Without Persistent the digest is simply missing on any morning the board
+    # happened to be off at 04:00.
+    assert "Persistent=true" in timer
+    assert "WantedBy=timers.target" in timer
+
+
+def test_the_digest_installer_enables_the_timer_not_the_service() -> None:
+    """Enabling the oneshot service as well would run the digest at every login."""
+    script = (PROJECT_ROOT / "scripts" / "install-house-digest.sh").read_text(encoding="utf-8")
+
+    assert "systemctl --user enable --now house-digest.timer" in script
+    assert "enable --now house-digest.service" not in script
+    # User timers do not fire once the last session ends.
+    assert "enable-linger" in script

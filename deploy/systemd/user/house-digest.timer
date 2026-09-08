@@ -1,0 +1,17 @@
+[Unit]
+Description=Write the morning digest at 04:00
+
+[Timer]
+# 04:00 is the quietest hour on this board: nothing else wants the eight big
+# cores, and the digest covers the whole of the preceding day by the time
+# anybody is awake to read it.
+OnCalendar=*-*-* 04:00:00
+# The board is not always up at 04:00. Without this a missed run is simply
+# lost and there is no digest that morning.
+Persistent=true
+# Ollama's first request after an idle unload reloads 2.5 GiB, and several
+# timers firing at once on a swapless board is exactly what to avoid.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

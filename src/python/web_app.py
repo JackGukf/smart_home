@@ -19,6 +19,7 @@ from urllib.parse import urlencode
 from urllib.parse import quote
 from urllib.parse import quote_plus
 from urllib.parse import urlparse
+from urllib.error import HTTPError
 from urllib.request import Request as _URLRequest
 from urllib.request import urlopen
 
@@ -46,6 +47,14 @@ from src.python.matter_device import (
     node_to_device,
 )
 from src.python import bridge_sync
+from src.python.house_digest import read_digest
+from src.python.automation_author import (
+    AuthorError,
+    Draft,
+    draft_automation,
+    ha_get as _author_ha_get,
+    render_proposal,
+)
 
 _matter_log = logging.getLogger(__name__)
 
@@ -96,6 +105,17 @@ DEFAULT_HOME_ALARM_PATH = PROJECT_ROOT / "dashboard_home_alarm.json"
 # the file stays small: ~40 events a day is a few hundred KB a fortnight.
 MOTION_LOG_MAX_DAYS = 14
 MOTION_LOG_DEFAULT_LIMIT = 200
+# Automations the local LLM has drafted but nobody has installed. On disk, and
+# outside Home Assistant, because a proposal is deliberately inert: it exists to
+# be read and rejected as easily as accepted.
+DEFAULT_PROPOSALS_PATH = PROJECT_ROOT / "automation-proposals"
+# The morning digest, written by house-digest.timer at 04:00. Served from the
+# file rather than generated on request: it takes a minute to produce and says
+# the same thing all day, so a page load must never wait for it.
+DEFAULT_DIGEST_PATH = PROJECT_ROOT / "house_digest.json"
+# A proposal file name, as this code writes them. Anything else is refused
+# rather than joined onto a path.
+PROPOSAL_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,79}\.yaml")
 # The three device_classes this house's motion sensors actually use. The Zigbee
 # units report occupancy; the two Tuya ones report motion and occupancy both.
 MOTION_DEVICE_CLASSES = frozenset({"occupancy", "motion", "moving"})
@@ -379,6 +399,10 @@ class HomeAssistantConfig:
     alarm_zone_exclude: frozenset[str] = frozenset()
 
 
+class AutomationDraftRequest(BaseModel):
+    request: str
+
+
 class HomeAlarmCardRequest(BaseModel):
     sensors: list[str]
 
@@ -451,6 +475,8 @@ def create_app(
     motion_log_path: Path | None = None,
     home_alarm_path: Path | None = None,
     zigbee_secret_path: Path = DEFAULT_ZIGBEE_SECRET_PATH,
+    proposals_path: Path | None = None,
+    digest_path: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
     app.state.discovery_path = discovery_path
@@ -462,6 +488,12 @@ def create_app(
     app.state.motion_log_path = motion_log_path or DEFAULT_MOTION_LOG_PATH
     app.state.home_alarm_path = home_alarm_path or DEFAULT_HOME_ALARM_PATH
     app.state.zigbee_secret_path = zigbee_secret_path
+    app.state.proposals_path = proposals_path or DEFAULT_PROPOSALS_PATH
+    app.state.digest_path = digest_path or DEFAULT_DIGEST_PATH
+    # One draft at a time. Ollama serialises requests anyway, so a second
+    # concurrent draft would not run sooner - it would just hold a worker
+    # thread and a connection for a minute to find that out.
+    app.state.draft_lock = asyncio.Lock()
     # Last known device list, served instantly while a refresh runs behind it.
     app.state.device_cache = {"cards": None, "at": 0.0, "task": None}
     # Consecutive status failures per switch host, used to retire dead sockets
@@ -938,6 +970,114 @@ def create_app(
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @app.post("/api/automations/draft")
+    async def draft_automation_route(body: AutomationDraftRequest) -> dict[str, Any]:
+        """Draft an automation from a sentence and save it as a proposal.
+
+        Nothing here reaches the house. The draft is validated against the real
+        entity and service lists, written to a proposal file, and returned for a
+        human to read. Installing it is a separate call.
+        """
+        request_text = body.request.strip()
+        if not request_text:
+            raise HTTPException(status_code=400, detail="Say what the automation should do")
+        if len(request_text) > 500:
+            raise HTTPException(status_code=400, detail="That request is too long")
+
+        config, token = _home_assistant_auth(app.state.config_path)
+
+        # Checked and taken in one step. Testing `locked()` and then awaiting
+        # the lock leaves a window where a second request waits a full minute
+        # instead of being told plainly that one is already running.
+        try:
+            await asyncio.wait_for(app.state.draft_lock.acquire(), timeout=0.01)
+        except (TimeoutError, asyncio.TimeoutError):
+            raise HTTPException(status_code=409,
+                                detail="A draft is already running - one at a time") from None
+
+        try:
+            try:
+                states = await asyncio.to_thread(_author_ha_get, config.base_url, token,
+                                                 "/api/states")
+                services = await asyncio.to_thread(_author_ha_get, config.base_url, token,
+                                                   "/api/services")
+            except OSError as exc:
+                raise HTTPException(status_code=502,
+                                    detail=f"Home Assistant unreachable: {exc}") from exc
+
+            try:
+                draft = await asyncio.to_thread(draft_automation, request_text,
+                                                states, services)
+            except AuthorError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except OSError as exc:
+                # A 4B model on eight cores can genuinely take a minute; a
+                # timeout here is far more likely than the model being down.
+                raise HTTPException(status_code=504,
+                                    detail=f"the local model did not answer: {exc}") from exc
+
+        finally:
+            app.state.draft_lock.release()
+
+        payload = draft.as_dict()
+        if draft.ok:
+            payload["proposal"] = await asyncio.to_thread(
+                _write_proposal, app.state.proposals_path, draft)
+        return payload
+
+    @app.get("/api/digest")
+    async def house_digest() -> dict[str, Any]:
+        """The most recent morning digest, or an empty one before the first run."""
+        digest = await asyncio.to_thread(read_digest, app.state.digest_path)
+        if digest is None:
+            return {"available": False}
+        return {"available": True, **digest}
+
+    @app.get("/api/automations/proposals")
+    async def list_proposals() -> dict[str, Any]:
+        proposals = await asyncio.to_thread(_read_proposals, app.state.proposals_path)
+        return {"proposals": proposals}
+
+    @app.delete("/api/automations/proposals/{name}")
+    async def delete_proposal(name: str) -> dict[str, Any]:
+        path = _proposal_path(app.state.proposals_path, name)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="No such proposal")
+        await asyncio.to_thread(path.unlink)
+        return {"deleted": name}
+
+    @app.post("/api/automations/proposals/{name}/install")
+    async def install_proposal(name: str) -> dict[str, Any]:
+        """Hand the proposal to Home Assistant, which validates and reloads it.
+
+        Home Assistant's own config API is the install path rather than an
+        append to automations.yaml: it validates the automation with the same
+        validator the UI uses, writes it, and reloads automations by itself. A
+        draft our checker passed can still be rejected here, and that rejection
+        is the authoritative one.
+        """
+        path = _proposal_path(app.state.proposals_path, name)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="No such proposal")
+
+        config, token = _home_assistant_auth(app.state.config_path)
+        automation = _automation_from_proposal(path)
+        automation_id = f"llm{int(time.time())}"
+
+        try:
+            await asyncio.to_thread(_install_automation, config.base_url, token,
+                                    automation_id, automation)
+        except HTTPException:
+            raise
+        except OSError as exc:
+            raise HTTPException(status_code=502,
+                                detail=f"Home Assistant unreachable: {exc}") from exc
+
+        # It is live now, so the proposal has served its purpose.
+        await asyncio.to_thread(path.unlink)
+        return {"installed": name, "automation_id": automation_id,
+                "alias": automation.get("alias")}
 
     @app.get("/api/network/devices")
     async def network_devices() -> dict[str, Any]:
@@ -1830,6 +1970,100 @@ def _home_assistant_camera_fetch(config: HomeAssistantConfig, token: str, ha_pat
     )
     with urlopen(request, timeout=20) as response:
         return response.read(), response.headers.get("Content-Type")
+
+
+def _proposal_path(directory: Path, name: str) -> Path:
+    """Resolve a proposal file name, refusing anything this code did not write.
+
+    The name arrives from the URL, so it is checked against the pattern rather
+    than sanitised: "../../.env" is not a proposal name and there is no useful
+    way to interpret it as one.
+    """
+    if not PROPOSAL_NAME.fullmatch(name):
+        raise HTTPException(status_code=400, detail="Not a proposal name")
+    return Path(directory) / name
+
+
+def _write_proposal(directory: Path, draft: Draft) -> str:
+    """Write the proposal, without overwriting an earlier one of the same name."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    slug = draft.slug()
+    name = f"{slug}.yaml"
+    # Two drafts of the same request give the same slug. Keeping both lets you
+    # compare them, which is usually why you asked twice.
+    counter = 2
+    while (directory / name).exists():
+        name = f"{slug}-{counter}.yaml"
+        counter += 1
+    (directory / name).write_text(render_proposal(draft), encoding="utf-8")
+    return name
+
+
+def _read_proposals(directory: Path) -> list[dict[str, Any]]:
+    """Every saved proposal, newest first, with what a reviewer needs to judge it."""
+    directory = Path(directory)
+    if not directory.is_dir():
+        return []
+
+    proposals = []
+    for path in sorted(directory.glob("*.yaml")):
+        try:
+            text = path.read_text(encoding="utf-8")
+            parsed = yaml.safe_load(text) or []
+        except (OSError, yaml.YAMLError):
+            continue
+        automation = parsed[0] if isinstance(parsed, list) and parsed else {}
+        if not isinstance(automation, dict):
+            continue
+        hints = [line.split("REVIEW HINT:", 1)[1].strip()
+                 for line in text.splitlines() if "REVIEW HINT:" in line]
+        request = next((line.split("Request:", 1)[1].strip()
+                        for line in text.splitlines() if line.startswith("# Request:")), "")
+        proposals.append({
+            "name": path.name,
+            "alias": automation.get("alias") or path.stem,
+            "description": automation.get("description") or "",
+            "request": request,
+            "hints": hints,
+            "yaml": text,
+            "modified": path.stat().st_mtime,
+        })
+    proposals.sort(key=lambda item: item["modified"], reverse=True)
+    return proposals
+
+
+def _automation_from_proposal(path: Path) -> dict[str, Any]:
+    try:
+        parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    except (OSError, yaml.YAMLError) as exc:
+        raise HTTPException(status_code=400,
+                            detail=f"Could not read that proposal: {exc}") from exc
+    automation = parsed[0] if isinstance(parsed, list) and parsed else parsed
+    if not isinstance(automation, dict) or not automation.get("alias"):
+        raise HTTPException(status_code=400,
+                            detail="That proposal does not contain an automation")
+    return automation
+
+
+def _install_automation(base_url: str, token: str, automation_id: str,
+                        automation: dict[str, Any]) -> None:
+    """POST to Home Assistant's automation config API, which validates and reloads."""
+    request = _URLRequest(
+        f"{base_url.rstrip('/')}/api/config/automation/config/{automation_id}",
+        data=json.dumps(automation).encode("utf-8"),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            response.read()
+    except HTTPError as exc:
+        # 400 here is Home Assistant's own validator refusing the automation,
+        # and its message says exactly what is wrong. Pass it through.
+        detail = exc.read().decode("utf-8", "replace")[:400] or str(exc)
+        raise HTTPException(status_code=422,
+                            detail=f"Home Assistant rejected it: {detail}") from exc
 
 
 def _home_assistant_auth(path: Path) -> tuple[HomeAssistantConfig, str]:
