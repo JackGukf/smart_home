@@ -90,3 +90,6 @@ deploy/zigbee/mosquitto/passwd
 # Local runtime flag: suppresses scripts/zigbee-adapter-watch.sh auto-start.
 deploy/zigbee/.autostart-disabled
 
+
+# Drafts from scripts/author_automation.py - review artefacts, not source.
+automation-proposals/

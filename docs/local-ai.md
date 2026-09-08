@@ -301,6 +301,49 @@ The valuable shape is **the LLM authors, rules execute**: describe a rule in
 English, have Qwen emit an automation config, review it, and let Home Assistant
 run it deterministically thereafter.
 
+### `scripts/author_automation.py`
+
+That shape, built. Describe a rule in English; it drafts a Home Assistant
+automation, checks it against your actual house, and writes a **proposal file**.
+It never touches `automations.yaml` — nothing it produces is live until you copy
+it in.
+
+```bash
+# on the board: Home Assistant and Ollama are both loopback-only
+python3 scripts/author_automation.py "turn off the office switch every night at 11pm"
+```
+
+Three layers, because the model is wrong often enough to need all of them:
+
+1. **The entity list comes from `/api/states`,** not the model's imagination —
+   entity ids are what an LLM invents most readily. The ~25 most relevant are
+   put in the prompt (all 218 would crowd a 4096-token context), `unavailable`
+   ones excluded since nothing can act on them.
+2. **Validation against the real house.** Every `entity_id` must exist, every
+   service must exist in `/api/services`, and the automation must be
+   structurally capable of firing. Failures are fed back to the model and it
+   retries — the deterministic checker is the arbiter, not the model.
+3. **Review hints** for what validation cannot judge: intent. Warnings only,
+   never blocking, and written into the proposal's header.
+
+**What it gets right and wrong**, measured against the real house:
+
+| Request | Result |
+| --- | --- |
+| "turn off the office switch every night at 11pm" | correct, ~10 s |
+| "when motion after sunset, switch on for 5 minutes" | valid, but dropped the sunset condition, made 5 minutes into 5 seconds, and never turned it off — all four flagged |
+| "notify when bedroom humidity goes above 70 percent" | wrong: a `state` trigger instead of `numeric_state above: 70`, and it would not fix this even after two repair attempts — flagged |
+
+So: **simple single-clause requests come out right; compound ones need editing.**
+That is the ceiling of a 4B model, and the reason this writes a proposal for a
+human rather than installing anything. Read the hints — every one of them was a
+real defect it produced.
+
+Mistakes it makes that are worth recognising, all caught mechanically now: a
+`delay` *service* (there is none — `delay` is a step key), a state trigger with
+`from == to` (loads, never fires), and `at: sunset` on a time trigger (a
+restriction is a condition; as a trigger it also fires at sunset on its own).
+
 ## Operational notes
 
 **Memory is the binding constraint.** `llama-server` holds ~5.0 GiB for the life
