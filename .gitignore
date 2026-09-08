@@ -99,3 +99,7 @@ motion_log.jsonl
 
 # Alarm card sensor choice, written by the dashboard at runtime.
 dashboard_home_alarm.json
+
+# Morning digest written by house-digest.timer at runtime.
+house_digest.json
+house_digest.jsonl
