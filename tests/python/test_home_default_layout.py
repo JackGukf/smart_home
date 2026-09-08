@@ -19,7 +19,7 @@ STYLES = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 # to sit above Music here; it now lives in the Bridges group under Devices,
 # alongside the Tuya gateway, so the coordinator is read next to the other
 # radios rather than as a lone tile on the landing view. Music left too, for
-# the Entertainment view, and Alarm took its slot -- a phone should show
+# the Media view, and Alarm took its slot -- a phone should show
 # whether the house is shut before it shows what is playing.
 PHONE_ORDER = [
     "weather", "camera", "climate", "tempsensors", "areas", "alarm",

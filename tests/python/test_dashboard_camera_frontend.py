@@ -187,17 +187,17 @@ def test_the_home_alarm_card_is_builtin_so_it_reaches_every_device() -> None:
     assert 'data-home-card="bluetooth"' not in html
 
 
-def test_music_moved_to_the_entertainment_view_intact() -> None:
+def test_music_moved_to_the_media_view_intact() -> None:
     """The panel moved wholesale rather than being rebuilt: #btDeviceList is
     what refreshBluetooth() writes into, and it is queried at call time."""
     html = (PROJECT_ROOT / "src" / "python" / "web_static" / "index.html").read_text(encoding="utf-8")
 
-    panel = html.split('data-view-panel="entertainment"')[1].split("</div>\n\n")[0]
+    panel = html.split('data-view-panel="media"')[1].split("</div>\n\n")[0]
     assert 'id="btDeviceList"' in panel
     assert "Music" in panel
     # Reachable: the view exists in the sidebar and the scan modal is not orphaned.
-    assert 'data-view="entertainment"' in html
-    assert 'id="btScanFromEntertainment"' in html
+    assert 'data-view="media"' in html
+    assert 'id="btScanFromMedia"' in html
 
 
 def test_custom_card_renders_sensors_as_tiles_not_rows() -> None:

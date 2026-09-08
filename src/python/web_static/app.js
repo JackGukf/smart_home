@@ -5068,9 +5068,9 @@ document.addEventListener("click", async (event) => {
   const closeModal = () => { if (modal) modal.hidden = true; };
 
   document.querySelector("#btScanNav")?.addEventListener("click", openModal);
-  /* Same modal from the Entertainment view, so the Music panel is not a
+  /* Same modal from the Media view, so the Music panel is not a
      dead end once it no longer sits on Home beside the Bluetooth nav item. */
-  document.querySelector("#btScanFromEntertainment")?.addEventListener("click", openModal);
+  document.querySelector("#btScanFromMedia")?.addEventListener("click", openModal);
   document.querySelector("#closeBtModal")?.addEventListener("click", closeModal);
   modal?.addEventListener("click", (event) => {
     if (event.target === modal) closeModal();
@@ -6276,7 +6276,7 @@ function activateView(viewName) {
   if (viewName === "environment") {
     loadEnvironmentSensors().catch((error) => console.error(error));
   }
-  if (viewName === "entertainment") {
+  if (viewName === "media") {
     refreshBluetooth().catch((error) => console.error(error));
   }
   if (viewName === "zigbee") {

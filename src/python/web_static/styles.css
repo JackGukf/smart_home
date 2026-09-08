@@ -3087,7 +3087,7 @@ aside {
 
 /* sidebar icon colour for alarm */
 .room-item[data-view="alarm"] { --group-color: var(--red); }
-.room-item[data-view="entertainment"] { --group-color: var(--purple); }
+.room-item[data-view="media"] { --group-color: var(--purple); }
 
 .doorbell-live-media,
 .doorbell-live-placeholder {
@@ -5282,17 +5282,17 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
 #homeAlarmBody .zone-tile-state { font-size: clamp(10px, 4.2cqw, 15px); }
 #homeAlarmBody .zone-tile-name  { font-size: clamp(8.5px, 3cqw, 12px); }
 
-/* ── Entertainment view ──
+/* ── Media view ──
    One card today; a grid because the point of the view is that video and
    others join it, and a single centred panel would have to be rebuilt when
    they do. */
-.entertainment-grid {
+.media-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
   align-items: start;
 }
-.entertainment-grid .home-panel-head { margin-bottom: 10px; }
+.media-grid .home-panel-head { margin-bottom: 10px; }
 
 
 /* ── Alarm card sensor picker ──
