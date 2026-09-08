@@ -5241,18 +5241,23 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
 .home-alarm-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
-  overflow: auto;
 }
 .home-alarm-state {
   display: flex;
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
+  /* Never shrink. A flex child defaults to flex-shrink:1, so as the card was
+     made shorter this line was squeezed below its own text height and the
+     status printed straight over the first tile. The tiles scroll instead. */
+  flex: 0 0 auto;
 }
 .home-alarm-status {
-  font-size: 15px;
+  /* Scales with the card, like the tiles beneath it: a resize that shrinks the
+     tiles and leaves 15px text behind is how the two collide again. */
+  font-size: clamp(12px, 5.5cqw, 16px);
   font-weight: 600;
   color: var(--t-text);
   letter-spacing: -0.01em;
@@ -5261,7 +5266,7 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
 .home-alarm-zones-count {
   margin-left: auto;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: clamp(9px, 3.4cqw, 11px);
   padding: 2px 8px;
   border-radius: 20px;
   border: 1px solid var(--border-hover);
@@ -5277,7 +5282,16 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
    container query rather than inheriting that panel's sizing. */
 #homeAlarmBody { container-type: inline-size; }
 #homeAlarmBody .zone-tile-grid {
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  /* The tiles take whatever height is left and scroll inside it, so the card
+     can be dragged to any size without its contents landing on each other. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-bottom: 0;
+  /* Tracks follow the card's own width rather than a fixed 84px floor, which
+     on a narrow tablet forced one tall column and pushed the rest out of view. */
+  grid-template-columns: repeat(auto-fill, minmax(clamp(54px, 26cqw, 92px), 1fr));
+  gap: 6px;
 }
 #homeAlarmBody .zone-tile-state { font-size: clamp(10px, 4.2cqw, 15px); }
 #homeAlarmBody .zone-tile-name  { font-size: clamp(8.5px, 3cqw, 12px); }

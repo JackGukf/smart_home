@@ -144,3 +144,34 @@ def test_the_security_label_is_display_only_and_the_ids_stay_alarm() -> None:
     # "Alarm" as a bare visible label should be gone from the sidebar and titles.
     assert "\n        Alarm\n" not in html
     assert "Alarm System" not in html
+
+
+def test_the_card_contents_resize_with_the_card_and_cannot_collide() -> None:
+    """Dragging the card smaller made the status line print over the first tile.
+
+    A flex child defaults to flex-shrink:1, so the status row was squeezed
+    below its own text height while the text stayed put. Fixed sizes were the
+    other half: 15px text and an 84px tile floor do not shrink when the card
+    does, so on a tablet the tiles became one tall column.
+    """
+    css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+
+    state = css[css.index(".home-alarm-state {"):]
+    state = state[:state.index("}")]
+    assert "flex: 0 0 auto" in state, "the status row can still be squashed into the tiles"
+
+    grid = css[css.index("#homeAlarmBody .zone-tile-grid {"):]
+    grid = grid[:grid.index("}")]
+    # The tiles absorb the size change and scroll, rather than overflowing.
+    assert "flex: 1 1 auto" in grid
+    assert "min-height: 0" in grid
+    assert "overflow-y: auto" in grid
+    # Tracks follow the card's width instead of a fixed floor.
+    assert "cqw" in grid
+
+    # Text scales too, or it collides again at the small end.
+    status = css[css.index(".home-alarm-status {"):]
+    status = status[:status.index("}")]
+    assert "cqw" in status
+    # Container queries need a container; without this every cqw is invalid.
+    assert "#homeAlarmBody { container-type: inline-size; }" in css
