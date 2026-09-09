@@ -121,18 +121,74 @@ def nms(boxes: np.ndarray, scores: np.ndarray, classes: np.ndarray, iou_thr: flo
     return keep
 
 
-def merge_outputs(outputs: list[np.ndarray]) -> np.ndarray:
-    """Accept either the one-tensor or the split-head form of the model.
+class HeadDecoder:
+    """The YOLOv8 detection head, in numpy, for models whose head was cut off.
 
-    The head's final Concat is removed before quantisation - joined, box
-    coordinates and class scores would share one INT8 scale and every score
-    would round to zero (see scripts/npu-model/export_rewrite.py). Rejoining
-    them here is a memory copy and costs nothing, which is exactly why the graph
-    does not need to do it.
+    The head is a rounding error of the model's compute - a softmax, an anchor
+    add, a stride multiply - and it is where INT8 quantisation goes wrong: a QDQ
+    Concat forces its inputs to share one scale, so joining boxes (0-640) with
+    scores (0-1), or a box centre with its size, erases the smaller of the two.
+    Running it here in float removes the whole class of failure for a few
+    milliseconds a frame.
+
+    The constants come from the graph the model was cut from, saved beside it,
+    so this cannot drift from the network it decodes.
+    """
+
+    def __init__(self, meta_path: Path) -> None:
+        meta = np.load(str(meta_path))
+        self.anchors = meta["anchors"].astype(np.float32)   # [1, 2, 8400]
+        self.strides = meta["strides"].astype(np.float32)   # [1, 8400]
+        # DFL weights are the bin centres 0..15; conv shape [1, 16, 1, 1].
+        self.bins = meta["dfl"].astype(np.float32).reshape(1, 1, -1, 1)
+
+    def __call__(self, outputs: list[np.ndarray]) -> np.ndarray:
+        """Six raw conv outputs -> the [1, 84, 8400] tensor decode() expects."""
+        box = np.concatenate([o.reshape(o.shape[0], o.shape[1], -1) for o in outputs[:3]], axis=2)
+        cls = np.concatenate([o.reshape(o.shape[0], o.shape[1], -1) for o in outputs[3:]], axis=2)
+
+        # Distribution Focal Loss: each of the four sides is a distribution over
+        # 16 bins, and the distance is its expected value.
+        batch, _, anchors = box.shape
+        dist = box.reshape(batch, 4, -1, anchors)
+        dist = dist - dist.max(axis=2, keepdims=True)        # stable softmax
+        np.exp(dist, out=dist)
+        dist /= dist.sum(axis=2, keepdims=True)
+        dist = (dist * self.bins).sum(axis=2)                # [b, 4, 8400]
+
+        left_top, right_bottom = dist[:, :2], dist[:, 2:]
+        x1y1 = self.anchors - left_top
+        x2y2 = self.anchors + right_bottom
+        centre = (x1y1 + x2y2) / 2
+        size = x2y2 - x1y1
+        boxes = np.concatenate([centre, size], axis=1) * self.strides
+
+        scores = 1.0 / (1.0 + np.exp(-cls))
+        return np.concatenate([boxes, scores], axis=1).astype(np.float32)
+
+
+def head_meta_for(model_path: Path) -> Path | None:
+    """The head constants saved next to a model, if it was exported split."""
+    candidate = Path(model_path).parent / "prelu_ft_decomp.head.npz"
+    return candidate if candidate.is_file() else None
+
+
+def merge_outputs(outputs: list[np.ndarray], head: "HeadDecoder | None" = None) -> np.ndarray:
+    """Turn whatever shape this model emits into the [1, 84, 8400] decode() wants.
+
+    Three forms exist and the board may hold any of them while a model is being
+    rolled out: one decoded tensor, boxes and scores separately, or the six raw
+    convolution outputs of a model whose head was cut off.
     """
     if len(outputs) == 1:
         return outputs[0]
-    return np.concatenate(outputs, axis=1)
+    if len(outputs) == 2:
+        return np.concatenate(outputs, axis=1)
+    if head is None:
+        raise ValueError(
+            f"model has {len(outputs)} outputs, so its head was split off, but the "
+            f"head constants (prelu_ft_decomp.head.npz) were not found beside it")
+    return head(outputs)
 
 
 def decode(output: np.ndarray, scale: float, pad_x: int, pad_y: int,
@@ -239,11 +295,24 @@ class Detector:
             str(model), options, providers=["ZhouyiExecutionProvider"]
         )
         self.input_name = self.session.get_inputs()[0].name
-        LOG.info("NPU session ready in %.1fs (%s)", time.time() - started, model.name)
+
+        # A model exported with its head split off emits six raw tensors and
+        # needs the constants saved beside it to make detections of them.
+        meta = head_meta_for(model)
+        self._head = HeadDecoder(meta) if meta else None
+        outputs = len(self.session.get_outputs())
+        if outputs > 2 and self._head is None:
+            raise RuntimeError(
+                f"{model.name} has {outputs} outputs, so its head was split off, but "
+                f"prelu_ft_decomp.head.npz is not beside it - detections cannot be decoded"
+            )
+        LOG.info("NPU session ready in %.1fs (%s, %d output%s%s)",
+                 time.time() - started, model.name, outputs, "" if outputs == 1 else "s",
+                 ", head decoded here" if self._head else "")
 
     def detect(self, frame: np.ndarray, cfg: Config) -> list[Detection]:
         blob, scale, pad_x, pad_y = to_input(frame)
-        output = merge_outputs(self.session.run(None, {self.input_name: blob}))
+        output = merge_outputs(self.session.run(None, {self.input_name: blob}), self._head)
         return decode(output, scale, pad_x, pad_y, frame.shape[:2], cfg.conf, cfg.iou,
                       cfg.classes)
 

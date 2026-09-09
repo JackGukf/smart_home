@@ -30,10 +30,18 @@ import time
 from pathlib import Path
 
 
-def _merged(outputs: list) -> "np.ndarray":
-    """Join a split-head model's two outputs; pass a single one through."""
-    import numpy as np
-    return outputs[0] if len(outputs) == 1 else np.concatenate(outputs, axis=1)
+def _decoder(model_path: "Path", session) -> "object | None":
+    """The numpy head this model needs, if it was exported with its head split off."""
+    sys.path.insert(0, str(Path.home() / "smart_home_AI"))
+    from src.python.npu_detector import HeadDecoder, head_meta_for
+
+    if len(session.get_outputs()) <= 2:
+        return None
+    meta = head_meta_for(model_path)
+    if meta is None:
+        raise SystemExit(f"{model_path.name} has its head split off but "
+                         f"prelu_ft_decomp.head.npz is not beside it")
+    return HeadDecoder(meta)
 
 
 def main() -> int:
@@ -128,13 +136,18 @@ def main() -> int:
         cpu = ort.InferenceSession(str(args.model), cpu_opts, providers=["CPUExecutionProvider"])
         cpu_name = cpu.get_inputs()[0].name
 
+        sys.path.insert(0, str(Path.home() / "smart_home_AI"))
+        from src.python.npu_detector import merge_outputs as _merge
+
+        head = _decoder(args.model, session)
         worst = 0.0
         for trial in range(3):
             probe = rng.uniform(0.0, 1.0, size=shape).astype(np.float32)
-            # Concatenated so a split-head model is compared whole, not just
-            # its box tensor - the scores are the half that quantisation kills.
-            on_npu = _merged(session.run(None, {name: probe})).astype(np.float64)
-            on_cpu = _merged(cpu.run(None, {cpu_name: probe})).astype(np.float64)
+            # Decoded first, so a split-head model is compared as detections
+            # rather than as raw tensors - the scores are the half quantisation
+            # kills, and they only exist after the head has run.
+            on_npu = _merge(session.run(None, {name: probe}), head).astype(np.float64)
+            on_cpu = _merge(cpu.run(None, {cpu_name: probe}), head).astype(np.float64)
             diff = float(np.max(np.abs(on_npu - on_cpu)))
             worst = max(worst, diff)
             if trial == 0:
@@ -156,14 +169,15 @@ def main() -> int:
     if args.frame_from:
         print(f"\nrunning one real frame from {args.frame_from}")
         sys.path.insert(0, str(Path.home() / "smart_home_AI"))
-        from src.python.npu_detector import decode, grab_frame, merge_outputs, to_input
+        from src.python.npu_detector import (decode, grab_frame, head_meta_for,
+                                             merge_outputs, to_input, HeadDecoder)
 
         frame = grab_frame(args.go2rtc, args.frame_from)
         if frame is None:
             print(f"  could not fetch a frame from {args.frame_from}")
         else:
             inp, scale, pad_x, pad_y = to_input(frame, args.imgsz)
-            output = merge_outputs(session.run(None, {name: inp}))
+            output = merge_outputs(session.run(None, {name: inp}), _decoder(args.model, session))
             found = decode(output, scale, pad_x, pad_y, frame.shape[:2], 0.25, 0.45, None)
             print(f"  frame {frame.shape} -> {len(found)} detections")
             for det in found[:8]:

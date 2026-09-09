@@ -141,7 +141,8 @@ def test_evaluation_scores_every_model_through_one_path() -> None:
     source = (SCRIPT_DIR / "evaluate.py").read_text(encoding="utf-8")
 
     assert "def as_onnx" in source, ".pt models must be exported, not scored separately"
-    assert "from src.python.npu_detector import COCO_NAMES, merge_outputs, nms, to_input" in source
+    assert "from src.python.npu_detector import (" in source
+    assert "COCO_NAMES, HeadDecoder, head_meta_for, merge_outputs, nms, to_input," in source
     assert "person_AP50" in source
 
 
@@ -158,13 +159,13 @@ def test_the_subset_split_is_reproducible_from_a_seed() -> None:
 
 
 def test_the_head_split_is_the_default_and_can_be_turned_off() -> None:
-    """Quantised, the head's final Concat forces box coordinates and class scores
-    to share one INT8 scale - and since boxes run to ~640 while scores are in
-    [0, 1], every score rounds to zero. Removing the node is the fix, so it has
-    to happen by default; the flag exists only to reproduce the failure."""
+    """The detection head is where INT8 goes wrong: its Concats force tensors of
+    very different magnitude to share one scale, erasing the smaller. Cutting the
+    whole head off removes every instance at once, so it happens by default; the
+    flag exists only to reproduce the failure."""
     source = (SCRIPT_DIR / "export_rewrite.py").read_text(encoding="utf-8")
 
-    assert "def split_final_concat" in source
+    assert "def split_head" in source
     assert '"--no-split-head"' in source
     assert "if not args.no_split_head:" in source
     # The new outputs are typed from shape inference, not from a hardcoded
@@ -203,3 +204,26 @@ def test_calibration_method_is_selectable_and_bounded() -> None:
     # CalibNumBins is silently ignored by onnxruntime - it is named in the
     # docstring as a warning, and must never be set as an option again.
     assert 'extra["CalibNumBins"]' not in source
+
+
+def test_the_numpy_head_needs_constants_lifted_from_the_graph() -> None:
+    """Recomputing anchors and strides here would let the decode drift from the
+    network it decodes; they are saved out of the graph instead."""
+    source = (SCRIPT_DIR / "export_rewrite.py").read_text(encoding="utf-8")
+
+    assert "np.savez(npz_path" in source
+    for constant in ('"anchors"', '"strides"', '"dfl"'):
+        assert constant in source
+
+
+def test_a_split_model_without_its_constants_fails_loudly() -> None:
+    """Six raw tensors cannot be turned into detections without them, and
+    guessing would produce plausible-looking nonsense."""
+    import numpy as np
+    import pytest as _pytest
+
+    from src.python.npu_detector import merge_outputs
+
+    six = [np.zeros((1, 64, 80, 80), dtype=np.float32)] * 6
+    with _pytest.raises(ValueError, match="head constants"):
+        merge_outputs(six)

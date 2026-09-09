@@ -98,7 +98,7 @@ reference.
 `Concat` of tensors with different dynamic ranges destroys the smaller one. Look
 for them before blaming the calibrator.
 
-### The fix, and what is still broken
+### The fix
 
 Excluding `Concat` from quantisation fixes the numbers but leaves float ops in
 the graph, and this device cannot run those. So `export_rewrite.py` **removes
@@ -117,17 +117,40 @@ device:
 | Class scores | no longer saturated: **0** values at 1.0, against 284 before |
 | On a real office frame | chair, book, tv, microwave - plausible, where it used to say zebra and parking meter at confidence 1.00 |
 
-**Still wrong: the boxes.** Every detection comes back with zero height, and the
-cause is the same one a level deeper. `/model.22/Concat_2` joins the box centre
-(`Div_1`, grid units up to ~80) with its size (`Sub_1`, typically under 20)
-before the stride multiply - different ranges, one scale, and the size collapses.
+The first cut removed only the last Concat, which fixed the scores and left the
+boxes with zero height - the same bug one level deeper, at
+`/model.22/Concat_2`, which joins the box centre with its size. Patching Concats
+one at a time is whack-a-mole, so `export_rewrite.py` now cuts **the whole
+detection head** off instead: the graph ends at the six final convolutions, and
+the DFL softmax, `dist2bbox` and stride multiply run in numpy in
+`HeadDecoder`. The head's constants - anchor points, strides, DFL bin weights -
+are lifted out of the graph into `prelu_ft_decomp.head.npz` rather than
+recomputed, so the decode cannot drift from the network it decodes. Verified
+bit-for-bit against the original graph: **max abs diff 0.00018**.
 
-The next step is to cut the graph before the whole `dist2bbox` head rather than
-at one Concat: quantise the backbone and neck, output the raw distance and class
-tensors, and do the DFL softmax, `dist2bbox` and stride multiply in numpy. That
-removes every range-mixing Concat and the `Softmax`/`Div` from the quantised
-graph at once, and the arithmetic it moves to the CPU is trivial next to the
-convolutions.
+What is left to quantise is only convolutions, activations and same-magnitude
+feature concatenations - no `Softmax`, no `Div`, no `Sigmoid`, no range mixing.
+That model is better than everything before it, and it is the one running now:
+
+| Model | mAP50 | mAP50-95 | person AP50 | NPU fps |
+| --- | ---: | ---: | ---: | ---: |
+| INT8 Conv-only (the old best) | 0.3482 | 0.2256 | 0.6279 | 15.9, wrong on device |
+| INT8 all-ops, head split off | **0.3628** | **0.2419** | **0.6327** | **32.4** |
+
+Better on every metric *and* twice the speed, because the head is no longer
+degraded at all. On a real office frame, before and after:
+
+```
+before:  chair 0.82 (0, 0, 200, 0)        <- zero height, and 17 of them
+after:   chair 0.57 (222, 525, 556, 714)  <- a chair
+         tv    0.37 (997, 343, 1109, 438)
+```
+
+`verify_on_npu.py --compare-cpu` still reports a numerical difference against
+the CPU provider on random-noise probes. That is the Zhouyi provider's own INT8
+kernels differing from onnxruntime's, it is worst on out-of-distribution input,
+and it does not stop real frames producing sensible detections. Watch it, do not
+panic at it.
 
 ## Things that will cost you a day
 

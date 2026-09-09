@@ -146,7 +146,7 @@ Three services, all loopback-only or local-only on purpose. See `docs/local-ai.m
 | Service | Endpoint | What |
 | --- | --- | --- |
 | `ollama.service` (system) | `127.0.0.1:11434` | Qwen3-4B Q4_K_M, Ollama API. Unloads when idle. **Live** — `scripts/install-ollama.sh`. |
-| `npu-detector.service` (user) | → MQTT `smarthome/vision/<camera>` | YOLOv8n on the Zhouyi NPU. **Not installed** — the model was lost and must be re-created. |
+| `npu-detector.service` (user) | → MQTT `smarthome/vision/<camera>` | YOLOv8n on the Zhouyi NPU. **Live since 2026-09-09** — mAP50 0.363, person AP50 0.633, 32.4 fps. The detection head is cut off the graph and decoded in numpy; quantising it erases what it computes. See `docs/npu-model-pipeline.md`. |
 | `llama-server.service` (user) | `127.0.0.1:8081` | Qwen3-4B Q4_0, OpenAI API. ~3x faster prompts, holds 5GB always. **Deferred** — do not run it beside Ollama. |
 
 Reach the LLMs with an SSH tunnel, not by widening the bind address:
@@ -176,6 +176,7 @@ Three things that will waste a day if you do not know them:
 - **`-mcpu=native` silently produces a baseline binary.** GCC 13 cannot identify this A720+A520 CPU and emits zero ARM feature macros. Always pass `-DGGML_CPU_ARM_ARCH=armv9-a+i8mm+dotprod+sve+bf16`. Worth 3x on prompt processing.
 - **The A720 cores are interleaved**: `0,1,6,7,8,9,10,11`. CIX's documented taskset list is wrong for this board and costs 31% of generation throughput.
 - **On the NPU, a model that runs is not proof it ran on the NPU.** Unsupported ops fall back to CPU silently — set `session.disable_cpu_ep_fallback` or you are measuring the CPU. SiLU crashes the execution provider outright, which is why stock YOLOv8 cannot run.
+- **A QDQ `Concat` gives all its inputs one shared INT8 scale**, so joining tensors of different magnitude erases the smaller one. This is why quantising YOLOv8's detection head silently zeroed every class score, and it cost days chasing the calibrator instead. The head is now cut off the graph and run in numpy.
 
 ## Secrets / Credentials
 

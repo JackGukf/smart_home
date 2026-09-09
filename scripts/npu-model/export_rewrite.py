@@ -116,46 +116,86 @@ def verify_equivalent(before: Path, after: Path, runs: int = 3) -> float:
     return worst
 
 
-def split_final_concat(model: onnx.ModelProto) -> tuple[str, str] | None:
-    """Drop the head's last Concat, exposing boxes and scores as separate outputs.
+def split_head(model: onnx.ModelProto, npz_path: Path) -> list[str] | None:
+    """Cut the graph at the detection head, leaving only the body to be quantised.
 
-    YOLOv8 ends by concatenating box coordinates with class scores into one
-    [1, 84, 8400] tensor.  Those two have wildly different ranges - boxes run to
-    ~640 pixels, scores are probabilities in [0, 1] - and a QDQ Concat gives its
-    inputs a *single* shared scale.  Quantised, that scale is set by the boxes,
-    so a score of 0.92 lands well inside the first quantisation step and every
-    class score in the model rounds to exactly zero.
+    Everything after the last six convolutions is arithmetic on small tensors -
+    a DFL softmax, an anchor add, a stride multiply - and it is where INT8 goes
+    wrong.  A QDQ ``Concat`` gives all of its inputs one shared scale, so any
+    Concat joining tensors of different magnitude destroys the smaller one, and
+    this head has two of them:
 
-    That is the whole reason ``--all-ops`` produced a model that detects nothing:
-    measured, boxes came out at 637.7 against a reference 637.1 while scores went
-    from 0.9230 to 0.0000.  Excluding Concat from quantisation fixes the numbers
-    but leaves float ops in the graph, which this device cannot run.  Removing
-    the node entirely is what does both: the concatenation is a memory layout
-    change that costs nothing in numpy, and the tensors never have to share a
-    scale.
+    * ``Concat_3`` joins boxes (0-640) with class scores (0-1).  Quantised, one
+      INT8 step is ~2.5 and **every class score in the model rounds to zero**.
+    * ``Concat_2`` joins the box centre (grid units, up to ~80) with its size
+      (usually under 20).  The size collapses and every box comes out with no
+      height.
+
+    Patching them one at a time is whack-a-mole - the head also holds a Softmax
+    and a Div that INT8 serves badly.  Cutting the whole head off removes every
+    instance at once, and costs nothing: the head is a rounding error of the
+    model's compute next to 64 convolutions, and numpy does it exactly.
+
+    The constants the head needs - anchor points, strides, DFL weights - are
+    lifted out of this graph rather than recomputed, so the decode cannot drift
+    from the model it decodes.  Returns the output names, body-order.
     """
-    outputs = {o.name for o in model.graph.output}
-    final = next((n for n in model.graph.node
-                  if n.op_type == "Concat" and set(n.output) & outputs), None)
-    if final is None or len(final.input) != 2:
+    from onnx import numpy_helper
+
+    convs: dict[str, str] = {}
+    for node in model.graph.node:
+        for branch in ("cv2", "cv3"):
+            for scale in range(3):
+                if node.name == f"/model.22/{branch}.{scale}/{branch}.{scale}.2/Conv":
+                    convs[f"{branch}.{scale}"] = node.output[0]
+    if len(convs) != 6:
         return None
 
-    # The new outputs need a declared type and shape, and the honest source of
-    # those is inference over the graph as it stands rather than a hardcoded
-    # [1, 4, 8400] that would be wrong for any other class count or image size.
+    initializers = {i.name: numpy_helper.to_array(i) for i in model.graph.initializer}
+    try:
+        meta = {
+            "anchors": initializers["/model.22/Constant_12_output_0"],
+            "strides": initializers["/model.22/Constant_15_output_0"],
+            "dfl": initializers["model.22.dfl.conv.weight"],
+        }
+    except KeyError:
+        return None
+
+    order = [convs[f"cv2.{i}"] for i in range(3)] + [convs[f"cv3.{i}"] for i in range(3)]
+    keep = set(order)
+
+    # Everything the kept outputs depend on, walked backwards. Anything else in
+    # the graph is head-only and goes.
+    producer = {out: n for n in model.graph.node for out in n.output}
+    needed, stack = set(), list(order)
+    while stack:
+        name = stack.pop()
+        node = producer.get(name)
+        if node is None or id(node) in needed:
+            continue
+        needed.add(id(node))
+        stack.extend(node.input)
+
+    for node in [n for n in model.graph.node if id(n) not in needed]:
+        model.graph.node.remove(node)
+
     inferred = onnx.shape_inference.infer_shapes(model)
     known = {v.name: v for v in inferred.graph.value_info}
-
-    boxes, scores = final.input
-    if boxes not in known or scores not in known:
-        return None
-
-    model.graph.node.remove(final)
     for stale in list(model.graph.output):
         model.graph.output.remove(stale)
-    for name in (boxes, scores):
+    for name in order:
+        if name not in known:
+            return None
         model.graph.output.append(known[name])
-    return boxes, scores
+
+    # Drop initializers nothing refers to any more, so the file does not carry
+    # the head's weights it will never use.
+    used = {i for n in model.graph.node for i in n.input}
+    for init in [i for i in model.graph.initializer if i.name not in used]:
+        model.graph.initializer.remove(init)
+
+    np.savez(npz_path, **meta)
+    return order
 
 
 def main() -> int:
@@ -165,9 +205,9 @@ def main() -> int:
     ap.add_argument("--imgsz", type=int, default=640, help="must match the detector's letterbox size")
     ap.add_argument("--opset", type=int, default=12)
     ap.add_argument("--no-split-head", action="store_true",
-                    help="keep the final Concat. Only useful for reproducing the failure it "
-                         "causes: quantised, it forces box coordinates and class scores to "
-                         "share one INT8 scale and every score becomes zero")
+                    help="quantise the detection head too. Only useful for reproducing the "
+                         "failure it causes: its Concats force tensors of very different "
+                         "magnitude to share one INT8 scale, and the smaller one is erased")
     args = ap.parse_args()
 
     args.outdir.mkdir(parents=True, exist_ok=True)
@@ -188,11 +228,14 @@ def main() -> int:
     replaced = decompose_prelu(graph)
 
     if not args.no_split_head:
-        split = split_final_concat(graph)
+        npz = args.outdir / "prelu_ft_decomp.head.npz"
+        split = split_head(graph, npz)
         if split is None:
-            print("\n  ! could not find the head's final Concat - not split")
+            print("\n  ! could not identify the detection head - it has NOT been split, and "
+                  "quantising it will erase the class scores")
         else:
-            print(f"\nsplit the head: outputs are now {split[0]} (boxes) and {split[1]} (scores)")
+            print(f"\nsplit off the detection head: {len(split)} raw outputs, decoded in numpy")
+            print(f"  head constants -> {npz}")
 
     onnx.checker.check_model(graph)
     decomposed = args.outdir / "prelu_ft_decomp.onnx"

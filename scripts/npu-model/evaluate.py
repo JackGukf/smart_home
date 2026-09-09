@@ -40,7 +40,9 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.python.npu_detector import COCO_NAMES, merge_outputs, nms, to_input  # noqa: E402  deployed code
+from src.python.npu_detector import (  # noqa: E402  deployed code
+    COCO_NAMES, HeadDecoder, head_meta_for, merge_outputs, nms, to_input,
+)
 
 
 def coco_category_ids(ann_file: Path) -> list[int]:
@@ -94,6 +96,8 @@ def run_model(model_path: Path, images: list[tuple[int, Path]], cat_ids: list[in
     opts.log_severity_level = 3
     session = ort.InferenceSession(str(model_path), opts, providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
+    meta = head_meta_for(model_path)
+    head = HeadDecoder(meta) if meta and len(session.get_outputs()) > 2 else None
 
     results: list[dict] = []
     total = 0.0
@@ -103,7 +107,7 @@ def run_model(model_path: Path, images: list[tuple[int, Path]], cat_ids: list[in
             continue
         blob, scale, pad_x, pad_y = to_input(frame, imgsz)
         started = time.perf_counter()
-        output = merge_outputs(session.run(None, {input_name: blob}))
+        output = merge_outputs(session.run(None, {input_name: blob}), head)
         total += time.perf_counter() - started
         boxes, scores, classes = decode_for_eval(output, scale, pad_x, pad_y,
                                                  frame.shape[:2], conf, iou, max_det)
