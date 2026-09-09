@@ -141,7 +141,7 @@ def test_evaluation_scores_every_model_through_one_path() -> None:
     source = (SCRIPT_DIR / "evaluate.py").read_text(encoding="utf-8")
 
     assert "def as_onnx" in source, ".pt models must be exported, not scored separately"
-    assert "from src.python.npu_detector import COCO_NAMES, nms, to_input" in source
+    assert "from src.python.npu_detector import COCO_NAMES, merge_outputs, nms, to_input" in source
     assert "person_AP50" in source
 
 
@@ -155,3 +155,51 @@ def test_the_subset_split_is_reproducible_from_a_seed() -> None:
 
     assert "random.Random(seed)" in source, "the split is not deterministic"
     assert "--seed" in source
+
+
+def test_the_head_split_is_the_default_and_can_be_turned_off() -> None:
+    """Quantised, the head's final Concat forces box coordinates and class scores
+    to share one INT8 scale - and since boxes run to ~640 while scores are in
+    [0, 1], every score rounds to zero. Removing the node is the fix, so it has
+    to happen by default; the flag exists only to reproduce the failure."""
+    source = (SCRIPT_DIR / "export_rewrite.py").read_text(encoding="utf-8")
+
+    assert "def split_final_concat" in source
+    assert '"--no-split-head"' in source
+    assert "if not args.no_split_head:" in source
+    # The new outputs are typed from shape inference, not from a hardcoded
+    # [1, 4, 8400] that would be wrong for any other class count or image size.
+    assert "infer_shapes" in source
+
+
+def test_the_detector_accepts_both_the_joined_and_split_model() -> None:
+    """The board may hold either shape while a new model is being rolled out."""
+    import numpy as np
+
+    from src.python.npu_detector import merge_outputs
+
+    boxes = np.zeros((1, 4, 8400), dtype=np.float32)
+    scores = np.ones((1, 80, 8400), dtype=np.float32)
+
+    joined = merge_outputs([np.concatenate([boxes, scores], axis=1)])
+    split = merge_outputs([boxes, scores])
+
+    assert joined.shape == (1, 84, 8400)
+    assert split.shape == (1, 84, 8400)
+    assert np.array_equal(joined, split)
+
+
+def test_calibration_method_is_selectable_and_bounded() -> None:
+    """Histogram calibration holds every intermediate tensor for every image and
+    onnxruntime offers no way to bound it - `max_intermediate_outputs` reaches
+    MinMaxCalibrater only. 300 images asked for 14.5 GB and was OOM-killed, so
+    the image count is the only bound there is."""
+    source = (SCRIPT_DIR / "quantize.py").read_text(encoding="utf-8")
+
+    assert '"--calibrate"' in source
+    assert "HISTOGRAM_CALIB_MAX_IMAGES" in source
+    assert "CalibrationMethod.Entropy" in source
+    assert "CalibrationMethod.Percentile" in source
+    # CalibNumBins is silently ignored by onnxruntime - it is named in the
+    # docstring as a warning, and must never be set as an option again.
+    assert 'extra["CalibNumBins"]' not in source

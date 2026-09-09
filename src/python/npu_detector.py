@@ -121,6 +121,20 @@ def nms(boxes: np.ndarray, scores: np.ndarray, classes: np.ndarray, iou_thr: flo
     return keep
 
 
+def merge_outputs(outputs: list[np.ndarray]) -> np.ndarray:
+    """Accept either the one-tensor or the split-head form of the model.
+
+    The head's final Concat is removed before quantisation - joined, box
+    coordinates and class scores would share one INT8 scale and every score
+    would round to zero (see scripts/npu-model/export_rewrite.py). Rejoining
+    them here is a memory copy and costs nothing, which is exactly why the graph
+    does not need to do it.
+    """
+    if len(outputs) == 1:
+        return outputs[0]
+    return np.concatenate(outputs, axis=1)
+
+
 def decode(output: np.ndarray, scale: float, pad_x: int, pad_y: int,
            frame_shape: tuple[int, int], conf_thr: float, iou_thr: float,
            wanted: set[str] | None, max_det: int = 100) -> list[Detection]:
@@ -229,7 +243,7 @@ class Detector:
 
     def detect(self, frame: np.ndarray, cfg: Config) -> list[Detection]:
         blob, scale, pad_x, pad_y = to_input(frame)
-        output = self.session.run(None, {self.input_name: blob})[0]
+        output = merge_outputs(self.session.run(None, {self.input_name: blob}))
         return decode(output, scale, pad_x, pad_y, frame.shape[:2], cfg.conf, cfg.iou,
                       cfg.classes)
 

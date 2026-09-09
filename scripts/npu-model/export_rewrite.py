@@ -116,12 +116,58 @@ def verify_equivalent(before: Path, after: Path, runs: int = 3) -> float:
     return worst
 
 
+def split_final_concat(model: onnx.ModelProto) -> tuple[str, str] | None:
+    """Drop the head's last Concat, exposing boxes and scores as separate outputs.
+
+    YOLOv8 ends by concatenating box coordinates with class scores into one
+    [1, 84, 8400] tensor.  Those two have wildly different ranges - boxes run to
+    ~640 pixels, scores are probabilities in [0, 1] - and a QDQ Concat gives its
+    inputs a *single* shared scale.  Quantised, that scale is set by the boxes,
+    so a score of 0.92 lands well inside the first quantisation step and every
+    class score in the model rounds to exactly zero.
+
+    That is the whole reason ``--all-ops`` produced a model that detects nothing:
+    measured, boxes came out at 637.7 against a reference 637.1 while scores went
+    from 0.9230 to 0.0000.  Excluding Concat from quantisation fixes the numbers
+    but leaves float ops in the graph, which this device cannot run.  Removing
+    the node entirely is what does both: the concatenation is a memory layout
+    change that costs nothing in numpy, and the tensors never have to share a
+    scale.
+    """
+    outputs = {o.name for o in model.graph.output}
+    final = next((n for n in model.graph.node
+                  if n.op_type == "Concat" and set(n.output) & outputs), None)
+    if final is None or len(final.input) != 2:
+        return None
+
+    # The new outputs need a declared type and shape, and the honest source of
+    # those is inference over the graph as it stands rather than a hardcoded
+    # [1, 4, 8400] that would be wrong for any other class count or image size.
+    inferred = onnx.shape_inference.infer_shapes(model)
+    known = {v.name: v for v in inferred.graph.value_info}
+
+    boxes, scores = final.input
+    if boxes not in known or scores not in known:
+        return None
+
+    model.graph.node.remove(final)
+    for stale in list(model.graph.output):
+        model.graph.output.remove(stale)
+    for name in (boxes, scores):
+        model.graph.output.append(known[name])
+    return boxes, scores
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--weights", type=Path, required=True, help="finetuned .pt")
     ap.add_argument("--outdir", type=Path, default=Path.home() / "npu-training" / "export")
     ap.add_argument("--imgsz", type=int, default=640, help="must match the detector's letterbox size")
     ap.add_argument("--opset", type=int, default=12)
+    ap.add_argument("--no-split-head", action="store_true",
+                    help="keep the final Concat. Only useful for reproducing the failure it "
+                         "causes: quantised, it forces box coordinates and class scores to "
+                         "share one INT8 scale and every score becomes zero")
     args = ap.parse_args()
 
     args.outdir.mkdir(parents=True, exist_ok=True)
@@ -140,6 +186,14 @@ def main() -> int:
     print(f"  ops: {audit(graph)}")
 
     replaced = decompose_prelu(graph)
+
+    if not args.no_split_head:
+        split = split_final_concat(graph)
+        if split is None:
+            print("\n  ! could not find the head's final Concat - not split")
+        else:
+            print(f"\nsplit the head: outputs are now {split[0]} (boxes) and {split[1]} (scores)")
+
     onnx.checker.check_model(graph)
     decomposed = args.outdir / "prelu_ft_decomp.onnx"
     onnx.save(graph, str(decomposed))

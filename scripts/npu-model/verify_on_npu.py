@@ -30,6 +30,12 @@ import time
 from pathlib import Path
 
 
+def _merged(outputs: list) -> "np.ndarray":
+    """Join a split-head model's two outputs; pass a single one through."""
+    import numpy as np
+    return outputs[0] if len(outputs) == 1 else np.concatenate(outputs, axis=1)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", type=Path, required=True)
@@ -125,8 +131,10 @@ def main() -> int:
         worst = 0.0
         for trial in range(3):
             probe = rng.uniform(0.0, 1.0, size=shape).astype(np.float32)
-            on_npu = session.run(None, {name: probe})[0].astype(np.float64)
-            on_cpu = cpu.run(None, {cpu_name: probe})[0].astype(np.float64)
+            # Concatenated so a split-head model is compared whole, not just
+            # its box tensor - the scores are the half that quantisation kills.
+            on_npu = _merged(session.run(None, {name: probe})).astype(np.float64)
+            on_cpu = _merged(cpu.run(None, {cpu_name: probe})).astype(np.float64)
             diff = float(np.max(np.abs(on_npu - on_cpu)))
             worst = max(worst, diff)
             if trial == 0:
@@ -148,14 +156,14 @@ def main() -> int:
     if args.frame_from:
         print(f"\nrunning one real frame from {args.frame_from}")
         sys.path.insert(0, str(Path.home() / "smart_home_AI"))
-        from src.python.npu_detector import decode, grab_frame, to_input
+        from src.python.npu_detector import decode, grab_frame, merge_outputs, to_input
 
         frame = grab_frame(args.go2rtc, args.frame_from)
         if frame is None:
             print(f"  could not fetch a frame from {args.frame_from}")
         else:
             inp, scale, pad_x, pad_y = to_input(frame, args.imgsz)
-            output = session.run(None, {name: inp})[0]
+            output = merge_outputs(session.run(None, {name: inp}))
             found = decode(output, scale, pad_x, pad_y, frame.shape[:2], 0.25, 0.45, None)
             print(f"  frame {frame.shape} -> {len(found)} detections")
             for det in found[:8]:

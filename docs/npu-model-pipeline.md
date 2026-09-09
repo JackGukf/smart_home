@@ -61,6 +61,74 @@ python3 scripts/npu-model/evaluate.py \
     --model ~/npu-training/export/prelu_ft_decomp.int8-conv.onnx
 ```
 
+## Why `--all-ops` produced a model that detects nothing
+
+This was the blocker from 2026-09-08, and the explanation in the handoff -
+"per-tensor MinMax across the detection head destroys the score range" - is
+**wrong**. Five quantisation configurations were tried and all five scored
+mAP50 **0.0000** on the CPU:
+
+| Variant | mAP50 |
+| --- | ---: |
+| MinMax, per-tensor (the original) | 0.0000 |
+| Percentile, per-channel | 0.0000 |
+| Percentile, symmetric int8 | 0.0000 |
+| Percentile, excluding Softmax/Div/Sigmoid | 0.0000 |
+| Percentile, excluding Mul/Sub | 0.0000 |
+| Conv-only (for comparison) | **0.3482** |
+
+Calibration was never the problem. Comparing the FP32 and INT8 outputs on one
+image says exactly what is:
+
+```
+FP32 reference    boxes max 637.15   scores max 0.9230
+Conv-only         boxes max 637.69   scores max 0.9485
+every --all-ops   boxes max ~637     scores max 0.0000
+```
+
+The boxes are perfect and the scores are *exactly* zero. YOLOv8's head ends by
+concatenating box coordinates with class scores into one `[1, 84, 8400]`
+tensor, and **a QDQ `Concat` gives all of its inputs one shared scale**. Boxes
+run to ~640 pixels and scores are probabilities in `[0, 1]`, so the shared scale
+is set by the boxes: one INT8 step is ~2.5, and every class score in the model
+rounds to zero. Excluding `Concat` alone restores them - 0.8203 against a 0.9230
+reference.
+
+**The general rule, which is not written down anywhere else:** under QDQ, a
+`Concat` of tensors with different dynamic ranges destroys the smaller one. Look
+for them before blaming the calibrator.
+
+### The fix, and what is still broken
+
+Excluding `Concat` from quantisation fixes the numbers but leaves float ops in
+the graph, and this device cannot run those. So `export_rewrite.py` **removes
+the head's final Concat entirely** (`--no-split-head` keeps it, only useful for
+reproducing the failure): the model gets two outputs, boxes and scores, and
+`merge_outputs()` in `src/python/npu_detector.py` rejoins them in numpy, which
+costs nothing because concatenation is a memory copy.
+
+That model is the first all-INT8 graph that both works and runs wholly on the
+device:
+
+| | |
+| --- | --- |
+| CPU accuracy | mAP50 **0.3466**, person AP50 0.5663 (Conv-only: 0.3482 / 0.6279) |
+| On the NPU | **33.0 fps** with `disable_cpu_ep_fallback` set - twice Conv-only's 15.9 |
+| Class scores | no longer saturated: **0** values at 1.0, against 284 before |
+| On a real office frame | chair, book, tv, microwave - plausible, where it used to say zebra and parking meter at confidence 1.00 |
+
+**Still wrong: the boxes.** Every detection comes back with zero height, and the
+cause is the same one a level deeper. `/model.22/Concat_2` joins the box centre
+(`Div_1`, grid units up to ~80) with its size (`Sub_1`, typically under 20)
+before the stride multiply - different ranges, one scale, and the size collapses.
+
+The next step is to cut the graph before the whole `dist2bbox` head rather than
+at one Concat: quantise the backbone and neck, output the raw distance and class
+tensors, and do the DFL softmax, `dist2bbox` and stride multiply in numpy. That
+removes every range-mixing Concat and the `Softmax`/`Div` from the quantised
+graph at once, and the arithmetic it moves to the CPU is trivial next to the
+convolutions.
+
 ## Things that will cost you a day
 
 **`Model.train()` silently discards an activation swap.** It rebuilds the

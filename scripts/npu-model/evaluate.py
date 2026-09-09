@@ -40,7 +40,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.python.npu_detector import COCO_NAMES, nms, to_input  # noqa: E402  deployed code
+from src.python.npu_detector import COCO_NAMES, merge_outputs, nms, to_input  # noqa: E402  deployed code
 
 
 def coco_category_ids(ann_file: Path) -> list[int]:
@@ -103,7 +103,7 @@ def run_model(model_path: Path, images: list[tuple[int, Path]], cat_ids: list[in
             continue
         blob, scale, pad_x, pad_y = to_input(frame, imgsz)
         started = time.perf_counter()
-        output = session.run(None, {input_name: blob})[0]
+        output = merge_outputs(session.run(None, {input_name: blob}))
         total += time.perf_counter() - started
         boxes, scores, classes = decode_for_eval(output, scale, pad_x, pad_y,
                                                  frame.shape[:2], conf, iou, max_det)
