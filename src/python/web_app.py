@@ -137,6 +137,13 @@ BRIDGE_MAX_ENDPOINTS = 16
 # restart - it is not a page-load budget, because the cache below means only
 # the very first request ever waits on a poll.
 SWITCH_STATUS_TIMEOUT = 6.0
+# A switch that failed its last poll is very unlikely to answer this time
+# either, and at SWITCH_POLL_CONCURRENCY 4 one dead switch adds its entire
+# timeout to every refresh. Measured on this board: a single unplugged switch
+# took 6.00s of a 6.31s poll, while all seven live ones answered in 0.1-0.95s.
+# Its state is reported as unknown either way; the only question is how long
+# everything else waits to find that out.
+SWITCH_STATUS_TIMEOUT_FAILING = 1.5
 # Polling all of them at once makes each one slower: they share the board's
 # WiFi, and the contention showed up as every device creeping past the cap.
 SWITCH_POLL_CONCURRENCY = 4
@@ -496,6 +503,9 @@ def create_app(
     app.state.draft_lock = asyncio.Lock()
     # Last known device list, served instantly while a refresh runs behind it.
     app.state.device_cache = {"cards": None, "at": 0.0, "task": None}
+    # host -> (patch, when). A refresh that began before `when` read the switch
+    # in its pre-command state, so its result must not be allowed to undo it.
+    app.state.device_commands = {}
     # Consecutive status failures per switch host, used to retire dead sockets
     # and to notice a switch that may have moved to a new address.
     app.state.switch_failures = {}
@@ -1358,10 +1368,15 @@ async def _switch_status(
     that as an unknown state rather than failing the request.
     """
     failures = app.state.switch_failures
+    # Give a switch that is already failing a much shorter rope, so one dead
+    # device cannot set the pace of every refresh. A single success clears the
+    # count and it is back on the full timeout.
+    timeout = (SWITCH_STATUS_TIMEOUT_FAILING if failures.get(switch.host)
+               else SWITCH_STATUS_TIMEOUT)
     try:
         async with limit:
             state = await asyncio.wait_for(
-                app.state.controller.status(switch), timeout=SWITCH_STATUS_TIMEOUT
+                app.state.controller.status(switch), timeout=timeout
             )
     except Exception:
         count = failures.get(switch.host, 0) + 1
@@ -1458,13 +1473,45 @@ def _schedule_device_refresh(app: FastAPI) -> None:
 
 
 async def _refresh_device_cache(app: FastAPI) -> None:
+    # Noted before polling, not after: what matters is whether a command landed
+    # after this poll had already read the switch.
+    started = time.monotonic()
     try:
         cards = await _device_cards(app)
     except Exception:
         _matter_log.exception("Background device refresh failed; keeping previous cache")
         return
+    _reapply_commands_since(app, cards, started)
     app.state.device_cache["cards"] = cards
     app.state.device_cache["at"] = time.monotonic()
+
+
+def _reapply_commands_since(app: FastAPI, cards: list[dict[str, Any]], started: float) -> None:
+    """Re-assert commands that this poll is too old to know about.
+
+    A refresh replaces the card list wholesale, so a command that landed while
+    it was in flight was silently undone when it finished: the switch turned
+    on, the card said on, and then flipped back to off seconds later when a
+    poll that had read it *before* the command completed. On this board that
+    window is seconds wide, which is why toggling quickly made the state jump
+    around.
+
+    Only commands newer than the poll's start are applied, so a poll that began
+    after the command - or a switch someone changed at the wall - still wins.
+    """
+    commands = getattr(app.state, "device_commands", None)
+    if not commands:
+        return
+    for card in cards:
+        recorded = commands.get(card.get("host"))
+        if recorded is None:
+            continue
+        patch, when = recorded
+        if when >= started:
+            card.update(patch)
+    # Anything older than the poll that just finished can never apply again.
+    for host in [h for h, (_, when) in commands.items() if when < started]:
+        commands.pop(host, None)
 
 
 def _patch_device_cache(app: FastAPI, host: str, state: Any) -> None:
@@ -1473,14 +1520,22 @@ def _patch_device_cache(app: FastAPI, host: str, state: Any) -> None:
     Without this the cached card would keep reporting the pre-command state
     until the next background refresh, and the toggle would look like it failed.
     """
+    patch: dict[str, Any] = {"is_on": state.is_on}
+    if state.brightness is not None:
+        patch["brightness"] = state.brightness
+
+    # Remembered whether or not there is a cache to patch, because the point is
+    # to survive the refresh that is probably in flight right now.
+    commands = getattr(app.state, "device_commands", None)
+    if commands is not None:
+        commands[host] = (patch, time.monotonic())
+
     cards = app.state.device_cache.get("cards")
     if not cards:
         return
     for card in cards:
         if card.get("host") == host:
-            card["is_on"] = state.is_on
-            if state.brightness is not None:
-                card["brightness"] = state.brightness
+            card.update(patch)
             break
 
 
