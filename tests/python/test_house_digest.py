@@ -12,7 +12,9 @@ import json
 import time
 
 from src.python.house_digest import (
+    Facts,
     battery_report,
+    camera_name,
     board_report,
     build_digest,
     facts_to_prompt,
@@ -236,3 +238,43 @@ def test_the_notes_are_the_briefing_and_survive_without_a_model(tmp_path) -> Non
     assert "Hall triggered 1 times" in notes
     assert any("Water sensor" in note and "26" in note for note in notes)
     assert any("not reporting" in note for note in notes)
+
+
+def test_a_camera_sighting_is_reported_apart_from_a_pir_trip() -> None:
+    """They arrive on the same feed with the same device_class, but a PIR says
+    something warm moved and a camera says it recognised a person. Ranking them
+    together would let three PIR trips bury the one camera that saw somebody."""
+    now = 1_000_000.0
+    events = [
+        motion(now - 100, "binary_sensor.hall", "Hall", "on"),
+        motion(now - 90, "binary_sensor.hall", "Hall", "off", duration=10),
+        motion(now - 80, "binary_sensor.office_camera_npu_person",
+               "Office Camera (NPU) Person", "on"),
+        motion(now - 20, "binary_sensor.office_camera_npu_person",
+               "Office Camera (NPU) Person", "off", duration=60),
+    ]
+
+    facts = Facts(generated_at=now, motion=motion_summary(events, now))
+    notes = headlines(facts)
+
+    assert any("Hall triggered 1 times" in note for note in notes)
+    assert any("the office camera saw someone 1 time" in note for note in notes)
+
+
+def test_a_camera_that_saw_nobody_still_says_so() -> None:
+    """Silence from a camera is a fact about the night, not an absence of data -
+    but only when a camera was actually watching."""
+    now = 1_000_000.0
+    events = [
+        motion(now - 100, "binary_sensor.office_camera_npu_person",
+               "Office Camera (NPU) Person", "off", duration=5),
+    ]
+
+    notes = headlines(Facts(generated_at=now, motion=motion_summary(events, now)))
+
+    assert any("no camera saw anyone" in note for note in notes)
+
+
+def test_the_camera_name_reads_as_english() -> None:
+    assert camera_name("Office Camera (NPU) Person") == "the office camera"
+    assert camera_name("") == "a camera"

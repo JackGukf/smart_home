@@ -42,6 +42,25 @@ BATTERY_WARN_PERCENT = 50
 # States that mean "this entity is not telling us anything".
 DEAD_STATES = frozenset({"unavailable", "unknown"})
 
+
+def is_camera_sighting(entity_id: str) -> bool:
+    """Did this come from the NPU camera detector rather than a PIR sensor?
+
+    They arrive on the same feed and share a device_class, but they are not the
+    same evidence: a PIR says something warm moved, a camera says it recognised
+    a person. Worth keeping apart in a briefing.
+    """
+    return "_npu_" in str(entity_id or "").lower()
+
+
+def camera_name(name: str) -> str:
+    """"Office Camera (NPU) Person" -> "the office camera"."""
+    cleaned = str(name or "").replace("(NPU)", "").replace("Person", "").strip()
+    cleaned = " ".join(cleaned.split()).lower()
+    if not cleaned:
+        return "a camera"
+    return f"the {cleaned}"
+
 class EmptySummary(RuntimeError):
     """The model answered, with nothing in it."""
 
@@ -151,6 +170,7 @@ def motion_summary(events: list[dict], now: float, window_hours: int = WINDOW_HO
             "active_minutes": round(recent_seconds[entity_id] / 60, 1),
             "daily_average": average,
             "baseline_days": round(baseline_span_days, 1),
+            "camera": is_camera_sighting(entity_id),
             # Only claimed when there is a baseline to claim it against: a
             # sensor logged since yesterday has no normal yet.
             "unusual": bool(average is not None and average >= 1
@@ -268,7 +288,8 @@ def facts_to_prompt(facts: Facts) -> str:
     lines = [f"Window: the last {facts.window_hours} hours."]
 
     active = [entry for entry in facts.motion
-              if entry["events"] or entry["daily_average"]]
+              if (entry["events"] or entry["daily_average"]) and not entry["camera"]]
+    cameras = [entry for entry in facts.motion if entry["camera"]]
     no_baseline = active and all(entry["daily_average"] is None for entry in active)
     if active:
         lines.append("\nMotion (times triggered, then this sensor's own daily average):")
@@ -287,6 +308,12 @@ def facts_to_prompt(facts: Facts) -> str:
                          "so do not call any of this unusual)")
     else:
         lines.append("\nMotion: no sensors reported.")
+
+    if cameras:
+        lines.append("\nCameras (the NPU detector recognising a person, not a PIR trip):")
+        for entry in cameras:
+            lines.append(f"  {camera_name(entry['name'])}: {entry['events']} sightings, "
+                         f"{entry['active_minutes']} minutes in view")
 
     if facts.batteries:
         lines.append("\nBatteries running low:")
@@ -348,7 +375,10 @@ def headlines(facts: Facts) -> list[str]:
     """
     notes: list[str] = []
 
-    busiest = sorted((entry for entry in facts.motion if entry["events"]),
+    sensors = [e for e in facts.motion if not e["camera"]]
+    cameras = [e for e in facts.motion if e["camera"]]
+
+    busiest = sorted((entry for entry in sensors if entry["events"]),
                      key=lambda entry: -entry["events"])[:3]
     if busiest:
         notes += [f"{entry['name']} triggered {entry['events']} times"
@@ -357,6 +387,18 @@ def headlines(facts: Facts) -> list[str]:
                   for entry in busiest]
     else:
         notes.append("no motion sensor triggered at all")
+
+    # A camera saying it recognised a person is stronger evidence than a PIR
+    # saying something warm moved, so it gets its own line rather than being
+    # ranked among them.
+    seen = sorted((entry for entry in cameras if entry["events"]),
+                  key=lambda entry: -entry["events"])
+    for entry in seen[:3]:
+        notes.append(f"{camera_name(entry['name'])} saw someone {entry['events']} "
+                     f"time{'' if entry['events'] == 1 else 's'}"
+                     f" ({entry['active_minutes']} minutes in view)")
+    if cameras and not seen:
+        notes.append(f"no camera saw anyone ({len(cameras)} watching)")
 
     unusual = [entry["name"] for entry in facts.motion if entry["unusual"]]
     if unusual:

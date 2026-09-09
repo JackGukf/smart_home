@@ -504,6 +504,12 @@ beside the notes in the same file and is one click away in the UI.
 
 What it computes, all in `src/python/house_digest.py`:
 
+- **Camera sightings**, kept apart from motion sensors. They arrive on the same
+  Home Assistant feed with the same `occupancy` device_class, but they are not
+  the same evidence: a PIR says something warm moved, the NPU detector says it
+  recognised a person. Ranked together, three PIR trips would bury the one
+  camera that actually saw somebody.
+
 - **Motion**, per sensor, against *its own* previous days rather than against
   the other sensors.
 - **Batteries** below 50%.
@@ -552,6 +558,29 @@ Two things the digest deliberately refuses to do:
 - **It will not fail because the model did.** If Ollama is unreachable or slow,
   the digest is still written with the facts and no prose, and the UI says so.
   A morning report must not depend on the least reliable component in it.
+
+## Vision and the LLM
+
+The plan was that the NPU would detect, rules would act instantly, and the LLM
+would asynchronously write a description into the event log. Two of those three
+are live; the third is not, and deliberately.
+
+**What runs.** Detections reach Home Assistant as
+`binary_sensor.<camera>_npu_person`, and because those carry the `occupancy`
+device_class they flow into the motion log with no extra wiring - which means
+they reach the morning digest as well. `automation.office_person_detected_...`
+acts on them directly, in Home Assistant, in milliseconds.
+
+**What does not, and why.** Having the model narrate detections is the same job
+the digest prose turned out to be, and Qwen3-4B failed that four different ways
+(see above). It would also be the wrong shape: the model is text-only, so it
+could not describe an *image* - only retell counts and timestamps that Python
+already states exactly. There is no version of this where the model adds
+information rather than rephrasing it.
+
+So the deterministic path is the whole path. The model stays out of it, and the
+rule that made it worth trying still holds: **the LLM authors, rules execute** -
+and here the rules needed no authoring.
 
 ## Operational notes
 
