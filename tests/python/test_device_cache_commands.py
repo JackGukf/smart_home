@@ -176,3 +176,62 @@ async def test_a_failing_switch_is_given_a_much_shorter_timeout(tmp_path: Path) 
     first, second = controller.waited
     assert first >= 0.35, "the first attempt should get the full timeout"
     assert second < 0.2, "a switch already known to be down must fail fast"
+
+
+@pytest.mark.asyncio
+async def test_the_tuya_cloud_is_not_waited_on_by_every_repaint(tmp_path: Path) -> None:
+    """Every live update runs the dashboard's full refresh, which waits on all
+    of its endpoints at once - so a 2.9s Tuya cloud call set the pace for
+    repainting the whole page, switches included. Toggling a light felt slow
+    because of devices the toggle had nothing to do with."""
+    calls = {"n": 0}
+
+    async def slow_cloud(_path):
+        calls["n"] += 1
+        await asyncio.sleep(0.3)
+        return [{"id": "t1", "category": "tuya_temperature", "values": {"temperature": 21}}]
+
+    app = web_app.create_app(discovery_path=_discovery(tmp_path),
+                             controller=SlowPollController(), check_camera_ports=False)
+    original = web_app._tuya_cards
+    web_app._tuya_cards = slow_cloud
+    try:
+        # The cold call pays for real, so a fresh process is accurate.
+        first = time.monotonic()
+        cards = await web_app._tuya_cards_cached(app)
+        cold = time.monotonic() - first
+        assert cards and cold >= 0.3
+
+        # Every call after that is served from cache and waits on nothing.
+        warm_start = time.monotonic()
+        for _ in range(5):
+            assert await web_app._tuya_cards_cached(app) == cards
+        warm = time.monotonic() - warm_start
+        assert warm < 0.05, f"cached reads still cost {warm:.3f}s"
+        assert calls["n"] == 1
+    finally:
+        web_app._tuya_cards = original
+
+
+@pytest.mark.asyncio
+async def test_a_stale_tuya_cache_refreshes_behind_the_request(tmp_path: Path) -> None:
+    async def cloud(_path):
+        await asyncio.sleep(0.05)
+        return [{"id": "t1", "n": time.monotonic()}]
+
+    app = web_app.create_app(discovery_path=_discovery(tmp_path),
+                             controller=SlowPollController(), check_camera_ports=False)
+    original = web_app._tuya_cards
+    web_app._tuya_cards = cloud
+    web_app.TUYA_CACHE_STALE_AFTER = 0.0
+    try:
+        await web_app._tuya_cards_cached(app)
+        # Stale, so this returns at once and kicks off a refresh behind it.
+        started = time.monotonic()
+        await web_app._tuya_cards_cached(app)
+        assert time.monotonic() - started < 0.02
+        await app.state.tuya_cache["task"]
+        assert app.state.tuya_cache["cards"]
+    finally:
+        web_app._tuya_cards = original
+        web_app.TUYA_CACHE_STALE_AFTER = 60.0

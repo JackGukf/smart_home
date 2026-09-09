@@ -172,3 +172,46 @@ console.log(JSON.stringify({
 
     assert result["remembered"] == 40
     assert result["unknown"] is None
+
+
+def test_home_assistant_cards_are_keyed_by_entity_not_by_their_shared_host(tmp_path: Path) -> None:
+    """Cards sourced from Home Assistant all carry the literal string
+    "Home Assistant" as their host. Keying on that matched nothing for Stick S3,
+    and would have applied one light's command to every other one."""
+    script = SETUP + """
+latestTuyaDevices = [
+  { id: 'light.stick_s3', entity_id: 'light.stick_s3', host: 'Home Assistant', is_on: false },
+  { id: 'light.other', entity_id: 'light.other', host: 'Home Assistant', is_on: false },
+];
+notePendingCommand('light.stick_s3', { is_on: true });
+applyPendingCommands();
+console.log(JSON.stringify({
+  keys: latestTuyaDevices.map(deviceHostKey),
+  states: latestTuyaDevices.map((d) => d.is_on),
+}));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["keys"] == ["light.stick_s3", "light.other"]
+    assert result["states"] == [True, False], "the command leaked to the other light"
+
+
+def test_a_home_assistant_light_in_the_tuya_grid_refreshes_that_grid(tmp_path: Path) -> None:
+    """Stick S3 is an ha: host whose card lives in the Tuya list. Refreshing
+    /api/devices for it read a list it is not in, so the card kept showing the
+    pre-command state until the next full poll."""
+    script = """
+globalThis.latestTuyaDevices = [
+  { id: 'light.stick_s3', entity_id: 'light.stick_s3', host: 'Home Assistant' },
+];
+eval(pick('deviceSourceOf'));
+console.log(JSON.stringify({
+  stick: deviceSourceOf('ha:light.stick_s3'),
+  plainSwitch: deviceSourceOf('ha:switch.not_in_that_list'),
+  kasa: deviceSourceOf('192.168.0.143'),
+  matter: deviceSourceOf('matter:7'),
+}));
+"""
+    assert _run_node(script, tmp_path) == {
+        "stick": "tuya", "plainSwitch": "switches", "kasa": "switches", "matter": "matter",
+    }

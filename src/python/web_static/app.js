@@ -6277,6 +6277,16 @@ function deviceSourceOf(host) {
   const h = String(host || "");
   if (h.startsWith("matter:")) return "matter";
   if (h.startsWith("tuya:")) return "tuya";
+  /* A Home Assistant entity can sit in either list. Stick S3 is an ha: host
+     whose card lives in the Tuya grid, so refreshing /api/devices for it read
+     a list it is not in and left the card showing the pre-command state until
+     the next full poll. */
+  if (h.startsWith("ha:")) {
+    const entityId = h.slice(3);
+    const inTuya = (latestTuyaDevices || []).some(
+      (device) => String(device.entity_id ?? device.id) === entityId);
+    return inTuya ? "tuya" : "switches";
+  }
   return "switches";
 }
 
@@ -6304,8 +6314,18 @@ function deviceSourceOf(host) {
 const PENDING_COMMAND_MS = 12000;
 const pendingCommands = new Map();
 
+/* What identifies a device across the lists a command might have to survive.
+
+   Not simply `host`: cards sourced from Home Assistant carry the literal string
+   "Home Assistant" there, which is not an address and is the *same* for every
+   one of them - so keying on it matched nothing for Stick S3 and would have
+   applied one light's command to all seventy-four of them. The entity id is
+   the real identity for those. */
 function deviceHostKey(device) {
-  return String(device.host ?? (device.node_id != null ? `matter:${device.node_id}` : device.id));
+  if (device.node_id != null) return `matter:${device.node_id}`;
+  if (device.entity_id) return String(device.entity_id);
+  if (device.host && device.host !== "Home Assistant") return String(device.host);
+  return String(device.id ?? "");
 }
 
 function notePendingCommand(host, patch) {

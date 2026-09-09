@@ -154,6 +154,12 @@ SWITCH_EVICT_AFTER_FAILURES = 2
 # off. The dashboard re-polls every 60s, so this keeps the cache warm without
 # letting a burst of requests each start their own refresh.
 DEVICE_CACHE_STALE_AFTER = 10.0
+# The direct-Tuya half of /api/tuya/devices goes to Tuya's cloud and takes ~2.9s
+# against ~0.13s for the Home Assistant half. It is only consulted for sensors
+# Home Assistant does not expose, which change slowly, so it is cached harder
+# than the local devices are: the point is that no live update ever waits on a
+# cloud round trip.
+TUYA_CACHE_STALE_AFTER = 60.0
 # A switch that misses this many consecutive polls may have been handed a new
 # DHCP lease rather than died, so go looking for it. Set above
 # SWITCH_EVICT_AFTER_FAILURES: reconnecting is the cheap explanation and is
@@ -506,6 +512,7 @@ def create_app(
     # host -> (patch, when). A refresh that began before `when` read the switch
     # in its pre-command state, so its result must not be allowed to undo it.
     app.state.device_commands = {}
+    app.state.tuya_cache = {"cards": None, "at": 0.0, "task": None}
     # Consecutive status failures per switch host, used to retire dead sockets
     # and to notice a switch that may have moved to a new address.
     app.state.switch_failures = {}
@@ -836,7 +843,7 @@ def create_app(
         home_assistant_devices = await asyncio.to_thread(
             _tuya_cards_from_home_assistant, app.state.config_path, app.state.discovery_path
         )
-        direct_devices = await _tuya_cards(app.state.config_path)
+        direct_devices = await _tuya_cards_cached(app)
         if home_assistant_devices:
             supplements = _tuya_direct_sensor_supplements(direct_devices)
             return {"devices": home_assistant_devices + supplements, "source": "home_assistant"}
@@ -2198,6 +2205,46 @@ def _config_camera_matches(item: dict[str, Any], camera_id: str) -> bool:
         item.get("id"),
     ]
     return any(str(value) == camera_id for value in values if value is not None)
+
+
+async def _tuya_cards_cached(app: FastAPI) -> list[dict[str, Any]]:
+    """The direct-Tuya cards, served from cache while a re-poll runs behind it.
+
+    Every live update runs the dashboard's full refresh, which waits on all of
+    its endpoints at once - so a 2.9s cloud call here set the pace for repainting
+    the whole page, switches included. Toggling anything felt slow because of
+    devices the toggle had nothing to do with.
+
+    Same shape as the device cache: a cold call polls for real so a fresh process
+    is accurate, and after that staleness is traded for never blocking a paint.
+    """
+    cache = app.state.tuya_cache
+    if cache["cards"] is None:
+        _schedule_tuya_refresh(app)
+        await cache["task"]
+        return cache["cards"] or []
+
+    if time.monotonic() - cache["at"] >= TUYA_CACHE_STALE_AFTER:
+        _schedule_tuya_refresh(app)
+    return cache["cards"]
+
+
+def _schedule_tuya_refresh(app: FastAPI) -> None:
+    cache = app.state.tuya_cache
+    task = cache.get("task")
+    if task is not None and not task.done():
+        return
+    cache["task"] = asyncio.create_task(_refresh_tuya_cache(app))
+
+
+async def _refresh_tuya_cache(app: FastAPI) -> None:
+    try:
+        cards = await _tuya_cards(app.state.config_path)
+    except Exception:
+        _matter_log.exception("Background Tuya refresh failed; keeping previous cache")
+        return
+    app.state.tuya_cache["cards"] = cards
+    app.state.tuya_cache["at"] = time.monotonic()
 
 
 async def _tuya_cards(path: Path) -> list[dict[str, Any]]:
