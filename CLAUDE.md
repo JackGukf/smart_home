@@ -116,6 +116,8 @@ Deploy scripts default to `orangepi@192.168.0.234` and `/home/orangepi/smart_hom
 
 `deploy-dashboard.sh` increments `BUILD_COUNT`, rewrites static cache-busting versions and `web_static/build_info.json`. It mutates the source tree; review the resulting diff.
 
+`install-living-room-lighting.py` installs the living room rules through Home Assistant's config API, not by appending to `automations.yaml` — that runs the same validator the UI does and reloads, so a malformed template is refused rather than written and left to fail at 11pm. Two Jinja traps it exists to not repeat: these Zigbee entity ids **start with a digit**, so `states.binary_sensor.0xa4c…` is a syntax error and the subscript form is required; and **`}}` inside a Python f-string collapses to a single `}`**, silently breaking any template built that way.
+
 `backup-smart-home.sh` reads Home Assistant's config through `sudo` — `.storage/auth` is root-owned, and a backup that skips it loses every HA token silently. It verifies the finished archive against a required-members manifest and fails loudly rather than producing a quietly incomplete backup.
 
 ## Python Environment
