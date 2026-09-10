@@ -45,6 +45,11 @@ if pgrep -u "$(id -u)" -f "uvicorn src.python.web_app:app.*--port 8000" >/dev/nu
 fi
 
 for service_name in "${SERVICE_NAMES[@]}"; do
+  # The stop above can time out - the dashboard holds SSE streams open - and a
+  # unit killed on a timed-out stop is left `failed`. Clear that first: a restart
+  # from `failed` is fine, but the state persists otherwise and the next deploy
+  # inherits it.
+  systemctl --user reset-failed "${service_name}" 2>/dev/null || true
   systemctl --user restart "${service_name}"
   systemctl --user --no-pager --full status "${service_name}"
 done

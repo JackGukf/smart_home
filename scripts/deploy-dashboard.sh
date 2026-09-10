@@ -87,9 +87,38 @@ rsync --checksum -av \
 echo "==> Syncing Python dependencies..."
 ssh "${PI_TARGET}" "cd ${REMOTE_PATH} && [ -x .venv/bin/pip ] && .venv/bin/pip install -q -r src/python/requirements.txt || true"
 
+SYSTEMCTL="HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user"
+
+# A restart whose stop times out leaves the unit `failed`, and a failed unit does
+# not come back by itself - Restart=always covers a crash, not a stop that never
+# finished. Deploys inherited that state and reported success anyway, because
+# `restart` returns 0 for a unit it went on to kill. So: clear any failure first,
+# then confirm the thing is actually running, and say so plainly if it is not.
+restart_unit() {
+    local unit="$1"
+    ssh "${PI_TARGET}" "${SYSTEMCTL} reset-failed ${unit} >/dev/null 2>&1 || true"
+    ssh "${PI_TARGET}" "${SYSTEMCTL} restart ${unit}" || true
+
+    local attempt
+    for attempt in 1 2 3; do
+        if ssh "${PI_TARGET}" "${SYSTEMCTL} is-active --quiet ${unit}"; then
+            echo "    ${unit}: active"
+            return 0
+        fi
+        echo "    ${unit}: not active (attempt ${attempt}), clearing and starting..."
+        ssh "${PI_TARGET}" "${SYSTEMCTL} reset-failed ${unit} >/dev/null 2>&1 || true"
+        ssh "${PI_TARGET}" "${SYSTEMCTL} start ${unit}" || true
+        sleep 5
+    done
+
+    echo "ERROR: ${unit} did not come back. Last journal lines:" >&2
+    ssh "${PI_TARGET}" "${SYSTEMCTL} status ${unit} --no-pager --lines=20" >&2 || true
+    return 1
+}
+
 echo "==> Installing and restarting smart-home-dashboard.service..."
 ssh "${PI_TARGET}" "cd ${REMOTE_PATH} && HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) bash scripts/install-dashboard-service.sh >/tmp/smart-home-dashboard-install.log 2>&1"
-ssh "${PI_TARGET}" "HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user restart go2rtc.service && HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user is-active go2rtc.service"
-ssh "${PI_TARGET}" "HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user restart smart-home-dashboard.service && HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user is-active smart-home-dashboard.service"
+restart_unit go2rtc.service
+restart_unit smart-home-dashboard.service
 
 echo "==> Done. Dashboard live at http://${PI_HOST}:8000"

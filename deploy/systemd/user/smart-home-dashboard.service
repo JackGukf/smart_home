@@ -11,6 +11,11 @@ Environment=PORT=8000
 ExecStart=/home/orangepi/smart_home_AI/scripts/run-dashboard.sh
 Restart=always
 RestartSec=5
+# The runner tells uvicorn to stop waiting on open SSE streams after 5s. This is
+# the backstop for the case where it does not: 20s, not systemd's default 90s,
+# because a stop that reaches the deadline is SIGKILLed and leaves the unit
+# `failed` - and a failed unit stays failed. Deploys used to land there.
+TimeoutStopSec=20
 
 [Install]
 WantedBy=default.target

@@ -16,6 +16,25 @@ def test_dashboard_systemd_service_restarts_and_uses_project_runner() -> None:
     assert "Environment=PORT=8000" in unit
 
 
+def test_the_dashboard_stop_has_a_deadline_shorter_than_systemds_default() -> None:
+    """The dashboard holds an SSE stream open per browser tab, and those never
+    close. Without a deadline the stop waits systemd's default 90s, is SIGKILLed,
+    and the unit is left `failed` - which does not self-recover, so the next
+    deploy started from a dead dashboard."""
+    unit = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "smart-home-dashboard.service").read_text(encoding="utf-8")
+    runner = (PROJECT_ROOT / "scripts" / "run-dashboard.sh").read_text(encoding="utf-8")
+
+    assert "TimeoutStopSec=20" in unit
+    # uvicorn has to give up on the streams first, or systemd's deadline is just
+    # a faster kill rather than a clean exit.
+    assert "--timeout-graceful-shutdown" in runner
+    graceful = int(runner.split('GRACEFUL_SHUTDOWN_S:-')[1].split('}')[0])
+    assert 0 < graceful < 20, "uvicorn must give up before systemd does"
+    # exec: uvicorn is then the main process, so SIGTERM reaches it directly and
+    # no shell is left behind for "process remains running after unit stopped".
+    assert 'exec "$PYTHON" -m uvicorn' in runner
+
+
 def test_go2rtc_systemd_service_restarts_and_uses_project_runner() -> None:
     unit = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "go2rtc.service").read_text(encoding="utf-8")
 
@@ -29,11 +48,27 @@ def test_go2rtc_systemd_service_restarts_and_uses_project_runner() -> None:
 def test_deploy_script_restarts_user_systemd_service_without_old_process_runner() -> None:
     script = (PROJECT_ROOT / "scripts" / "deploy-dashboard.sh").read_text(encoding="utf-8")
 
-    assert "systemctl --user restart smart-home-dashboard.service" in script
-    assert "systemctl --user restart go2rtc.service" in script
+    assert "restart_unit smart-home-dashboard.service" in script
+    assert "restart_unit go2rtc.service" in script
+    assert "${SYSTEMCTL} restart ${unit}" in script
     assert '"${PROJECT_ROOT}/scripts/run-go2rtc.sh"' in script
     assert "pkill -f uvicorn" not in script
     assert "nohup bash -c" not in script
+
+
+def test_the_deploy_clears_a_failed_unit_and_checks_it_came_back() -> None:
+    """`systemctl restart` exits 0 for a unit it then kills on a stop timeout, so
+    a deploy could report success over a dead dashboard - and `failed` is sticky:
+    Restart=always covers a crash, not a stop that never finished."""
+    script = (PROJECT_ROOT / "scripts" / "deploy-dashboard.sh").read_text(encoding="utf-8")
+    installer = (PROJECT_ROOT / "scripts" / "install-dashboard-service.sh").read_text(encoding="utf-8")
+
+    assert "${SYSTEMCTL} reset-failed ${unit}" in script
+    assert "${SYSTEMCTL} is-active --quiet ${unit}" in script
+    assert "did not come back" in script, "a dead unit must fail the deploy"
+    # The installer stops the service itself, so it can create the failed state
+    # the deploy would otherwise inherit.
+    assert 'systemctl --user reset-failed "${service_name}"' in installer
 
 
 def test_install_script_uses_resolved_user_home_and_project_root_paths() -> None:
