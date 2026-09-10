@@ -112,3 +112,49 @@ def test_the_script_writes_nothing_without_apply() -> None:
     assert '"--apply"' in source
     assert "if not args.apply:" in source
     assert "Nothing was written" in source
+
+
+def test_the_motion_fallback_exists_and_triggers_on_the_room_itself() -> None:
+    """Arriving without passing the downstairs sensor is the common case - that
+    sensor only fires on the stairs - so the room's own motion has to work too."""
+    rule = lr.automations()["living_room_on_when_motion"]
+
+    (trigger,) = rule["triggers"]
+    assert trigger["entity_id"] == lr.LR_MOTION
+    assert trigger["from"] == "off" and trigger["to"] == "on"
+    # No direction check here on purpose: being in the room *is* the evidence.
+    assert not any(lr.UP_MOTION in c.get("value_template", "")
+                   for c in rule["conditions"])
+
+
+def test_a_switch_turned_off_by_hand_is_left_alone_by_every_on_rule() -> None:
+    """"I turned it off, then went upstairs" must not be undone by coming back
+    down, so the suppression belongs on both paths, not just the new one."""
+    autos = lr.automations()
+    for auto_id in ("living_room_on_when_dark", "living_room_on_when_motion"):
+        templates = [c.get("value_template", "") for c in autos[auto_id]["conditions"]]
+        assert any("context.user_id is none" in t and "context.parent_id is none" in t
+                   for t in templates), f"{auto_id} can override a manual off"
+
+
+def test_manual_is_distinguished_by_the_absence_of_any_context() -> None:
+    """Measured on the board: a change made at the wall carries neither a
+    user_id nor a parent_id, while anything Home Assistant did carries one.
+    Testing only user_id would treat an automation's own switch-off as manual."""
+    dark_rule = lr.automations()["living_room_on_when_motion"]
+    suppression = next(c["value_template"] for c in dark_rule["conditions"]
+                       if "by_hand" in c.get("value_template", ""))
+
+    assert "user_id is none and" in suppression
+    assert "parent_id is none" in suppression
+    assert str(lr.MANUAL_OFF_SUPPRESS_S) in suppression
+
+
+def test_the_suppression_only_applies_while_the_switch_is_still_off() -> None:
+    """If it is already on there is nothing to suppress, and the rule must not
+    latch: once you turn it back on yourself, normal behaviour resumes."""
+    rule = lr.automations()["living_room_on_when_motion"]
+    suppression = next(c["value_template"] for c in rule["conditions"]
+                       if "by_hand" in c.get("value_template", ""))
+
+    assert "sw.state == 'off'" in suppression

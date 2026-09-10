@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Install the living room lighting pair into Home Assistant.
+"""Install the living room lighting rules into Home Assistant.
 
-Two automations that work together:
+Three automations that work together:
 
   * **on** when you come *downstairs* into a dark living room
+  * **on** when there is motion in the room at all and it is dark - the
+    fallback, and in practice the common case, because the downstairs sensor
+    only fires on the stairs
   * **off** after 11pm once the room has been quiet for ten minutes
+
+Neither "on" rule will override a switch you turned off by hand.
 
 Installed through Home Assistant's own config API rather than by appending to
 ``automations.yaml``.  That runs the same validator the UI does, writes the file
@@ -32,6 +37,13 @@ on a reading that its own action had caused.  A reading older than the switch's
 last change cannot describe the room as it is now, so in that case the rule
 falls back to the sun -- but only then, because "it is night" alone would fire
 even with another lamp lighting the room.
+
+**A switch you turned off yourself is left alone.**  A state change Home
+Assistant caused carries a context - a ``user_id`` when a person did it in HA, a
+``parent_id`` when an automation did.  A change made at the wall carries
+neither, which is the only signal there is that *you* turned it off; the switch
+does not report how it was pressed.  Both "on" rules respect that for
+``MANUAL_OFF_SUPPRESS_S``.
 
 **Two triggers on the off rule.**  Motion going quiet handles the usual case.
 The 23:00 trigger catches a night that was *already* quiet before 11pm, which
@@ -72,6 +84,11 @@ DARK_LX = 50
 # "was upstairs an hour ago" does not count.
 CAME_DOWN_WINDOW_S = 120
 QUIET_FOR = "00:10:00"
+# How long a switch you turned off by hand stays off. Measured: a change made
+# outside Home Assistant carries no context at all (user_id and parent_id both
+# None), where anything HA did carries one - so "you turned it off" is
+# detectable, and this is how long that decision is respected.
+MANUAL_OFF_SUPPRESS_S = 1800
 
 
 def _came_down() -> str:
@@ -93,6 +110,23 @@ def _is_dark() -> str:
     )
 
 
+def _not_recently_switched_off_by_hand() -> str:
+    """True unless you turned the switch off yourself in the last while.
+
+    A state change Home Assistant caused carries a context - a user_id for
+    something a person did in HA, a parent_id for something an automation did.
+    A change made at the wall, or in the Kasa app, or by a schedule on the
+    device itself, carries neither. That is the signal, and it is the only one
+    available: the switch does not report *how* it was pressed.
+    """
+    return (
+        "{% set sw = states['" + SWITCH + "'] %}"
+        "{% set by_hand = sw.context.user_id is none and sw.context.parent_id is none %}"
+        "{{ not (sw.state == 'off' and by_hand and "
+        "(now() - sw.last_changed).total_seconds() < " + str(MANUAL_OFF_SUPPRESS_S) + ") }}"
+    )
+
+
 def automations() -> dict[str, dict]:
     return {
         "living_room_on_when_dark": {
@@ -110,7 +144,28 @@ def automations() -> dict[str, dict]:
             "conditions": [
                 {"condition": "template", "value_template": _came_down()},
                 {"condition": "template", "value_template": _is_dark()},
+                {"condition": "template", "value_template": _not_recently_switched_off_by_hand()},
                 # Nothing to do if it is already on, and it saves a device round trip.
+                {"condition": "state", "entity_id": SWITCH, "state": "off"},
+            ],
+            "actions": [{"action": "switch.turn_on", "target": {"entity_id": SWITCH}}],
+            "mode": "single",
+        },
+        "living_room_on_when_motion": {
+            "id": "living_room_on_when_motion",
+            "alias": "Living room - on when there is motion in the room and it is dark",
+            "description": (
+                "The fallback for arriving without passing the downstairs sensor - which "
+                "is most of the time, since that sensor fires only on the stairs. Same "
+                "dark test as the descent rule, and the same respect for a switch you "
+                "turned off by hand."
+            ),
+            "triggers": [
+                {"trigger": "state", "entity_id": LR_MOTION, "from": "off", "to": "on"},
+            ],
+            "conditions": [
+                {"condition": "template", "value_template": _is_dark()},
+                {"condition": "template", "value_template": _not_recently_switched_off_by_hand()},
                 {"condition": "state", "entity_id": SWITCH, "state": "off"},
             ],
             "actions": [{"action": "switch.turn_on", "target": {"entity_id": SWITCH}}],
