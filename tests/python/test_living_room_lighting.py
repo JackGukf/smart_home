@@ -158,3 +158,18 @@ def test_the_suppression_only_applies_while_the_switch_is_still_off() -> None:
                        if "by_hand" in c.get("value_template", ""))
 
     assert "sw.state == 'off'" in suppression
+
+
+def test_the_quiet_period_outlasts_a_person_sitting_still() -> None:
+    """The living room sensor's p90 gap is 10.9 minutes, so a 10-minute quiet
+    period turned the light off on someone still in the room. Both the trigger
+    and the condition have to agree, or the rule fires on one and is refused by
+    the other."""
+    rule = lr.automations()["living_room_off_late_and_quiet"]
+
+    assert lr.QUIET_FOR == "00:30:00"
+    state_trigger = next(t for t in rule["triggers"] if t.get("trigger") == "state")
+    assert state_trigger["for"] == lr.QUIET_FOR
+    quiet_condition = next(c for c in rule["conditions"]
+                           if c.get("entity_id") == lr.LR_MOTION)
+    assert quiet_condition["for"] == lr.QUIET_FOR

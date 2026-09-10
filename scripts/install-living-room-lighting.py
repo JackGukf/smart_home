@@ -7,7 +7,7 @@ Three automations that work together:
   * **on** when there is motion in the room at all and it is dark - the
     fallback, and in practice the common case, because the downstairs sensor
     only fires on the stairs
-  * **off** after 11pm once the room has been quiet for ten minutes
+  * **off** after 11pm once the room has been quiet for half an hour
 
 Neither "on" rule will override a switch you turned off by hand.
 
@@ -83,7 +83,11 @@ DARK_LX = 50
 # Long enough for a slow descent plus the sensors' 30s fade, short enough that
 # "was upstairs an hour ago" does not count.
 CAME_DOWN_WINDOW_S = 120
-QUIET_FOR = "00:10:00"
+# How long the room must be still before it counts as empty. 30 minutes, not
+# 10: the living room sensor's p90 gap is 10.9 minutes, so sitting quietly
+# watching television regularly exceeded 10 and turned the light off on someone
+# who was still in the room.
+QUIET_FOR = "00:30:00"
 # How long a switch you turned off by hand stays off. Measured: a change made
 # outside Home Assistant carries no context at all (user_id and parent_id both
 # None), where anything HA did carries one - so "you turned it off" is
@@ -173,7 +177,7 @@ def automations() -> dict[str, dict]:
         },
         "living_room_off_late_and_quiet": {
             "id": "living_room_off_late_and_quiet",
-            "alias": "Living room - off after 11pm once quiet for 10 minutes",
+            "alias": "Living room - off after 11pm once quiet for 30 minutes",
             "description": (
                 "Two triggers: motion going quiet handles the usual case, and the 23:00 "
                 "trigger catches a night already quiet before 11pm. Both then check the "
