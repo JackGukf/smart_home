@@ -244,6 +244,9 @@ class Config:
     discovery_prefix: str = "homeassistant"
     entity_category: str | None = "diagnostic"
     fetch_timeout: float = 8.0
+    # Seconds a watched class may go undetected before it is reported gone. A
+    # rise is never held; see PresenceHold.
+    presence_hold: float = 60.0
 
     @property
     def availability_topic(self) -> str:
@@ -259,6 +262,10 @@ class Config:
             go2rtc_url=os.getenv("GO2RTC_URL", "http://127.0.0.1:1984"),
             interval=float(os.getenv("NPU_INTERVAL", "2.0")),
             conf=float(os.getenv("NPU_CONF", "0.35")),
+            # Seconds a person may go undetected before the room is called
+            # empty. 0 disables the hold and publishes every frame, which is
+            # what produced 2,289 state changes a day from one camera.
+            presence_hold=float(os.getenv("NPU_PRESENCE_HOLD", "60")),
             iou=float(os.getenv("NPU_IOU", "0.45")),
             classes=classes,
             mqtt_host=os.getenv("MQTT_HOST", "127.0.0.1"),
@@ -334,7 +341,11 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
     64ms per frame is ~15 inferences a second against a handful of cameras
     wanting one every couple of seconds.
     """
-    LOG.info("%s: watching every %.1fs", camera, cfg.interval)
+    LOG.info("%s: watching every %.1fs (presence hold %.0fs)", camera, cfg.interval,
+             cfg.presence_hold)
+    # One hold per watched class, per camera: a car appearing must not be able
+    # to keep "person" alive, and vice versa.
+    holds = {label: PresenceHold(cfg.presence_hold) for label in cfg.classes}
     while not stop.is_set():
         started = time.monotonic()
         try:
@@ -343,9 +354,14 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
                 fetched = time.monotonic()
                 with npu_lock:
                     detections = detector.detect(frame, cfg)
-                publish(camera, build_payload(camera, detections, cfg.classes))
-                LOG.debug("%s: %d detection(s)  fetch %.0fms  infer %.0fms",
-                          camera, len(detections), (fetched - started) * 1000,
+
+                held, changed = _apply_holds(holds, detections, cfg.classes,
+                                             time.monotonic())
+                if changed:
+                    publish(camera, build_payload(camera, detections, cfg.classes, held))
+                LOG.debug("%s: %d detection(s)%s  fetch %.0fms  infer %.0fms",
+                          camera, len(detections), "" if changed else " (held)",
+                          (fetched - started) * 1000,
                           (time.monotonic() - fetched) * 1000)
         except Exception:
             # One camera failing must not take its thread down and silently stop
@@ -463,19 +479,90 @@ def discovery_messages(
     return messages
 
 
-def build_payload(camera: str, detections: Sequence[Detection], wanted: Iterable[str]) -> str:
+class PresenceHold:
+    """Turn per-frame detections into an enter/leave signal, per camera.
+
+    The detector sees a person for a median of 0.8s and then loses them for a
+    median of 3s while they sit perfectly still at a desk. Published raw, that
+    was 2,289 state changes a day from one camera - 87% of the motion log across
+    two of them, an automation firing 2,357 times, and a digest reporting "2,358
+    sightings" of an empty room.
+
+    The rule is asymmetric on purpose:
+
+    * **A rise is published immediately.** First sight of a person, or a second
+      person joining one already there, is never delayed and never suppressed.
+      That is the edge automations care about and the one that must not be lost.
+    * **A fall waits.** The published count is the highest seen in the last
+      `hold` seconds, so a dropout has to persist before it is believed.
+
+    So the only thing the hold can ever do is report a room occupied for up to
+    `hold` seconds after it emptied. Measured against real gaps, 60s bridges
+    94% of dropouts; 10s bridges 74%.
+    """
+
+    def __init__(self, hold: float) -> None:
+        self.hold = hold
+        self.published = 0
+        self._seen: list[tuple[float, int]] = []
+
+    def update(self, count: int, now: float) -> int | None:
+        """Feed one frame's count. Returns the count to publish, or None."""
+        self._seen.append((now, count))
+        cutoff = now - self.hold
+        self._seen = [(t, c) for t, c in self._seen if t >= cutoff]
+
+        # Highest count still inside the window - what we are prepared to
+        # believe. A rise overrides it, because a rise is never held back.
+        target = max((c for _, c in self._seen), default=0)
+        if count > self.published:
+            target = count
+        if target == self.published:
+            return None
+        self.published = target
+        return target
+
+
+def _apply_holds(holds: dict[str, PresenceHold], detections: Sequence[Detection],
+                 wanted: Iterable[str], now: float) -> tuple[dict[str, int], bool]:
+    """Feed this frame to each class's hold. Returns (held counts, anything changed)."""
+    seen: dict[str, int] = {}
+    for d in detections:
+        seen[d.label] = seen.get(d.label, 0) + 1
+
+    changed = False
+    held: dict[str, int] = {}
+    for label in wanted:
+        hold = holds[label]
+        if hold.update(seen.get(label, 0), now) is not None:
+            changed = True
+        held[label] = hold.published
+    return held, changed
+
+
+def build_payload(camera: str, detections: Sequence[Detection], wanted: Iterable[str],
+                  held: dict[str, int] | None = None) -> str:
+    """The MQTT payload. `held` is the debounced count Home Assistant sees.
+
+    `detections` stays raw - the boxes and scores of the frame that caused this
+    publish - because that is what is useful for tuning and for anything that
+    wants to look at the picture. Only the per-class counts and booleans are
+    held, and those are what automations bind to.
+    """
     counts: dict[str, int] = {}
     for d in detections:
         counts[d.label] = counts.get(d.label, 0) + 1
+    reported = counts if held is None else held
     payload = {
         "camera": camera,
         "detections": [d.as_dict() for d in detections],
-        "counts": counts,
+        "counts": reported,
+        "raw_counts": counts,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     # A plain boolean per watched class is what an automation actually binds to.
     for label in wanted:
-        payload[label] = counts.get(label, 0) > 0
+        payload[label] = reported.get(label, 0) > 0
     return json.dumps(payload)
 
 

@@ -401,8 +401,19 @@ def test_a_slow_camera_does_not_delay_a_fast_one() -> None:
         return object()
 
     class FakeDetector:
+        """Alternates seen/not-seen so every cycle is a state change.
+
+        A detector that never sees anything now publishes nothing at all - the
+        presence hold only emits on change - and this test measures loop rate
+        through the publish rate.
+        """
+
+        def __init__(self) -> None:
+            self.n = 0
+
         def detect(self, _frame, _cfg):
-            return []
+            self.n += 1
+            return [Detection("person", 0.9, (0, 0, 1, 1))] if self.n % 2 else []
 
     published: dict[str, int] = {"slow": 0, "fast": 0}
     lock = threading.Lock()
@@ -411,8 +422,10 @@ def test_a_slow_camera_does_not_delay_a_fast_one() -> None:
         with lock:
             published[camera] += 1
 
+    # presence_hold=0: this is about thread independence, not debouncing, and a
+    # hold would swallow the falling edges the count relies on.
     cfg = Config(model=Path("unused"), cameras=["slow", "fast"], interval=0.0,
-                 fetch_timeout=1.0)
+                 fetch_timeout=1.0, presence_hold=0.0)
     original = nd.grab_frame
     nd.grab_frame = fake_grab
     try:
@@ -522,3 +535,109 @@ def test_fetch_timeout_is_configurable(monkeypatch) -> None:
     assert Config.from_env().fetch_timeout == 2.5
     monkeypatch.delenv("NPU_FETCH_TIMEOUT")
     assert Config.from_env().fetch_timeout == 8.0
+
+
+# ------------------------------------------------------------- presence hold
+
+def test_first_sight_of_a_person_is_published_immediately() -> None:
+    """The edge that must never be delayed. A hold that made you wait to be
+    noticed would be worse than the flapping it replaces."""
+    from src.python.npu_detector import PresenceHold
+
+    hold = PresenceHold(60.0)
+
+    assert hold.update(1, now=0.0) == 1, "arrival was delayed"
+    assert hold.published == 1
+
+
+def test_a_second_person_joining_is_also_immediate() -> None:
+    """A rise is a rise whatever it rises from - someone joining a room that is
+    already occupied is exactly the event worth acting on."""
+    from src.python.npu_detector import PresenceHold
+
+    hold = PresenceHold(60.0)
+    hold.update(1, now=0.0)
+
+    assert hold.update(2, now=5.0) == 2, "the second person was not reported"
+
+
+def test_a_dropout_shorter_than_the_hold_publishes_nothing() -> None:
+    """Measured on the real detector: a person sitting still is seen for a
+    median 0.8s and lost for a median 3s. Every one of those was a state change."""
+    from src.python.npu_detector import PresenceHold
+
+    hold = PresenceHold(60.0)
+    hold.update(1, now=0.0)
+
+    published = [hold.update(0, now=t) for t in (3.0, 6.0, 9.0, 30.0, 59.0)]
+
+    assert published == [None] * 5, "a dropout leaked through the hold"
+    assert hold.published == 1
+
+
+def test_the_room_is_reported_empty_once_the_hold_expires() -> None:
+    from src.python.npu_detector import PresenceHold
+
+    hold = PresenceHold(60.0)
+    hold.update(1, now=0.0)
+    for t in (10.0, 30.0, 59.0):
+        hold.update(0, now=t)
+
+    assert hold.update(0, now=61.0) == 0
+    assert hold.published == 0
+
+
+def test_one_of_two_people_leaving_settles_to_one() -> None:
+    """The count must come down as well as up, or a room that ever held two
+    people reads as two for ever."""
+    from src.python.npu_detector import PresenceHold
+
+    hold = PresenceHold(10.0)
+    hold.update(2, now=0.0)
+
+    assert hold.update(1, now=2.0) is None, "the drop was believed too eagerly"
+    assert hold.update(1, now=11.0) == 1, "the count never came down"
+    assert hold.published == 1
+
+
+def test_a_zero_hold_publishes_every_change() -> None:
+    """The escape hatch, and what the old behaviour was."""
+    from src.python.npu_detector import PresenceHold
+
+    hold = PresenceHold(0.0)
+
+    assert hold.update(1, now=0.0) == 1
+    assert hold.update(0, now=0.5) == 0
+    assert hold.update(1, now=1.0) == 1
+
+
+def test_classes_are_held_independently() -> None:
+    """A car in view must not keep `person` alive on its own."""
+    from src.python.npu_detector import Detection, _apply_holds, PresenceHold
+
+    holds = {"person": PresenceHold(60.0), "car": PresenceHold(60.0)}
+    wanted = ["person", "car"]
+
+    held, changed = _apply_holds(holds, [Detection("person", 0.9, (0, 0, 1, 1))],
+                                 wanted, now=0.0)
+    assert changed and held == {"person": 1, "car": 0}
+
+    # Only the car is visible now; person must stay held, car must rise at once.
+    held, changed = _apply_holds(holds, [Detection("car", 0.9, (0, 0, 1, 1))],
+                                 wanted, now=1.0)
+    assert changed and held == {"person": 1, "car": 1}
+
+
+def test_the_payload_reports_held_counts_but_keeps_the_raw_frame() -> None:
+    """Automations bind to the held count; tuning needs what the frame actually
+    saw, so both are published."""
+    import json
+
+    from src.python.npu_detector import Detection, build_payload
+
+    payload = json.loads(build_payload(
+        "office", [], ["person"], held={"person": 1}))
+
+    assert payload["person"] is True, "the held state was lost"
+    assert payload["counts"] == {"person": 1}
+    assert payload["raw_counts"] == {}, "the raw frame was not preserved"

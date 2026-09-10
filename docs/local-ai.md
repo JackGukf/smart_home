@@ -287,6 +287,48 @@ Three traps found the hard way:
   filters them now. Checking `/api/cameras` alone does **not** tell you what the
   Cameras view renders.
 
+### The detector reports presence, not frames
+
+Published raw, the detector saw a person for a median of **0.8 s** and lost them
+for a median of **3 s** while they sat still at a desk. That was 2,289 state
+changes a day from the office camera and 2,868 from the family room - **87% of
+the motion log between them** - an automation firing 2,357 times, and a digest
+reporting "2,358 sightings" of an empty room.
+
+`PresenceHold` in `src/python/npu_detector.py` turns that into an enter/leave
+signal. It is deliberately asymmetric:
+
+- **A rise publishes immediately.** First sight of a person, or a second person
+  joining one already there, is never delayed and never suppressed.
+- **A fall waits.** The published count is the highest seen in the last
+  `NPU_PRESENCE_HOLD` seconds (default 60), so a dropout must persist to be
+  believed.
+
+The only error it can make is reporting a room occupied for up to the hold after
+it emptied. It cannot make you wait to be noticed. Measured against the real gap
+distribution:
+
+| Hold | Gaps bridged | Office events over 2.1 days |
+| ---: | ---: | ---: |
+| 10 s | 73.6% | 635 |
+| 30 s | 88.9% | 266 |
+| **60 s** | **94.2%** | **139** |
+| 120 s | 97.0% | 71 |
+
+Observed live: one event in the first three minutes with somebody in the office,
+where the same window previously produced about 115.
+
+Holds are per camera **and per class**, so a car in view cannot keep `person`
+alive. `raw_counts` stays in the MQTT payload alongside the held `counts`, which
+is what makes the hold tunable later without guessing.
+
+**Do not apply this to the PIR sensors.** They already hold in firmware -
+20-40 s on the Zigbee ones (`fading_time`), minutes to hours on the Tuya ones -
+and a 60 s software hold bridges only 18-64% of their gaps against the camera's
+94%. Their gaps are long because the room genuinely went quiet; the camera's
+were short because detection failed. Bridging the former would invent occupancy
+that never happened.
+
 ## Using the LLM safely
 
 Keep device control deterministic. `scripts/qwen_intent_demo.py` is the pattern:
