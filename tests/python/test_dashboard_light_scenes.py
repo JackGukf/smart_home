@@ -75,6 +75,48 @@ def test_scenes_sit_in_the_header_not_above_the_grid() -> None:
     assert 'id="lightDragLock"' in lights_panel
 
 
+def test_the_menu_is_closed_until_it_is_opened() -> None:
+    """An author `display` beats the user agent's `[hidden] { display: none }`,
+    so `.view-menu-list { display: flex }` left the four controls on screen from
+    the moment the page loaded. This file already warns about the same trap on
+    .device-back-btn six lines above."""
+    css = STYLES_CSS.read_text(encoding="utf-8")
+
+    assert ".view-menu-list[hidden] { display: none; }" in css
+    hidden_at = css.index(".view-menu-list[hidden]")
+    display_at = css.index(".view-menu-list {")
+    assert hidden_at < display_at, "the [hidden] rule must not be overridden by what follows"
+
+
+def test_the_header_wraps_rather_than_pushing_controls_off_a_phone() -> None:
+    """On an iPhone 15 the Manage and Edit buttons, both chips and the lock come
+    to about 400px against ~360px of usable width. Without wrapping the items on
+    the right were pushed off the screen instead of onto a second line - which
+    is why only the sun chip was visible."""
+    css = STYLES_CSS.read_text(encoding="utf-8")
+
+    actions = css[css.index(".section-actions {"):]
+    actions = actions[:actions.index("}")]
+    assert "flex-wrap: wrap" in actions
+
+
+def test_the_chip_labels_are_never_hidden() -> None:
+    """Hiding them left a bare sun icon with nothing to distinguish the two
+    chips. There is room for the labels now the meta line is gone."""
+    css = STYLES_CSS.read_text(encoding="utf-8")
+
+    assert ".scene-label { display: none; }" not in css
+    assert ".scene-label" in css
+
+
+def test_the_lights_header_carries_no_vendor_line() -> None:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    lights_panel = html[html.index('data-view-panel="lights"'):html.index('data-view-panel="plugs"')]
+
+    assert "TP-Link" not in lights_panel
+    assert "local control" not in lights_panel
+
+
 def test_the_scene_chips_are_small_and_uncoloured_backgrounds() -> None:
     """A tinted fill on a chip this size reads as a filled button and invites
     the very tap this change exists to avoid, so only the icon carries colour."""

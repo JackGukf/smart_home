@@ -600,7 +600,11 @@ aside {
 
 .section-title { font-size: 14px; font-weight: 600; color: var(--text); }
 .section-meta  { font-size: 12px; color: var(--muted); }
-.section-actions { display: flex; align-items: center; gap: 8px; }
+/* Wraps on purpose. Without it the row overflowed a phone: on an iPhone 15 the
+   Manage and Edit buttons, both scene chips and the lock come to about 400px
+   against ~360px of usable width, and the items on the right were pushed off
+   the screen entirely rather than moving to a second line. */
+.section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* [hidden] must beat .command's inline-flex, same idiom as .room-item[hidden]. */
 .device-back-btn[hidden] { display: none; }
@@ -651,12 +655,6 @@ aside {
 .scene-button.all-on i { color: var(--amber, #F2B84B); }
 .scene-button.all-off i { color: var(--t-accent); }
 .scene-label { line-height: 1; }
-
-@media (max-width: 560px) {
-  /* The labels are the first thing to go; the icons still say which is which. */
-  .scene-label { display: none; }
-  .scene-button { padding: 0; width: 30px; justify-content: center; }
-}
 
 .light-drag-lock {
   width: 30px;
@@ -5471,6 +5469,10 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
 .view-menu-btn:hover { border-color: var(--border-hover); }
 .view-menu-btn:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
 .view-menu-btn[aria-expanded="true"] { border-color: var(--t-accent); color: var(--t-accent); }
+
+/* [hidden] must beat the display below, the same idiom as .device-back-btn
+   above - without this the menu is open from the moment the page loads. */
+.view-menu-list[hidden] { display: none; }
 
 .view-menu-list {
   position: absolute;
