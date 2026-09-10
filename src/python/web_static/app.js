@@ -446,10 +446,6 @@ function environmentSummary() {
 
 function renderDevicesOverview() {
   const grid = document.querySelector("#devicesOverviewGrid");
-  const badge = document.querySelector("#deviceGroupCount");
-
-  if (badge) badge.textContent = String(distinctDeviceCount());
-
   if (!grid) return;
   grid.innerHTML = deviceGroupTileData().map((tile) => `
     <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}"${tile.color ? ` style="--group-color:${tile.color}"` : ""}>
@@ -1113,21 +1109,33 @@ function saveDeviceOrderFromDom(grid, category) {
 function deviceDragHandle(host) {
   return `<button class="device-drag-handle" data-device-drag="${escapeHtml(host)}" type="button" title="Drag to reorder" aria-label="Drag to reorder device"><i class="ti ti-grip-vertical" aria-hidden="true"></i></button>`;
 }
-function renderLightScenes(lightDevices) {
-  if (!lightScenes) return;
+/* Compact chips, not the 82px blocks these used to be.
+   Full width and directly above the light grid, they sat in the path to the
+   switches and "All Lights On" was hit by accident repeatedly. Small and to the
+   right of the section header keeps them reachable without being in the way.
+   The same markup is rendered into the Home header, so the two stay identical
+   by construction rather than by being kept in step. */
+function lightSceneChips(lightDevices) {
   const disabled = lightDevices.length === 0 ? " disabled" : "";
-  lightScenes.innerHTML = [
-    '<button class="scene-button all-on" data-light-scene="on" type="button"' + disabled + '>',
-    '<span class="scene-icon"><i class="ti ti-sun-filled" aria-hidden="true"></i></span>',
-    '<span class="scene-copy"><strong>All Lights On</strong><small>Wake every room</small></span>',
-    '<span class="scene-spark" aria-hidden="true"></span>',
+  return [
+    '<button class="scene-button all-on" data-light-scene="on" type="button"',
+    ' title="Turn every light switch on"' + disabled + '>',
+    '<i class="ti ti-sun-filled" aria-hidden="true"></i>',
+    '<span class="scene-label">All On</span>',
     '</button>',
-    '<button class="scene-button all-off" data-light-scene="off" type="button"' + disabled + '>',
-    '<span class="scene-icon"><i class="ti ti-moon-filled" aria-hidden="true"></i></span>',
-    '<span class="scene-copy"><strong>All Lights Off</strong><small>Settle the house</small></span>',
-    '<span class="scene-spark" aria-hidden="true"></span>',
+    '<button class="scene-button all-off" data-light-scene="off" type="button"',
+    ' title="Turn every light switch off"' + disabled + '>',
+    '<i class="ti ti-moon-filled" aria-hidden="true"></i>',
+    '<span class="scene-label">All Off</span>',
     '</button>'
   ].join("");
+}
+
+function renderLightScenes(lightDevices) {
+  const markup = lightSceneChips(lightDevices);
+  for (const host of [lightScenes, document.querySelector("#homeLightScenes")]) {
+    if (host) host.innerHTML = markup;
+  }
 }
 async function loadAmbientLights() {
   const payload = await requestJson("/api/ambient-lights");
@@ -4634,8 +4642,6 @@ function renderHomeView() {
   const shown = areas.filter((a) => a.custom || a.devices.length > 0);
   const totalDevices = areas.reduce((sum, a) => sum + a.devices.length, 0);
 
-  const areaCountBadge = document.querySelector("#areaCount");
-  if (areaCountBadge) areaCountBadge.textContent = String(shown.length);
   const homeMeta = document.querySelector("#homeMeta");
   if (homeMeta) homeMeta.textContent = `${totalDevices} devices · ${shown.length} area${shown.length === 1 ? "" : "s"}`;
 
@@ -7149,6 +7155,57 @@ document.addEventListener("click", (event) => {
     requestJson(`/api/automations/proposals/${encodeURIComponent(name)}`, { method: "DELETE" })
       .then(() => loadAutomationProposals())
       .catch((error) => setAutomationStatus(escapeHtml(apiErrorDetail(error)), "warn"));
+  }
+});
+
+/* ── The Home view's overflow menu ──
+   New Card, New Area, Choose cards and Reset layout used to sit in the header
+   as four labelled buttons. They are behind one control now, which freed that
+   row for the light scene chips.
+
+   The buttons themselves are untouched and keep their ids, so every handler
+   already bound to them still works - this only changes where they live and
+   when they are visible. */
+function closeHomeViewMenu() {
+  const list = document.querySelector("#homeViewMenuList");
+  const button = document.querySelector("#homeViewMenuButton");
+  if (!list || list.hidden) return;
+  list.hidden = true;
+  if (button) button.setAttribute("aria-expanded", "false");
+}
+
+function toggleHomeViewMenu() {
+  const list = document.querySelector("#homeViewMenuList");
+  const button = document.querySelector("#homeViewMenuButton");
+  if (!list) return;
+  const opening = list.hidden;
+  list.hidden = !opening;
+  if (button) button.setAttribute("aria-expanded", String(opening));
+  if (opening) list.querySelector("button")?.focus();
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#homeViewMenuButton")) {
+    event.stopPropagation();
+    toggleHomeViewMenu();
+    return;
+  }
+  /* Choosing an item closes the menu; clicking anywhere outside it does too.
+     Clicks inside that are not on an item (the separator, padding) leave it
+     open, so a near-miss does not dismiss what you were aiming at. */
+  if (event.target.closest("#homeViewMenuList [role='menuitem']")) {
+    closeHomeViewMenu();
+    return;
+  }
+  if (!event.target.closest("#homeViewMenu")) closeHomeViewMenu();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const list = document.querySelector("#homeViewMenuList");
+  if (list && !list.hidden) {
+    closeHomeViewMenu();
+    document.querySelector("#homeViewMenuButton")?.focus();
   }
 });
 

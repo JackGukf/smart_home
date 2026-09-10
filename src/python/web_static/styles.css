@@ -610,70 +610,52 @@ aside {
 .view-panel.active { display: block; }
 
 /* ── LIGHT SCENES ── */
+/* ── Light scene chips ──
+   These were 82px full-width blocks sitting directly above the light grid,
+   which put "All Lights On" in the path of every tap aimed at a switch. They
+   are chips in the section header now: same actions, a fraction of the target
+   area, and out of the way. */
 .light-scene-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 
 .scene-button {
-  position: relative;
-  overflow: hidden;
-  min-height: 82px;
-  border: 1px solid var(--border-hover);
-  border-radius: 14px;
-  padding: 16px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
-  color: var(--text);
-  background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.025));
-  box-shadow: 0 16px 38px rgba(0,0,0,0.22);
-  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 0.76rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
 }
 
 .scene-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: rgba(var(--t-accent-rgb), 0.62);
-  box-shadow: 0 18px 44px rgba(0,0,0,0.32), 0 0 26px rgba(var(--t-accent-rgb),0.13);
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.075);
 }
+.scene-button:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
+.scene-button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.scene-button:disabled { opacity: 0.52; cursor: not-allowed; }
+/* Colour lives on the icon only. On a chip this small a tinted background
+   reads as a filled button and invites the tap this change exists to avoid. */
+.scene-button.all-on i { color: var(--amber, #F2B84B); }
+.scene-button.all-off i { color: var(--t-accent); }
+.scene-label { line-height: 1; }
 
-.scene-button.all-on {
-  background: radial-gradient(circle at 88% 18%, rgba(251,191,36,0.32), transparent 32%), linear-gradient(135deg, rgba(245,158,11,0.22), rgba(22,24,38,0.88));
-}
-
-.scene-button.all-off {
-  background: radial-gradient(circle at 88% 18%, rgba(95,192,234,0.24), transparent 34%), linear-gradient(135deg, rgba(79,70,229,0.2), rgba(22,24,38,0.9));
-}
-
-.scene-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  background: rgba(255,255,255,0.11);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
-}
-
-.scene-button.all-on .scene-icon { color: #fbbf24; }
-.scene-button.all-off .scene-icon { color: #93c5fd; }
-.scene-icon i { font-size: 23px; }
-.scene-copy { display: grid; gap: 2px; text-align: left; min-width: 0; }
-.scene-copy strong { font-size: 15px; font-weight: 700; }
-.scene-copy small { color: var(--muted); font-size: 12px; }
-.scene-spark {
-  position: absolute;
-  right: -22px;
-  bottom: -26px;
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.05);
+@media (max-width: 560px) {
+  /* The labels are the first thing to go; the icons still say which is which. */
+  .scene-label { display: none; }
+  .scene-button { padding: 0; width: 30px; justify-content: center; }
 }
 
 .light-drag-lock {
@@ -2505,11 +2487,6 @@ aside {
   .power-val { font-size: 16px; }
   .rocker { width: 40px; height: 68px; }
   .device-card.new-style h3.device-name { font-size: 15px; }
-
-  /* ── Scene buttons ── */
-  .scene-button { min-height: 66px; padding: 12px; }
-  .scene-copy strong { font-size: 13px; }
-  .scene-copy small { display: none; }
 
   /* ── Stat cards ── */
   .stat-value { font-size: 20px; }
@@ -5472,3 +5449,70 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   line-height: 1.6;
 }
 .digest-notes li { margin: 3px 0; }
+
+/* ── Home view overflow menu ──
+   Holds New Card, New Area, Choose cards and Reset layout, which used to be
+   four labelled buttons across the header. */
+.view-menu { position: relative; flex: 0 0 auto; }
+
+.view-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--t-text);
+  cursor: pointer;
+  transition: border-color .15s ease, color .15s ease;
+}
+.view-menu-btn:hover { border-color: var(--border-hover); }
+.view-menu-btn:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
+.view-menu-btn[aria-expanded="true"] { border-color: var(--t-accent); color: var(--t-accent); }
+
+.view-menu-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 186px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+}
+
+/* The items keep .area-add-btn so their existing handlers and look survive;
+   only their arrangement changes. */
+.view-menu-list .area-add-btn {
+  width: 100%;
+  justify-content: flex-start;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+.view-menu-list .area-add-btn:hover { background: rgba(var(--t-accent-rgb), 0.13); }
+
+.view-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}
+
+/* Visible only to screen readers: the menu button is an icon alone. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

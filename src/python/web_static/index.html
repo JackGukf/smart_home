@@ -68,7 +68,6 @@
       <li class="room-item active" data-view="home">
         <span class="room-icon"><i class="ti ti-home-2"></i></span>
         Home
-        <span class="room-badge" id="areaCount">–</span>
       </li>
       <li class="room-item" data-view="cameras">
         <span class="room-icon"><i class="ti ti-video"></i></span>
@@ -78,7 +77,6 @@
       <li class="room-item" id="devicesGroupToggle" data-view="devices">
         <span class="room-icon"><i class="ti ti-devices"></i></span>
         Devices
-        <span class="room-badge" id="deviceGroupCount">–</span>
       </li>
       <li class="room-item" data-view="homeassistant">
         <span class="room-icon"><i class="ti ti-smart-home"></i></span>
@@ -240,12 +238,15 @@
             <i class="ti ti-pencil" aria-hidden="true"></i> Edit
           </button>
           <span class="section-meta">TP-Link · local control</span>
+          <!-- Scenes live here, small and to the right, rather than as full-width
+               blocks above the grid: there they sat directly in the path to the
+               light cards and were repeatedly hit by accident. -->
+          <div class="light-scene-row" id="lightScenes"></div>
           <button class="light-drag-lock locked" id="lightDragLock" type="button" aria-pressed="false" title="Unlock light switch arrangement">
             <i class="ti ti-lock" aria-hidden="true"></i>
           </button>
         </div>
       </div>
-      <div class="light-scene-row" id="lightScenes"></div>
       <div class="device-grid" id="lightGrid">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
       </div>
@@ -453,20 +454,38 @@
           <span class="section-title">Home</span>
           <div class="section-actions">
             <span class="section-meta" id="homeMeta">Devices by area</span>
-            <button class="area-add-btn" id="addCustomCardButton" type="button" title="Create a new card and pick the devices it shows">
-              <i class="ti ti-layout-grid-add"></i> New Card
-            </button>
-            <button class="area-add-btn" id="addAreaButton" type="button" title="Create a new area">
-              <i class="ti ti-plus"></i> New Area
-            </button>
-            <button class="area-add-btn" id="homeCardsButton" type="button"
-                    aria-haspopup="dialog" title="Choose which cards appear on the Home view">
-              <i class="ti ti-eye"></i> Cards
-            </button>
-            <button class="area-add-btn" id="homeResetLayout" type="button"
-                    title="Put every card back to its default size and position">
-              <i class="ti ti-layout-board-split"></i> Reset Layout
-            </button>
+            <!-- Populated by renderLightScenes, same markup as the Lights view. -->
+            <div class="light-scene-row" id="homeLightScenes"></div>
+            <!-- The four view controls, behind one button. Not a "+": two of them
+                 create something and two change the layout, and a plus sign would
+                 promise only the first pair. -->
+            <div class="view-menu" id="homeViewMenu">
+              <button class="view-menu-btn" id="homeViewMenuButton" type="button"
+                      aria-haspopup="menu" aria-expanded="false" aria-controls="homeViewMenuList"
+                      title="View options">
+                <i class="ti ti-dots" aria-hidden="true"></i>
+                <span class="sr-only">View options</span>
+              </button>
+              <div class="view-menu-list" id="homeViewMenuList" role="menu" hidden>
+                <button class="area-add-btn" id="addCustomCardButton" type="button" role="menuitem"
+                        title="Create a new card and pick the devices it shows">
+                  <i class="ti ti-layout-grid-add"></i> New Card
+                </button>
+                <button class="area-add-btn" id="addAreaButton" type="button" role="menuitem"
+                        title="Create a new area">
+                  <i class="ti ti-plus"></i> New Area
+                </button>
+                <div class="view-menu-sep" role="separator"></div>
+                <button class="area-add-btn" id="homeCardsButton" type="button" role="menuitem"
+                        aria-haspopup="dialog" title="Choose which cards appear on the Home view">
+                  <i class="ti ti-eye"></i> Choose cards
+                </button>
+                <button class="area-add-btn" id="homeResetLayout" type="button" role="menuitem"
+                        title="Put every card back to its default size and position">
+                  <i class="ti ti-layout-board-split"></i> Reset layout
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 

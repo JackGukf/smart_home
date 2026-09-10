@@ -10,16 +10,29 @@ STYLES_CSS = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 DEVICE_CHILD_VIEWS = ["lights", "plugs", "ambient", "humidifier", "environment", "tuya", "climate"]
 
 
-def test_devices_parent_exists_with_badge_and_no_chevron() -> None:
-    """Devices is now a plain nav item: the groups live behind its overview
-    tiles, so there are no children to collapse and no chevron."""
+def test_devices_is_a_plain_nav_item_with_no_chevron_and_no_count() -> None:
+    """Devices is a plain nav item: the groups live behind its overview tiles,
+    so there are no children to collapse and no chevron.
+
+    The count badge was removed deliberately - a running total of devices is
+    not something anyone acts on, and it drew the eye on every view change.
+    """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     assert 'id="devicesGroupToggle"' in html
     assert 'data-view="devices"' in html
-    assert 'id="deviceGroupCount"' in html
     entry = html[html.index('id="devicesGroupToggle"'):]
-    assert "settings-chevron" not in entry[:entry.index("</li>")]
+    entry = entry[:entry.index("</li>")]
+    assert "settings-chevron" not in entry
+    assert "room-badge" not in entry, "the device count badge is back"
+
+
+def test_the_home_nav_item_has_no_count_either() -> None:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    entry = html[html.index('data-view="home"'):]
+    assert "room-badge" not in entry[:entry.index("</li>")]
+    assert 'id="areaCount"' not in html
 
 
 def test_no_device_group_children_in_the_sidebar() -> None:

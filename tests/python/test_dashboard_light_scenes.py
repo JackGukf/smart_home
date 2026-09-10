@@ -59,3 +59,65 @@ def test_light_scene_buttons_have_fancy_styles() -> None:
     assert ".scene-button" in css
     assert ".scene-button.all-on" in css
     assert ".scene-button.all-off" in css
+
+
+def test_scenes_sit_in_the_header_not_above_the_grid() -> None:
+    """Full width and directly above the light cards, "All Lights On" was in the
+    path of every tap aimed at a switch and was hit by accident repeatedly. It
+    belongs beside the section title, small and to the right."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    lights_panel = html[html.index('data-view-panel="lights"'):html.index('data-view-panel="plugs"')]
+
+    header_end = lights_panel.index("</div>", lights_panel.index('id="lightScenes"'))
+    assert lights_panel.index('id="lightScenes"') < lights_panel.index('id="lightGrid"')
+    # Inside the section header, which closes before the grid begins.
+    assert header_end < lights_panel.index('id="lightGrid"')
+    assert 'id="lightDragLock"' in lights_panel
+
+
+def test_the_scene_chips_are_small_and_uncoloured_backgrounds() -> None:
+    """A tinted fill on a chip this size reads as a filled button and invites
+    the very tap this change exists to avoid, so only the icon carries colour."""
+    css = STYLES_CSS.read_text(encoding="utf-8")
+
+    block = css[css.index(".scene-button {"):css.index(".scene-button:hover")]
+    assert "height: 30px" in block, "the chip is not chip-sized"
+    assert "min-height: 82px" not in css and "min-height: 66px" not in css
+    assert ".scene-button.all-on i" in css
+    assert ".scene-button.all-off i" in css
+
+
+def test_home_renders_the_same_scene_markup_as_lights() -> None:
+    """One builder feeds both, so they cannot drift apart."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert 'id="homeLightScenes"' in html
+    assert "function lightSceneChips(lightDevices)" in source
+    assert '#homeLightScenes' in source
+    # Still the same data attribute, so the existing click handler is untouched.
+    assert 'data-light-scene="on"' in source
+
+
+def test_the_four_view_controls_are_behind_one_button() -> None:
+    """They kept their ids so every handler already bound to them still works -
+    only where they live changed."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+
+    menu = html[html.index('id="homeViewMenuList"'):]
+    menu = menu[:menu.index("</div>", menu.index('id="homeResetLayout"'))]
+    for control in ("addCustomCardButton", "addAreaButton", "homeCardsButton", "homeResetLayout"):
+        assert f'id="{control}"' in menu, f"{control} is not inside the menu"
+    assert 'aria-haspopup="menu"' in html
+    assert 'aria-expanded="false"' in html
+
+
+def test_the_menu_closes_on_escape_and_on_an_outside_click() -> None:
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "function closeHomeViewMenu()" in source
+    assert "function toggleHomeViewMenu()" in source
+    assert 'event.key !== "Escape"' in source
+    assert 'if (!event.target.closest("#homeViewMenu")) closeHomeViewMenu();' in source
+    # Choosing an item dismisses it; a click on the padding between items does not.
+    assert '#homeViewMenuList [role=\'menuitem\']' in source
