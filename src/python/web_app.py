@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -282,6 +283,48 @@ def _save_ambient_runtime_state(config_path: Path) -> None:
     except OSError:
         pass
 
+# ── Trusted hosts: the wall panel logs itself in ─────────────────────────────
+# A wall-mounted display has no keyboard to type a password into, and nobody
+# standing by to retype it when the 30-day session cookie expires at 3am. A
+# listed address therefore skips the login page outright.
+#
+# This is the same trade Home Assistant makes with its `trusted_networks` auth
+# provider, and it carries the same warning: list single addresses, never a
+# whole subnet, and give the panel a static lease. The address *is* the
+# credential, so whatever holds it next inherits the panel's access.
+def _parse_trusted_hosts(values: Any) -> list[Any]:
+    """Turn the configured trusted_hosts into networks, dropping what won't parse."""
+    if not values:
+        return []
+    if isinstance(values, str):
+        values = [values]
+    networks: list[Any] = []
+    for raw in values:
+        text = str(raw).strip()
+        if not text:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(text, strict=False))
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "dashboard_auth.trusted_hosts: ignoring %r - not an IP address or CIDR",
+                text,
+            )
+    return networks
+
+
+def _host_is_trusted(host: str | None, networks: list[Any]) -> bool:
+    """True when the peer address falls inside one of the trusted networks."""
+    if not networks or not host:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        # A hostname, a unix-socket peer, or TestClient's literal "testclient".
+        return False
+    return any(address in network for network in networks)
+
+
 _raw_cfg: dict = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
 _matter_cfg: dict = _raw_cfg.get("matter") or {}
 _matter_server_url: str = _matter_cfg.get("server_url", "ws://localhost:5580/ws")
@@ -527,6 +570,9 @@ def create_app(
     _auth_cfg = _raw_cfg.get("dashboard_auth")
     _auth_user: str | None = str(_auth_cfg["username"]) if _auth_cfg else None
     _auth_pass: str | None = str(_auth_cfg["password"]) if _auth_cfg else None
+    _trusted_hosts = _parse_trusted_hosts(
+        _auth_cfg.get("trusted_hosts") if isinstance(_auth_cfg, dict) else None
+    )
     _signer: URLSafeTimedSerializer | None = None
     _MAX_AGE = 30 * 24 * 3600  # 30 days
     if _auth_cfg:
@@ -542,6 +588,12 @@ def create_app(
                 # Always allow login/logout, static assets, and bridge sync API
                 # (bridge endpoints are internal-only, called from localhost by the C++ bridge)
                 if path in _SKIP_PATHS or path.startswith("/static/") or path.startswith("/bridge/"):
+                    return await call_next(request)
+
+                # The kiosk panel has no keyboard; its address is its credential
+                if _host_is_trusted(
+                    request.client.host if request.client else None, _trusted_hosts
+                ):
                     return await call_next(request)
 
                 # Validate session cookie
@@ -569,7 +621,13 @@ def create_app(
         from fastapi import Form as _Form
 
         @app.get("/login")
-        async def login_page() -> Response:
+        async def login_page(request: Request) -> Response:
+            # A trusted panel that lands here - a stale URL, a restored tab -
+            # would sit on a form with no keyboard in front of it. Send it home.
+            if _host_is_trusted(
+                request.client.host if request.client else None, _trusted_hosts
+            ):
+                return RedirectResponse(url="/", status_code=303)
             path = STATIC_DIR / "login.html"
             if not path.exists():
                 from fastapi.responses import JSONResponse

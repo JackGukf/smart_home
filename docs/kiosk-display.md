@@ -1,0 +1,148 @@
+# Wall panel: the dashboard on the Raspberry Pi 4
+
+The Raspberry Pi 4 runs none of this project. It is a browser on a wall, pointed
+at the Orange Pi, that comes up by itself after a power cut and never asks
+anybody for a password.
+
+**Live since 2026-09-10.** Panel `smarthome@192.168.0.176`, Debian 13 (trixie),
+labwc/Wayland, HDMI-A-1, Chromium 148.
+
+```
+Raspberry Pi 4 (192.168.0.176)                Orange Pi 6 Plus (192.168.0.234)
+┌──────────────────────────────┐              ┌─────────────────────────────┐
+│ lightdm autologin            │              │ dashboard  :8000            │
+│   └ labwc session            │  ──────────► │   trusted_hosts: .176       │
+│       └ xdg autostart        │              │                             │
+│           └ smart-home-kiosk │              │ Home Assistant :8123        │
+│               └ chromium     │  ──────────► │   trusted_networks: .176/32 │
+│                   --kiosk    │  (iframe)    │                             │
+└──────────────────────────────┘              └─────────────────────────────┘
+```
+
+## Install
+
+Two halves, because they touch two different machines. Run both from the
+workstation, in this order:
+
+```bash
+scripts/setup-kiosk-display.sh                                  # the panel
+scripts/enable-kiosk-autologin.py --kiosk-ip 192.168.0.176      # the board
+sudo reboot                                                     # on the panel
+```
+
+The first installs the launcher, the autostart entry, and turns off screen
+blanking. The second opens both login doors for that one address, validates the
+Home Assistant config before restarting anything, and is safe to re-run — it
+updates its managed block in place rather than appending a second one. Add
+`--dry-run` to see what it would do.
+
+Both scripts are the source of truth. Nothing is left on the panel or the board
+to hand-edit: `enable-kiosk-autologin.py` pipes its payload over ssh and
+`setup-kiosk-display.sh` re-copies the launcher every run.
+
+### Pin the address first
+
+The panel's IP **is** its credential, at both doors. Give `192.168.0.176` a
+static DHCP lease in the router before relying on this. If DHCP moves the panel,
+it is locked out of both logins; if DHCP hands that address to something else,
+that thing inherits the panel's access. This is the same trade Home Assistant's
+own `trusted_networks` provider makes, and there is no token-shaped alternative:
+the HA *frontend* keeps its refresh token in the browser's localStorage, so no
+header we could set will log it in.
+
+## What each half actually changed
+
+| Where | What |
+| --- | --- |
+| `configs/devices.local.yaml` on the board | `dashboard_auth.trusted_hosts: [192.168.0.176]` |
+| `configuration.yaml` on the board | a delimited `homeassistant: auth_providers:` block |
+| `~/.local/bin/smart-home-kiosk` on the panel | the launcher, from `scripts/kiosk/kiosk-launch.sh` |
+| `~/.config/smart-home-kiosk.env` on the panel | `DASHBOARD_URL` |
+| `~/.config/autostart/smart-home-kiosk.desktop` on the panel | what starts it |
+
+Both config files are backed up as `*.bak-kiosk-<timestamp>` before every edit.
+
+The dashboard side is [`web_app.py`](../src/python/web_app.py)'s auth
+middleware: a listed address skips the session-cookie check outright, and a
+trusted host that lands on `/login` is redirected to `/` instead of being shown
+a form it cannot fill in. Everyone else is challenged exactly as before —
+including this workstation, which is the check worth running after any change:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://192.168.0.234:8000/api/health   # 401
+ssh smarthome@192.168.0.176 'curl -s -o /dev/null -w "%{http_code}\n" http://192.168.0.234:8000/api/health'  # 200
+```
+
+## Verify
+
+```bash
+ssh smarthome@192.168.0.176 'tail -5 ~/.local/state/smart-home-kiosk.log'
+ssh smarthome@192.168.0.176 'curl -s http://192.168.0.234:8123/auth/providers'
+```
+
+The providers list seen **from the panel** must have `trusted_networks` first
+and `homeassistant` second. Seen from anywhere else it must contain only
+`homeassistant` — Home Assistant computes that list per client address, which is
+why the panel's shortcut costs no one else anything.
+
+For a picture of what is actually on the screen, the panel has `grim`:
+
+```bash
+ssh smarthome@192.168.0.176 'XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 grim /tmp/panel.png'
+scp smarthome@192.168.0.176:/tmp/panel.png .
+```
+
+## The traps
+
+Most of these cost an hour each. They are listed in the order they bite.
+
+- **`--ozone-platform-hint=auto` guesses X11 and dies.** The hint reads
+  `XDG_SESSION_TYPE`, which is `tty` over ssh — so Chromium picks X11, fails with
+  *"Missing X server or $DISPLAY"*, and the launcher respawns it for ever. The
+  launcher now finds the compositor socket in `XDG_RUNTIME_DIR` itself and passes
+  `--ozone-platform=wayland` explicitly. This only shows up when testing a panel
+  over ssh, which is exactly how you will test a panel that is already on a wall.
+- **`trusted_networks` must be the first auth provider.** The frontend renders
+  `providers[0]` as the login form and pushes the rest under *"Or log in with"*.
+  With `homeassistant` first, `allow_bypass_login` looks broken: the panel gets a
+  password box and a "Trusted Networks" link nobody is there to tap. Ordering it
+  first is invisible to every other client, because the list is per-address.
+- **Listing `auth_providers` at all replaces Home Assistant's implicit default.**
+  The `- type: homeassistant` entry is what keeps password login working
+  everywhere else. Delete it and nothing can log in with a password again.
+- **`trusted_users` pins the panel to one user.** Without it a trusted client
+  gets a user picker instead of a session. The configurator asks Home Assistant
+  who owns `HOME_ASSISTANT_TOKEN` (`auth/current_user` over the WebSocket API)
+  and pins that user, so the panel logs in as whoever the board already acts as.
+- **`yaml.safe_load` cannot read Home Assistant's `configuration.yaml`.** It dies
+  on `!include` and `!secret`. Validating the edit needs a loader with
+  `add_multi_constructor("!", ...)`, or every config looks broken.
+- **Screen blanking on labwc is one line in `~/.config/labwc/autostart`** — a
+  `swayidle` invocation. That is all `raspi-config nonint do_blanking 1` writes
+  there, so removing the line needs no sudo, which matters when the panel's user
+  has a sudo password. The launcher also re-kills stray `swayidle` every 60s,
+  because the session can start one after the autostart entry has run.
+- **Chromium thinks a power cut is a crash** and parks a *"Restore pages?"* bar
+  over the dashboard that nobody is there to dismiss. The flags help; rewriting
+  `exit_type` in the profile's `Preferences` before each launch is what actually
+  stops it.
+- **A systemd `--user` unit is the wrong tool here.** It starts outside the
+  Wayland session and has no `WAYLAND_DISPLAY` to draw on. The Pi's labwc session
+  runs `lxsession-xdg-autostart`, so `~/.config/autostart/*.desktop` is the hook
+  that works.
+- **The dashboard rewrites `devices.local.yaml` itself** when devices are added,
+  with plain `yaml.dump` — comments there do not survive. Keep the explanation in
+  `configs/devices.example.yaml`, which is only ever edited by hand.
+- **Camera tiles are the expensive part.** Chromium on the Pi 4 software-decodes
+  the go2rtc WebRTC streams. The Home view, with one camera card live, costs
+  roughly 70% of one core of the four and sits at 38 °C — comfortable, but a
+  multi-camera view will not be. Point the panel at a view without cameras
+  (`DASHBOARD_URL` in `~/.config/smart-home-kiosk.env`) if it runs hot.
+
+## Undo
+
+Remove the `trusted_hosts` line from `configs/devices.local.yaml` and the block
+between the `smart-home kiosk autologin` markers in `configuration.yaml`, then
+restart both services. On the panel, delete
+`~/.config/autostart/smart-home-kiosk.desktop`. The `*.bak-kiosk-*` files next to
+each config are the state before the first run.

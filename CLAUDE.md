@@ -46,6 +46,11 @@ The Orange Pi 6 Plus is the **primary** target. The Raspberry Pi 4 is kept as a 
 | Toolchain | `cmake/toolchains/orangepi6-aarch64.cmake` | `cmake/toolchains/rpi4-aarch64.cmake` |
 | Build dir | `build/orangepi6-release/` | `build/rpi4-release/` |
 
+Since 2026-09-10 the Raspberry Pi 4 is **also the wall panel**: it displays the
+dashboard full screen from boot and logs itself into both the dashboard and Home
+Assistant by IP address. That makes `192.168.0.176` a credential — see
+`docs/kiosk-display.md` before changing it, and before deploying to that host.
+
 Gotchas that have bitten this project:
 
 - **Interface names differ.** Ubuntu uses predictable names, so anything passing `--interface` (notably the Matter bridge in `configs/matter-bridge.service`) must use `wlp1s0`/`enp97s0`, not `wlan0`. A wrong interface makes Matter commissioning fail quietly.
@@ -113,6 +118,13 @@ docker compose run --rm dev sh -lc \
 ```
 
 Deploy scripts default to `orangepi@192.168.0.234` and `/home/orangepi/smart_home_AI`. Override with `--host`/`--user`/`--remote-path` (or `PI_HOST`/`PI_USER`/`REMOTE_PATH`) — always confirm the target before deploying, and never assume a default points at the board you mean.
+
+### Wall panel (Raspberry Pi 4)
+```bash
+./scripts/setup-kiosk-display.sh                              # panel: chromium, autostart, no blanking
+./scripts/enable-kiosk-autologin.py --kiosk-ip 192.168.0.176  # board: both logins, by address
+./scripts/enable-kiosk-autologin.py --kiosk-ip 192.168.0.176 --dry-run
+```
 
 `deploy-dashboard.sh` increments `BUILD_COUNT`, rewrites static cache-busting versions and `web_static/build_info.json`. It mutates the source tree; review the resulting diff.
 
@@ -200,6 +212,9 @@ Three things that will waste a day if you do not know them:
 - `docs/setup-orangepi6.md` — verified board facts and first-time setup
 - `docs/orangepi6-cross-compile-deploy.md` — build and deploy workflow (both boards)
 - `docs/docker-development.md`, `docs/WSL_DEVELOPMENT.md` — dev environment
+- `docs/kiosk-display.md` — **the Raspberry Pi 4 as a wall panel**: full-screen
+  dashboard on boot, both logins bypassed by address, and the traps (Chromium
+  guesses X11, `trusted_networks` must be the first auth provider)
 - `docs/matter-bridge.md` — Matter bridge design and deployment (our devices → Apple Home)
 - `docs/matter-bridge-runbook.md` — **build and commission the bridge from scratch**: ordered steps, the values that prove it is conformant, and the twelve traps
 - `docs/matter-controller.md` — Matter controller setup (third-party Matter devices → dashboard)

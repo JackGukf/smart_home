@@ -5,6 +5,12 @@
 dashboard_auth:
   username: admin
   password: change_me
+  # Addresses that skip the login page entirely - a wall-panel kiosk has no
+  # keyboard to type the password into. The address is the credential, so list
+  # single hosts (or /32), never a whole subnet, and give the panel a static
+  # DHCP lease: whatever holds that address next inherits its access.
+  # trusted_hosts:
+  #   - 192.168.1.50
 
 tplink:
   switches:
