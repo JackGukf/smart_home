@@ -117,6 +117,44 @@ The checkbox persists; an episode does not. A reload mid-episode re-derives it
 from the sensor: still moving, the camera comes back; already clear, it does
 not.
 
+### Following somebody along a route
+
+Cameras can also be chained, so the card follows a person instead of sitting on
+one view. `camera_paths` lists them in the order somebody crosses them:
+
+```yaml
+camera_paths:
+  - name: Front approach
+    linger_seconds: 300
+    cameras: [Garage camera, Frontyard camera, Front door camera]
+```
+
+Each camera still needs its own `motion_entity` — that is what announces
+somebody reaching it. Live on this house since build #204, driven by the NPU
+person detector on the two outdoor cameras and the Zigbee PIR at the door.
+
+There is no re-identification model and there should not be. The geometry
+already says it is the same person walking, and matching people between views
+would mean a second graph on an NPU where a QDQ `Concat` silently zeroed the
+last one's outputs for days. What the route needs is an order, and you know it.
+
+Four things carry it, and each was measured rather than assumed:
+
+- **The next camera is opened before they reach it.** A WebRTC stream takes a
+  few seconds to come up, and by then they have walked out of frame — so the
+  card holds the camera on screen *and* the one they are heading for.
+- **Only those two.** Holding all three put the Pi 4 at 80% CPU with two
+  Chromium processes pegged at ~85% of a core each, and none of the streams
+  finished connecting. Only the next one has to be ready.
+- **Slots are DOM nodes, not markup.** Re-creating an `<iframe>` reloads it, so
+  rebuilding the card to add the next camera would drop the stream currently on
+  screen — a black gap at the exact moment somebody walks into view. The card is
+  managed node by node during an episode, which is why it bypasses `renderHtml`
+  and clears that function's cache on the way in and out.
+- **Advancing is one-way.** `NPU_PRESENCE_HOLD` keeps the garage sensor true for
+  a minute after somebody has left it, so the rule is "the furthest camera that
+  has seen them". Anything else retreats to a view they have already left.
+
 To watch it work without standing at the door, nudge the sensor in Home
 Assistant. The real Zigbee device reasserts its own state on its next report, so
 this is a nudge rather than an edit — but pass the attributes back or the entity

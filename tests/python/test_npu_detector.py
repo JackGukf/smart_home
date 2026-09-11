@@ -383,6 +383,19 @@ def test_npu_vision_entities_are_recognised() -> None:
 
 # ------------------------------------------------- per-camera independent loops
 
+class _FakeFrameSource:
+    """Stands in for the held-open RTSP consumer, with no camera in sight."""
+
+    def __init__(self, read):
+        self._read = read
+        self.closed = False
+
+    def read(self):
+        return self._read()
+
+    def close(self):
+        self.closed = True
+
 def test_a_slow_camera_does_not_delay_a_fast_one() -> None:
     """The whole point of the change.
 
@@ -396,9 +409,8 @@ def test_a_slow_camera_does_not_delay_a_fast_one() -> None:
 
     delays = {"slow": 0.30, "fast": 0.01}
 
-    def fake_grab(_url, camera, _timeout=8.0):
-        _time.sleep(delays[camera])
-        return object()
+    def fake_source(camera, _rtsp_url, _timeout=8.0):
+        return _FakeFrameSource(lambda: (_time.sleep(delays[camera]), object())[1])
 
     class FakeDetector:
         """Alternates seen/not-seen so every cycle is a state change.
@@ -426,8 +438,8 @@ def test_a_slow_camera_does_not_delay_a_fast_one() -> None:
     # hold would swallow the falling edges the count relies on.
     cfg = Config(model=Path("unused"), cameras=["slow", "fast"], interval=0.0,
                  fetch_timeout=1.0, presence_hold=0.0)
-    original = nd.grab_frame
-    nd.grab_frame = fake_grab
+    original = nd.FrameSource
+    nd.FrameSource = fake_source
     try:
         stop = threading.Event()
         npu_lock = threading.Lock()
@@ -444,7 +456,7 @@ def test_a_slow_camera_does_not_delay_a_fast_one() -> None:
         for t in threads:
             t.join(timeout=3)
     finally:
-        nd.grab_frame = original
+        nd.FrameSource = original
 
     # The fast camera must have run many more cycles than the slow one; under a
     # shared loop the two counts would be identical.
@@ -460,13 +472,15 @@ def test_one_camera_failing_does_not_kill_its_thread() -> None:
 
     calls = {"n": 0}
 
-    def exploding_grab(_url, _camera, _timeout=8.0):
-        calls["n"] += 1
-        raise RuntimeError("camera on fire")
+    def exploding_source(_camera, _rtsp_url, _timeout=8.0):
+        def read():
+            calls["n"] += 1
+            raise RuntimeError("camera on fire")
+        return _FakeFrameSource(read)
 
     cfg = Config(model=Path("unused"), cameras=["boom"], interval=0.0, fetch_timeout=1.0)
-    original = nd.grab_frame
-    nd.grab_frame = exploding_grab
+    original = nd.FrameSource
+    nd.FrameSource = exploding_source
     try:
         stop = threading.Event()
         t = threading.Thread(target=run_camera,
@@ -477,7 +491,7 @@ def test_one_camera_failing_does_not_kill_its_thread() -> None:
         stop.set()
         t.join(timeout=3)
     finally:
-        nd.grab_frame = original
+        nd.FrameSource = original
 
     assert calls["n"] > 1, "thread stopped retrying after the first failure"
     assert not t.is_alive()
@@ -505,8 +519,8 @@ def test_inference_is_serialised_across_cameras() -> None:
             return []
 
     cfg = Config(model=Path("unused"), cameras=list("abcd"), interval=0.0, fetch_timeout=1.0)
-    original = nd.grab_frame
-    nd.grab_frame = lambda _u, _c, _t=8.0: object()
+    original = nd.FrameSource
+    nd.FrameSource = lambda _c, _u, _t=8.0: _FakeFrameSource(object)
     try:
         stop = threading.Event()
         npu_lock = threading.Lock()
@@ -524,7 +538,7 @@ def test_inference_is_serialised_across_cameras() -> None:
         for t in threads:
             t.join(timeout=3)
     finally:
-        nd.grab_frame = original
+        nd.FrameSource = original
 
     assert concurrent["max"] == 1, f"NPU ran {concurrent['max']} inferences at once"
 
@@ -641,3 +655,173 @@ def test_the_payload_reports_held_counts_but_keeps_the_raw_frame() -> None:
     assert payload["person"] is True, "the held state was lost"
     assert payload["counts"] == {"person": 1}
     assert payload["raw_counts"] == {}, "the raw frame was not preserved"
+
+
+# ------------------------------------------------------- held-open frame source
+
+def test_frames_are_drained_between_inferences() -> None:
+    """The reason the loop reads every frame rather than one per interval.
+
+    Frames left in ffmpeg's buffer come back in order, so a loop that reads only
+    when it wants to score would hand the model a picture that falls further
+    into the past the longer the service runs - a nasty failure, because it goes
+    on looking like it works. Reading every frame keeps the stream current.
+    """
+    import threading
+    import time as _time
+
+    import src.python.npu_detector as nd
+    from src.python.npu_detector import run_camera
+
+    reads = {"n": 0}
+    scored: list[int] = []
+    staleness: list[int] = []
+
+    def source(_camera, _rtsp_url, _timeout=8.0):
+        def read():
+            reads["n"] += 1
+            _time.sleep(0.005)
+            return reads["n"]          # the frame *is* its sequence number
+        return _FakeFrameSource(read)
+
+    class RecordingDetector:
+        def detect(self, frame, _cfg):
+            scored.append(frame)
+            # How many frames had arrived since the one being scored. A loop
+            # working off the buffer would show this climbing.
+            staleness.append(reads["n"] - frame)
+            return []
+
+    cfg = Config(model=Path("unused"), cameras=["cam"], interval=0.10,
+                 fetch_timeout=1.0, presence_hold=0.0)
+    original = nd.FrameSource
+    nd.FrameSource = source
+    try:
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=run_camera,
+            args=("cam", RecordingDetector(), threading.Lock(), cfg, lambda *a: None, stop),
+            daemon=True,
+        )
+        thread.start()
+        _time.sleep(0.45)
+        stop.set()
+        thread.join(timeout=3)
+    finally:
+        nd.FrameSource = original
+
+    assert reads["n"] > len(scored) * 2, (
+        f"read {reads['n']} frames but scored {len(scored)} - the loop is not draining"
+    )
+    assert scored == sorted(scored)
+    # The model must always see the frame that just arrived, never one pulled
+    # out of a backlog - and that must hold for the last inference as firmly as
+    # the first, which is exactly what drifts when the buffer is not drained.
+    assert staleness == [0] * len(scored), f"scored stale frames: {staleness}"
+
+
+def test_the_source_is_closed_when_the_loop_stops() -> None:
+    """A leaked capture holds an RTSP consumer open against the camera."""
+    import threading
+    import time as _time
+
+    import src.python.npu_detector as nd
+    from src.python.npu_detector import run_camera
+
+    made: list[_FakeFrameSource] = []
+
+    def source(_camera, _rtsp_url, _timeout=8.0):
+        made.append(_FakeFrameSource(lambda: object()))
+        return made[-1]
+
+    cfg = Config(model=Path("unused"), cameras=["cam"], interval=0.01, fetch_timeout=1.0)
+    original = nd.FrameSource
+    nd.FrameSource = source
+    try:
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=run_camera,
+            args=("cam", _NullDetector(), threading.Lock(), cfg, lambda *a: None, stop),
+            daemon=True,
+        )
+        thread.start()
+        _time.sleep(0.1)
+        stop.set()
+        thread.join(timeout=3)
+    finally:
+        nd.FrameSource = original
+
+    assert made and made[0].closed, "the frame source was left open"
+
+
+class _NullDetector:
+    def detect(self, _frame, _cfg):
+        return []
+
+
+def test_the_rtsp_endpoint_is_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("GO2RTC_RTSP_URL", "rtsp://10.0.0.5:8554")
+    assert Config.from_env().rtsp_url == "rtsp://10.0.0.5:8554"
+    monkeypatch.delenv("GO2RTC_RTSP_URL")
+    assert Config.from_env().rtsp_url == "rtsp://127.0.0.1:8554"
+
+
+# --------------------------------------------------- per-camera confidence
+
+def test_a_camera_can_be_made_harder_to_convince() -> None:
+    """An outdoor camera at night sees headlights and branches an indoor one
+    never does, so one threshold does not fit every view."""
+    cfg = Config(model=Path("unused"), cameras=["garage_camera", "office_camera"],
+                 conf=0.35, conf_overrides={"garage_camera": 0.55})
+    assert cfg.conf_for("garage_camera") == 0.55
+    assert cfg.conf_for("office_camera") == 0.35
+
+
+def test_conf_overrides_parse_from_one_env_string(monkeypatch) -> None:
+    monkeypatch.setenv("NPU_CONF_OVERRIDES", "garage_camera=0.55, frontyard_camera=0.5")
+    overrides = Config.from_env().conf_overrides
+    assert overrides == {"garage_camera": 0.55, "frontyard_camera": 0.5}
+
+
+def test_a_typo_in_the_overrides_is_dropped_not_fatal(monkeypatch) -> None:
+    """This is a tuning knob. A mistake in it must not stop the house watching."""
+    monkeypatch.setenv("NPU_CONF_OVERRIDES", "garage_camera=high,frontyard_camera=0.5")
+    assert Config.from_env().conf_overrides == {"frontyard_camera": 0.5}
+
+
+def test_a_camera_says_its_state_once_at_startup() -> None:
+    """Publishes are on change, so a newly added camera's entities sat at
+    "unknown" in Home Assistant until somebody walked past it - and a condition
+    on "unknown" is not false, it is broken."""
+    import threading
+    import time as _time
+
+    import src.python.npu_detector as nd
+    from src.python.npu_detector import run_camera
+
+    published: list[str] = []
+
+    cfg = Config(model=Path("unused"), cameras=["quiet"], interval=0.01,
+                 fetch_timeout=1.0, presence_hold=60.0)
+    original = nd.FrameSource
+    nd.FrameSource = lambda _c, _u, _t=8.0: _FakeFrameSource(object)
+    try:
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=run_camera,
+            args=("quiet", _NullDetector(), threading.Lock(), cfg,
+                  lambda _cam, payload: published.append(payload), stop),
+            daemon=True,
+        )
+        thread.start()
+        _time.sleep(0.2)
+        stop.set()
+        thread.join(timeout=3)
+    finally:
+        nd.FrameSource = original
+
+    assert published, "an empty camera never said so"
+    assert json.loads(published[0])["person"] is False
+    # Exactly once: nothing changed after that, and a retained topic republished
+    # every cycle would be noise on the broker and churn in the recorder.
+    assert len(published) == 1, f"published {len(published)} times without a change"

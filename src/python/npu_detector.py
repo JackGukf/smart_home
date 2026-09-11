@@ -34,7 +34,7 @@ import signal
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
@@ -226,13 +226,39 @@ def decode(output: np.ndarray, scale: float, pad_x: int, pad_y: int,
 
 # ---------------------------------------------------------------------- runtime
 
+def _parse_conf_overrides(raw: str) -> dict[str, float]:
+    """"cam_a=0.5,cam_b=0.6" -> {"cam_a": 0.5, "cam_b": 0.6}.
+
+    A bad entry is dropped with a warning rather than taken down the service:
+    this is a tuning knob, and a typo in it must not stop the house watching.
+    """
+    overrides: dict[str, float] = {}
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        camera, _, value = chunk.partition("=")
+        try:
+            overrides[camera.strip()] = float(value)
+        except ValueError:
+            LOG.warning("NPU_CONF_OVERRIDES: ignoring %r, expected camera=number", chunk)
+    return overrides
+
+
 @dataclass
 class Config:
     model: Path
     cameras: list[str]
     go2rtc_url: str = "http://127.0.0.1:1984"
+    # go2rtc re-serves every camera over RTSP locally. Reading that, and holding
+    # it open, is what makes a frame 130ms old instead of 1.1s - see FrameSource.
+    rtsp_url: str = "rtsp://127.0.0.1:8554"
     interval: float = 2.0
     conf: float = 0.35
+    # Per-camera confidence, for the ones a single threshold does not suit. An
+    # outdoor camera at night sees headlights and branches that an indoor one
+    # never does, so it may need to be surer before it says "person".
+    conf_overrides: dict[str, float] = field(default_factory=dict)
     iou: float = 0.45
     classes: set[str] = field(default_factory=lambda: {"person"})
     mqtt_host: str = "127.0.0.1"
@@ -252,6 +278,9 @@ class Config:
     def availability_topic(self) -> str:
         return f"{self.base_topic}/status"
 
+    def conf_for(self, camera: str) -> float:
+        return self.conf_overrides.get(camera, self.conf)
+
     @classmethod
     def from_env(cls) -> "Config":
         cameras = [c.strip() for c in os.getenv("NPU_CAMERAS", "").split(",") if c.strip()]
@@ -260,8 +289,10 @@ class Config:
             model=Path(os.getenv("NPU_MODEL", "/home/orangepi/npu-test/prelu_ft_decomp.int8.onnx")),
             cameras=cameras,
             go2rtc_url=os.getenv("GO2RTC_URL", "http://127.0.0.1:1984"),
+            rtsp_url=os.getenv("GO2RTC_RTSP_URL", "rtsp://127.0.0.1:8554"),
             interval=float(os.getenv("NPU_INTERVAL", "2.0")),
             conf=float(os.getenv("NPU_CONF", "0.35")),
+            conf_overrides=_parse_conf_overrides(os.getenv("NPU_CONF_OVERRIDES", "")),
             # Seconds a person may go undetected before the room is called
             # empty. 0 disables the hold and publishes every frame, which is
             # what produced 2,289 state changes a day from one camera.
@@ -328,12 +359,12 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
                publish: "Callable[[str, str], None]", stop: "threading.Event") -> None:
     """Watch one camera on its own cadence until stop is set.
 
-    One thread per camera rather than a single loop over all of them. Frame
-    fetch dominates - 0.25s to 4.1s depending on whether go2rtc serves the
-    stream natively or has to spawn ffmpeg - so a shared loop makes every camera
-    wait for the slowest, and an unreachable one stalls the lot for its whole
-    timeout. Independent loops mean a 0.36s camera updates every 0.36s no matter
-    what the 3s doorbell is doing.
+    One thread per camera rather than a single loop over all of them, so an
+    unreachable camera cannot stall the rest while its reconnect backs off.
+
+    The loop consumes every frame the stream delivers and runs the model on a
+    schedule - see FrameSource for why reading every frame is what keeps the
+    picture current rather than slowly falling behind.
 
     Inference is serialised behind npu_lock. There is one NPU and one session,
     and this execution provider is not one to take chances with concurrently -
@@ -341,36 +372,126 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
     64ms per frame is ~15 inferences a second against a handful of cameras
     wanting one every couple of seconds.
     """
-    LOG.info("%s: watching every %.1fs (presence hold %.0fs)", camera, cfg.interval,
-             cfg.presence_hold)
+    conf = cfg.conf_for(camera)
+    LOG.info("%s: watching every %.1fs (presence hold %.0fs, conf %.2f)",
+             camera, cfg.interval, cfg.presence_hold, conf)
     # One hold per watched class, per camera: a car appearing must not be able
     # to keep "person" alive, and vice versa.
     holds = {label: PresenceHold(cfg.presence_hold) for label in cfg.classes}
-    while not stop.is_set():
-        started = time.monotonic()
-        try:
-            frame = grab_frame(cfg.go2rtc_url, camera, cfg.fetch_timeout)
-            if frame is not None:
-                fetched = time.monotonic()
+    source = FrameSource(camera, cfg.rtsp_url, cfg.fetch_timeout)
+    camera_cfg = replace(cfg, conf=conf)
+    last_inference = 0.0
+    # Publishes are on change, which leaves a newly added camera's entities
+    # "unknown" in Home Assistant until somebody happens to walk past it. Say
+    # the state once at startup so a condition on it means something from the
+    # first minute rather than the first visitor.
+    said_anything = False
+
+    try:
+        while not stop.is_set():
+            try:
+                frame = source.read()
+                if frame is None:
+                    # Reconnecting. Wait a beat rather than spinning on a camera
+                    # that is off, which on a five-camera board is a busy loop
+                    # per dead camera.
+                    stop.wait(min(cfg.interval, 2.0))
+                    continue
+
+                now = time.monotonic()
+                if now - last_inference < cfg.interval:
+                    continue        # drain: keep the stream current, do not score
+                last_inference = now
+
                 with npu_lock:
-                    detections = detector.detect(frame, cfg)
+                    detections = detector.detect(frame, camera_cfg)
 
                 held, changed = _apply_holds(holds, detections, cfg.classes,
                                              time.monotonic())
-                if changed:
+                if changed or not said_anything:
                     publish(camera, build_payload(camera, detections, cfg.classes, held))
-                LOG.debug("%s: %d detection(s)%s  fetch %.0fms  infer %.0fms",
+                    said_anything = True
+                LOG.debug("%s: %d detection(s)%s  infer %.0fms",
                           camera, len(detections), "" if changed else " (held)",
-                          (fetched - started) * 1000,
-                          (time.monotonic() - fetched) * 1000)
-        except Exception:
-            # One camera failing must not take its thread down and silently stop
-            # watching that view for the life of the process.
-            LOG.exception("%s: detection cycle failed", camera)
-        slack = cfg.interval - (time.monotonic() - started)
-        if slack > 0:
-            stop.wait(slack)
+                          (time.monotonic() - now) * 1000)
+            except Exception:
+                # One camera failing must not take its thread down and silently
+                # stop watching that view for the life of the process.
+                LOG.exception("%s: detection cycle failed", camera)
+                source.close()
+                stop.wait(min(cfg.interval, 2.0))
+    finally:
+        source.close()
     LOG.info("%s: stopped", camera)
+
+
+class FrameSource:
+    """A camera's video, held open.
+
+    The detector used to ask go2rtc for one JPEG per cycle. That is a fresh
+    consumer every time, and go2rtc has to wait for the camera's next keyframe
+    before it can answer, so a frame cost 0.6-3.2s on these cameras - measured,
+    not guessed. The model needs 64ms. Nearly all the latency was in asking.
+
+    That is fine for "is anyone in the office", and useless for following
+    somebody up the drive: at a second a frame they reach the door before the
+    picture of them at the gate arrives.
+
+    Holding one RTSP consumer open instead drops it to ~2ms a frame, because the
+    frames are already arriving - go2rtc re-serves each camera on :8554, so this
+    costs the camera nothing extra. The price is ~15% of one core per camera to
+    keep decoding, against twelve cores on this board.
+
+    Read *every* frame, and infer on a schedule. Reading only when the detector
+    wants one leaves the rest in ffmpeg's buffer, and read() then returns those
+    in order - the picture scored would drift further into the past the longer
+    the service ran, which is a nasty way to be wrong: it looks like it works.
+    """
+
+    def __init__(self, camera: str, rtsp_url: str, timeout: float = 8.0) -> None:
+        self.camera = camera
+        self.url = f"{rtsp_url.rstrip('/')}/{camera}"
+        self.timeout = timeout
+        self._capture: Any = None
+        self._opened_at = 0.0
+
+    def _open(self) -> bool:
+        import cv2
+
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
+        capture = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+        if not capture.isOpened():
+            capture.release()
+            LOG.warning("%s: could not open %s", self.camera, self.url)
+            return False
+        # Advisory - the FFMPEG backend may ignore it. Reading every frame is
+        # what actually keeps the buffer empty; this only helps if it is heeded.
+        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self._capture = capture
+        self._opened_at = time.monotonic()
+        LOG.info("%s: reading %s", self.camera, self.url)
+        return True
+
+    def read(self) -> "np.ndarray | None":
+        """The next frame, reconnecting if the stream has gone away."""
+        if self._capture is None and not self._open():
+            return None
+        ok, frame = self._capture.read()
+        if not ok or frame is None:
+            # Cameras drop out - a reboot, a lost Wi-Fi packet on the frontyard
+            # camera's weak link. Reopen rather than going quiet for ever.
+            LOG.warning("%s: stream ended after %.0fs, reconnecting",
+                        self.camera, time.monotonic() - self._opened_at)
+            self.close()
+            return None
+        return frame
+
+    def close(self) -> None:
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
 
 
 def grab_frame(go2rtc_url: str, camera: str, timeout: float = 8.0) -> np.ndarray | None:

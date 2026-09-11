@@ -160,7 +160,7 @@ Three services, all loopback-only or local-only on purpose. See `docs/local-ai.m
 | Service | Endpoint | What |
 | --- | --- | --- |
 | `ollama.service` (system) | `127.0.0.1:11434` | Qwen3-4B Q4_K_M, Ollama API. Unloads when idle. **Live** — `scripts/install-ollama.sh`. |
-| `npu-detector.service` (user) | → MQTT `smarthome/vision/<camera>` | YOLOv8n on the Zhouyi NPU. **Live since 2026-09-09** — mAP50 0.363, person AP50 0.633, 32.4 fps. The detection head is cut off the graph and decoded in numpy; quantising it erases what it computes. Publishes *presence*, not frames: `NPU_PRESENCE_HOLD` (60 s) delays only the falling edge, never a rise. See `docs/npu-model-pipeline.md`. |
+| `npu-detector.service` (user) | → MQTT `smarthome/vision/<camera>` | YOLOv8n on the Zhouyi NPU. **Live since 2026-09-09**, five cameras since 2026-09-11 — mAP50 0.363, person AP50 0.633, 32.4 fps. The detection head is cut off the graph and decoded in numpy; quantising it erases what it computes. Publishes *presence*, not frames: `NPU_PRESENCE_HOLD` (60 s) delays only the falling edge, never a rise. Frames come from a **held-open RTSP consumer** on go2rtc's own `:8554` — one-shot `frame.jpeg` cost 0.6–3.2 s a frame against 64 ms of inference, which is fine for "is anyone in the office" and useless for following somebody up a drive. See `docs/npu-model-pipeline.md`. |
 | `llama-server.service` (user) | `127.0.0.1:8081` | Qwen3-4B Q4_0, OpenAI API. ~3x faster prompts, holds 5GB always. **Deferred** — do not run it beside Ollama. |
 
 Reach the LLMs with an SSH tunnel, not by widening the bind address:

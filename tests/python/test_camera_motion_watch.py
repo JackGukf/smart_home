@@ -58,6 +58,13 @@ globalThis.latestTuyaDevices = [
 globalThis.activeCameraIds = new Set();
 globalThis.homeCameraOverride = null;
 globalThis.motionEpisodes = new Map();
+// No routes configured here - this file is about the single-camera watch. The
+// real path functions are loaded rather than stubbed so that the two rules
+// meeting each other is exercised, not imagined.
+globalThis.latestCameraPaths = [];
+globalThis.pathEpisodes = new Map();
+globalThis.latestCameraById = new Map();
+globalThis.applyPathSlots = () => {};
 globalThis.renderHomeCamera = () => { events.renders += 1; };
 globalThis.logActivity = (msg) => { events.log.push(msg); };
 globalThis.captureSnapshotOnce = async () => { events.snapshots += 1; };
@@ -102,9 +109,16 @@ eval(pick('cameraIdFor') + pick('motionSensorIsTripped') + pick('motionLingerMs'
    + pick('stopAllMotionEpisodes') + pick('releaseMotionEpisodes')
    + pick('updateMotionWatch') + pick('motionWatchEnabled')
    + pick('setMotionWatchEnabled') + pick('anyCameraWatchesMotion')
-   + pick('syncMotionWatchToggle'));
+   + pick('syncMotionWatchToggle') + pick('cameraPathList') + pick('pathCameraIds')
+   + pick('pathEpisodeCameras') + pick('activePathCameraId') + pick('openPathEpisode')
+   + pick('advancePathEpisode') + pick('closePathEpisode') + pick('stopAllPathEpisodes')
+   + pick('updatePathWatch'));
 
 const setMotion = (state, extra = {}) => {
+  // The server reports the sensor state on the camera card itself; `online`
+  // still comes from the device list, so both are set.
+  globalThis.latestCameras = latestCameras.map(
+    (c) => (c.motion_entity ? { ...c, motion_state: extra.online === false ? undefined : state } : c));
   globalThis.latestTuyaDevices = [
     { id: CAMERA.motion_entity, state, online: true, ...extra },
   ];

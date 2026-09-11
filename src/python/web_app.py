@@ -871,7 +871,10 @@ def create_app(
 
     @app.get("/api/cameras")
     async def cameras() -> dict[str, list[dict[str, Any]]]:
-        return {"cameras": _camera_cards(app.state.config_path, app.state.check_camera_ports)}
+        cards = _camera_cards(app.state.config_path, app.state.check_camera_ports)
+        paths = _camera_paths(app.state.config_path, cards)
+        _attach_motion_states(app.state.config_path, cards, paths)
+        return {"cameras": cards, "paths": paths}
 
     @app.get("/api/home-assistant/cameras/{entity_id}/snapshot.jpg")
     async def home_assistant_camera_snapshot(entity_id: str) -> Response:
@@ -2231,6 +2234,98 @@ def _load_cameras(path: Path) -> list[CameraDefinition]:
             )
         )
     return cameras
+
+
+def _attach_motion_states(config_path: Path, cards: list[dict[str, Any]],
+                          paths: list[dict[str, Any]]) -> None:
+    """Put each watched sensor's current state next to the camera it watches.
+
+    The browser cannot look these up for itself. The NPU detector's entities are
+    deliberately kept out of the device list - their occupancy device_class and
+    "camera" names made the Cameras view render three phantom cameras reading
+    "stream not configured" - so a dashboard hunting for them there finds
+    nothing, which is exactly how the first version of this failed.
+
+    Sending the state with the camera also means one rule works for every kind
+    of sensor: the front door's Zigbee PIR and the garage's NPU person detector
+    arrive in the same shape.
+    """
+    wanted = {str(card["motion_entity"]) for card in cards if card.get("motion_entity")}
+    wanted |= {str(step["motion_entity"]) for path in paths for step in path["steps"]}
+    if not wanted:
+        return
+
+    config = _load_home_assistant_config(config_path)
+    token = os.getenv(config.token_env)
+    if not token:
+        return
+    try:
+        states = _home_assistant_get(config, token, "/api/states")
+    except Exception:  # noqa: BLE001 - Home Assistant being down is routine
+        return
+    current = {
+        str(entity.get("entity_id")): str(entity.get("state"))
+        for entity in states
+        if str(entity.get("entity_id")) in wanted
+    }
+
+    for card in cards:
+        if card.get("motion_entity"):
+            card["motion_state"] = current.get(str(card["motion_entity"]))
+    for path in paths:
+        for step in path["steps"]:
+            step["state"] = current.get(str(step["motion_entity"]))
+
+
+def _camera_paths(config_path: Path, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ordered camera routes, resolved against the cameras that actually exist.
+
+    A person arriving at this house crosses the garage, then the frontyard, then
+    the front door, and each of those cameras has a sensor watching it. Listing
+    them in order is all the dashboard needs to follow somebody up the drive: no
+    re-identification model, no matching faces between views. The geometry
+    already says it is the same person, and a model that guessed at it would be
+    a second graph on an NPU where the last one cost days.
+
+    Cameras are named here the way they are named everywhere else in the config,
+    and resolved to ids for the browser. A name that matches nothing is dropped
+    with a warning rather than sinking the whole route - a typo in one step
+    should cost that step, not the feature.
+    """
+    if not config_path.exists():
+        return []
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    by_name = {str(card.get("name")): card for card in cards}
+
+    paths: list[dict[str, Any]] = []
+    for entry in payload.get("camera_paths") or []:
+        steps: list[dict[str, Any]] = []
+        for name in entry.get("cameras") or []:
+            card = by_name.get(str(name))
+            if card is None:
+                logging.getLogger(__name__).warning(
+                    "camera_paths: no camera named %r", name)
+                continue
+            if not card.get("motion_entity"):
+                logging.getLogger(__name__).warning(
+                    "camera_paths: %r has no motion_entity, so nothing can "
+                    "announce somebody reaching it", name)
+                continue
+            steps.append({
+                "camera_id": card["id"],
+                "name": card["name"],
+                "motion_entity": card["motion_entity"],
+            })
+        # One step is not a route - the single-camera watch already covers that,
+        # and letting it through here would mean two rules driving one card.
+        if len(steps) < 2:
+            continue
+        paths.append({
+            "name": str(entry.get("name") or "Camera path"),
+            "linger_seconds": int(entry.get("linger_seconds", 300)),
+            "steps": steps,
+        })
+    return paths
 
 
 def _rename_camera(path: Path, camera_id: str, name: str) -> str:

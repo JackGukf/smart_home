@@ -267,6 +267,7 @@ const activeCameraIds   = new Set();
    plainer alternative. */
 const LEGACY_JS = document.documentElement.classList.contains("legacy-js");
 let latestCameras       = [];
+let latestCameraPaths   = [];
 let latestTuyaDevices   = [];
 let latestAlarmData     = null;
 let latestSwitchDevices = [];
@@ -3733,6 +3734,7 @@ async function loadDevices() {
   notifySeenNewHomeAssistantDevices(homeAssistantData.entities);
 
   latestCameras       = cameraData.cameras;
+  latestCameraPaths   = cameraData.paths || [];
   latestTuyaDevices   = tuyaData.devices;
   latestAlarmData     = alarmData;
   latestSwitchDevices = deviceData.devices;
@@ -3752,7 +3754,10 @@ async function loadDevices() {
   _renderMatterDeviceList(matterData.devices || []);
   renderHomeView();
   refreshActiveDynamicGroupPanel();
-  /* After the render, so an episode that opens here draws over fresh cards. */
+  /* After the render, so an episode that opens here draws over fresh cards.
+     Paths first: they own their cameras, and the single-camera watch skips
+     them, so letting the path decide first keeps the two from racing. */
+  updatePathWatch();
   updateMotionWatch();
 
   if (statusDot) statusDot.classList.add("online");
@@ -4950,13 +4955,27 @@ function renderHomeCamera() {
   select.hidden = cameras.length === 0;
   syncMotionWatchToggle();
 
+  // While an episode runs the card is managed node by node rather than
+  // re-rendered, so leave it alone here.
+  const route = pathEpisodeCameras();
+  if (route.length) {
+    syncPathSlots(route);
+    return;
+  }
+
   if (!camera) {
     renderHtml(body, `<div class="home-empty">No cameras found</div>`);
     return;
   }
+  renderHtml(body, homeCameraMarkup(camera));
+}
+
+/* The picture and its controls. Shared so a path slot and the ordinary card
+   cannot drift into looking like two different things. */
+function homeCameraMarkup(camera) {
   const cameraId = cameraIdFor(camera);
   const live = activeCameraIds.has(cameraId);
-  renderHtml(body, `
+  return `
     <div class="home-camera-frame" data-home-camera-toggle="${escapeHtml(cameraId)}" role="button" tabindex="0"
          title="${live ? "Tap to stop the live view" : "Tap to start the live view"}">
       ${cameraMedia(camera)}${cameraBatteryBadge(camera)}
@@ -4975,7 +4994,64 @@ function renderHomeCamera() {
           <i class="ti ti-maximize" aria-hidden="true"></i>
         </button>
       </span>
-    </div>`);
+    </div>`;
+}
+
+/* Make the card hold exactly these cameras, adding and removing slots one node
+   at a time.
+
+   Deliberately not renderHtml. Replacing the card's innerHTML re-creates every
+   <iframe> inside it, and a re-created iframe reloads - so rebuilding the card
+   to add the next camera would drop the stream currently on screen and leave a
+   black gap at exactly the moment somebody is walking into view. Touching only
+   the nodes that changed leaves the others playing, untouched.
+
+   The cost of going around renderHtml is that its cache no longer describes
+   this element, so it is cleared on the way in and on the way out. */
+function syncPathSlots(cameras) {
+  const body = document.querySelector("#homeCameraBody");
+  if (!body) return;
+
+  if (body.dataset.pathMode !== "1") {
+    body.textContent = "";
+    body.dataset.pathMode = "1";
+    lastRenderedHtml.delete(body);
+  }
+
+  const wantedIds = new Set(cameras.map(cameraIdFor));
+  for (const slot of [...body.querySelectorAll("[data-path-slot]")]) {
+    if (!wantedIds.has(slot.dataset.pathSlot)) slot.remove();
+  }
+  for (const camera of cameras) {
+    const id = cameraIdFor(camera);
+    if (body.querySelector(`[data-path-slot="${CSS.escape(id)}"]`)) continue;
+    const slot = document.createElement("div");
+    slot.className = "home-camera-slot";
+    slot.dataset.pathSlot = id;
+    slot.innerHTML = homeCameraMarkup(camera);
+    body.appendChild(slot);
+  }
+  applyPathSlots();
+}
+
+function exitPathMode() {
+  const body = document.querySelector("#homeCameraBody");
+  if (!body) return;
+  delete body.dataset.pathMode;
+  lastRenderedHtml.delete(body);   // the cache describes markup we replaced
+}
+
+/* Which slot is on screen. A class, never a re-render - see the path notes. */
+function applyPathSlots() {
+  const showing = activePathCameraId();
+  for (const slot of document.querySelectorAll("[data-path-slot]")) {
+    slot.classList.toggle("showing", slot.dataset.pathSlot === showing);
+  }
+  /* The picker is markup this function deliberately does not rebuild, so it
+     would otherwise keep naming the camera the route started on while the card
+     below it shows the one they have walked to. Setting the value is enough. */
+  const select = document.querySelector("#homeCameraSelect");
+  if (select && showing && select.value !== showing) select.value = showing;
 }
 
 
@@ -5077,8 +5153,10 @@ function setMotionWatchEnabled(enabled) {
   if (enabled) {
     /* Do not make somebody who just asked for this wait for the next refresh
        to find out whether there is already someone on the doorstep. */
+    updatePathWatch();
     updateMotionWatch();
   } else {
+    stopAllPathEpisodes();
     stopAllMotionEpisodes();
   }
   logActivity(`Auto camera on motion ${enabled ? "enabled" : "disabled"} on this screen`);
@@ -5086,7 +5164,8 @@ function setMotionWatchEnabled(enabled) {
 
 /* Any camera at all paired with a sensor - otherwise the switch is decoration. */
 function anyCameraWatchesMotion() {
-  return (latestCameras || []).some((camera) => camera.motion_entity);
+  return (latestCameras || []).some((camera) => camera.motion_entity)
+      || cameraPathList().length > 0;
 }
 
 function syncMotionWatchToggle() {
@@ -5097,7 +5176,16 @@ function syncMotionWatchToggle() {
   box.checked = motionWatchEnabled();
 }
 
-function motionSensorIsTripped(entityId) {
+function motionSensorIsTripped(entityId, reportedState) {
+  /* The server sends the state alongside the camera, because the browser
+     cannot always find it: the NPU detector's entities are kept out of the
+     device list on purpose, so looking for them there finds nothing. The
+     device list is still consulted as a fallback, which keeps a sensor that
+     the dashboard already knows about working if Home Assistant is briefly
+     unreachable from the server. */
+  if (reportedState !== undefined && reportedState !== null) {
+    return MOTION_ON_STATES.has(String(reportedState).trim().toLowerCase());
+  }
   const device = (latestTuyaDevices || []).find(
     (d) => d.id === entityId || d.entity_id === entityId,
   );
@@ -5134,6 +5222,167 @@ function closeMotionEpisode(cameraId) {
   logActivity("Motion clear - camera stopped");
 }
 
+/* ── Following somebody up the drive ───────────────────────────────────────
+
+   A camera path is an ordered route - garage, frontyard, front door - where
+   each camera has a sensor watching it. When somebody trips the first one the
+   card opens every camera on the route at once and shows the one they are at,
+   then follows them along it.
+
+   Opening all of them, rather than the current one and the next, is not
+   enthusiasm. Moving or re-creating an <iframe> reloads it, so a card that
+   swapped which cameras it held would tear down the very stream it had just
+   spent three seconds pre-warming. Instead the markup lists every camera on the
+   route for the whole episode - identical on every render, so renderHtml leaves
+   it alone - and following the person is a class change on slots that are
+   already playing. The switch is instant because nothing reconnects.
+
+   Advancing is one-way. The presence hold keeps the garage sensor reading true
+   for a minute after somebody has walked out of it, so "the furthest camera
+   that has seen them" is the only reading that does not bounce backwards to a
+   view they have already left.
+
+   The cost is real - three streams decode on the panel instead of one - so it
+   lasts only as long as the episode, and the linger that ends it is the same
+   five minutes the single-camera watch uses. */
+
+function cameraPathList() {
+  return (latestCameraPaths || []).filter((path) => (path.steps || []).length > 1);
+}
+
+function pathCameraIds() {
+  const ids = new Set();
+  for (const path of cameraPathList()) {
+    for (const step of path.steps) ids.add(step.camera_id);
+  }
+  return ids;
+}
+
+/* path name -> { index, stopTimer, released }. Index is the step being shown. */
+const pathEpisodes = new Map();
+
+/* The cameras a live episode holds open: the one on screen, and the one they
+   are walking towards.
+
+   Not the whole route. Three 1080p WebRTC streams put this Raspberry Pi 4 at
+   80% CPU with two Chromium processes pegged at ~85% of a core each, and none
+   of them finished connecting - measured on the panel, after trying it. Two is
+   enough for the handoff to be instant, because the only stream that has to be
+   ready is the next one. */
+function pathEpisodeCameras() {
+  const cameras = [];
+  for (const path of cameraPathList()) {
+    const episode = pathEpisodes.get(path.name);
+    if (!episode) continue;
+    for (const offset of [0, 1]) {
+      const step = path.steps[episode.index + offset];
+      if (!step) continue;
+      const camera = latestCameraById.get(step.camera_id);
+      if (camera) cameras.push(camera);
+    }
+  }
+  return cameras;
+}
+
+/* The camera a live path episode wants on screen, or null when none is. */
+function activePathCameraId() {
+  for (const path of cameraPathList()) {
+    const episode = pathEpisodes.get(path.name);
+    if (episode) return path.steps[episode.index]?.camera_id ?? null;
+  }
+  return null;
+}
+
+function openPathEpisode(path, index) {
+  pathEpisodes.set(path.name, { index, stopTimer: null, released: false });
+  homeCameraOverride = path.steps[index].camera_id;
+  applyPathCameras();
+  logActivity(`${path.name}: ${path.steps[index].name}`);
+}
+
+function advancePathEpisode(path, episode, index) {
+  episode.index = index;
+  homeCameraOverride = path.steps[index].camera_id;
+  /* No full re-render: the slot they are walking into is already open and
+     already playing, so this adds the *next* one and shows this one. Rebuilding
+     the card here would reload every iframe in it, which is the whole reason
+     the slots are managed as nodes rather than as a block of markup. */
+  applyPathCameras();
+  logActivity(`${path.name}: ${path.steps[index].name}`);
+}
+
+function closePathEpisode(pathName) {
+  const path = cameraPathList().find((p) => p.name === pathName);
+  const episode = pathEpisodes.get(pathName);
+  if (!episode || !path) return;
+  pathEpisodes.delete(pathName);
+  if (episode.released) return;
+
+  for (const step of path.steps) activeCameraIds.delete(step.camera_id);
+  if (homeCameraOverride === path.steps[episode.index]?.camera_id) homeCameraOverride = null;
+  exitPathMode();
+  renderHomeCamera();
+  logActivity(`${path.name}: clear`);
+}
+
+/* Bring the card in line with what the episode wants open: exactly the current
+   camera and the next one, playing, with the current one on screen. */
+function applyPathCameras() {
+  const wanted = pathEpisodeCameras();
+  const wantedIds = new Set(wanted.map(cameraIdFor));
+
+  for (const id of pathCameraIds()) {
+    if (!wantedIds.has(id)) activeCameraIds.delete(id);
+  }
+  for (const id of wantedIds) activeCameraIds.add(id);
+  syncPathSlots(wanted);
+}
+
+function stopAllPathEpisodes() {
+  for (const name of [...pathEpisodes.keys()]) {
+    const episode = pathEpisodes.get(name);
+    if (episode?.stopTimer) clearTimeout(episode.stopTimer);
+    if (episode) episode.stopTimer = null;
+    closePathEpisode(name);
+  }
+}
+
+function updatePathWatch() {
+  if (!motionWatchEnabled()) return;
+
+  for (const path of cameraPathList()) {
+    const seen = path.steps.map(
+      (step) => motionSensorIsTripped(step.motion_entity, step.state) === true);
+    const furthest = seen.lastIndexOf(true);
+    const episode = pathEpisodes.get(path.name);
+
+    if (!episode) {
+      if (furthest >= 0) openPathEpisode(path, furthest);
+      continue;
+    }
+    if (furthest >= 0) {
+      if (episode.stopTimer) {
+        clearTimeout(episode.stopTimer);
+        episode.stopTimer = null;
+      }
+      /* Forward only: a held sensor behind them must not drag the view back. */
+      if (furthest > episode.index && !episode.released) {
+        advancePathEpisode(path, episode, furthest);
+      }
+    } else if (!episode.stopTimer) {
+      if (episode.released) {
+        pathEpisodes.delete(path.name);
+      } else {
+        const linger = Number(path.linger_seconds);
+        episode.stopTimer = setTimeout(
+          () => closePathEpisode(path.name),
+          (Number.isFinite(linger) && linger >= 0 ? linger : 300) * 1000,
+        );
+      }
+    }
+  }
+}
+
 /* Turning the switch off puts the card back now, rather than leaving a stream
    the automation started running until the linger happens to expire. */
 function stopAllMotionEpisodes() {
@@ -5148,6 +5397,12 @@ function stopAllMotionEpisodes() {
    current motion lasts. Called from the stream button and the dropdown. */
 function releaseMotionEpisodes() {
   let released = false;
+  for (const episode of pathEpisodes.values()) {
+    if (episode.stopTimer) clearTimeout(episode.stopTimer);
+    episode.stopTimer = null;
+    episode.released = true;
+    released = true;
+  }
   for (const episode of motionEpisodes.values()) {
     if (episode.stopTimer) clearTimeout(episode.stopTimer);
     episode.stopTimer = null;
@@ -5162,7 +5417,10 @@ function updateMotionWatch() {
 
   for (const camera of latestCameras || []) {
     if (!camera.motion_entity) continue;
-    const tripped = motionSensorIsTripped(camera.motion_entity);
+    // A camera on a path is driven by the path, which knows what comes next.
+    // Two rules on one card would fight over which camera is showing.
+    if (pathCameraIds().has(cameraIdFor(camera))) continue;
+    const tripped = motionSensorIsTripped(camera.motion_entity, camera.motion_state);
     if (tripped === null) continue;          /* sensor missing or offline */
 
     const cameraId = cameraIdFor(camera);

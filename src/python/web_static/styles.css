@@ -4253,6 +4253,35 @@ aside {
 
 .home-camera-auto:hover { color: var(--t-text); }
 
+/* ── Camera path slots ──
+   Every camera on a route is in the card at once while an episode runs, and
+   exactly one is on screen. The hidden ones must keep *playing*: they are here
+   so that following somebody from the garage to the door is instant, and a
+   display:none iframe has its media suspended, which would throw that away and
+   leave a three-second black gap at each step. So they are shrunk to a pixel
+   and made transparent rather than hidden. */
+.home-camera-slot {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0.01;
+  pointer-events: none;
+}
+
+.home-camera-slot.showing {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The slots are absolutely positioned until one is showing, so the body needs
+   to be the thing they are positioned against. */
+.home-camera-body { position: relative; }
+
 .home-camera-body {
   margin-top: 12px;
   flex: 1 1 auto;
