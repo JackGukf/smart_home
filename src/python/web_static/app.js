@@ -3752,6 +3752,8 @@ async function loadDevices() {
   _renderMatterDeviceList(matterData.devices || []);
   renderHomeView();
   refreshActiveDynamicGroupPanel();
+  /* After the render, so an episode that opens here draws over fresh cards. */
+  updateMotionWatch();
 
   if (statusDot) statusDot.classList.add("online");
   apiStatus.textContent = "Online";
@@ -4743,6 +4745,9 @@ function layoutAreaGrid() {
 /* ── Home dashboard panels (climate + camera) ── */
 const HOME_TEMP_SENSORS_KEY = "home_temp_sensors";
 const HOME_CAMERA_KEY = "home_camera_id";
+/* Set while a motion episode is showing a camera the user did not choose.
+   Deliberately not persisted - see the motion watch further down. */
+let homeCameraOverride = null;
 
 /* Every temperature source on the dashboard: ecobee remote sensors plus any
    Tuya/HA sensor group that reports a temperature reading. */
@@ -4931,7 +4936,10 @@ function renderHomeCamera() {
   const cameras = homeCameraList();
   let savedId = null;
   try { savedId = localStorage.getItem(HOME_CAMERA_KEY); } catch {}
-  const camera = cameras.find((c) => cameraIdFor(c) === savedId) || cameras[0] || null;
+  // A motion episode shows its camera without touching the saved choice, so
+  // the card goes back to the one you picked when the episode ends.
+  const wantedId = homeCameraOverride ?? savedId;
+  const camera = cameras.find((c) => cameraIdFor(c) === wantedId) || cameras[0] || null;
 
   // Rebuilding the option list resets the dropdown, so leave it alone when
   // the cameras have not changed.
@@ -4940,6 +4948,7 @@ function renderHomeCamera() {
     return `<option value="${escapeHtml(id)}"${camera && cameraIdFor(camera) === id ? " selected" : ""}>${escapeHtml(c.name || id)}</option>`;
   }).join(""));
   select.hidden = cameras.length === 0;
+  syncMotionWatchToggle();
 
   if (!camera) {
     renderHtml(body, `<div class="home-empty">No cameras found</div>`);
@@ -4982,6 +4991,8 @@ document.addEventListener("click", (event) => {
   event.stopPropagation();
 
   const cameraId = trigger.dataset.homeCameraToggle;
+  /* Whatever the motion watch was doing, the person watching wins. */
+  releaseMotionEpisodes();
   if (activeCameraIds.has(cameraId)) {
     activeCameraIds.delete(cameraId);
   } else {
@@ -5009,6 +5020,173 @@ document.addEventListener("click", (event) => {
   }
   expandHomeCamera(cameraId);
 });
+
+
+/* ── Motion watch: the panel shows the door by itself ──────────────────────
+
+   A camera with a `motion_entity` in devices.local.yaml is paired with a
+   binary_sensor. When that sensor reads motion the Home card switches to that
+   camera and starts playing; `motion_linger_seconds` after it reads clear
+   again, the stream stops and the card goes back to the camera you chose.
+
+   Three decisions worth knowing, because each one is a thing that would
+   otherwise be wrong at 2am:
+
+   * Every screen decides for itself, and starts out saying no. A dashboard
+     left open on a phone would otherwise pull a video stream over cellular
+     because a cat walked past the door. The switch lives in the camera card
+     and in this browser's localStorage, so the wall panel and the laptop can
+     each opt in without agreeing with each other.
+
+   * The saved camera choice is never overwritten. The episode sets an override
+     the card prefers, so ending it restores your pick without having to
+     remember and write back - a write that would survive a badly timed reload
+     and leave the door camera as your permanent choice.
+
+   * A person beats the automation. Touching the stream button or the camera
+     dropdown releases the episode: it stops managing the card and will not
+     yank the picture away five minutes later. The next rise starts fresh.
+
+   State is per page load. A reload mid-episode re-derives it from the sensor:
+   still moving, the camera comes back; already clear, it does not. */
+
+const MOTION_WATCH_DEFAULT_LINGER_MS = 300_000;
+/* Home Assistant spells a tripped binary_sensor "on". Zigbee2MQTT occupancy
+   has arrived here as "true" and "detected" through other bridges, and a
+   sensor that is merely unavailable must never read as motion. */
+const MOTION_ON_STATES = new Set(["on", "true", "detected", "open", "motion"]);
+
+/* cameraId -> { released, stopTimer } for every episode currently in flight. */
+const motionEpisodes = new Map();
+
+/* Per browser, and off until somebody asks for it. */
+const HOME_CAMERA_AUTO_KEY = "home_camera_motion_auto";
+
+function motionWatchEnabled() {
+  try {
+    return localStorage.getItem(HOME_CAMERA_AUTO_KEY) === "1";
+  } catch {
+    return false;   /* private window, storage blocked: stay out of the way */
+  }
+}
+
+function setMotionWatchEnabled(enabled) {
+  try {
+    localStorage.setItem(HOME_CAMERA_AUTO_KEY, enabled ? "1" : "0");
+  } catch {}
+  if (enabled) {
+    /* Do not make somebody who just asked for this wait for the next refresh
+       to find out whether there is already someone on the doorstep. */
+    updateMotionWatch();
+  } else {
+    stopAllMotionEpisodes();
+  }
+  logActivity(`Auto camera on motion ${enabled ? "enabled" : "disabled"} on this screen`);
+}
+
+/* Any camera at all paired with a sensor - otherwise the switch is decoration. */
+function anyCameraWatchesMotion() {
+  return (latestCameras || []).some((camera) => camera.motion_entity);
+}
+
+function syncMotionWatchToggle() {
+  const wrap = document.querySelector("#homeCameraAutoWrap");
+  const box = document.querySelector("#homeCameraAuto");
+  if (!wrap || !box) return;
+  wrap.hidden = !anyCameraWatchesMotion();
+  box.checked = motionWatchEnabled();
+}
+
+function motionSensorIsTripped(entityId) {
+  const device = (latestTuyaDevices || []).find(
+    (d) => d.id === entityId || d.entity_id === entityId,
+  );
+  if (!device || device.online === false) return null;   /* null: no opinion */
+  return MOTION_ON_STATES.has(String(device.state ?? "").trim().toLowerCase());
+}
+
+function motionLingerMs(camera) {
+  const seconds = Number(camera.motion_linger_seconds);
+  return Number.isFinite(seconds) && seconds >= 0
+    ? seconds * 1000
+    : MOTION_WATCH_DEFAULT_LINGER_MS;
+}
+
+function openMotionEpisode(camera) {
+  const cameraId = cameraIdFor(camera);
+  motionEpisodes.set(cameraId, { released: false, stopTimer: null });
+  activeCameraIds.add(cameraId);
+  homeCameraOverride = cameraId;
+  renderHomeCamera();
+  logActivity(`Motion at ${camera.room || camera.name} - showing ${camera.name}`);
+  if (camera.battery_powered) captureSnapshotOnce(camera).catch(() => {});
+}
+
+function closeMotionEpisode(cameraId) {
+  const episode = motionEpisodes.get(cameraId);
+  if (!episode) return;
+  motionEpisodes.delete(cameraId);
+  if (episode.released) return;      /* somebody took the card over; leave it */
+
+  activeCameraIds.delete(cameraId);
+  if (homeCameraOverride === cameraId) homeCameraOverride = null;
+  renderHomeCamera();
+  logActivity("Motion clear - camera stopped");
+}
+
+/* Turning the switch off puts the card back now, rather than leaving a stream
+   the automation started running until the linger happens to expire. */
+function stopAllMotionEpisodes() {
+  for (const [cameraId, episode] of [...motionEpisodes]) {
+    if (episode.stopTimer) clearTimeout(episode.stopTimer);
+    episode.stopTimer = null;
+    closeMotionEpisode(cameraId);
+  }
+}
+
+/* Touching the card hands control back to the person for as long as the
+   current motion lasts. Called from the stream button and the dropdown. */
+function releaseMotionEpisodes() {
+  let released = false;
+  for (const episode of motionEpisodes.values()) {
+    if (episode.stopTimer) clearTimeout(episode.stopTimer);
+    episode.stopTimer = null;
+    episode.released = true;
+    released = true;
+  }
+  if (released) homeCameraOverride = null;
+}
+
+function updateMotionWatch() {
+  if (!motionWatchEnabled()) return;
+
+  for (const camera of latestCameras || []) {
+    if (!camera.motion_entity) continue;
+    const tripped = motionSensorIsTripped(camera.motion_entity);
+    if (tripped === null) continue;          /* sensor missing or offline */
+
+    const cameraId = cameraIdFor(camera);
+    const episode = motionEpisodes.get(cameraId);
+
+    if (tripped) {
+      if (!episode) {
+        openMotionEpisode(camera);
+      } else if (episode.stopTimer) {
+        /* Motion came back inside the linger window: it never left. */
+        clearTimeout(episode.stopTimer);
+        episode.stopTimer = null;
+      }
+    } else if (episode && !episode.stopTimer) {
+      if (episode.released) {
+        motionEpisodes.delete(cameraId);     /* forget it quietly */
+      } else {
+        episode.stopTimer = setTimeout(
+          () => closeMotionEpisode(cameraId), motionLingerMs(camera),
+        );
+      }
+    }
+  }
+}
 
 /* ── Full screen camera ──
 
@@ -6245,8 +6423,14 @@ document.addEventListener("change", async (event) => {
     if (!picker.hidden) renderHomeSensorPicker();
   });
   document.querySelector("#homeCameraSelect")?.addEventListener("change", (event) => {
+    /* Picking a camera by hand is the clearest possible "I have this" - the
+       override has to go, or the card would ignore the choice just made. */
+    releaseMotionEpisodes();
     try { localStorage.setItem(HOME_CAMERA_KEY, event.target.value); } catch {}
     renderHomeCamera();
+  });
+  document.querySelector("#homeCameraAuto")?.addEventListener("change", (event) => {
+    setMotionWatchEnabled(event.target.checked);
   });
 
   document.querySelector("#addAreaButton")?.addEventListener("click", openAreaModal);
@@ -8151,17 +8335,73 @@ async function refreshNetworkDevices() {
   refreshNetworkDevices().catch(console.error);
 })();
 
+/* ── Build watch ───────────────────────────────────────────────────────────
+   A deploy replaces app.js on the board. It cannot replace the copy a browser
+   is already running, and nothing tells that browser to go and look. On a
+   phone you reload without thinking about it; the wall panel has nobody to do
+   that, so it would sit on the build it booted with for weeks while the board
+   served a newer one.
+
+   So: remember the build this page loaded, notice when the board reports a
+   different one, and reload.
+
+   The reload waits for the server to answer first. deploy-dashboard.sh copies
+   the files and *then* restarts the service, so the new build number is
+   visible for a moment while the dashboard is still coming back - reloading
+   into that window parks the panel on a Chromium error page that nobody is
+   there to dismiss, which is worse than the stale page it replaced. */
+const BUILD_POLL_MS = 60_000;
+let loadedBuild = null;
+
+async function fetchBuild() {
+  const response = await fetch(`/static/build_info.json?ts=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) return null;
+  const info = await response.json();
+  return info.build ?? null;
+}
+
 async function loadBuildInfo() {
-  if (!buildBadge) return;
   try {
-    const response = await fetch(`/static/build_info.json?ts=${Date.now()}`);
-    if (!response.ok) return;
-    const info = await response.json();
-    if (info.build !== undefined) buildBadge.textContent = `Build #${info.build}`;
+    const build = await fetchBuild();
+    if (build === null) return;
+    loadedBuild = build;
+    if (buildBadge) buildBadge.textContent = `Build #${build}`;
   } catch {}
 }
 
+async function reloadWhenServerAnswers(attempt = 0) {
+  try {
+    const response = await fetch(`/api/health?ts=${Date.now()}`, { cache: "no-store" });
+    if (response.ok) {
+      location.reload();
+      return;
+    }
+  } catch {}
+  /* Two minutes of retries: longer than any deploy takes, and short enough
+     that a board which is genuinely down leaves the last good page on screen
+     rather than replacing it with an error. */
+  if (attempt < 60) setTimeout(() => reloadWhenServerAnswers(attempt + 1), 2_000);
+}
+
+function watchForNewBuild() {
+  setInterval(async () => {
+    try {
+      const build = await fetchBuild();
+      if (build === null) return;
+      /* The read at page load can fail - a deploy in flight, a flaky moment.
+         The first number we actually see is the baseline, never a change. */
+      if (loadedBuild === null) {
+        loadedBuild = build;
+        if (buildBadge) buildBadge.textContent = `Build #${build}`;
+        return;
+      }
+      if (build !== loadedBuild) reloadWhenServerAnswers();
+    } catch {}
+  }, BUILD_POLL_MS);
+}
+
 loadBuildInfo();
+watchForNewBuild();
 
 loadDevices().catch((error) => {
   apiStatus.textContent = "Error";

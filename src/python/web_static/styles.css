@@ -4228,6 +4228,31 @@ aside {
 
 .home-camera-select option { color: #1b1b1f; background: #f4f4f6; }
 
+/* Title, auto-on-motion switch, camera picker. Three things in a head sized
+   for two, so let it wrap rather than crushing the picker on a phone. */
+#homeCameraPanel .home-panel-head { flex-wrap: wrap; row-gap: 6px; }
+
+.home-camera-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--t-text-dim);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.home-camera-auto input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.home-camera-auto:hover { color: var(--t-text); }
+
 .home-camera-body {
   margin-top: 12px;
   flex: 1 1 auto;

@@ -73,6 +73,80 @@ curl -s -o /dev/null -w "%{http_code}\n" http://192.168.0.234:8000/api/health   
 ssh smarthome@192.168.0.176 'curl -s -o /dev/null -w "%{http_code}\n" http://192.168.0.234:8000/api/health'  # 200
 ```
 
+## A screen shows a camera on motion
+
+A camera paired with a motion sensor in `configs/devices.local.yaml` can take
+over the Home card by itself:
+
+```yaml
+cameras:
+  - name: Front door camera
+    # ...
+    motion_entity: binary_sensor.0xa4c138f3061bad8d_presence
+    motion_linger_seconds: 300
+```
+
+Pairing only *offers* the behaviour. Each screen turns it on for itself with the
+**Auto on motion** checkbox on the camera card, which is off until someone ticks
+it — so the wall panel and a laptop can each opt in without agreeing with each
+other, and a phone that never opts in is unaffected. Once ticked, the card
+switches to the camera while the sensor reads motion; five minutes after it
+reads clear, the stream stops and the card goes back to the camera you chose.
+
+Live on this house since build #199, front door camera paired with *Motion
+sensor and TH front door*.
+
+Three rules shape how it behaves around people, and each is there for a reason:
+
+- **Every screen decides for itself, and starts out saying no.** A dashboard
+  left open on a phone would otherwise pull a video stream over cellular because
+  a cat crossed the doorstep. The preference is this browser's `localStorage`,
+  so it survives reloads and needs no account, server config, or per-device
+  setup — and the switch hides itself entirely when no camera is paired, rather
+  than offering a control that cannot do anything.
+- **Your saved camera choice is never overwritten.** The episode sets an
+  override that the card prefers, rather than writing the door camera into
+  `localStorage`; a badly timed reload during an episode would otherwise leave
+  the door camera as your permanent choice.
+- **A person beats the automation.** Touching the play/stop button or the camera
+  dropdown releases the episode — it stops managing the card and will not yank
+  the picture away five minutes later. The next time motion rises, it starts
+  fresh.
+
+The checkbox persists; an episode does not. A reload mid-episode re-derives it
+from the sensor: still moving, the camera comes back; already clear, it does
+not.
+
+To watch it work without standing at the door, nudge the sensor in Home
+Assistant. The real Zigbee device reasserts its own state on its next report, so
+this is a nudge rather than an edit — but pass the attributes back or the entity
+loses its `device_class` and the dashboard stops recognising it as occupancy:
+
+```bash
+ssh orangepi@192.168.0.234 'cd smart_home_AI && set -a && . ./.env && set +a && curl -s -X POST -H "Authorization: Bearer $HOME_ASSISTANT_TOKEN" -H "Content-Type: application/json" -d "{\"state\":\"on\",\"attributes\":{\"device_class\":\"occupancy\",\"friendly_name\":\"Motion sensor and TH front door Occupancy\"}}" http://127.0.0.1:8123/api/states/binary_sensor.0xa4c138f3061bad8d_presence'
+```
+
+## Deploys reach the panel on their own
+
+A deploy replaces `app.js` on the board but not the copy Chromium is already
+running, and nothing tells it to look again. Since build #197 the dashboard
+polls `/static/build_info.json` once a minute and reloads when the number
+differs from the one the page loaded with, so the panel picks up a deploy within
+about a minute without anyone touching it. The reload waits for `/api/health` to
+answer first, because `deploy-dashboard.sh` restarts the service *after* copying
+the files — reloading into that gap would swap a working panel for a Chromium
+error page.
+
+To push a deploy through immediately, kill Chromium; the launcher has it back in
+five seconds:
+
+```bash
+ssh smarthome@192.168.0.176 'pkill -f chromium-kiosk'
+```
+
+That is also how you bootstrap a panel still running a build from before the
+watch existed — it cannot reload itself into the version that knows how to.
+
 ## Verify
 
 ```bash

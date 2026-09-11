@@ -73,6 +73,13 @@ cameras:
     rtsp_port: 322
     stream_path: /stream0
     go2rtc_source: ffmpeg
+    # Pair the camera with a motion sensor and the Home card can show it by
+    # itself: it switches to this camera and plays while the sensor reads
+    # motion, then stops motion_linger_seconds after it reads clear and goes
+    # back to the camera you picked. Pairing only offers the behaviour - each
+    # screen turns it on for itself with "Auto on motion" on the camera card.
+    # motion_entity: binary_sensor.hallway_motion_occupancy
+    # motion_linger_seconds: 300
   # Each Wyze camera gets its own RTSP username/password, set per camera when
   # you enable RTSP in the app, so give every one its own *_env pair rather
   # than sharing WYZE_RTSP_USERNAME/PASSWORD.

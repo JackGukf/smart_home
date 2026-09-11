@@ -375,6 +375,11 @@ class CameraDefinition:
     stream_name: str
     go2rtc_url: str | None
     battery_powered: bool
+    # The binary_sensor that lets a screen show this camera by itself, and how
+    # long the picture stays up after that sensor reads clear again. Pairing
+    # only offers the behaviour; each screen opts in for itself.
+    motion_entity: str | None = None
+    motion_linger_seconds: int = 300
 
 
 @dataclass(frozen=True)
@@ -2221,6 +2226,8 @@ def _load_cameras(path: Path) -> list[CameraDefinition]:
                 stream_name=str(item.get("stream_name") or _stream_name(item["name"])),
                 go2rtc_url=go2rtc_url,
                 battery_powered=bool(item.get("battery_powered", False)),
+                motion_entity=(str(item["motion_entity"]) if item.get("motion_entity") else None),
+                motion_linger_seconds=int(item.get("motion_linger_seconds", 300)),
             )
         )
     return cameras
@@ -5389,6 +5396,9 @@ def _camera_card(camera: CameraDefinition, check_ports: bool = True) -> dict[str
     if camera.battery_powered:
         card["battery_powered"] = True
         card["battery"] = None
+    if camera.motion_entity:
+        card["motion_entity"] = camera.motion_entity
+        card["motion_linger_seconds"] = camera.motion_linger_seconds
     return card
 
 

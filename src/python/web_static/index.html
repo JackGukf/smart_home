@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build196">
+  <link rel="stylesheet" href="/static/styles.css?v=build200">
 </head>
 <body>
 
@@ -511,6 +511,13 @@
             <div class="home-panel-head">
               <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
               <span class="panel-title"><i class="ti ti-video"></i> Camera</span>
+              <!-- Hidden until some camera is paired with a motion sensor: a
+                   switch that cannot do anything is worse than no switch. -->
+              <label class="home-camera-auto" id="homeCameraAutoWrap" hidden
+                     title="Show a paired camera here automatically while its motion sensor sees motion">
+                <input type="checkbox" id="homeCameraAuto">
+                <span>Auto on motion</span>
+              </label>
               <select id="homeCameraSelect" class="home-camera-select" aria-label="Camera to display"></select>
             </div>
             <div class="home-camera-body" id="homeCameraBody">
@@ -1084,6 +1091,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build196"></script>
+<script src="/static/app.js?v=build200"></script>
 </body>
 </html>

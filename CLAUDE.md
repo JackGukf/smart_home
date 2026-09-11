@@ -126,7 +126,7 @@ Deploy scripts default to `orangepi@192.168.0.234` and `/home/orangepi/smart_hom
 ./scripts/enable-kiosk-autologin.py --kiosk-ip 192.168.0.176 --dry-run
 ```
 
-`deploy-dashboard.sh` increments `BUILD_COUNT`, rewrites static cache-busting versions and `web_static/build_info.json`. It mutates the source tree; review the resulting diff.
+`deploy-dashboard.sh` increments `BUILD_COUNT`, rewrites static cache-busting versions and `web_static/build_info.json`. It mutates the source tree; review the resulting diff. Open browsers pick the new build up by themselves: the dashboard polls `build_info.json` once a minute and reloads when it changes, waiting for `/api/health` first so a reload cannot land mid-restart.
 
 `install-living-room-lighting.py` installs the living room rules through Home Assistant's config API, not by appending to `automations.yaml` — that runs the same validator the UI does and reloads, so a malformed template is refused rather than written and left to fail at 11pm. Two Jinja traps it exists to not repeat: these Zigbee entity ids **start with a digit**, so `states.binary_sensor.0xa4c…` is a syntax error and the subscript form is required; and **`}}` inside a Python f-string collapses to a single `}`**, silently breaking any template built that way.
 
