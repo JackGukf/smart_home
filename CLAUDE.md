@@ -56,6 +56,17 @@ Gotchas that have bitten this project:
 - **Interface names differ.** Ubuntu uses predictable names, so anything passing `--interface` (notably the Matter bridge in `configs/matter-bridge.service`) must use `wlp1s0`/`enp97s0`, not `wlan0`. A wrong interface makes Matter commissioning fail quietly.
 - **`-mcpu=cortex-a720` is unavailable.** It needs GCC 14+; the dev container ships the Ubuntu 22.04 aarch64 cross-compiler (GCC 11). The Orange Pi toolchain probes for the best `-march` the compiler accepts and falls back to a safe baseline. Override with `-DORANGEPI6_ARCH_FLAGS=...`.
 - Both boards are `aarch64`, so a generic arm64 binary (e.g. the Matter bridge from the GN build) runs on either.
+- **The board's Wi-Fi runs with power save on, and it costs the whole LAN.**
+  Measured 2026-09-11: 333 ms *average* round trip to the router, peaks near 2 s,
+  and ~5% packet loss — to the router itself, not just to a camera, on 2 Mbit/s
+  of traffic over a 130 Mbit/s link. It is latency, not bandwidth: the adapter
+  sleeps between beacons. Harmless until something needs steady streams; the NPU
+  detector holding five cameras open is what turned it into loss. Fix:
+  `sudo iw dev wlp1s0 set power_save off`, and
+  `sudo nmcli connection modify dlink_DIR-859 802-11-wireless.powersave 2` so it
+  survives a reboot. Both need a sudo password. Ethernet (`enp97s0`, currently
+  **down**) removes the problem outright and is the better answer — the board is
+  on 2.4 GHz, sharing a crowded band with the cameras it is pulling from.
 - **Two Bluetooth controllers.** The onboard Intel AX210 (`E0:D5:5D:9D:38:97`) sits alongside the TP-Link UB500 (`20:E1:5D:68:2B:DB`), which is the one BLE should use. Pin it with `BLE_ADAPTER` in `.env` — a MAC, not `hciN`, because the numbering can swap across reboots. bleak returns *zero* devices when given no adapter on this host, so `src/python/ble_adapter.py` always passes one. See `docs/setup-orangepi6.md`.
 
 ## Repository Layout
