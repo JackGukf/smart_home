@@ -224,8 +224,13 @@ Three things that will waste a day if you do not know them:
 - `docs/orangepi6-cross-compile-deploy.md` — build and deploy workflow (both boards)
 - `docs/docker-development.md`, `docs/WSL_DEVELOPMENT.md` — dev environment
 - `docs/kiosk-display.md` — **the Raspberry Pi 4 as a wall panel**: full-screen
-  dashboard on boot, both logins bypassed by address, and the traps (Chromium
-  guesses X11, `trusted_networks` must be the first auth provider)
+  dashboard on boot, both logins bypassed by address, camera-on-motion and the
+  camera route, and the traps (Chromium guesses X11, `trusted_networks` must be
+  the first auth provider, the V4L2 flags that look like a fix and are not)
+- `docs/handoff-2026-09-10-wall-panel.md` — **pick the panel work up cold**: what
+  was built, the stream-cost measurements, four things that were believed and
+  measured wrong, and what still needs a person (Wi-Fi power save, Ethernet, the
+  fan that has never been needed)
 - `docs/matter-bridge.md` — Matter bridge design and deployment (our devices → Apple Home)
 - `docs/matter-bridge-runbook.md` — **build and commission the bridge from scratch**: ordered steps, the values that prove it is conformant, and the twelve traps
 - `docs/matter-controller.md` — Matter controller setup (third-party Matter devices → dashboard)
