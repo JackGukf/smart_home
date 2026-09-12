@@ -1,0 +1,26 @@
+[Unit]
+# The same logger as resource-logger.service, for the Raspberry Pi 4 wall panel.
+# A second file rather than a templated one because every unit in this repo
+# hardcodes its paths and the tests assert them literally - and the two boards
+# differ in both the user and the directory name, so systemd's %h would not be
+# enough on its own.
+#
+# The panel has no OS-controlled fan (no cooling_device, no PWM, no gpio-fan
+# overlay, and not one GPIO configured as an output), so its fan was wired
+# straight to power and was removed by hand on 2026-09-12. This log is the only
+# record of what that cost. On the Pi the line also carries throttled=0x...,
+# whose sticky bits are the authoritative answer and do not survive a reboot.
+Description=Resource History Logger
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smarthome/smart-home-rpi4
+ExecStart=/home/smarthome/smart-home-rpi4/scripts/resource-logger.sh
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=default.target

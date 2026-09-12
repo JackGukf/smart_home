@@ -29,6 +29,26 @@ hottest() {
     echo $(( max / 1000 ))
 }
 
+# The Raspberry Pi reports throttling and undervoltage as sticky bits, and
+# temperature alone cannot tell you the moment throttling began - by the time
+# you look, the clock is back up and the heat has gone. The bits are cleared by
+# a reboot, which is exactly what a log is for. 0x0 means it has never happened
+# since boot.
+#
+# Resolved once rather than per sample: this runs forever and should stay the
+# cheapest thing on the box. Absent on the Orange Pi, where the field is simply
+# left out and the line keeps its old shape.
+HAS_VCGENCMD=0
+command -v vcgencmd >/dev/null 2>&1 && HAS_VCGENCMD=1
+
+throttled() {
+    (( HAS_VCGENCMD )) || return 0
+    local out
+    out="$(vcgencmd get_throttled 2>/dev/null)" || return 0
+    [[ "${out}" == throttled=* ]] || return 0
+    printf 'throttled=%s ' "${out#throttled=}"
+}
+
 # Mark the boundary so a reboot is obvious when reading the file back.
 printf '%s BOOT uptime=%s\n' "$(date -Is)" "$(cut -d. -f1 /proc/uptime)" >> "${LOG_FILE}"
 
@@ -45,8 +65,9 @@ while true; do
     top3="$(ps -eo rss,comm --sort=-rss --no-headers 2>/dev/null | head -3 |
             awk '{printf "%s=%dM ", $2, $1/1024}')"
 
-    printf '%s mem_used=%sM avail=%sM load=%s/%s temp=%sC %s\n' \
-        "$(date -Is)" "${used}" "${available}" "${load1}" "${load5}" "$(hottest)" "${top3}" \
+    printf '%s mem_used=%sM avail=%sM load=%s/%s temp=%sC %s%s\n' \
+        "$(date -Is)" "${used}" "${available}" "${load1}" "${load5}" "$(hottest)" \
+        "$(throttled)" "${top3}" \
         >> "${LOG_FILE}"
 
     sleep "${INTERVAL}"

@@ -178,6 +178,60 @@ def test_resource_logger_service_survives_and_is_low_priority() -> None:
     assert "Nice=10" in unit
 
 
+def test_panel_resource_logger_targets_the_raspberry_pi_not_the_board() -> None:
+    """The wall panel needs its own unit: different user, different directory.
+
+    The panel's fan was wired straight to power with no OS control at all, and
+    was removed by hand on 2026-09-12. Without a log there is no way to answer
+    whether that was safe, because the throttling bits reset on reboot.
+    """
+    unit = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "resource-logger-rpi4.service").read_text(
+        encoding="utf-8"
+    )
+    assert "WorkingDirectory=/home/smarthome/smart-home-rpi4" in unit
+    assert "ExecStart=/home/smarthome/smart-home-rpi4/scripts/resource-logger.sh" in unit
+    assert "Restart=always" in unit
+    assert "WantedBy=default.target" in unit
+    assert "Nice=10" in unit
+    # The two units must not be the same file with a different name: the board's
+    # paths appearing here would mean a deploy silently logged the wrong host.
+    assert "orangepi" not in unit
+
+
+def test_resource_logger_records_throttling_where_the_hardware_reports_it() -> None:
+    """Temperature alone cannot say when throttling began.
+
+    By the time anyone looks the clock is back up and the heat has gone, and the
+    Pi's sticky bits are cleared by a reboot. The field is Pi-only, resolved
+    once rather than per sample, and absent on the Orange Pi -- which is why the
+    digest's parser must still match a line without it.
+    """
+    script = (PROJECT_ROOT / "scripts" / "resource-logger.sh").read_text(encoding="utf-8")
+    assert "vcgencmd get_throttled" in script
+    # Resolved once outside the loop: this process runs forever.
+    assert "HAS_VCGENCMD" in script
+
+
+def test_the_throttled_field_does_not_break_the_digests_parser() -> None:
+    """house_digest reads these lines; a new field must not shift the old ones.
+
+    The field goes after temp=NC, and _RESOURCE_LINE is not anchored at the end,
+    so both shapes parse. This is the assertion that stops someone inserting it
+    in the middle.
+    """
+    from src.python.house_digest import _RESOURCE_LINE
+
+    with_throttle = ("2026-09-12T16:30:00-07:00 mem_used=1030M avail=2765M "
+                     "load=2.80/2.20 temp=42C throttled=0x0 chromium=250M")
+    without = ("2026-09-12T16:30:00-07:00 mem_used=7777M avail=7833M "
+               "load=4.35/3.64 temp=42C ollama=3300M")
+
+    for line in (with_throttle, without):
+        match = _RESOURCE_LINE.match(line)
+        assert match is not None, line
+        assert match.group("temp") == "42"
+
+
 def test_resource_logger_cannot_fill_the_disk() -> None:
     """A monitor that fills / would cause the outage it exists to explain."""
     script = (PROJECT_ROOT / "scripts" / "resource-logger.sh").read_text(encoding="utf-8")
