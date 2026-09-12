@@ -81,9 +81,16 @@ cameras:
     # motion_entity: binary_sensor.hallway_motion_occupancy
     # motion_linger_seconds: 300
     # A camera whose stream a browser cannot play - HEVC, which WebRTC has no
-    # support for - needs go2rtc to convert it. Transcode the small substream
-    # rather than the 1080p one: far cheaper, and the detector loses nothing,
-    # because the model letterboxes its input to 640x640 anyway.
+    # support for - needs go2rtc to convert it, at real and permanent CPU cost.
+    #
+    # Try the camera first: many will encode H.264 if asked over ONVIF, and then
+    # nothing has to transcode anything. Do not trust what ONVIF *reports* - the
+    # Hipcam here answered "H264" while plainly streaming HEVC - but the write
+    # took effect anyway. See scripts/camera-set-h264.py.
+    #
+    # If it truly cannot, transcode the small substream rather than the 1080p
+    # one: far cheaper, and the detector loses nothing, because the model
+    # letterboxes its input to 640x640 anyway.
     # go2rtc_source: ffmpeg
     # go2rtc_video: h264
     # go2rtc_audio: none
