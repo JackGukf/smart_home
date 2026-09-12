@@ -176,3 +176,22 @@ Many front-end tests assert on the *text* of `app.js`, `index.html`, and `styles
 - Establish a small, authenticated AI-to-dashboard API with read-only status queries first; add any device action only after policy validation and audit logging exist.
 - Consider whether the small tiles inside custom Home cards and the temp-sensor grid should be reorderable on touch. They still use HTML5 drag-and-drop, which iOS Safari does not implement, and a drag handle does not fit a 72px tile — they need a different gesture, such as an explicit arrange mode.
 - Self-host the Google Fonts and Tabler icon stylesheets. They are render-blocking requests to external CDNs on an otherwise fully local dashboard.
+- **Server-side camera mosaic, so the wall panel can show every camera at once.**
+  The Raspberry Pi 4 tops out at about six simultaneous WebRTC streams: six play
+  (2.26 of its 4 cores, 69% busy), eight does not — two tiles froze a minute
+  behind and one showed decode corruption, while *CPU went down*, because a
+  stalled tile is cheap. Tiling the cameras into one stream on the Orange Pi
+  instead means the panel decodes one stream (~70% of a core) rather than eight.
+  Measured 2026-09-12: a six-camera `xstack` mosaic at 1920x720, `libx264
+  -preset ultrafast`, costs **67% of one core of twelve** on the board — about
+  5% of it. Cheap enough to just do.
+  - The GPU cannot help and does not need to. This board exposes **no hardware
+    video codec** — no V4L2 device has an output queue, and `/dev/video-cixdec0`
+    is the ISP despite its name — so decode and encode are software regardless.
+    The Mali G720 can only scale and composite: `overlay_opencl` works on two or
+    three inputs and **segfaulted** on the real six-camera pipeline, and Vulkan
+    fails at the first filter with `VK_ERROR_OUT_OF_HOST_MEMORY`. Not worth
+    chasing to optimise 5% of the board.
+  - The real work is not the mosaic, it is losing per-camera interaction: one
+    video means no tapping a tile to enlarge it, unless the dashboard overlays
+    hit regions and switches to that camera's own stream on tap.
