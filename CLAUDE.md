@@ -241,6 +241,11 @@ Three things that will waste a day if you do not know them:
   exact decomposition, INT8 quantisation, and scoring (`scripts/npu-model/`)
 - `docs/handoff-2026-09-08-local-ai.md` — **pick the AI work up cold**: what runs,
   the NPU blocker and what it rules out, where the artefacts are, what to try next
+- `docs/voice-assistant-proposal.md` — **adding voice**: why the pipeline goes on
+  the board and the microphone does not go on the panel, the ESP32-S3-Touch-LCD-4B
+  that is already owned, and the four traps (no add-ons in this HA install, the
+  panel's browser cannot open a mic over HTTP, the LLM must stay out of the voice
+  path, and audio is the next thing the Wi-Fi will break)
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
 

@@ -4,6 +4,10 @@ Investigated 2026-09-12 against the running hardware. Every figure below with a
 unit was measured on the board or the panel that day unless it says *estimate*,
 and the estimates are the ones stage 2 exists to replace.
 
+**Updated the same day:** an ESP32-S3-Touch-LCD-4B is already on hand, which
+settles the hardware question and makes stage 3 free. See "The
+ESP32-S3-Touch-LCD-4B" below — it changes which device, not the architecture.
+
 ## The answer
 
 **Neither board, and both.** "Orange Pi or Raspberry Pi" is the wrong split —
@@ -15,7 +19,10 @@ same place as where the speech recognition runs.
 - **The microphone does not go on the Raspberry Pi 4.** It is the wall panel, and
   the panel's whole job is decoding video. Adding speech recognition to the same
   four cores contends with exactly the thing that makes it work.
-- **The microphone goes where you stand and talk**, on its own small device.
+- **The microphone goes where you stand and talk**, on its own small device —
+  and one is already owned: an ESP32-S3-Touch-LCD-4B, an 86-box wall panel with
+  a microphone in it, so the screen and the place you talk stop being a
+  trade-off.
 
 ## What is there today
 
@@ -103,41 +110,101 @@ only flows after someone has said the wake word.
 ## The architecture
 
 ```
-  where you stand                          Orange Pi 6 Plus
-  ┌───────────────┐                    ┌──────────────────────────────┐
-  │ mic + speaker │                    │ wyoming-whisper   (STT)      │
-  │ wake word     │ ──audio, only ───► │ wyoming-piper     (TTS)      │
-  │ runs here     │    after wake      │                              │
-  │               │                    │ HA Assist pipeline           │
-  │               │ ◄── spoken reply ──│  ├ local intents  ~0.02 s ──► house
-  └───────────────┘                    │  └ fallback: local_qwen ~22 s│
-                                       └──────────────────────────────┘
+  ESP32-S3-Touch-LCD-4B              Orange Pi 6 Plus
+  ┌─────────────────┐                ┌──────────────────────────────┐
+  │ ES7210 mic      │                │ wyoming-whisper   (STT)      │
+  │ ES8311 + speaker│ ─audio, only─► │ wyoming-piper     (TTS)      │
+  │ micro_wake_word │   after wake   │                              │
+  │ on-device       │                │ HA Assist pipeline           │
+  │ (86 box, wall)  │ ◄spoken reply─ │  ├ local intents ~0.02 s ──► house
+  └─────────────────┘                │  └ fallback: local_qwen ~22 s│
+                                   └──────────────────────────────┘
 ```
 
 Nothing new runs on the Raspberry Pi 4. The panel keeps decoding video.
 
-### Where the microphone goes — three options
+### Where the microphone goes
+
+**This is settled by hardware already on hand.** The ESP32-S3-Touch-LCD-4B in the
+drawer is a better answer than anything that would have been bought, and the
+next section is about it. The alternatives are recorded because they are the
+fallbacks if it disappoints.
 
 | | Hardware cost | Wake word | Load added |
 | --- | --- | --- | --- |
-| **A. Home Assistant Voice Preview Edition** (ESP32-S3) | ~$60 | on-device, microWakeWord | **none on either board** |
-| B. USB mic + speaker on the Pi 4, `wyoming-satellite` | ~$25 | openWakeWord, ~0.3 core (*estimate*) | on the busiest box |
+| **A. ESP32-S3-Touch-LCD-4B** (owned) | **a speaker, a few dollars** | on-device, microWakeWord | **none on either board** |
+| B. Home Assistant Voice Preview Edition | ~$60 | on-device, microWakeWord | none on either board |
 | C. USB mic on the Orange Pi itself | ~$25 | on the board | small, but wrong place |
+| D. USB mic + speaker on the Pi 4, `wyoming-satellite` | ~$25 | openWakeWord, ~0.3 core (*estimate*) | on the busiest box |
 
-**A is the recommendation.** It is the device Home Assistant develops the voice
-stack against, it has a microphone array, a speaker, and a physical mute switch,
-it does its wake word on-device so nothing streams until you speak to it, and it
-adds zero load to a board that is already running the house. It also goes where
-the conversation is rather than where the screen is, which is the point — you
-talk to a room, you look at a panel.
+**B is the fallback, not a rival.** It is the device Home Assistant develops the
+voice stack against, with a microphone array, a speaker and a physical mute
+switch. If the ESP32-S3 board turns out to be a fight, this is what to buy, and
+nothing else in this proposal changes.
 
-**C is still worth doing first**, for an afternoon, because the board already has
-a capture device and free USB ports: it makes stages 1–3 testable before any
-hardware is ordered.
+**C is still worth an afternoon**, because the Orange Pi already has a capture
+device (`ALC269VC`) and free USB ports. It makes stages 1–2 testable at a desk
+before any wall is involved.
 
-**B only makes sense** if voice must be *at the panel specifically*. It puts
-openWakeWord on four cores that are already at 70%, and the Pi 4 has no capture
-device at all today, so it needs the same USB microphone that option C does.
+**D only makes sense** if voice must be *at the wall panel specifically*, which
+the ESP32-S3 board makes unnecessary. It puts openWakeWord on four cores that are
+already at 70%, and the Pi 4 has no capture device at all.
+
+## The ESP32-S3-Touch-LCD-4B
+
+An 86-box wall panel with a microphone in it, which dissolves the awkward part of
+this proposal: the advice was to put the microphone where you talk rather than
+where the screen is, and this is a screen you mount where you talk.
+
+| | |
+| --- | --- |
+| Module | `ESP32-S3-WROOM-1-N16R8` — 16 MB flash, **8 MB octal PSRAM** |
+| Microphone | onboard SMD mic, through an **ES7210** echo-cancellation ADC |
+| Codec | **ES8311** for playback |
+| Speaker | MX1.25 2P, 8 Ω 2 W — **connector only, nothing fitted** |
+| Display | 4″ 480×480, ST7701 RGB, GT911 touch |
+| Form factor | Smart 86 box — a wall switch box |
+| Power | USB-C, or 3.7 V LiPo through an AXP2101 PMIC |
+
+The octal PSRAM matters: it is the configuration `micro_wake_word` needs. Every
+chip on the audio path has a stock ESPHome component — `es7210` as an
+`audio_adc`, `es8311` as an `audio_dac`, plus `i2s_audio`, `micro_wake_word`,
+`voice_assistant` and `gt911`. Nothing here needs a custom driver.
+
+### The caveat: the display and the voice fight over PSRAM
+
+An RGB parallel LCD has **no frame memory of its own**. The ESP32-S3 shifts
+480×480×16bpp — 450 KB — out of PSRAM continuously, roughly 27 MB/s at 60 Hz,
+and the wake-word inference and I2S buffers want the same PSRAM. This is not an
+exotic risk: ESPHome's own reference voice devices (ESP32-S3-BOX-3, Voice PE) all
+use small SPI or QSPI displays that hold their own frame memory, which avoids the
+problem by construction. ESPHome's ST7701S page says PSRAM is required "due to
+the size of the display buffer" and says nothing about sharing it.
+
+It can be made to work. Plan on **the display being what gets compromised** — a
+static, few-widget screen rather than animated LVGL — and treat voice as the job
+the device is there to do. Write the display against `mipi_rgb`; the `st7701s`
+component is deprecated and slated for removal.
+
+### What it will not do
+
+**Camera streams.** No video decode, not the bandwidth, not the resolution. The
+Raspberry Pi 4 keeps that job, and this device is a second small panel beside it,
+not a replacement for it — temperatures, security state, NPU presence, a few
+light toggles.
+
+### Two things to establish before writing any YAML
+
+- **The GPIO pin map.** Waveshare's wiki documents the demos but not a pin table,
+  and an ESPHome config needs exact I2S and I2C pins. The authority is the
+  schematic, or their `07_ES8311` and `08_ES7210` demo sources.
+- **Whether the ES7210's echo cancellation is actually engaged.** ESPHome's
+  component is an ADC driver; the chip's AEC may not be exercised by it. The
+  practical consequence is that the wake word may not trigger over the device's
+  own TTS. Livable — but do not design around barge-in until it is demonstrated.
+
+No published ESPHome configuration was found for this exact board, so expect to
+write it from the datasheet rather than adapt someone else's.
 
 ## "Voice for dashboard control" is two different jobs
 
@@ -183,12 +250,20 @@ as unknown until measured. If it lands above ~1.5 s, drop to `tiny.en`; if it
 lands well under, `small.en` buys accuracy. *Verify:* HA's Assist debug page,
 typed first, then an uploaded audio file.
 
-**3. Microphone.** Option C on the board for an afternoon to prove the pipeline
-end to end, then option A where you actually talk. *Verify:* wake-to-spoken-reply
-latency, and that the whole turn stays off `conversation.local_qwen`.
+**3. Microphone — now the cheapest stage, not the most expensive.** A USB mic on
+the Orange Pi for an afternoon (option C) proves the pipeline end to end with no
+firmware involved. Then the ESP32-S3 board, and do it in **two steps, voice
+first**: bring it up as a headless `voice_assistant` + `micro_wake_word` satellite
+with the display disabled entirely, confirm it works, and only then add the
+screen. That ordering is what turns the PSRAM contention from a mystery into a
+measurement — if the wake word degrades when the display comes up, you know
+exactly what did it. *Verify:* wake-to-spoken-reply latency, and that the whole
+turn stays off `conversation.local_qwen`.
 
 **4. Dashboard-control intents.** The `intent_script` → SSE path above, per-screen
-opt-in, and only after 1–3 are boring.
+opt-in, and only after 1–3 are boring. The ESP32-S3 board makes this more
+interesting than it was: touch and voice in the same device, so a spoken request
+can act on the Raspberry Pi 4's big panel while the small one confirms it.
 
 ## Budget
 
@@ -200,10 +275,14 @@ is 7.8 GiB, but Ollama takes ~3.3 GiB whenever a model is loaded and HA's
 | --- | --- |
 | wyoming-piper | ~100 MB |
 | wyoming-whisper, `base.en` int8 | ~300–500 MB |
-| wyoming-openwakeword (only if option B) | ~100 MB |
+| wyoming-openwakeword (only if option D) | ~100 MB |
 
 Comfortable, but give each unit a `MemoryMax` and `OOMPolicy=stop` so a runaway
 speech container cannot be the process that makes the kernel pick a victim.
+
+The hardware bill is now **one 8 Ω 2 W speaker with an MX1.25 2P connector**, a
+few dollars. Without it the board can hear and cannot answer, which is not a
+voice assistant.
 
 ## What not to do
 
@@ -214,9 +293,22 @@ speech container cannot be the process that makes the kernel pick a victim.
 - Do not stream continuous audio to a central wake word service over this Wi-Fi.
 - Do not add a microphone button to the dashboard expecting it to work on the
   panel. See trap 2.
+- Do not bring the ESP32-S3 board up with its display first. Voice is the job;
+  the screen is the thing that might have to give, and doing it in that order
+  means a wake word that degrades has exactly one suspect.
+- Do not design around barge-in — talking over the device's own TTS — until the
+  ES7210's echo cancellation has been shown to actually be engaged.
 
 ## Related
 
 - `docs/local-ai.md` — the conversation agents, the pipelines, and why there are two
 - `docs/kiosk-display.md` — the panel, its Chromium flags, and what breaks it
 - `docs/handoff-2026-09-10-wall-panel.md` — the stream-cost measurements and the Wi-Fi item
+
+### Vendor and component references
+
+- Waveshare wiki: <https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4B> — board
+  specs and the `07_ES8311` / `08_ES7210` demos, which are the authority on pins
+- ESPHome `es7210` audio ADC: <https://esphome.io/components/audio_adc/es7210/>
+- ESPHome ST7701S display: <https://esphome.io/components/display/st7701s/> —
+  deprecated; use `mipi_rgb`
