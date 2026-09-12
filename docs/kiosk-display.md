@@ -245,11 +245,29 @@ Most of these cost an hour each. They are listed in the order they bite.
 - **The dashboard rewrites `devices.local.yaml` itself** when devices are added,
   with plain `yaml.dump` — comments there do not survive. Keep the explanation in
   `configs/devices.example.yaml`, which is only ever edited by hand.
-- **Camera tiles are the expensive part.** Chromium on the Pi 4 software-decodes
-  the go2rtc WebRTC streams. The Home view, with one camera card live, costs
-  roughly 70% of one core of the four and sits at 38 °C — comfortable, but a
-  multi-camera view will not be. Point the panel at a view without cameras
-  (`DASHBOARD_URL` in `~/.config/smart-home-kiosk.env`) if it runs hot.
+- **Camera tiles are the expensive part, and hardware decode is already on.**
+  Measured 2026-09-12: Chromium holds `/dev/video10` (the `bcm2835-codec` H.264
+  decoder) open on both the WebRTC and MSE paths, with no flags. What costs the
+  CPU is everything around the decode — scaling to the card, compositing in the
+  browser and again in labwc, WebRTC's own work. So the lever is **pixels, not
+  the decoder**:
+
+  | Stream | CPU | fps |
+  | --- | --- | --- |
+  | 1920×1080 over WebRTC | 72% of one core | 20.4 |
+  | 640×352 over WebRTC | 33% of one core | 12.5 |
+
+  The camera card is ~520 px wide, so a 1080p stream means decoding 13× more
+  pixels than the screen ever shows. Prefer the camera's own substream.
+- **Do not "enable" hardware decode with Chromium flags — it is already on, and
+  the flags break it.** `--enable-features=V4L2FlatStatefulVideoDecoder` looks
+  like the fix and drops CPU to 46%, which looks like a win until you count
+  frames: playback collapses from 20 fps to **3.85 fps**. Adding
+  `AcceleratedVideoDecodeLinuxZeroCopyGL` produces `Context lost during
+  MakeCurrent` and a fallback; adding `--use-gl=egl` costs 92% of a core.
+  Measure frames decoded, never CPU alone — a player showing a black rectangle
+  is the cheapest configuration there is, which is exactly how the HEVC camera
+  fooled this measurement once already.
 
 ## Undo
 
