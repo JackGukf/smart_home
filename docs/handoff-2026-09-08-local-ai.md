@@ -1,5 +1,15 @@
 # Handoff: local AI, 2026-09-06 → 08
 
+> **The blocker in Step 2 was solved on 2026-09-08.** Do not pick this file up as
+> the current state of the NPU work — `npu-detector.service` has been live since
+> 2026-09-09 and has run five cameras since 2026-09-11. The cause was a QDQ
+> `Concat` sharing one INT8 scale between box coordinates (~640) and class
+> scores ([0,1]), so every score rounded to zero; the detection head is now cut
+> off the graph and decoded in numpy. **Current state: `docs/local-ai.md`. The
+> model and what is still open: `docs/npu-model-pipeline.md`.** This file is
+> kept for the investigation, which is still the best record of how the device
+> misleads you.
+
 Written to be picked up cold. The AI work is the point; the dashboard changes at
 the end are recorded so nothing looks unexplained, and are already documented in
 their own files.
@@ -40,6 +50,12 @@ leave thinking on and give a generous `num_predict`; `"think": false` returns th
 reasoning **as** the answer on a free-form call.
 
 ## Step 2 — the NPU detector: blocked, and this is the interesting part
+
+**Solved the same day this was written — see the banner at the top.** The
+diagnosis below is sound right up to its last step: the fault really was in the
+quantisation and not the model, but it was a range-mixing `Concat`, not the
+calibrator. The "Where to start next session" list at the end of this section is
+done.
 
 The model was rebuilt from scratch (the 2026-09-03 reflash destroyed the
 original and the backups never held it). Pipeline is checked in this time:
@@ -145,7 +161,7 @@ on the device" as unverified.
 | COCO subset | `~/npu-training/coco` (3.8 GB, regenerate with `--seed 0`) |
 | Trained weights | `~/npu-training/runs/prelu/weights/best.pt` (6.3 MB) |
 | Exports | `~/npu-training/export/*.onnx` |
-| On the board | `/home/orangepi/npu-test/prelu_ft_decomp.int8-{conv,conv-sym,all}.onnx` |
+| On the board | `~/npu-test/prelu_ft_decomp.body.int8-all-percentile.onnx` + `.head.npz` (live). The four superseded variants are in `~/npu-test/known-bad/` |
 | Detector env | `~/npu-venv` on the board (Python 3.11 — the wheel is cp311) |
 
 ## Step 3 — llama-server: still deferred
@@ -188,11 +204,11 @@ batteries, deliberately kept. Do not disable them.
 
 ## Open items
 
-- The NPU blocker above.
-- Two NPU model variants on the board are known-bad and can be deleted once a
-  working one exists.
-- The three NPU person entities in Home Assistant stay `unavailable` until the
-  detector runs; the dashboard already filters them out of its own views.
+- ~~The NPU blocker above.~~ Solved 2026-09-08.
+- ~~Known-bad NPU model variants on the board.~~ Moved to `~/npu-test/known-bad/`
+  on 2026-09-12, with a README saying why each one is wrong. Safe to delete.
+- ~~The NPU person entities stay `unavailable` until the detector runs.~~ Live
+  since 2026-09-09.
 - `scripts/list-tuya-cloud-devices.py` cannot enumerate the account —
   `TUYA_USERNAME`, `TUYA_PASSWORD`, `TUYA_COUNTRY_CODE` and `TUYA_APP_TYPE` are
   unset, so it returns `[]` and that empty result means nothing.

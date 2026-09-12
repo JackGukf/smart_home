@@ -249,7 +249,14 @@ Relative to stock on its *own* split, the lost model retained 67.9% of mAP50 and
 overall, slightly worse on person — not the clean win more training should have
 bought, which points at the quantisation step rather than the finetune.
 
-## Verified on the device, 2026-09-07 — and it does not work yet
+## Verified on the device, 2026-09-07 — the investigation, kept for its findings
+
+**Superseded 2026-09-08 by "Why `--all-ops` produced a model that detects
+nothing" above.** Everything below describes the pre-head-split models, all four
+of which now live in `~/npu-test/known-bad/` on the board. It is kept because
+three of its findings still hold and cost days to establish: placement is not
+correctness, this device cannot do FP32, and probing it with an FP32 graph times
+out the job queue. One conclusion in it is wrong and is marked where it appears.
 
 The model was deployed to the board and checked on the NPU. **Placement and
 speed are fine; the numbers it computes are not.** This section is the evidence,
@@ -305,6 +312,11 @@ All-ops is a *separate* fault — dead on the CPU too, so its quantisation is
 broken upstream of the device. Per-tensor MinMax across the detection head
 (Softmax, Div, Sigmoid) destroys the score range.
 
+> **This last sentence is wrong.** Calibration was never the problem: five
+> configurations were tried and every one scored 0.0000. The cause was a QDQ
+> `Concat` sharing one INT8 scale between box coordinates and class scores. See
+> the `--all-ops` section above.
+
 ### Why: Conv-only leaves FP32 in the graph, and this device cannot do FP32
 
 `docs/local-ai.md` already says INT8 QDQ only, and that an FP32 graph corrupts
@@ -338,23 +350,48 @@ were, and there is no record of the old model's *output* ever being verified on
 the NPU. Treat "Conv-only worked on the device" as unverified rather than
 established.
 
-### Next steps
+### How it was resolved
 
-1. Re-quantise all-ops with the detection head handled properly — entropy or
-   percentile calibration, and per-channel weights — until it scores sanely on
-   the CPU. It already agrees with the NPU, so a correct all-ops model is
-   probably a working model.
-2. Re-verify with `verify_on_npu.py --compare-cpu --frame-from <camera>` before
-   enabling the service. Do not trust a mAP number measured off-device.
-3. `npu-detector.service` is installed but **stopped and disabled**, and the
-   retained `smarthome/vision/*` topics were cleared, so Home Assistant shows
-   the entities unavailable rather than falsely occupied.
+The prediction in the paragraph above was right, but not for the reason given.
+All-ops *was* the shape to pursue, and what was wrong with it was a `Concat`,
+not the calibrator. `npu-detector.service` has been **enabled and running since
+2026-09-09**, on five cameras since 2026-09-11. What is still open is in
+"What is still open" below.
+
+## What is still open
+
+- **Accuracy.** 0.3628 mAP50 against 0.3770 for the same weights in FP32 and
+  0.4468 for stock YOLOv8n. The untried levers are per-channel weight scales
+  and entropy calibration on the *head-split* graph
+  (`quantize.py --per-channel --calibrate`). Per-channel needs a broadcasting
+  scale the Zhouyi compiler has not been shown to accept, so it has to be
+  verified on the device rather than assumed.
+- **The Zhouyi provider's INT8 kernels still differ from onnxruntime's** on
+  random-noise probes, worst on out-of-distribution input. Recorded, not
+  explained. It does not stop real frames decoding sensibly.
+- **Throughput headroom.** Five cameras at `NPU_INTERVAL=0.5` is ~10
+  inferences/s against 32.4 fps of capacity. More cameras, more classes or a
+  shorter interval all fit; the binding constraint is the network, not the NPU.
 
 ## Deploying
 
-`npu_detector.py` expects a `[1, 3, 640, 640]` input and a `[1, 84, 8400]`
-output, and defaults to `NPU_MODEL=/home/orangepi/npu-test/prelu_ft_decomp.int8.onnx`.
-Copy the chosen `.int8-conv.onnx` there, or point `NPU_MODEL` at it.
+`npu_detector.py` takes a `[1, 3, 640, 640]` input and accepts **any of the
+three output shapes** the pipeline can produce — one decoded `[1, 84, 8400]`
+tensor, separate boxes and scores, or the six raw convolution outputs of a
+head-split model — because the board may hold any of them mid-rollout.
+`merge_outputs()` normalises them.
+
+A head-split model **needs `prelu_ft_decomp.head.npz` in the same directory**.
+Copying the `.onnx` alone gives a detector that starts and then refuses every
+frame. Copy both, and point `NPU_MODEL` at the `.onnx`:
+
+```
+NPU_MODEL=/home/orangepi/npu-test/prelu_ft_decomp.body.int8-all-percentile.onnx
+```
+
+The four pre-head-split models are kept in `~/npu-test/known-bad/` on the board
+with a README saying why each one is wrong. Never point `NPU_MODEL` at one; they
+are safe to delete.
 
 The detector needs its own Python 3.11 environment on the board —
 `onnxruntime_zhouyi` is a cp311 wheel and the board runs 3.12. See

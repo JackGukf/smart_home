@@ -286,7 +286,7 @@ class Config:
         cameras = [c.strip() for c in os.getenv("NPU_CAMERAS", "").split(",") if c.strip()]
         classes = {c.strip() for c in os.getenv("NPU_CLASSES", "person").split(",") if c.strip()}
         return cls(
-            model=Path(os.getenv("NPU_MODEL", "/home/orangepi/npu-test/prelu_ft_decomp.int8.onnx")),
+            model=Path(os.getenv("NPU_MODEL", "/home/orangepi/npu-test/prelu_ft_decomp.body.int8-all-percentile.onnx")),
             cameras=cameras,
             go2rtc_url=os.getenv("GO2RTC_URL", "http://127.0.0.1:1984"),
             rtsp_url=os.getenv("GO2RTC_RTSP_URL", "rtsp://127.0.0.1:8554"),

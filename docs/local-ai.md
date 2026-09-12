@@ -4,24 +4,31 @@ Everything the board runs locally: two LLM endpoints on the CPU, and camera
 object detection on the Zhouyi NPU. All measured on the board 2026-09-02 —
 where a number appears here it was observed, not quoted from a spec sheet.
 
-## Where this stands (2026-09-06)
+## Where this stands (2026-09-12)
 
 The 2026-09-03 rebuild restored the house services but not the AI stack, and the
 old NVMe was reflashed, so **every AI artifact on the board was lost** — the
 tuned llama.cpp build, the GGUF weights, `~/npu-venv`, and `~/npu-test/` with the
 finetuned PReLU YOLOv8n and its INT8 quant. The backups are config-only and
 never contained them. Anything below that describes a model file describes
-something that has to be rebuilt, not restored.
+something that was rebuilt, not restored — the pipeline is checked in this time,
+in `scripts/npu-model/`.
 
-The restore is staged one service at a time, with a soak between each, so an
-unexpected reset points at a single change rather than three:
+The restore was staged one service at a time, with a soak between each, so an
+unexpected reset would point at a single change rather than three:
 
 | Step | Service | State |
 | --- | --- | --- |
-| 1 | `ollama.service` | **installed 2026-09-06**, idle-unload verified, soaking |
-| 2 | `npu-detector.service` | **installed, stopped** — model trained and on the board, but the NPU
-        miscomputes it. Start at `docs/handoff-2026-09-08-local-ai.md` |
-| 3 | `llama-server.service` | deferred; only on evidence that something needs the latency |
+| 1 | `ollama.service` | **live since 2026-09-06**, idle-unload verified |
+| 2 | `npu-detector.service` | **live since 2026-09-09**, five cameras since 2026-09-11. mAP50 0.3628, person AP50 0.6327, 32.4 fps |
+| 3 | `llama-server.service` | **deferred**; only on evidence that something needs the latency |
+
+The NPU blocker that held step 2 up — a graph that ran on the device at full
+speed and computed the wrong answer — was a QDQ `Concat` sharing one INT8 scale
+between box coordinates and class scores. The detection head is now cut off the
+graph and decoded in numpy. `docs/npu-model-pipeline.md` has the whole thing;
+`docs/handoff-2026-09-08-local-ai.md` describes the blocker as unsolved because
+it was written before the fix.
 
 **Run one LLM, not both.** `llama-server` holds ~5.0 GiB for the life of the
 process and Ollama loading a model is ~3.5 GiB more. Together they leave roughly
@@ -232,9 +239,16 @@ does not compete with the LLM for cores.
 
 ## The camera detector
 
-`src/python/npu_detector.py`. Pulls JPEG frames from go2rtc
-(`/api/frame.jpeg?src=<stream>`), runs the model, publishes to
-`smarthome/vision/<camera>`.
+`src/python/npu_detector.py`. Reads frames from a **held-open RTSP consumer** on
+go2rtc's own `:8554`, runs the model, publishes to `smarthome/vision/<camera>`.
+
+**It used to ask for one JPEG at a time** (`/api/frame.jpeg?src=<stream>`), which
+meant a fresh consumer per cycle waiting for the camera's next keyframe:
+**0.6–3.2 s a frame against 64 ms of inference**. Nearly all the latency was in
+the asking. Holding the stream open costs ~2 ms a frame at ~15% of a core per
+camera to keep decoding — see `docs/handoff-2026-09-10-wall-panel.md`. The
+figures in the rest of this section were measured under the old one-shot fetch
+and are kept because the *shape* they argue for still holds.
 
 **One thread per camera.** Frame fetch dominates and varies enormously — 0.25s
 when go2rtc serves a stream natively, 3–4s when it must spawn ffmpeg for an
