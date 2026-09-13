@@ -8,7 +8,7 @@ anybody for a password.
 labwc/Wayland, HDMI-A-1, Chromium 148.
 
 ```
-Raspberry Pi 4 (192.168.0.176)                Orange Pi 6 Plus (192.168.0.234)
+Raspberry Pi 4 (192.168.0.176)                Orange Pi 6 Plus (192.168.0.83)
 ┌──────────────────────────────┐              ┌─────────────────────────────┐
 │ lightdm autologin            │              │ dashboard  :8000            │
 │   └ labwc session            │  ──────────► │   trusted_hosts: .176       │
@@ -43,7 +43,10 @@ to hand-edit: `enable-kiosk-autologin.py` pipes its payload over ssh and
 ### Pin the address first
 
 The panel's IP **is** its credential, at both doors. Give `192.168.0.176` a
-static DHCP lease in the router before relying on this. If DHCP moves the panel,
+static DHCP lease in the router before relying on this. **And now the board's
+address too:** it moved to Ethernet on 2026-09-12 and `192.168.0.83` is a plain
+DHCP lease that the panel, every deploy script and this document all hardcode.
+Two addresses to pin, not one. If DHCP moves the panel,
 it is locked out of both logins; if DHCP hands that address to something else,
 that thing inherits the panel's access. This is the same trade Home Assistant's
 own `trusted_networks` provider makes, and there is no token-shaped alternative:
@@ -69,8 +72,8 @@ a form it cannot fill in. Everyone else is challenged exactly as before —
 including this workstation, which is the check worth running after any change:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://192.168.0.234:8000/api/health   # 401
-ssh smarthome@192.168.0.176 'curl -s -o /dev/null -w "%{http_code}\n" http://192.168.0.234:8000/api/health'  # 200
+curl -s -o /dev/null -w "%{http_code}\n" http://192.168.0.83:8000/api/health   # 401
+ssh smarthome@192.168.0.176 'curl -s -o /dev/null -w "%{http_code}\n" http://192.168.0.83:8000/api/health'  # 200
 ```
 
 ## A screen shows a camera on motion
@@ -161,7 +164,7 @@ this is a nudge rather than an edit — but pass the attributes back or the enti
 loses its `device_class` and the dashboard stops recognising it as occupancy:
 
 ```bash
-ssh orangepi@192.168.0.234 'cd smart_home_AI && set -a && . ./.env && set +a && curl -s -X POST -H "Authorization: Bearer $HOME_ASSISTANT_TOKEN" -H "Content-Type: application/json" -d "{\"state\":\"on\",\"attributes\":{\"device_class\":\"occupancy\",\"friendly_name\":\"Motion sensor and TH front door Occupancy\"}}" http://127.0.0.1:8123/api/states/binary_sensor.0xa4c138f3061bad8d_presence'
+ssh orangepi@192.168.0.83 'cd smart_home_AI && set -a && . ./.env && set +a && curl -s -X POST -H "Authorization: Bearer $HOME_ASSISTANT_TOKEN" -H "Content-Type: application/json" -d "{\"state\":\"on\",\"attributes\":{\"device_class\":\"occupancy\",\"friendly_name\":\"Motion sensor and TH front door Occupancy\"}}" http://127.0.0.1:8123/api/states/binary_sensor.0xa4c138f3061bad8d_presence'
 ```
 
 ## Deploys reach the panel on their own
@@ -189,7 +192,7 @@ watch existed — it cannot reload itself into the version that knows how to.
 
 ```bash
 ssh smarthome@192.168.0.176 'tail -5 ~/.local/state/smart-home-kiosk.log'
-ssh smarthome@192.168.0.176 'curl -s http://192.168.0.234:8123/auth/providers'
+ssh smarthome@192.168.0.176 'curl -s http://192.168.0.83:8123/auth/providers'
 ```
 
 The providers list seen **from the panel** must have `trusted_networks` first

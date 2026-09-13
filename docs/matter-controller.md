@@ -51,7 +51,7 @@ The dashboard's Matter card shows **Online** once `ws://localhost:5580/ws` answe
   `--bluetooth-adapter`, resolved to the UB500 dongle rather than the onboard AX210.
   `hci` numbering can swap across reboots, so the installer resolves the index from
   the MAC in `BLE_ADAPTER`; re-run it if the adapters ever renumber.
-- **`--primary-interface wlp1s0`** — Ubuntu's predictable interface name, not `wlan0`.
+- **`--primary-interface enp97s0`** — Ubuntu's predictable interface name, not `wlan0`. Ethernet since 2026-09-12; it was `wlp1s0` while the board was on Wi-Fi.
 - **The client must keep `start_listening()` running.** python-matter-server only fills
   its node cache, and only resolves command futures, while that background task is
   alive. Connecting without it makes `get_nodes()` return an empty list and every

@@ -60,10 +60,10 @@ sudo systemctl enable --now ssh
 Make sure your WSL SSH key can log in:
 
 ```bash
-ssh orangepi@192.168.0.234
+ssh orangepi@192.168.0.83
 ```
 
-The default project scripts use `orangepi@192.168.0.234`.
+The default project scripts use `orangepi@192.168.0.83`.
 
 Quick connection check:
 

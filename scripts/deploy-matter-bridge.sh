@@ -6,7 +6,7 @@
 # enabled. The old Docker deployment path was retired 2026-07-08.
 #
 # Requires:
-#   PI_HOST env var — board IP address or hostname (default: 192.168.0.234)
+#   PI_HOST env var — board IP address or hostname (default: 192.168.0.83)
 #   PI_USER env var — SSH username (default: orangepi, matching deploy-to-pi.sh)
 #
 # Usage:
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PI_HOST="${PI_HOST:-192.168.0.234}"
+PI_HOST="${PI_HOST:-192.168.0.83}"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE="${PI_USER}@${PI_HOST}"
 REMOTE_DIR="${REMOTE_PATH:-/home/${PI_USER}/smart_home_AI}"

@@ -15,7 +15,7 @@ import json
 import urllib.request
 import urllib.error
 
-BASE = "http://192.168.0.234:8000"
+BASE = "http://192.168.0.83:8000"
 
 
 def fetch(path, method="GET", body=None):

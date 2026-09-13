@@ -2,7 +2,7 @@
 #
 # Install the two local AI services on the board.  Run it ON the Orange Pi.
 #
-#   ssh orangepi@192.168.0.234
+#   ssh orangepi@192.168.0.83
 #   cd smart_home_AI && ./scripts/install-ai-services.sh
 #
 #   llama-server.service  Qwen3-4B over HTTP on 127.0.0.1:8081, CPU, pinned to

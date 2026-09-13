@@ -15,7 +15,7 @@ SERVICE_USER="${SERVICE_USER:-$(id -un)}"
 SERVICE_GROUP="${SERVICE_GROUP:-$(id -gn)}"
 VENV="${MATTER_SERVER_VENV:-$HOME/.venvs/matter-server}"
 STORAGE_PATH="${MATTER_STORAGE_PATH:-/var/lib/matter}"
-PRIMARY_INTERFACE="${MATTER_PRIMARY_INTERFACE:-wlp1s0}"
+PRIMARY_INTERFACE="${MATTER_PRIMARY_INTERFACE:-enp97s0}"
 # The UB500 dongle, not the onboard AX210 — see docs/setup-orangepi6.md.
 BLE_ADAPTER_MAC="${BLE_ADAPTER:-20:E1:5D:68:2B:DB}"
 
@@ -48,7 +48,7 @@ sed -e "s|^User=.*|User=$SERVICE_USER|" \
     -e "s|^Group=.*|Group=$SERVICE_GROUP|" \
     -e "s|/home/orangepi/.venvs/matter-server|$VENV|" \
     -e "s|--storage-path /var/lib/matter|--storage-path $STORAGE_PATH|" \
-    -e "s|--primary-interface wlp1s0|--primary-interface $PRIMARY_INTERFACE|" \
+    -e "s|--primary-interface enp97s0|--primary-interface $PRIMARY_INTERFACE|" \
     -e "s|--bluetooth-adapter 0|--bluetooth-adapter $BT_INDEX|" \
     -e "s|^Environment=HOME=.*|Environment=HOME=$HOME|" \
     "$REPO_ROOT/configs/matter-server.service" \

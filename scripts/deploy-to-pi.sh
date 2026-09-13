@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.234}"
+PI_HOST="${PI_HOST:-192.168.0.83}"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE_PATH="${REMOTE_PATH:-}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -14,7 +14,7 @@ Usage:
                           [--board orangepi6|rpi4] [--skip-build]
 
 Environment variables:
-  PI_HOST       Board hostname or IP address. Default: 192.168.0.234 (Orange Pi 6 Plus)
+  PI_HOST       Board hostname or IP address. Default: 192.168.0.83 (Orange Pi 6 Plus)
   PI_USER       SSH username. Default: orangepi
   REMOTE_PATH   Remote install directory. Default: /home/$PI_USER/smart_home_AI
   BOARD         Target board for the cross build. Default: orangepi6

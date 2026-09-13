@@ -2,7 +2,7 @@
 #
 # Build llama.cpp for the Orange Pi 6 Plus.  Run it ON the board.
 #
-#   ssh orangepi@192.168.0.234
+#   ssh orangepi@192.168.0.83
 #   cd smart_home_AI && ./scripts/build-llama-server.sh
 #
 # The arch flags are the whole point of this script.  Measured 2026-09-02 on

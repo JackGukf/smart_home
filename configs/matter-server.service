@@ -12,7 +12,7 @@ Group=orangepi
 ExecStart=/home/orangepi/.venvs/matter-server/bin/matter-server \
     --storage-path /var/lib/matter \
     --port 5580 \
-    --primary-interface wlp1s0 \
+    --primary-interface enp97s0 \
     --bluetooth-adapter 0
 Restart=on-failure
 RestartSec=5

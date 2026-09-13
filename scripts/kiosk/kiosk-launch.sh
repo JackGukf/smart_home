@@ -15,7 +15,7 @@ CONFIG_FILE="${HOME}/.config/smart-home-kiosk.env"
 # shellcheck source=/dev/null
 [[ -r "${CONFIG_FILE}" ]] && source "${CONFIG_FILE}"
 
-DASHBOARD_URL="${DASHBOARD_URL:-http://192.168.0.234:8000/}"
+DASHBOARD_URL="${DASHBOARD_URL:-http://192.168.0.83:8000/}"
 CHROMIUM_BIN="${CHROMIUM_BIN:-$(command -v chromium || command -v chromium-browser || true)}"
 PROFILE_DIR="${PROFILE_DIR:-${HOME}/.config/chromium-kiosk}"
 LOG_FILE="${LOG_FILE:-${HOME}/.local/state/smart-home-kiosk.log}"

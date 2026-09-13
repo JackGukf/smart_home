@@ -27,7 +27,7 @@ def _camera(**overrides) -> CameraDefinition:
         "mjpeg_width": 640,
         "mjpeg_quality": 7,
         "stream_name": "front_door_camera",
-        "go2rtc_url": "http://192.168.0.234:1984",
+        "go2rtc_url": "http://192.168.0.83:1984",
         "battery_powered": False,
     }
     fields.update(overrides)
@@ -35,13 +35,13 @@ def _camera(**overrides) -> CameraDefinition:
 
 
 def test_frame_url_points_at_the_go2rtc_stream() -> None:
-    assert _go2rtc_frame_url(_camera()) == "http://192.168.0.234:1984/api/frame.jpeg?src=front_door_camera"
+    assert _go2rtc_frame_url(_camera()) == "http://192.168.0.83:1984/api/frame.jpeg?src=front_door_camera"
 
 
 def test_frame_url_strips_a_trailing_slash_and_encodes_the_stream_name() -> None:
-    camera = _camera(go2rtc_url="http://192.168.0.234:1984/", stream_name="front door")
+    camera = _camera(go2rtc_url="http://192.168.0.83:1984/", stream_name="front door")
 
-    assert _go2rtc_frame_url(camera) == "http://192.168.0.234:1984/api/frame.jpeg?src=front+door"
+    assert _go2rtc_frame_url(camera) == "http://192.168.0.83:1984/api/frame.jpeg?src=front+door"
 
 
 def test_no_frame_url_without_a_gateway() -> None:
@@ -73,7 +73,7 @@ def test_capture_returns_the_frame_go2rtc_serves(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(web_app_module, "urlopen", fake_urlopen)
 
     assert web_app_module._capture_go2rtc_frame(_camera()) == b"\xff\xd8jpeg-bytes"
-    assert requested == ["http://192.168.0.234:1984/api/frame.jpeg?src=front_door_camera"]
+    assert requested == ["http://192.168.0.83:1984/api/frame.jpeg?src=front_door_camera"]
 
 
 def test_capture_treats_an_empty_body_as_no_frame(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,7 +123,7 @@ cameras:
     rtsp_port: 322
     stream_path: /stream0
 media_gateway:
-  go2rtc_url: http://192.168.0.234:1984
+  go2rtc_url: http://192.168.0.83:1984
 """,
         encoding="utf-8",
     )

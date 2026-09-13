@@ -12,15 +12,15 @@ The Orange Pi 6 Plus is the primary deployment target, set up 2026-07-29.
 | CPU | 12 cores, Armv9.2-A big.LITTLE — Cortex-A720 (part `0xd81`) + Cortex-A520 (part `0xd80`) |
 | System GCC | 13.3.0 |
 | Storage | NVMe |
-| Wi-Fi interface | `wlp1s0` — 192.168.0.234 |
-| Ethernet interface | `enp97s0` — 192.168.0.14 |
+| Ethernet interface | `enp97s0` — **192.168.0.83**, 1000 Mb/s, in use since 2026-09-12 (was 192.168.0.14 when unused) |
+| Wi-Fi interface | `wlp1s0` — disconnected; the board was on Wi-Fi at 192.168.0.234 until 2026-09-12 |
 | SSH user | `orangepi` |
 | Project path | `/home/orangepi/smart_home_AI` |
 
 Ubuntu uses predictable interface names here, **not** the `wlan0`/`eth0` of
 Raspberry Pi OS. Anything that names an interface — most importantly the Matter
 bridge's `--interface` flag in `configs/matter-bridge.service` — must use
-`wlp1s0` or `enp97s0`. Confirm before installing units:
+`enp97s0` (Ethernet, in use) or `wlp1s0` (Wi-Fi, disconnected). Confirm before installing units:
 
 ```bash
 ip -o -4 addr show scope global
@@ -456,7 +456,7 @@ The board also runs Ollama as a system service with `qwen3:4b` installed
 intentional — use an SSH tunnel from the workstation rather than exposing it:
 
 ```bash
-ssh -N -L 11434:127.0.0.1:11434 orangepi@192.168.0.234
+ssh -N -L 11434:127.0.0.1:11434 orangepi@192.168.0.83
 ```
 
 Do not widen that binding without an authenticated reverse proxy. Treat model

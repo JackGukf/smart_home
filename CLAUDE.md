@@ -39,9 +39,9 @@ The Orange Pi 6 Plus is the **primary** target. The Raspberry Pi 4 is kept as a 
 | --- | --- | --- |
 | OS | Ubuntu 24.04 ARM64 | Raspberry Pi OS 64-bit |
 | CPU | Cix P1 / CD8180, 12 cores, Armv9.2-A (Cortex-A720 + A520) | Cortex-A72, Armv8-A |
-| SSH | `orangepi@192.168.0.234` | `smarthome@192.168.0.176` |
+| SSH | `orangepi@192.168.0.83` | `smarthome@192.168.0.176` |
 | Remote path | `/home/orangepi/smart_home_AI` | `/home/smarthome/smart-home-rpi4` |
-| Net interfaces | `wlp1s0` (Wi-Fi), `enp97s0` (Ethernet) | `wlan0`, `eth0` |
+| Net interfaces | **`enp97s0` (Ethernet, in use)**, `wlp1s0` (Wi-Fi, disconnected) | `wlan0`, `eth0` |
 | CMake preset | `docker-orangepi6-release` | `docker-rpi4-release` |
 | Toolchain | `cmake/toolchains/orangepi6-aarch64.cmake` | `cmake/toolchains/rpi4-aarch64.cmake` |
 | Build dir | `build/orangepi6-release/` | `build/rpi4-release/` |
@@ -53,20 +53,23 @@ Assistant by IP address. That makes `192.168.0.176` a credential — see
 
 Gotchas that have bitten this project:
 
-- **Interface names differ.** Ubuntu uses predictable names, so anything passing `--interface` (notably the Matter bridge in `configs/matter-bridge.service`) must use `wlp1s0`/`enp97s0`, not `wlan0`. A wrong interface makes Matter commissioning fail quietly.
+- **Interface names differ, and a wrong one fails silently.** Ubuntu uses predictable names, so anything passing `--interface` (notably the Matter bridge in `configs/matter-bridge.service`) must use `enp97s0`, not `wlan0`. This is not hypothetical: when the board moved to Ethernet on 2026-09-12, `wlp1s0` stopped existing and `matter-bridge.service` went on reporting `active` while bound to a device that was gone. Check the unit whenever the network changes.
 - **`-mcpu=cortex-a720` is unavailable.** It needs GCC 14+; the dev container ships the Ubuntu 22.04 aarch64 cross-compiler (GCC 11). The Orange Pi toolchain probes for the best `-march` the compiler accepts and falls back to a safe baseline. Override with `-DORANGEPI6_ARCH_FLAGS=...`.
 - Both boards are `aarch64`, so a generic arm64 binary (e.g. the Matter bridge from the GN build) runs on either.
-- **The board's Wi-Fi runs with power save on, and it costs the whole LAN.**
-  Measured 2026-09-11: 333 ms *average* round trip to the router, peaks near 2 s,
-  and ~5% packet loss — to the router itself, not just to a camera, on 2 Mbit/s
-  of traffic over a 130 Mbit/s link. It is latency, not bandwidth: the adapter
-  sleeps between beacons. Harmless until something needs steady streams; the NPU
-  detector holding five cameras open is what turned it into loss. Fix:
-  `sudo iw dev wlp1s0 set power_save off`, and
-  `sudo nmcli connection modify dlink_DIR-859 802-11-wireless.powersave 2` so it
-  survives a reboot. Both need a sudo password. Ethernet (`enp97s0`, currently
-  **down**) removes the problem outright and is the better answer — the board is
-  on 2.4 GHz, sharing a crowded band with the cameras it is pulling from.
+- **The board is on Ethernet since 2026-09-12, and that solved the LAN problem.**
+  On Wi-Fi, power save cost 333 ms *average* round trip to the router with peaks
+  near 2 s and ~5% packet loss — to the router itself, not just to a camera, on
+  2 Mbit/s of traffic over a 130 Mbit/s link. It was latency, not bandwidth: the
+  adapter slept between beacons, and the NPU detector holding five cameras open
+  turned that into loss. On `enp97s0` at 1000 Mb/s the same test is **0.78 ms
+  average, 0% loss** — a 426x improvement, measured 2026-09-12. Do not go back to
+  Wi-Fi for this board; if you must, `sudo iw dev wlp1s0 set power_save off` plus
+  `sudo nmcli connection modify <ssid> 802-11-wireless.powersave 2` is the
+  mitigation, not a fix. **The wall panel is still on Wi-Fi** and still shows
+  ~50 ms to the board, so latency that survives this change is the panel's link.
+- **`192.168.0.83` is a DHCP lease, not a static address.** Everything in this
+  repo hardcodes it. If the router hands the board a different address, deploys,
+  the wall panel and Home Assistant all break at once. Give it a reservation.
 - **Two Bluetooth controllers.** The onboard Intel AX210 (`E0:D5:5D:9D:38:97`) sits alongside the TP-Link UB500 (`20:E1:5D:68:2B:DB`), which is the one BLE should use. Pin it with `BLE_ADAPTER` in `.env` — a MAC, not `hciN`, because the numbering can swap across reboots. bleak returns *zero* devices when given no adapter on this host, so `src/python/ble_adapter.py` always passes one. See `docs/setup-orangepi6.md`.
 
 ## Repository Layout
@@ -128,7 +131,7 @@ docker compose run --rm dev sh -lc \
 ./scripts/backup-smart-home.sh        # Zigbee key, HA config, .env -> ~/orangepi-recovery
 ```
 
-Deploy scripts default to `orangepi@192.168.0.234` and `/home/orangepi/smart_home_AI`. Override with `--host`/`--user`/`--remote-path` (or `PI_HOST`/`PI_USER`/`REMOTE_PATH`) — always confirm the target before deploying, and never assume a default points at the board you mean.
+Deploy scripts default to `orangepi@192.168.0.83` and `/home/orangepi/smart_home_AI`. Override with `--host`/`--user`/`--remote-path` (or `PI_HOST`/`PI_USER`/`REMOTE_PATH`) — always confirm the target before deploying, and never assume a default points at the board you mean.
 
 ### Wall panel (Raspberry Pi 4)
 ```bash
@@ -177,7 +180,7 @@ Three services, all loopback-only or local-only on purpose. See `docs/local-ai.m
 Reach the LLMs with an SSH tunnel, not by widening the bind address:
 
 ```bash
-ssh -N -L 11434:127.0.0.1:11434 orangepi@192.168.0.234
+ssh -N -L 11434:127.0.0.1:11434 orangepi@192.168.0.83
 ```
 
 Treat model output as untrusted input: validate schema, enforce an allow-list, and keep device control deterministic. Never put the model in a trigger path — it is slower and less reliable than the rule it would replace. The useful shape is *LLM authors, rules execute*.

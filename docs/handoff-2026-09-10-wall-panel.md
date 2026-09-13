@@ -108,21 +108,34 @@ three separate times. Every measurement here now counts frames.
 
 ## Open — needs a person, not a session
 
-1. **Wi-Fi power save on the board.** 333 ms *average* round trip to the router,
-   peaks near 2 s, ~5% loss on 2 Mbit/s over a 130 Mbit/s link. Latency, not
-   bandwidth: the adapter sleeps between beacons. Needs a sudo password:
-   `sudo iw dev wlp1s0 set power_save off` and `sudo nmcli connection modify
-   dlink_DIR-859 802-11-wireless.powersave 2`. Dropped twice during this session.
-2. **Ethernet.** `enp97s0` is down; two 2.5G ports unused. Removes the power-save
-   problem, the 2.4 GHz contention with the cameras, and the dropouts at once.
-   Held up by fan noise where the router is — but the cable can travel instead of
-   the board.
-3. **The fan is doing nothing.** 26,012 samples over nine days: 91% of the time
-   at 35–44 °C, one sample ever at 65 °C, critical trip **98 °C**, and the
-   thermal governor has asked for cooling **zero** times. There is no
-   OS-controlled fan — nothing in `hwmon`, no PWM — so it runs flat out forever.
-   Unplug it and watch `~/resource-history.log`.
-4. **Server-side camera mosaic**, parked in `PROJECT_CONTEXT.md` with its
+1. ~~**Wi-Fi power save on the board.**~~ ~~**Ethernet.**~~ **Both done
+   2026-09-12** — the board is on `enp97s0` and Wi-Fi is disconnected. Items 1
+   and 2 were the same problem and Ethernet was always the better half of it.
+   Measured before and after, same test to the router:
+
+   | | avg | peak | loss |
+   | --- | ---: | ---: | ---: |
+   | Wi-Fi, power save on | 333 ms | ~2 s | ~5% |
+   | **Ethernet, 1000 Mb/s** | **0.78 ms** | 2.1 ms | **0%** |
+
+   Two consequences worth carrying forward. **The wall panel is still on Wi-Fi**,
+   and panel → board still measures ~50 ms average with a 308 ms peak — so any
+   latency that survived this change belongs to the panel's link, not the
+   board's. And **`192.168.0.83` is a DHCP lease**: the whole repo now hardcodes
+   it, so it needs a router reservation before it moves on its own.
+2. **The board's fan is doing nothing.** 26,012 samples over nine days: 91% of
+   the time at 35–44 °C, one sample ever at 65 °C, critical trip **98 °C**, and
+   the thermal governor has asked for cooling **zero** times. There is no
+   OS-controlled fan — nothing in `hwmon`, no PWM, no tachometer, and no fan node
+   in the device tree — so it runs flat out forever. Unplug it and watch
+   `~/resource-history.log`.
+
+   **The panel settled the same question first.** Its fan came out on 2026-09-12
+   and it went 36 °C → 55–58 °C, peak 59 °C, **zero throttling** across seven
+   hours, against an 80 °C trip. The board has a bigger heatsink, twelve cores it
+   barely uses, and a 98 °C trip, so it is the safer of the two. The panel now
+   logs too — `resource-logger.service` there as well as on the board.
+3. **Server-side camera mosaic**, parked in `PROJECT_CONTEXT.md` with its
    measurements. Six-camera mosaic costs 67% of one core of twelve. The GPU
    cannot help: this board exposes **no hardware video codec** (no V4L2 device
    has an output queue; `/dev/video-cixdec0` is the ISP), and `overlay_opencl`
@@ -132,4 +145,4 @@ three separate times. Every measurement here now counts frames.
 
 - `docs/kiosk-display.md` — how to build, verify and undo all of the above
 - `PROJECT_CONTEXT.md` — the mosaic entry under Recommended next milestones
-- `CLAUDE.md` — the Wi-Fi power-save gotcha, and the detector's frame source
+- `CLAUDE.md` — the move to Ethernet, the DHCP-lease warning, and the detector's frame source

@@ -107,6 +107,6 @@ def test_matter_bridge_unit_uses_the_orange_pi_interface_name():
     commissioning fail silently rather than loudly."""
     unit = Path("configs/matter-bridge.service").read_text()
 
-    assert "--interface wlp1s0" in unit
+    assert "--interface enp97s0" in unit
     assert "--interface wlan0" not in unit
 

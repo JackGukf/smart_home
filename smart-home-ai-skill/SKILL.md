@@ -20,7 +20,7 @@ description: >
 | WSL (preferred for all dev work) | `/home/jackgu/workspace/smart_home_AI` |
 | Windows (Cowork file tools) | `\\wsl.localhost\Ubuntu-22.04\home\jackgu\workspace\smart_home_AI` |
 | Git remote | `git@github.com:JackGukf/smart_home.git` (SSH — already configured) |
-| Orange Pi 6 Plus (primary) | `orangepi@192.168.0.234`, path `/home/orangepi/smart_home_AI` |
+| Orange Pi 6 Plus (primary) | `orangepi@192.168.0.83`, path `/home/orangepi/smart_home_AI` |
 | Raspberry Pi 4 (secondary) | `smarthome@192.168.0.176`, path `/home/smarthome/smart-home-rpi4` |
 
 > **Important for Cowork/sandbox:** The bash sandbox cannot mount the WSL workspace
@@ -115,7 +115,7 @@ CMake presets: `docker-debug`, `docker-orangepi6-release`, `docker-rpi4-release`
 # Deploy C++ binary + Python source + configs to the board
 ./scripts/deploy-to-pi.sh
 # Options:
-#   --host HOST        Override board IP (default: 192.168.0.234)
+#   --host HOST        Override board IP (default: 192.168.0.83)
 #   --user USER        Override SSH user (default: orangepi)
 #   --remote-path PATH Override install dir (default: /home/$USER/smart_home_AI)
 #   --board BOARD      orangepi6 (default) or rpi4
@@ -157,7 +157,7 @@ default — pass every detail explicitly:
 cd /home/orangepi/smart_home_AI && .venv/bin/python -m uvicorn src.python.web_app:app --host 0.0.0.0 --port 8000
 ```
 
-**Board gotcha:** Ubuntu uses predictable interface names (`wlp1s0` Wi-Fi,
+**Board gotcha:** Ubuntu uses predictable interface names (`enp97s0` Ethernet — in use since 2026-09-12, `wlp1s0` Wi-Fi,
 `enp97s0` Ethernet), not Raspberry Pi OS's `wlan0`/`eth0`. Anything passing
 `--interface` — notably the Matter bridge — must use the Ubuntu names.
 

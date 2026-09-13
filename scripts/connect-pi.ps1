@@ -1,5 +1,5 @@
 param(
-    [string]$PiHost = "192.168.0.234",
+    [string]$PiHost = "192.168.0.83",
     [string]$PiUser = "orangepi",
     [string]$RemotePath = "/home/orangepi/smart_home_AI",
     [switch]$Check,

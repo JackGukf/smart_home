@@ -20,7 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_HOST = "192.168.0.234"
+DEFAULT_HOST = "192.168.0.83"
 DEFAULT_USER = "orangepi"
 
 

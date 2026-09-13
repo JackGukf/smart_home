@@ -15,7 +15,7 @@ board was rebuilt, the watchdog finding). This file is the *procedure*.
 
 | | |
 | --- | --- |
-| Board | `orangepi@192.168.0.234`, Orange Pi 6 Plus, Ubuntu Noble |
+| Board | `orangepi@192.168.0.83`, Orange Pi 6 Plus, Ubuntu Noble |
 | Boots from | NVMe in the PCIe slot (`/dev/nvme0n1p2`) |
 | Backup | newest `~/orangepi-recovery/smart-home-backup-*.tgz` on the workstation |
 | Repo | `git@github.com:JackGukf/smart_home.git`, branch `main` |
@@ -45,7 +45,7 @@ rsync the local checkout:
 ```bash
 rsync -a --exclude='.git/' --exclude='build/' --exclude='third_party/' \
       --exclude='.codegraph/' --exclude='__pycache__/' --exclude='.venv/' \
-      ./ orangepi@192.168.0.234:/home/orangepi/smart_home_AI/
+      ./ orangepi@192.168.0.83:/home/orangepi/smart_home_AI/
 ```
 
 > **Trap — `.codegraph/` is 1.1 GB.** It is not in the exclude list by accident;

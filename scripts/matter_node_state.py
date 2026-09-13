@@ -100,7 +100,7 @@ class WSClient:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("node_id", type=int)
-    parser.add_argument("--host", default=os.environ.get("PI_HOST", "192.168.0.234"))
+    parser.add_argument("--host", default=os.environ.get("PI_HOST", "192.168.0.83"))
     parser.add_argument("--port", type=int, default=5580)
     args = parser.parse_args(argv[1:])
 

@@ -2,9 +2,13 @@
 # (deployed by scripts/deploy-matter-bridge.sh; requires loginctl enable-linger orangepi)
 #
 # --interface must name a real interface on the target. On the Orange Pi 6 Plus
-# the Wi-Fi interface is wlp1s0 and Ethernet is enp97s0 (predictable names), not
-# the wlan0/eth0 used by Raspberry Pi OS. Verify with `ip -o -4 addr show` on the
-# board before installing; a wrong interface makes commissioning fail silently.
+# Ethernet is enp97s0 and Wi-Fi is wlp1s0 (predictable names), not the wlan0/eth0
+# used by Raspberry Pi OS. Verify with `ip -o -4 addr show` on the board before
+# installing; a wrong interface makes commissioning fail silently.
+#
+# The board moved to Ethernet on 2026-09-12 and wlp1s0 no longer exists at all,
+# which is exactly the silent failure this comment warns about: the unit stayed
+# `active` while bound to a device that was gone.
 [Unit]
 Description=Matter Bridge (chip-bridge-app)
 After=network-online.target
@@ -14,7 +18,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/orangepi/smart_home_AI
 Environment=BRIDGE_SYNC_URL=http://localhost:8000
-ExecStart=/home/orangepi/smart_home_AI/build/matter-bridge/chip-bridge-app --KVS /home/orangepi/matter-bridge-kvs/kvs --interface wlp1s0 --discriminator 2861 --passcode 56123489
+ExecStart=/home/orangepi/smart_home_AI/build/matter-bridge/chip-bridge-app --KVS /home/orangepi/matter-bridge-kvs/kvs --interface enp97s0 --discriminator 2861 --passcode 56123489
 Restart=always
 RestartSec=5
 StandardOutput=append:/home/orangepi/matter-bridge.log

@@ -105,8 +105,8 @@ lowest free slot. Adding still needs a bridge restart, not a re-pair.
 Restart the dashboard so it re-reads `.env`:
 
 ```bash
-ssh orangepi@192.168.0.234 systemctl --user restart smart-home-dashboard
-curl -s http://192.168.0.234:8000/bridge/devices | python3 -m json.tool
+ssh orangepi@192.168.0.83 systemctl --user restart smart-home-dashboard
+curl -s http://192.168.0.83:8000/bridge/devices | python3 -m json.tool
 ```
 
 ### 2. Build
@@ -139,7 +139,7 @@ Syncs the binary and `configs/matter-bridge.service`, creates
 **Verify** every device registered:
 
 ```bash
-ssh orangepi@192.168.0.234 \
+ssh orangepi@192.168.0.83 \
   'PID=$(systemctl --user show matter-bridge -p MainPID --value); \
    grep -a "Registered .*(ep=" ~/matter-bridge.log | grep -a "\[$PID:"'
 ```
@@ -307,8 +307,8 @@ what caused No Response historically. The fabric survives a restart, so the
 commissioning does not need redoing:
 
 ```bash
-ssh orangepi@192.168.0.234 systemctl --user restart smart-home-dashboard
-ssh orangepi@192.168.0.234 systemctl --user restart matter-bridge
+ssh orangepi@192.168.0.83 systemctl --user restart smart-home-dashboard
+ssh orangepi@192.168.0.83 systemctl --user restart matter-bridge
 scripts/verify-matter-bridge.sh
 ```
 
@@ -394,7 +394,7 @@ readable. Commission the bridge into that fabric:
 python3 - <<'PY'
 import sys; sys.path.insert(0, "scripts")
 from matter_node_state import WSClient
-c = WSClient("192.168.0.234", 5580, timeout=180); c.recv()
+c = WSClient("192.168.0.83", 5580, timeout=180); c.recv()
 c.send({"message_id":"c1","command":"commission_with_code",
         "args":{"code":"<manual-code>","network_only":True}})
 while True:
@@ -440,7 +440,7 @@ with "Unable to connect to accessory" *after* accepting the code.
 
 ### Trap 12 — wrong interface name
 
-`--interface wlp1s0`, never `wlan0`. Ubuntu's predictable names; the Pi 4's unit
+`--interface enp97s0`, never `wlan0`. Ubuntu's predictable names; the Pi 4's unit
 does not transfer. A wrong interface makes commissioning fail **silently**.
 
 ---

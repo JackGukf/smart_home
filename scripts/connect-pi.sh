@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.234}"
+PI_HOST="${PI_HOST:-192.168.0.83}"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE_PATH="${REMOTE_PATH:-/home/${PI_USER}/smart_home_AI}"
 
@@ -21,7 +21,7 @@ Examples:
       --remote-path /home/smarthome/smart-home-rpi4
 
 Environment variables:
-  PI_HOST       Board IP/hostname. Default: 192.168.0.234 (Orange Pi 6 Plus)
+  PI_HOST       Board IP/hostname. Default: 192.168.0.83 (Orange Pi 6 Plus)
   PI_USER       SSH username. Default: orangepi
   REMOTE_PATH   Remote project directory. Default: /home/$PI_USER/smart_home_AI
 EOF

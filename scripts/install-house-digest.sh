@@ -2,7 +2,7 @@
 #
 # Install the morning digest timer on the board.  Run it ON the Orange Pi.
 #
-#   ssh orangepi@192.168.0.234
+#   ssh orangepi@192.168.0.83
 #   cd smart_home_AI && ./scripts/install-house-digest.sh
 #
 # house-digest.timer fires house-digest.service at 04:00.  The service computes

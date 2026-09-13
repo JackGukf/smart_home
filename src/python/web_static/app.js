@@ -8153,7 +8153,7 @@ renderAlarmSection();
 let zigbeeFrameLoaded = false;
 
 function _zigbeeUiUrl(port, token) {
-  const host = window.location.hostname || "192.168.0.234";
+  const host = window.location.hostname || "192.168.0.83";
   const base = `http://${host}:${port || 8080}`;
   return token ? `${base}/?token=${encodeURIComponent(token)}` : base;
 }

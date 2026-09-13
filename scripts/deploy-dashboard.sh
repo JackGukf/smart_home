@@ -5,7 +5,7 @@
 # Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER] [--remote-path PATH]
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.234}"
+PI_HOST="${PI_HOST:-192.168.0.83}"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE_PATH="${REMOTE_PATH:-}"
 

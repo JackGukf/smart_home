@@ -33,7 +33,7 @@ same place as where the speech recognition runs.
 | Capture device | **yes** — ALC269VC analog, `card 0` | **none at all** — `arecord -l` is empty |
 | Playback | ALC269VC analog + 2× I2S/DP | bcm2835 headphones + HDMI |
 | Free USB | yes — only the Zigbee CP210x and the UB500 BT adapter are in | yes |
-| Network | `wlp1s0`, power save **on**, `enp97s0` down | `wlan0`, `eth0` down |
+| Network | **`enp97s0` Ethernet, 1000 Mb/s, 0.78 ms to the router** | `wlan0` Wi-Fi, ~50 ms to the board |
 | Busy with | HA, MQTT, zigbee2mqtt, go2rtc, Ollama, NPU detector | Chromium at ~117% of 400%, 5 camera streams |
 
 The panel's 2.80 load average is it doing *nothing but being a panel*. The
@@ -79,13 +79,13 @@ off the LAN.
 **2. The panel's browser cannot open a microphone, and the failure is silent.**
 The obvious design — a microphone button on the dashboard — does not work on the
 panel as it stands. The dashboard is served over plain HTTP
-(`http://192.168.0.234:8000/`), and `getUserMedia` is gated on a secure context:
+(`http://192.168.0.83:8000/`), and `getUserMedia` is gated on a secure context:
 HTTPS, or `localhost`, and the panel is neither. It does not error in a way
 anyone would notice; the promise rejects and the button does nothing. Three ways
 out, none free:
 
 - serve the dashboard over HTTPS with a certificate the panel trusts;
-- launch Chromium with `--unsafely-treat-insecure-origin-as-secure=http://192.168.0.234:8000`
+- launch Chromium with `--unsafely-treat-insecure-origin-as-secure=http://192.168.0.83:8000`
   (which also needs `--user-data-dir`, and weakens every origin rule for that
   profile);
 - **don't put the audio in the browser at all** — recommended, and what the
@@ -99,13 +99,14 @@ waits on Qwen is not a slow assistant, it is a broken one. Voice rides the
 **default pipeline**, which already has `prefer_local_intents` on, and the model
 stays the fallback for sentences the matcher cannot parse.
 
-**4. Audio is the next thing the Wi-Fi will break.** A satellite streaming
-16 kHz 16-bit mono is 256 kbit/s *continuously* if the wake word runs centrally.
-The board's own link averages 333 ms to its router with ~5% loss; panel → board
-measured 39 ms average, 82 ms peak, 0% loss over 8 packets that day. RTSP already
-turned that latency into loss. Two consequences: **do the Ethernet/power-save fix
-first**, and **choose a satellite that runs its wake word locally**, so audio
-only flows after someone has said the wake word.
+**4. Audio was the next thing the Wi-Fi would break — and the Wi-Fi is gone.**
+A satellite streaming 16 kHz 16-bit mono is 256 kbit/s *continuously* if the wake
+word runs centrally. The board's link averaged 333 ms to its router with ~5% loss
+and RTSP had already turned that into loss. **Fixed 2026-09-12**: the board moved
+to Ethernet and the same test now reads 0.78 ms, 0% loss. The second half of the
+advice still stands on its own merits — **choose a satellite that runs its wake
+word locally**, so audio only flows after someone has said it — and note the
+satellite will be on Wi-Fi even though the board no longer is.
 
 ## The architecture
 
@@ -233,9 +234,9 @@ and it is the only genuinely new code here.
 
 Staged the way the AI restore was, so an unexpected problem points at one change.
 
-**0. Fix the network.** Ethernet on `enp97s0`, or power save off on `wlp1s0`.
-Already open item #1 from the wall-panel handoff. Do this first or spend the
-project debugging audio dropouts that are actually Wi-Fi.
+**0. ~~Fix the network.~~ Done 2026-09-12.** The board is on Ethernet:
+0.78 ms to the router at 0% loss, against 333 ms and ~5% on Wi-Fi. This was the
+prerequisite and it is no longer in the way.
 
 **1. Piper (TTS).** One container, `MemoryMax` set the way `install-ollama.sh`
 does it. Replaces `tts.google_translate_en_com`, which is the last cloud

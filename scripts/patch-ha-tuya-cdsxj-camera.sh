@@ -11,7 +11,7 @@
 # is recreated or the image is updated -- re-run this script after either.
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.234}"
+PI_HOST="${PI_HOST:-192.168.0.83}"
 PI_USER="${PI_USER:-orangepi}"
 CONTAINER="${HA_CONTAINER:-homeassistant}"
 RESTART=1
@@ -24,7 +24,7 @@ Usage:
                                         [--revert] [--local]
 
 Options:
-  --host HOST       Board IP/hostname. Default: 192.168.0.234
+  --host HOST       Board IP/hostname. Default: 192.168.0.83
   --user USER       SSH username. Default: orangepi
   --container NAME  Home Assistant container name. Default: homeassistant
   --no-restart      Apply the patch without restarting Home Assistant

@@ -14,7 +14,7 @@ set -euo pipefail
 
 PI_HOST="${KIOSK_HOST:-192.168.0.176}"
 PI_USER="${KIOSK_USER:-smarthome}"
-DASHBOARD_URL="${DASHBOARD_URL:-http://192.168.0.234:8000/}"
+DASHBOARD_URL="${DASHBOARD_URL:-http://192.168.0.83:8000/}"
 DO_REBOOT=0
 
 while [[ $# -gt 0 ]]; do
