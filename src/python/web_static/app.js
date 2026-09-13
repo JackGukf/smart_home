@@ -5894,9 +5894,19 @@ const HOME_GRID_GAP = 16;
    and change another in the same column to match, or that column stops lining
    up - the totals are the invariant, not the individual numbers.
 
-     left    3 + 9 + 8  = 20     Weather, Climate, Temperatures
+     left    2 + 9 + 9  = 20     Weather, Climate, Temperatures
      middle 11 + 9      = 20     Camera, Alarm
      right  20          = 20     Areas
+
+   Two rows of that are load-bearing across columns, not just within one.
+   Weather plus Climate spans rows 1-11, which is exactly Camera, so the left
+   and middle columns break at the same place; Temperatures and Alarm then both
+   run 12-20 and line up across the view. Move one and its opposite number has
+   to move with it.
+
+   Weather at two rows is 74px on the panel, under the ~150px the card wants, so
+   it scales with its own height through a container query - see
+   "#homeWeatherPanel" in styles.css. Without that it clips.
 
    The previous table totalled 20 / 15 / 12, which on the 1920x1080 wall panel
    meant the left column ran 220px past the bottom of the screen while Areas
@@ -5909,9 +5919,9 @@ const HOME_GRID_GAP = 16;
    back to this table for any card the saved layout has no entry for; what it
    will not do is move a card the user has already placed. */
 const DEFAULT_HOME_LAYOUT = {
-  weather:     { x: 1, y: 1,  w: 4, h: 3 },
-  climate:     { x: 1, y: 4,  w: 4, h: 9 },
-  tempsensors: { x: 1, y: 13, w: 4, h: 8 },
+  weather:     { x: 1, y: 1,  w: 4, h: 2 },
+  climate:     { x: 1, y: 3,  w: 4, h: 9 },
+  tempsensors: { x: 1, y: 12, w: 4, h: 9 },
   camera:      { x: 5, y: 1,  w: 4, h: 11 },
   alarm:       { x: 5, y: 12, w: 4, h: 9 },
   areas:       { x: 9, y: 1,  w: 4, h: 20 },

@@ -212,3 +212,57 @@ def test_the_weather_card_gets_the_height_it_cannot_compress_below() -> None:
         "Weather needs four of the fourteen rows on a small screen; it cannot "
         "shrink below its icon the way Climate and Temperatures can"
     )
+
+
+# ── Cross-column alignment, three-column layout only ─────────────────────────
+#
+# Two relationships run across columns rather than within one, so they cannot be
+# kept by the per-column totals alone. Weather plus Climate has to break where
+# Camera does, and Temperatures has to sit exactly where Security sits.
+
+
+def test_weather_and_climate_together_match_camera() -> None:
+    layout = _default_layout()
+    weather, climate, camera = layout["weather"], layout["climate"], layout["camera"]
+
+    assert weather["y"] == camera["y"] == 1, "all three start at the top"
+    assert climate["y"] + climate["h"] == camera["y"] + camera["h"], (
+        "Weather + Climate must end exactly where Camera ends, or the left and "
+        "middle columns break at different heights"
+    )
+    assert weather["h"] + climate["h"] == camera["h"], (
+        "2 + 9 == 11. The gap between Weather and Climate is not a row - Camera "
+        "spanning 11 rows already contains the ten gaps between them, so the "
+        "pixel heights come out equal: 74 + 16 + 389 == 479"
+    )
+
+
+def test_temperatures_and_security_occupy_the_same_rows() -> None:
+    layout = _default_layout()
+    temps, alarm = layout["tempsensors"], layout["alarm"]
+
+    assert (temps["y"], temps["h"]) == (alarm["y"], alarm["h"]), (
+        f"Temperatures {temps} and Security {alarm} must line up across the view"
+    )
+
+
+def test_weather_scales_with_its_own_height_rather_than_clipping() -> None:
+    """Two rows is 74px against the ~150px the card wants.
+
+    Same mechanism the sensor tiles already use: the card is its own size
+    container and its type is a clamp on cqh, so it shrinks continuously instead
+    of at a breakpoint, and tops out at the original sizes when given more room.
+    """
+    css = STYLES.read_text(encoding="utf-8")
+
+    assert "#homeWeatherPanel { container-type: size; }" in css
+    for part in ("home-weather-body > i", "home-weather-temp", "home-weather-cond"):
+        assert re.search(rf"#homeWeatherPanel \.{re.escape(part)}[^{{]*\{{[^}}]*cqh", css),             f"{part} must scale with the card height"
+    # The label is the one part that is dropped rather than shrunk.
+    assert "@container (max-height: 110px)" in css
+
+
+def test_the_small_screen_layout_does_not_inherit_the_two_row_weather() -> None:
+    """iPad mini gives Weather four rows; only the three-column view shrinks it."""
+    assert _default_layout()["weather"]["h"] == 2
+    assert _two_column_layout()["weather"]["h"] == 4

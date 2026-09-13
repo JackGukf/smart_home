@@ -4332,6 +4332,43 @@ aside {
   #homeSensorsPanel .temp-tile-name { font-size: clamp(8.5px, 3.2cqh, 13px); }
 }
 
+/* ── Weather scales with its own height ────────────────────────────────────
+   Weather is two of the twenty rows in the three-column layout, which is 74px
+   on the panel, and the card wants about 150: ~30px of padding, ~22px of header
+   and a body whose icon alone is a fixed 58px. At two rows it clipped to a
+   sliver.
+
+   Same answer as the sensor tiles above - the card is its own size container
+   and everything in it is a clamp on cqh, so it shrinks continuously with the
+   card instead of at a breakpoint. The clamps top out at the original values,
+   so a card dragged larger looks exactly as it always did.
+
+   Two rows works out at roughly a 25px icon over 19px of temperature, with the
+   label dropped, inside 36px of body - readable rather than merely present. */
+@media (min-width: 1101px) {
+  #homeWeatherPanel { container-type: size; }
+
+  #homeWeatherPanel.home-panel { padding: clamp(6px, 9cqh, 14px) 16px clamp(6px, 10cqh, 16px); }
+  #homeWeatherPanel .home-panel-head { margin-bottom: clamp(0px, 2cqh, 10px); }
+  #homeWeatherPanel .panel-title { font-size: clamp(9px, 13cqh, 12px); }
+
+  #homeWeatherPanel .home-weather-body {
+    margin-top: clamp(0px, 4cqh, 10px);
+    padding: clamp(0px, 4cqh, 10px) clamp(2px, 3cqh, 8px);
+    gap: clamp(8px, 9cqh, 20px);
+  }
+  #homeWeatherPanel .home-weather-body > i { font-size: clamp(20px, 34cqh, 58px); }
+  #homeWeatherPanel .home-weather-temp { font-size: clamp(16px, 26cqh, 34px); }
+  #homeWeatherPanel .home-weather-label { font-size: clamp(9px, 9cqh, 12px); }
+  #homeWeatherPanel .home-weather-cond { font-size: clamp(8.5px, 8cqh, 11.5px); }
+
+  /* The first thing to go when it gets tight. The card header already says
+     WEATHER, so "Outdoor Temperature" is the line carrying the least. */
+  @container (max-height: 110px) {
+    #homeWeatherPanel .home-weather-label { display: none; }
+  }
+}
+
 .home-camera-select {
   max-width: 55%;
   padding: 4px 8px;
