@@ -290,3 +290,22 @@ def test_a_stored_cell_cannot_outlive_the_table_it_was_resolved_against() -> Non
 
     assert "HOME_CARD_LAYOUT_VERSION" in body, "the loader must check the version"
     assert "DEFAULT_HOME_LAYOUT[id]" in body, "custom cards must survive the drop"
+
+
+def test_the_camera_player_grows_into_slack_but_never_shrinks() -> None:
+    """Locked to 16:9 it was sized by width alone.
+
+    The wall panel gives the card 485px and a 506px-wide 16:9 frame needs 284,
+    so ~112px sat empty under the controls. `flex: 1 0 auto` lets it take the
+    remainder - and the 0 matters: where the frame already wants more height
+    than the card has, as on an iPad mini, it must not be flexed smaller.
+    """
+    css = STYLES.read_text(encoding="utf-8")
+
+    assert "#homeCameraPanel .home-camera-frame { flex: 1 0 auto; }" in css, \
+        "must grow (1) and never shrink (0)"
+    # The 16:9 basis has to stay, because it is what the frame grows *from*.
+    assert re.search(r"\.home-camera-frame \{[^}]*aspect-ratio: 16 / 9", css)
+    # Below 740px cards are natural height and the ratio is load-bearing.
+    block = css.split("The camera player takes the height the card actually has")[1]
+    assert "@media (min-width: 740px)" in block.split("@media")[0] + "@media (min-width: 740px)"

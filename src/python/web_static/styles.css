@@ -4332,6 +4332,33 @@ aside {
   #homeSensorsPanel .temp-tile-name { font-size: clamp(8.5px, 3.2cqh, 13px); }
 }
 
+/* ── The camera player takes the height the card actually has ──────────────
+   .home-camera-frame is locked to 16:9, so it was sized entirely by the card's
+   width. When the card is taller than that - the wall panel gives it 485px and
+   a 506px-wide 16:9 frame only needs 284 - the remainder sat as ~112px of dead
+   space under the controls.
+
+   `flex: 1 0 auto` is the whole fix, and the 0 is the important digit: the
+   frame grows into slack but never shrinks, so its 16:9 basis still applies
+   wherever there is no slack to take. On an iPad mini, where the frame already
+   wants more height than the card has, nothing changes at all.
+
+   Not applied below 740px: there the cards are a flex column at their natural
+   height, so the frame's own ratio is what gives the card its height, and
+   letting it flex would collapse it. */
+@media (min-width: 740px) {
+  #homeCameraPanel .home-camera-body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  #homeCameraPanel .home-camera-frame { flex: 1 0 auto; }
+
+  /* The pre-aspect-ratio fallback adds height with a padding box, which a
+     flexed height cannot override - it would stack on top. */
+  html.no-aspect-ratio #homeCameraPanel .home-camera-frame::before { content: none; }
+}
+
 /* ── Weather scales with its own height ────────────────────────────────────
    Weather is two of the twenty rows in the three-column layout, which is 74px
    on the panel, and the card wants about 150: ~30px of padding, ~22px of header
