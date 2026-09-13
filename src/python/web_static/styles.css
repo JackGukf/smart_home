@@ -3672,6 +3672,15 @@ aside {
    Scoped to the home panel on purpose: Cameras and Devices are lists and are
    supposed to scroll. */
 @media (min-width: 1101px) {
+  /* [hidden] must beat the flex display below, same idiom as .home-card[hidden].
+     `display` on an id wins against the user agent's [hidden] { display: none }
+     on specificity alone - 1,0,0 against 0,1,0 - so without this, clicking an
+     area did nothing useful: renderAreaDetail() hides #homeOverview, the
+     overview stayed on screen anyway, and the area detail drew on top of it.
+     Anything below that sets display needs to be listed here too. */
+  #homeOverview[hidden],
+  .view-panel[data-view-panel="home"][hidden] { display: none; }
+
   .view-panel.active[data-view-panel="home"] {
     display: flex;
     flex-direction: column;

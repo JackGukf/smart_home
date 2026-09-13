@@ -309,3 +309,29 @@ def test_the_camera_player_grows_into_slack_but_never_shrinks() -> None:
     # Below 740px cards are natural height and the ratio is load-bearing.
     block = css.split("The camera player takes the height the card actually has")[1]
     assert "@media (min-width: 740px)" in block.split("@media")[0] + "@media (min-width: 740px)"
+
+
+def test_hiding_the_overview_actually_hides_it() -> None:
+    """Opening an area broke the whole view until this was here.
+
+    renderAreaDetail() sets #homeOverview.hidden = true and shows a sibling.
+    But `display` on an id beats the user agent's [hidden] { display: none } on
+    specificity - 1,0,0 against 0,1,0 - so the fit rules kept the overview on
+    screen and the area detail drew on top of it, with no way back but a reload.
+
+    The codebase already had this idiom for .home-card[hidden]; the fit rules
+    needed it too. Any new rule here that sets display needs the same guard.
+    """
+    css = STYLES.read_text(encoding="utf-8")
+
+    assert "#homeOverview[hidden]" in css, \
+        "#homeOverview sets display, so it must also state what [hidden] means"
+    assert '.view-panel[data-view-panel="home"][hidden]' in css
+
+    # The guard has to sit with the rule it guards - same media block - or the
+    # breakpoint will not carry it.
+    guard = css.index("#homeOverview[hidden]")
+    rule = css.index("#homeOverview {")
+    assert guard < rule, "the guard must come before the display rule"
+    assert rule - guard < 400, "the guard drifted away from the rule it guards"
+    assert "display: none" in css[guard:rule]
