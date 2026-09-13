@@ -15,7 +15,16 @@ CONFIG_FILE="${HOME}/.config/smart-home-kiosk.env"
 # shellcheck source=/dev/null
 [[ -r "${CONFIG_FILE}" ]] && source "${CONFIG_FILE}"
 
-DASHBOARD_URL="${DASHBOARD_URL:-http://192.168.0.83:8000/}"
+# No default address. setup-kiosk-display.sh writes DASHBOARD_URL into the config
+# file above, from configs/hosts.env. A literal here is how the panel ended up
+# pointed at a dead address for hours on 2026-09-12 after the board moved: the
+# installed copy still had the old one baked in and nothing said so. Failing is
+# louder than quietly loading the wrong host.
+if [[ -z "${DASHBOARD_URL:-}" ]]; then
+    echo "kiosk: DASHBOARD_URL is not set (expected it in ${CONFIG_FILE});"\
+         " re-run scripts/setup-kiosk-display.sh" >&2
+    exit 1
+fi
 CHROMIUM_BIN="${CHROMIUM_BIN:-$(command -v chromium || command -v chromium-browser || true)}"
 PROFILE_DIR="${PROFILE_DIR:-${HOME}/.config/chromium-kiosk}"
 LOG_FILE="${LOG_FILE:-${HOME}/.local/state/smart-home-kiosk.log}"

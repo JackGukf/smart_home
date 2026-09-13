@@ -12,9 +12,18 @@
 #                                       [--dashboard-url URL] [--reboot]
 set -euo pipefail
 
-PI_HOST="${KIOSK_HOST:-192.168.0.176}"
-PI_USER="${KIOSK_USER:-smarthome}"
-DASHBOARD_URL="${DASHBOARD_URL:-http://192.168.0.83:8000/}"
+# Addresses come from configs/hosts.env - the only place they are written down.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hosts.sh"
+
+# Careful: two machines in one script. hosts.sh defines PI_HOST as the *board*,
+# but this script's ssh target is the *panel* - so capture the board's address
+# before PI_HOST is repurposed below. Getting this backwards points the panel at
+# itself and it displays nothing.
+BOARD_HOST="${BOARD_HOST:-$PI_HOST}"
+
+PI_HOST="${KIOSK_HOST:-$RPI4_HOST}"
+PI_USER="${KIOSK_USER:-$RPI4_USER}"
+DASHBOARD_URL="${DASHBOARD_URL:-http://${BOARD_HOST}:${DASHBOARD_PORT}/}"
 DO_REBOOT=0
 
 while [[ $# -gt 0 ]]; do

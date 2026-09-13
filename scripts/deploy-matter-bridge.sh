@@ -6,7 +6,7 @@
 # enabled. The old Docker deployment path was retired 2026-07-08.
 #
 # Requires:
-#   PI_HOST env var — board IP address or hostname (default: 192.168.0.83)
+#   PI_HOST env var — board IP address or hostname (set in configs/hosts.env)
 #   PI_USER env var — SSH username (default: orangepi, matching deploy-to-pi.sh)
 #
 # Usage:
@@ -14,12 +14,13 @@
 #   SKIP_BUILD=1 bash scripts/deploy-matter-bridge.sh
 #
 # Secondary Raspberry Pi 4 install:
-#   PI_HOST=192.168.0.176 PI_USER=smarthome \
+#   PI_HOST="$RPI4_HOST" PI_USER="$RPI4_USER" \
 #     REMOTE_PATH=/home/smarthome/smart-home-rpi4 bash scripts/deploy-matter-bridge.sh
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PI_HOST="${PI_HOST:-192.168.0.83}"
+# Addresses come from configs/hosts.env - the only place they are written down.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hosts.sh"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE="${PI_USER}@${PI_HOST}"
 REMOTE_DIR="${REMOTE_PATH:-/home/${PI_USER}/smart_home_AI}"

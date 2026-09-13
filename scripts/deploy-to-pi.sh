@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.83}"
+# Addresses come from configs/hosts.env - the only place they are written down.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hosts.sh"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE_PATH="${REMOTE_PATH:-}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -14,14 +15,14 @@ Usage:
                           [--board orangepi6|rpi4] [--skip-build]
 
 Environment variables:
-  PI_HOST       Board hostname or IP address. Default: 192.168.0.83 (Orange Pi 6 Plus)
+  PI_HOST       Board hostname or IP address. Default: configs/hosts.env (Orange Pi 6 Plus)
   PI_USER       SSH username. Default: orangepi
   REMOTE_PATH   Remote install directory. Default: /home/$PI_USER/smart_home_AI
   BOARD         Target board for the cross build. Default: orangepi6
   SKIP_BUILD    Set to 1 to skip cross-compiling before deploy.
 
 Deploying to the secondary Raspberry Pi 4 install:
-  scripts/deploy-to-pi.sh --board rpi4 --host 192.168.0.176 --user smarthome \
+  scripts/deploy-to-pi.sh --board rpi4 --host "$RPI4_HOST" --user "$RPI4_USER" \
       --remote-path /home/smarthome/smart-home-rpi4
 EOF
 }

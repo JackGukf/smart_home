@@ -2588,7 +2588,8 @@ function renderHomeAssistant(payload) {
 }
 
 function homeAssistantUrl() {
-  const host = window.location.hostname || "192.168.0.176";
+  /* No fallback address: see _zigbeeUiUrl. The browser knows where it is. */
+  const host = window.location.hostname;
   return `http://${host}:8123/lovelace/default_view`;
 }
 
@@ -8153,7 +8154,10 @@ renderAlarmSection();
 let zigbeeFrameLoaded = false;
 
 function _zigbeeUiUrl(port, token) {
-  const host = window.location.hostname || "192.168.0.83";
+  /* No fallback address on purpose: a literal here would be a second place the
+     board's address is written down, and it would be wrong the moment the board
+     moves. location.hostname is always set for a page served over http. */
+  const host = window.location.hostname;
   const base = `http://${host}:${port || 8080}`;
   return token ? `${base}/?token=${encodeURIComponent(token)}` : base;
 }

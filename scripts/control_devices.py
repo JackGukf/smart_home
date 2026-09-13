@@ -11,11 +11,16 @@ Usage:
   python3 scripts/control_devices.py on  "Kitchen light switch"  # by name
 """
 import sys
+from pathlib import Path
 import json
 import urllib.request
 import urllib.error
 
-BASE = "http://192.168.0.83:8000"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.python.hosts import DASHBOARD_PORT, PI_HOST  # noqa: E402
+
+BASE = f"http://{PI_HOST}:{DASHBOARD_PORT}"
 
 
 def fetch(path, method="GET", body=None):

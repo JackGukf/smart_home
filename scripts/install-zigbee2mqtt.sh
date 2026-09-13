@@ -3,7 +3,7 @@
 # Set up the local Zigbee coordinator stack (Mosquitto + Zigbee2MQTT) on the
 # board.  Run it ON the Orange Pi, not on the workstation.
 #
-#   ssh orangepi@192.168.0.83
+#   ssh orangepi@<board>        # address: configs/hosts.env
 #   cd smart_home_AI && ./scripts/install-zigbee2mqtt.sh
 #
 # It is safe to re-run: existing credentials are kept rather than regenerated,

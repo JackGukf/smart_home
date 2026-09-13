@@ -5,7 +5,8 @@
 # Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER] [--remote-path PATH]
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.83}"
+# Addresses come from configs/hosts.env - the only place they are written down.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hosts.sh"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE_PATH="${REMOTE_PATH:-}"
 

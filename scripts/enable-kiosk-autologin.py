@@ -7,8 +7,8 @@ scripts/kiosk/configure-autologin.py to the Orange Pi and runs it there with the
 dashboard's virtualenv - nothing is left behind on the board, so the repo copy
 is always the one that ran.
 
-    scripts/enable-kiosk-autologin.py --kiosk-ip 192.168.0.176
-    scripts/enable-kiosk-autologin.py --kiosk-ip 192.168.0.176 --dry-run
+    scripts/enable-kiosk-autologin.py --kiosk-ip "$RPI4_HOST"   # configs/hosts.env
+    scripts/enable-kiosk-autologin.py --kiosk-ip "$RPI4_HOST" --dry-run
 
 The panel's IP address becomes a credential for both the dashboard and Home
 Assistant. Give it a static DHCP lease before you rely on this.
@@ -20,7 +20,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_HOST = "192.168.0.83"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.python.hosts import PI_HOST as DEFAULT_HOST  # noqa: E402
 DEFAULT_USER = "orangepi"
 
 

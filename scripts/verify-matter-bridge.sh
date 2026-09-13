@@ -14,7 +14,7 @@
 #   scripts/verify-matter-bridge.sh --cycle 7 --times 2
 #
 # Environment:
-#   PI_HOST        board address              (default 192.168.0.83)
+#   PI_HOST        board address              (set in configs/hosts.env)
 #   CHIP_TOOL      chip-tool binary           (default: first on PATH)
 #   NODE_ID        node id in chip-tool       (default 1)
 #   STORAGE_DIR    chip-tool fabric storage   (default ~/.chip-tool-bridge)
@@ -36,7 +36,8 @@
 # run against real lights.
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.83}"
+# Addresses come from configs/hosts.env - the only place they are written down.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hosts.sh"
 CHIP_TOOL="${CHIP_TOOL:-$(command -v chip-tool || true)}"
 NODE_ID="${NODE_ID:-1}"
 STORAGE_DIR="${STORAGE_DIR:-$HOME/.chip-tool-bridge}"

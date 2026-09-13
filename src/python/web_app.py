@@ -5566,11 +5566,66 @@ def _stream_name(value: str) -> str:
     return "".join(char.lower() if char.isalnum() else "_" for char in str(value)).strip("_")
 
 
-def _go2rtc_player_url(camera: CameraDefinition, mode: str) -> str | None:
+GO2RTC_DEFAULT_PORT = 1984
+
+
+def _go2rtc_auto_port(value: str) -> int | None:
+    """Port for an `auto` / `auto:PORT` setting, or None when it is a real URL.
+
+    `auto` means "go2rtc is on this machine". Writing the board's address here
+    instead is what broke every camera when the board moved from Wi-Fi to
+    Ethernet on 2026-09-12: the config said 192.168.0.234 and nothing on the
+    board had any reason to notice it was wrong.
+    """
+    text = str(value).strip().lower()
+    if text == "auto":
+        return GO2RTC_DEFAULT_PORT
+    prefix, separator, suffix = text.partition(":")
+    if prefix == "auto" and separator and suffix.isdigit():
+        return int(suffix)
+    return None
+
+
+def _lan_address() -> str:
+    """The address this machine reaches the LAN on.
+
+    Opens a UDP socket towards the default route and reads back the local end.
+    UDP connect only fixes a route, so no packet is sent and nothing has to be
+    listening; it costs microseconds. Deliberately *not* cached - the whole
+    point is to follow the address rather than pin it, and a cached value would
+    reintroduce the bug this exists to prevent.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            # TEST-NET-1: routed like any other address, never actually answers.
+            probe.connect(("192.0.2.1", 9))
+            return str(probe.getsockname()[0])
+    except OSError:
+        # No default route. Loopback at least keeps same-host clients working.
+        return "127.0.0.1"
+
+
+def _go2rtc_base_url(camera: CameraDefinition, *, for_browser: bool) -> str | None:
+    """Base go2rtc URL, resolved for whoever is going to fetch it.
+
+    The two callers need different answers from the same setting. A browser on
+    the wall panel needs an address it can route to; the dashboard fetching a
+    still frame is on the same box as go2rtc and should not take a round trip
+    across the LAN to talk to itself.
+    """
     if not camera.go2rtc_url:
         return None
+    port = _go2rtc_auto_port(camera.go2rtc_url)
+    if port is None:
+        return camera.go2rtc_url.rstrip("/")
+    return f"http://{_lan_address() if for_browser else '127.0.0.1'}:{port}"
 
-    base_url = camera.go2rtc_url.rstrip("/")
+
+def _go2rtc_player_url(camera: CameraDefinition, mode: str) -> str | None:
+    base_url = _go2rtc_base_url(camera, for_browser=True)
+    if not base_url:
+        return None
+
     stream = quote_plus(camera.stream_name)
     if mode == "hls":
         return f"{base_url}/stream.html?src={stream}&mode=hls"
@@ -5578,10 +5633,10 @@ def _go2rtc_player_url(camera: CameraDefinition, mode: str) -> str | None:
 
 
 def _go2rtc_frame_url(camera: CameraDefinition) -> str | None:
-    if not camera.go2rtc_url:
+    base_url = _go2rtc_base_url(camera, for_browser=False)
+    if not base_url:
         return None
 
-    base_url = camera.go2rtc_url.rstrip("/")
     return f"{base_url}/api/frame.jpeg?src={quote_plus(camera.stream_name)}"
 
 

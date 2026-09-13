@@ -2,7 +2,7 @@
 #
 # Phase 3 step 1 of the local-AI restore: Ollama, alone.  Run it ON the Orange Pi.
 #
-#   ssh orangepi@192.168.0.83
+#   ssh orangepi@<board>        # address: configs/hosts.env
 #   cd smart_home_AI && ./scripts/install-ollama.sh
 #
 # Ollama goes back first -- ahead of llama-server, which is faster -- because it
@@ -304,7 +304,7 @@ that an idle model is actually unloaded and the memory comes back:
 
 Reach it from the workstation over a tunnel, never by widening the bind address:
 
-  ssh -N -L 11434:127.0.0.1:11434 orangepi@192.168.0.83
+  ssh -N -L 11434:127.0.0.1:11434 ${PI_USER:-orangepi}@${PI_HOST:-<board>}
 
 Rollback is one command:
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.83}"
+# Addresses come from configs/hosts.env - the only place they are written down.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hosts.sh"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE_PATH="${REMOTE_PATH:-/home/${PI_USER}/smart_home_AI}"
 
@@ -17,11 +18,11 @@ Examples:
   scripts/connect-pi.sh -- "cd ~/smart_home_AI && ./bin/smart_home_controller"
 
   # Secondary Raspberry Pi 4 target:
-  scripts/connect-pi.sh --host 192.168.0.176 --user smarthome \
+  scripts/connect-pi.sh --host "$RPI4_HOST" --user "$RPI4_USER" \
       --remote-path /home/smarthome/smart-home-rpi4
 
 Environment variables:
-  PI_HOST       Board IP/hostname. Default: 192.168.0.83 (Orange Pi 6 Plus)
+  PI_HOST       Board IP/hostname. Default: configs/hosts.env (Orange Pi 6 Plus)
   PI_USER       SSH username. Default: orangepi
   REMOTE_PATH   Remote project directory. Default: /home/$PI_USER/smart_home_AI
 EOF

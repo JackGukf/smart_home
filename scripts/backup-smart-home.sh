@@ -26,7 +26,8 @@
 #      manifest of REQUIRED members and fails if any is missing.
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.83}"
+# Addresses come from configs/hosts.env - the only place they are written down.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hosts.sh"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE_PATH="${REMOTE_PATH:-/home/${PI_USER}/smart_home_AI}"
 HA_CONFIG="${HA_CONFIG:-/home/${PI_USER}/homeassistant-config}"
@@ -49,7 +50,7 @@ Usage:
 Writes <out>/smart-home-backup-<UTC date>.tgz and verifies it.
 
 Options:
-  --host HOST       Board IP/hostname.        Default: 192.168.0.83
+  --host HOST       Board IP/hostname.        set in configs/hosts.env
   --user USER       SSH username.             Default: orangepi
   --out DIR         Local output directory.   Default: ~/orangepi-recovery
   --ha-config PATH  Home Assistant config dir on the board.

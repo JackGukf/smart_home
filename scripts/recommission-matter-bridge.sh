@@ -6,7 +6,7 @@
 # the orangepi user (see configs/matter-bridge.service).
 #
 # Requires:
-#   PI_HOST env var — board IP address or hostname (default: 192.168.0.83)
+#   PI_HOST env var — board IP address or hostname (set in configs/hosts.env)
 #   PI_USER env var — SSH username (default: orangepi)
 #
 # Usage:
@@ -14,7 +14,8 @@
 #   KEEP_KVS=1 bash scripts/recommission-matter-bridge.sh   # restart only, keep fabrics
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-192.168.0.83}"
+# Addresses come from configs/hosts.env - the only place they are written down.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hosts.sh"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE="${PI_USER}@${PI_HOST}"
 KEEP_KVS="${KEEP_KVS:-0}"
