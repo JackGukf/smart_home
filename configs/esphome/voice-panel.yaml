@@ -191,6 +191,27 @@ media_player:
       format: FLAC
       sample_rate: 48000
       num_channels: 1
+    # The microphone and the speaker are the same I2S bus on this board - one
+    # MCLK, BCLK and LRCK between the ES7210 and the ES8311 - so they cannot run
+    # at once. With the wake word listening continuously the speaker could not
+    # start at all: "Parent bus is busy", retrying once a second until the mic
+    # happened to let go. That is why every announcement hung for seconds and
+    # the satellite sat in "responding".
+    #
+    # So the microphone steps aside for playback and comes back afterwards.
+    on_announcement:
+      - if:
+          condition:
+            - microphone.is_capturing:
+          then:
+            - micro_wake_word.stop:
+    on_idle:
+      - if:
+          condition:
+            not:
+              voice_assistant.is_running:
+          then:
+            - micro_wake_word.start:
 
 micro_wake_word:
   id: wake_word
