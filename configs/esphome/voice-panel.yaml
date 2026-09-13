@@ -118,19 +118,35 @@ audio_dac:
     i2c_id: bus_a
     address: 0x18
     bits_per_sample: 16bit
-    sample_rate: 16000
+    # Playback runs at 48k while the microphone stays at 16k. The two codecs
+    # share one I2S bus on this board, but they are not used at the same time,
+    # so each stream configures the clock when it starts. 16k everywhere was
+    # the wake word's requirement leaking into playback and making speech
+    # sound thin.
+    sample_rate: 48000
     use_mclk: true
 
+# Three speakers for one physical output, which ESPHome requires rather than
+# suggests: the announcement and media pipelines cannot share a speaker, and
+# saying so is a hard config error. A mixer owns the real I2S output and hands
+# each pipeline its own source to write into.
 speaker:
   - platform: i2s_audio
-    id: spkr
+    id: i2s_out
     i2s_audio_id: i2s_bus
     i2s_dout_pin: GPIO6
     dac_type: external
     audio_dac: es8311_dac
     bits_per_sample: 16bit
-    sample_rate: 16000
+    sample_rate: 48000
     channel: mono
+
+  - platform: mixer
+    id: mixer_out
+    output_speaker: i2s_out
+    source_speakers:
+      - id: announcement_spk
+      - id: media_spk
 
 # Announcements and any other audio Home Assistant sends come through a media
 # player rather than straight at the speaker. Without one the satellite reports
@@ -140,10 +156,28 @@ media_player:
   - platform: speaker
     id: media_out
     name: "Media"
+    # The range is the usable part of the dial, found by listening rather than
+    # assumed. With volume_multiplier back at 1.0 the codec is clean to at least
+    # 0.8, where it sits at a normal speaking level - so 0.8 belongs in the
+    # middle of the control, not at the top, and the old 0.3 floor was below
+    # anything worth hearing.
+    volume_min: 0.5
+    volume_max: 1.0
+    # Two pipelines, and both are needed. announcement_pipeline carries
+    # assist_satellite.announce and the assistant's replies; media_pipeline
+    # carries media_player.play_media. Defining only the first left play_media
+    # with no speaker to drain into, so it sat in "playing" for ever and made
+    # nothing come out - which reads as dead hardware rather than as a missing
+    # four lines of config.
     announcement_pipeline:
-      speaker: spkr
+      speaker: announcement_spk
       format: FLAC
-      sample_rate: 16000
+      sample_rate: 48000
+      num_channels: 1
+    media_pipeline:
+      speaker: media_spk
+      format: FLAC
+      sample_rate: 48000
       num_channels: 1
 
 micro_wake_word:
@@ -167,7 +201,10 @@ voice_assistant:
   micro_wake_word: wake_word
   noise_suppression_level: 2
   auto_gain: 31dBFS
-  volume_multiplier: 2.0
+  # Was 2.0, copied from ESPHome's reference device, which drives a different
+  # amplifier. Doubling the TTS before it reaches a codec that is already near
+  # full scale is the other half of the clipping.
+  volume_multiplier: 1.0
   on_end:
     - micro_wake_word.start:
 
