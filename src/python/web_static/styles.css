@@ -3725,10 +3725,17 @@ aside {
     gap: 8px;
   }
 
-  /* Left column: the things you read rather than operate. */
-  #homeOverview > .home-layout > [data-home-card="weather"]     { grid-column: 1 / span 6  !important; grid-row: 1 / span 2  !important; }
-  #homeOverview > .home-layout > [data-home-card="climate"]     { grid-column: 1 / span 6  !important; grid-row: 3 / span 6  !important; }
-  #homeOverview > .home-layout > [data-home-card="tempsensors"] { grid-column: 1 / span 6  !important; grid-row: 9 / span 6  !important; }
+  /* Left column: the things you read rather than operate.
+
+     Weather gets four rows, not two. It is the one card here that cannot
+     compress: ~54px of padding and header plus a fixed 58px icon means it needs
+     about 120px before anything renders, and two rows is 71px - so it clipped
+     to a sliver and scrolled inside itself. The two rows come from Climate and
+     Temperatures because both degrade gracefully - the ecobee dial scales
+     itself to its card, and the sensor grid scrolls. */
+  #homeOverview > .home-layout > [data-home-card="weather"]     { grid-column: 1 / span 6  !important; grid-row: 1 / span 4  !important; }
+  #homeOverview > .home-layout > [data-home-card="climate"]     { grid-column: 1 / span 6  !important; grid-row: 5 / span 5  !important; }
+  #homeOverview > .home-layout > [data-home-card="tempsensors"] { grid-column: 1 / span 6  !important; grid-row: 10 / span 5 !important; }
 
   /* Right column: the things you look at and act on. */
   #homeOverview > .home-layout > [data-home-card="camera"]      { grid-column: 7 / span 6  !important; grid-row: 1 / span 6  !important; }

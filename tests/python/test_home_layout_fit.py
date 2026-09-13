@@ -193,3 +193,22 @@ def test_cards_cannot_be_dragged_where_css_places_them() -> None:
     assert "function homeCardsArrangeable()" in js
     # Both the move and the resize handler must ask, not just one.
     assert js.count("!homeCardsArrangeable()) return;") == 2
+
+
+def test_the_weather_card_gets_the_height_it_cannot_compress_below() -> None:
+    """It is the one Home card with a hard floor.
+
+    ~54px of card padding and panel header, plus a fixed 58px weather icon, is
+    about 120px before anything renders. Two of fourteen rows is 71px on an iPad
+    mini in landscape, which clipped it to a sliver that scrolled inside its own
+    card. Four rows is 151px.
+
+    The other cards in that column can give the rows up: the ecobee dial scales
+    itself to whatever card it is in, and the sensor grid scrolls.
+    """
+    weather = _two_column_layout()["weather"]
+
+    assert weather["h"] >= 4, (
+        "Weather needs four of the fourteen rows on a small screen; it cannot "
+        "shrink below its icon the way Climate and Temperatures can"
+    )
