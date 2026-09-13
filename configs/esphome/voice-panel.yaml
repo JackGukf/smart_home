@@ -32,6 +32,15 @@ esphome:
         # the audio enable: without it the ES8311 plays into nothing and the
         # ES7210 hears nothing, with no error from either.
         - switch.turn_on: audio_enable
+    - priority: -100
+      then:
+        # micro_wake_word does not listen until something tells it to, and the
+        # only other start here is in voice_assistant's on_end - which can never
+        # run, because no session can end that never began. Without this the
+        # device sits idle for ever: Home Assistant lists the wake word, the
+        # microphone is configured, and nothing is listening to it.
+        - delay: 3s
+        - micro_wake_word.start:
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -190,6 +199,9 @@ micro_wake_word:
   models:
     - model: okay_nabu
   on_wake_word_detected:
+    - logger.log:
+        format: "wake word detected: %s"
+        args: [wake_word.c_str()]
     - voice_assistant.start:
         wake_word: !lambda return wake_word;
 
