@@ -5869,6 +5869,16 @@ document.addEventListener("click", async (event) => {
    its own cell {x, y, w, h}; moving or resizing one card never shifts the
    others, so any arrangement — including stacked columns — sticks. */
 const HOME_CARD_LAYOUT_KEY = "home_card_layout";
+/* Bump when DEFAULT_HOME_LAYOUT changes shape. A browser that stored cells for
+   the built-in cards under an older table drops them on the next load and picks
+   the new defaults up; anything the user added themselves is kept, because a
+   custom card has no default to fall back to.
+
+   Without this a stored cell outlives every future change: the wall panel had
+   Climate frozen at y4/h8 from an older table, so when Weather shrank to two
+   rows the freed row just sat there as a gap. */
+const HOME_CARD_LAYOUT_VERSION_KEY = "home_card_layout_version";
+const HOME_CARD_LAYOUT_VERSION = "2026-09-13-two-row-weather";
 const HOME_GRID_COLS = 12;
 /* Fallback row height, used only where the grid has no measurable height yet
    (first paint) or is stacked into a flex column on a phone. Above 1101px the
@@ -5894,7 +5904,7 @@ const HOME_GRID_GAP = 16;
    and change another in the same column to match, or that column stops lining
    up - the totals are the invariant, not the individual numbers.
 
-     left    2 + 9 + 9  = 20     Weather, Climate, Temperatures
+     left    3 + 8 + 9  = 20     Weather, Climate, Temperatures
      middle 11 + 9      = 20     Camera, Alarm
      right  20          = 20     Areas
 
@@ -5904,9 +5914,11 @@ const HOME_GRID_GAP = 16;
    run 12-20 and line up across the view. Move one and its opposite number has
    to move with it.
 
-   Weather at two rows is 74px on the panel, under the ~150px the card wants, so
-   it scales with its own height through a container query - see
-   "#homeWeatherPanel" in styles.css. Without that it clips.
+   Weather is three rows: two was 74px on the panel, under the ~150px the card
+   wants, and read as too small. Three is 120px, about its natural size. It
+   still scales with its own height through a container query - see
+   "#homeWeatherPanel" in styles.css - which is what keeps it legible on a
+   short browser window, where three rows is nearer 90px.
 
    The previous table totalled 20 / 15 / 12, which on the 1920x1080 wall panel
    meant the left column ran 220px past the bottom of the screen while Areas
@@ -5919,8 +5931,8 @@ const HOME_GRID_GAP = 16;
    back to this table for any card the saved layout has no entry for; what it
    will not do is move a card the user has already placed. */
 const DEFAULT_HOME_LAYOUT = {
-  weather:     { x: 1, y: 1,  w: 4, h: 2 },
-  climate:     { x: 1, y: 3,  w: 4, h: 9 },
+  weather:     { x: 1, y: 1,  w: 4, h: 3 },
+  climate:     { x: 1, y: 4,  w: 4, h: 8 },
   tempsensors: { x: 1, y: 12, w: 4, h: 9 },
   camera:      { x: 5, y: 1,  w: 4, h: 11 },
   alarm:       { x: 5, y: 12, w: 4, h: 9 },
@@ -5928,11 +5940,30 @@ const DEFAULT_HOME_LAYOUT = {
 };
 
 function loadHomeLayout() {
-  try { return JSON.parse(localStorage.getItem(HOME_CARD_LAYOUT_KEY) || "{}") || {}; } catch { return {}; }
+  let stored;
+  try { stored = JSON.parse(localStorage.getItem(HOME_CARD_LAYOUT_KEY) || "{}") || {}; } catch { return {}; }
+
+  let version = null;
+  try { version = localStorage.getItem(HOME_CARD_LAYOUT_VERSION_KEY); } catch {}
+  if (version === HOME_CARD_LAYOUT_VERSION) return stored;
+
+  // Stale table: keep only cards this file has no opinion about.
+  const kept = {};
+  for (const [id, cell] of Object.entries(stored)) {
+    if (!DEFAULT_HOME_LAYOUT[id]) kept[id] = cell;
+  }
+  try {
+    localStorage.setItem(HOME_CARD_LAYOUT_KEY, JSON.stringify(kept));
+    localStorage.setItem(HOME_CARD_LAYOUT_VERSION_KEY, HOME_CARD_LAYOUT_VERSION);
+  } catch {}
+  return kept;
 }
 
 function saveHomeLayout(layout) {
-  try { localStorage.setItem(HOME_CARD_LAYOUT_KEY, JSON.stringify(layout)); } catch {}
+  try {
+    localStorage.setItem(HOME_CARD_LAYOUT_KEY, JSON.stringify(layout));
+    localStorage.setItem(HOME_CARD_LAYOUT_VERSION_KEY, HOME_CARD_LAYOUT_VERSION);
+  } catch {}
 }
 
 /* Below 1100px the layout falls back to a flex column (see CSS); fit logic
@@ -6206,7 +6237,12 @@ function applyHomeCardLayout() {
 
     /* Persist only when the card actually had to move, or was custom. Writing
        every default back would freeze this browser's layout against future
-       changes to DEFAULT_HOME_LAYOUT, which Reset Layout is supposed to adopt. */
+       changes to DEFAULT_HOME_LAYOUT, which Reset Layout is supposed to adopt.
+
+       A cell remembered here still only survives within one layout version -
+       HOME_CARD_LAYOUT_VERSION drops it when the defaults change shape, which
+       is what stops a position from outliving the table it was resolved
+       against. */
     if (!DEFAULT_HOME_LAYOUT[id] || resolved.y !== lay.y) {
       layout[id] = resolved;
       changed = true;

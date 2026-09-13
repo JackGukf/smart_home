@@ -262,7 +262,31 @@ def test_weather_scales_with_its_own_height_rather_than_clipping() -> None:
     assert "@container (max-height: 110px)" in css
 
 
-def test_the_small_screen_layout_does_not_inherit_the_two_row_weather() -> None:
-    """iPad mini gives Weather four rows; only the three-column view shrinks it."""
-    assert _default_layout()["weather"]["h"] == 2
+def test_weather_keeps_enough_rows_to_render_in_both_layouts() -> None:
+    """Two rows was 74px on the panel and read as too small; three is 120px.
+
+    The two layouts size it independently - fourteen rows on a small screen is a
+    coarser scale than twenty - so neither number can be derived from the other.
+    """
+    assert _default_layout()["weather"]["h"] == 3
     assert _two_column_layout()["weather"]["h"] == 4
+
+
+def test_a_stored_cell_cannot_outlive_the_table_it_was_resolved_against() -> None:
+    """The wall panel held a Climate cell from an older default table.
+
+    Weather shrank, the freed row had nobody to fill it, and it showed as a gap
+    that only Reset Layout cleared. Versioning the defaults makes that automatic:
+    a browser storing cells for built-in cards under an older version drops them
+    on the next load. Cards the user added themselves are kept, because there is
+    no default to fall back to for those.
+    """
+    js = APP_JS.read_text(encoding="utf-8")
+
+    assert "HOME_CARD_LAYOUT_VERSION" in js
+    loader = re.search(r"function loadHomeLayout\(\) \{(.*?)\n\}", js, re.S)
+    assert loader, "loadHomeLayout not found"
+    body = loader.group(1)
+
+    assert "HOME_CARD_LAYOUT_VERSION" in body, "the loader must check the version"
+    assert "DEFAULT_HOME_LAYOUT[id]" in body, "custom cards must survive the drop"
