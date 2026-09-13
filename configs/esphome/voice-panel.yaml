@@ -132,6 +132,20 @@ speaker:
     sample_rate: 16000
     channel: mono
 
+# Announcements and any other audio Home Assistant sends come through a media
+# player rather than straight at the speaker. Without one the satellite reports
+# no announce support at all, and assist_satellite.announce fails with
+# ServiceNotSupported - which is exactly what it did before this was here.
+media_player:
+  - platform: speaker
+    id: media_out
+    name: "Media"
+    announcement_pipeline:
+      speaker: spkr
+      format: FLAC
+      sample_rate: 16000
+      num_channels: 1
+
 micro_wake_word:
   id: wake_word
   microphone:
@@ -146,7 +160,14 @@ voice_assistant:
   id: assist
   microphone:
     microphone: mic
-  speaker: spkr
+  media_player: media_out
+  # This link is what puts the on-device wake words in Home Assistant's list.
+  # Without it the satellite advertises only "no_wake_word", which reads as the
+  # wake word being broken when it is really just not being offered.
+  micro_wake_word: wake_word
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
   on_end:
     - micro_wake_word.start:
 

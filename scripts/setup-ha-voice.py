@@ -68,21 +68,30 @@ def port_open(host: str, port: int, timeout: float = 3.0) -> bool:
         return False
 
 
+# What each service calls itself, which is what wyoming titles the entry.
+SERVICE_TITLES = {10300: "faster-whisper", 10200: "piper"}
+
+
 async def existing_wyoming_entries(session, headers, base) -> dict[str, str]:
-    """Map "host:port" -> entry_id for wyoming entries already configured."""
+    """Map service title -> entry_id for wyoming entries already configured.
+
+    Matching on the title rather than the address, because there is nothing
+    better to match on: wyoming leaves unique_id as None, so Home Assistant will
+    happily add the same host and port twice, and the config entries API does
+    not expose an entry's data, so the host and port cannot be read back.
+
+    The cost of getting this wrong is not a harmless no-op. Adding Whisper twice
+    produces a second stt.faster_whisper_2 entity and a second container-facing
+    connection, and the pipeline then points at whichever one the script picked
+    last - which is how this script created a duplicate pair on its second run
+    before this existed.
+    """
     async with session.get(f"{base}/api/config/config_entries/entry",
                            headers=headers) as response:
         entries = await response.json()
 
-    found = {}
-    for entry in entries:
-        if entry.get("domain") != "wyoming":
-            continue
-        # The entry title is the service name, so the address lives in the
-        # unique_id, which wyoming sets to "host:port".
-        key = entry.get("unique_id") or entry.get("title")
-        found[str(key)] = entry["entry_id"]
-    return found
+    return {str(e.get("title")): e["entry_id"]
+            for e in entries if e.get("domain") == "wyoming"}
 
 
 async def ensure_entry(session, headers, base, host: str, port: int, apply: bool):
@@ -130,6 +139,38 @@ class HomeAssistantWS:
             return message.get("result")
 
 
+def best_language(supported: list[str], want: str = "en") -> str | None:
+    """Pick a language the engine actually offers.
+
+    Not cosmetic. Piper's voices are regional - it advertises en_US and en_GB
+    and no bare "en" - so setting the pipeline to "en" makes Home Assistant
+    refuse every announcement with "Language \'en\' not supported", which
+    surfaces as a 500 from assist_satellite.announce and says nothing about the
+    cause. Whisper, meanwhile, does take a bare "en". One hardcoded value cannot
+    be right for both.
+    """
+    if not supported:
+        return None
+    if want in supported:
+        return want
+    prefix = want.lower().replace("-", "_") + "_"
+    variants = [l for l in supported if l.lower().replace("-", "_").startswith(prefix)]
+    if not variants:
+        return None
+    # en_US ahead of en_GB when both exist, otherwise whatever is offered.
+    preferred = f"{want}_{want.upper()}" if want == "en" else None
+    for candidate in ("en_US", preferred):
+        if candidate and candidate in variants:
+            return candidate
+    return sorted(variants)[0]
+
+
+async def engine_languages(ha: HomeAssistantWS, kind: str) -> dict[str, list[str]]:
+    result = await ha.call(type=f"{kind}/engine/list")
+    providers = (result or {}).get("providers", [])
+    return {p.get("engine_id"): (p.get("supported_languages") or []) for p in providers}
+
+
 async def point_pipeline_at(ha: HomeAssistantWS, stt_entity: str, tts_entity: str,
                             apply: bool) -> list[str]:
     listing = await ha.call(type="assist_pipeline/pipeline/list")
@@ -140,20 +181,31 @@ async def point_pipeline_at(ha: HomeAssistantWS, stt_entity: str, tts_entity: st
     if default is None:
         return ["no Assist pipeline to update"]
 
+    stt_langs = await engine_languages(ha, "stt")
+    tts_langs = await engine_languages(ha, "tts")
+    stt_language = best_language(stt_langs.get(stt_entity, []))
+    tts_language = best_language(tts_langs.get(tts_entity, []))
+    if not stt_language or not tts_language:
+        return [f"{stt_entity} or {tts_entity} offers no English; pipeline left alone"]
+
     changes = []
     if default.get("stt_engine") != stt_entity:
         changes.append(f"stt_engine={stt_entity}")
     if default.get("tts_engine") != tts_entity:
         changes.append(f"tts_engine={tts_entity}")
+    if default.get("stt_language") != stt_language:
+        changes.append(f"stt_language={stt_language}")
+    if default.get("tts_language") != tts_language:
+        changes.append(f"tts_language={tts_language}")
     if not changes:
         return []
 
     if apply:
         fields = {k: v for k, v in default.items() if k != "id"}
         fields["stt_engine"] = stt_entity
-        fields["stt_language"] = fields.get("stt_language") or "en"
+        fields["stt_language"] = stt_language
         fields["tts_engine"] = tts_entity
-        fields["tts_language"] = fields.get("tts_language") or "en"
+        fields["tts_language"] = tts_language
         fields["tts_voice"] = None
         await ha.call(type="assist_pipeline/pipeline/update",
                       pipeline_id=default["id"], **fields)
@@ -191,9 +243,9 @@ async def run(args: argparse.Namespace) -> int:
     async with aiohttp.ClientSession() as session:
         have = await existing_wyoming_entries(session, headers, base)
         for name, host, port in SERVICES:
-            key = f"{host}:{port}"
+            key = SERVICE_TITLES[port]
             if key in have:
-                print(f"wyoming entry for {key} already exists ({have[key]})")
+                print(f"wyoming entry {key!r} ({host}:{port}) already exists ({have[key]})")
                 continue
             if not apply:
                 print(f"would create a wyoming entry for {key}")
