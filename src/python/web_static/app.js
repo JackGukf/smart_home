@@ -5932,6 +5932,21 @@ function homeGridMode() {
   return !!grid && getComputedStyle(grid).display === "grid";
 }
 
+/* Whether cards can be dragged and resized, which is a different question from
+   whether the grid has fixed heights. On a small screen the layout is placed by
+   CSS rather than by the saved cells, so a drag would write an inline style the
+   stylesheet then overrides - the card would simply refuse to move, which reads
+   as broken rather than as disabled.
+
+   CSS owns the answer (--home-arrangeable) so there is one place that decides,
+   the same way homeGridMode() reads the computed display instead of repeating
+   the breakpoint in JS. */
+function homeCardsArrangeable() {
+  const grid = document.querySelector("#homeCardGrid");
+  if (!grid || !homeGridMode()) return false;
+  return getComputedStyle(grid).getPropertyValue("--home-arrangeable").trim() !== "0";
+}
+
 function setCardCell(card, lay) {
   card.style.gridColumn = `${lay.x} / span ${lay.w}`;
   card.style.gridRow = `${lay.y} / span ${lay.h}`;
@@ -6214,7 +6229,7 @@ function homeGridPitch(grid) {
   onDragStart(grid, (event) => {
     const grip = event.target.closest(".home-card-grip");
     const card = grip?.closest(".home-card");
-    if (!card || !homeGridMode()) return;
+    if (!card || !homeCardsArrangeable()) return;
     event.preventDefault();
     const start = dragPoint(event);
     const { pitchX, pitchY } = homeGridPitch(grid);
@@ -6259,7 +6274,7 @@ function homeGridPitch(grid) {
   onDragStart(grid, (event) => {
     const handle = event.target.closest(".home-card-resize");
     const card = handle?.closest(".home-card");
-    if (!card || !homeGridMode()) return;
+    if (!card || !homeCardsArrangeable()) return;
     event.preventDefault();
     const { pitchX, pitchY } = homeGridPitch(grid);
     const start = dragPoint(event);

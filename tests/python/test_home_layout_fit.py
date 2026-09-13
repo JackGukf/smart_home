@@ -123,3 +123,73 @@ def test_the_phone_still_stacks_and_scrolls() -> None:
     assert ".home-layout { display: flex; flex-direction: column; }" in css
     # The fit rules must not reach below the stacking breakpoint.
     assert "@media (min-width: 1101px)" in css
+
+
+# ── Small screens: two columns, because three do not fit ──────────────────────
+#
+# An iPad mini in landscape is 1133x744. It clears the 1101px width, so it was
+# getting the panel's three-column layout with twenty rows - and nineteen 16px
+# gaps eat 304px of the ~548px available, leaving 12px rows and six squashed
+# cards. In portrait, 744px wide is three ~197px columns, and below 900px `main`
+# is height:auto so the rows stayed a literal 40px and the page simply grew.
+
+TWO_COL = re.compile(
+    r'\[data-home-card="(\w+)"\][^{]*\{\s*grid-column:\s*(\d+) / span (\d+)\s*!important;'
+    r'\s*grid-row:\s*(\d+) / span (\d+)\s*!important;'
+)
+
+
+def _two_column_layout() -> dict[str, dict[str, int]]:
+    css = STYLES.read_text(encoding="utf-8")
+    return {
+        name: {"x": int(x), "w": int(w), "y": int(y), "h": int(h)}
+        for name, x, w, y, h in TWO_COL.findall(css)
+    }
+
+
+def test_small_screens_place_every_card_in_two_columns() -> None:
+    layout = _two_column_layout()
+
+    assert set(layout) == set(_default_layout()), "every Home card needs a small-screen cell"
+    assert {cell["x"] for cell in layout.values()} == {1, 7}
+    assert {cell["w"] for cell in layout.values()} == {6}
+
+
+def test_both_small_screen_columns_total_the_same_rows() -> None:
+    """Same invariant as the panel: agree, or the columns go ragged."""
+    layout = _two_column_layout()
+
+    columns: dict[int, list[tuple[int, int]]] = {}
+    for cell in layout.values():
+        columns.setdefault(cell["x"], []).append((cell["y"], cell["h"]))
+
+    ends = {x: max(y + h for y, h in cards) - 1 for x, cards in columns.items()}
+
+    assert set(ends.values()) == {14}, f"columns end at {ends}, expected 14 rows each"
+
+    for x, cards in columns.items():
+        expected = 1
+        for y, h in sorted(cards):
+            assert y == expected, f"small-screen column {x}: row {y} expected {expected}"
+            expected = y + h
+
+
+def test_the_short_landscape_case_is_covered_by_width_and_height() -> None:
+    """1133x744 clears the width test, so width alone never caught it."""
+    css = STYLES.read_text(encoding="utf-8")
+
+    assert "(min-width: 740px) and (max-width: 1100px)" in css, "portrait tablets"
+    assert "(min-width: 1101px) and (max-height: 820px)" in css, "landscape tablets"
+    assert "(min-width: 1101px) and (min-height: 821px)" in css, "the panel and desktops"
+
+
+def test_cards_cannot_be_dragged_where_css_places_them() -> None:
+    """A drag would write a cell the stylesheet overrides: the card just sticks."""
+    css = STYLES.read_text(encoding="utf-8")
+    js = APP_JS.read_text(encoding="utf-8")
+
+    assert "--home-arrangeable: 0" in css
+    assert "--home-arrangeable: 1" in css
+    assert "function homeCardsArrangeable()" in js
+    # Both the move and the resize handler must ask, not just one.
+    assert js.count("!homeCardsArrangeable()) return;") == 2

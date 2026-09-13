@@ -3701,6 +3701,65 @@ aside {
   }
 }
 
+/* ── Two columns where three will not fit ──────────────────────────────────
+   Three 4-wide columns need width the small screens do not have, and twenty
+   rows need height they do not have either. An iPad mini in landscape is
+   1133x744: the grid gets about 548px of height, and nineteen 16px gaps eat
+   304px of it before a single card is drawn, leaving 12px rows. Every card
+   came out squashed. In portrait it is worse - 744px wide is three ~197px
+   columns, and below 900px `main` is height:auto so the rows stay a literal
+   40px and the page just grows.
+
+   So both bands get two columns of six, placed here rather than from the saved
+   cells, with a smaller gap and fourteen rows instead of twenty - fewer gaps is
+   most of the height back.
+
+   Placement is !important because applyHomeCardLayout() writes grid-column and
+   grid-row as inline styles. That is also why --home-arrangeable turns dragging
+   off here: a drag would write a cell the stylesheet overrides, and the card
+   would refuse to move. */
+@media (min-width: 740px) and (max-width: 1100px),
+       (min-width: 1101px) and (max-height: 820px) {
+  #homeOverview > .home-layout {
+    --home-arrangeable: 0;
+    gap: 8px;
+  }
+
+  /* Left column: the things you read rather than operate. */
+  #homeOverview > .home-layout > [data-home-card="weather"]     { grid-column: 1 / span 6  !important; grid-row: 1 / span 2  !important; }
+  #homeOverview > .home-layout > [data-home-card="climate"]     { grid-column: 1 / span 6  !important; grid-row: 3 / span 6  !important; }
+  #homeOverview > .home-layout > [data-home-card="tempsensors"] { grid-column: 1 / span 6  !important; grid-row: 9 / span 6  !important; }
+
+  /* Right column: the things you look at and act on. */
+  #homeOverview > .home-layout > [data-home-card="camera"]      { grid-column: 7 / span 6  !important; grid-row: 1 / span 6  !important; }
+  #homeOverview > .home-layout > [data-home-card="alarm"]       { grid-column: 7 / span 6  !important; grid-row: 7 / span 4  !important; }
+  #homeOverview > .home-layout > [data-home-card="areas"]       { grid-column: 7 / span 6  !important; grid-row: 11 / span 4 !important; }
+
+  /* Nothing to grab, because nothing can be moved here. */
+  #homeOverview > .home-layout .home-card-grip,
+  #homeOverview > .home-layout .home-card-resize { display: none; }
+
+  #homeOverview > .home-layout > .home-card { min-height: 0; overflow: auto; }
+}
+
+/* Dividing the height only works where there is a height to divide. Above
+   1101px the chain above gives the grid a definite one, so fourteen 1fr rows
+   fill the screen exactly. Below it `main` is height:auto, so the rows stay a
+   fixed 40px and the page scrolls - two columns of sensible cards rather than
+   one column of very tall ones, which was the actual complaint. */
+@media (min-width: 1101px) and (max-height: 820px) {
+  #homeOverview > .home-layout {
+    grid-auto-rows: unset;
+    grid-template-rows: repeat(14, minmax(0, 1fr));
+  }
+}
+
+/* Only the wide-and-tall case keeps the three-column arrangement, so the
+   default cells and the arrangeable flag belong to it. */
+@media (min-width: 1101px) and (min-height: 821px) {
+  #homeOverview > .home-layout { --home-arrangeable: 1; }
+}
+
 /* [hidden] must beat the flex display below, same idiom as .room-item[hidden].
    Without this, hiding a card from the Cards modal does nothing at all. */
 .home-card[hidden] { display: none; }
