@@ -52,6 +52,12 @@ The dashboard's Matter card shows **Online** once `ws://localhost:5580/ws` answe
   `hci` numbering can swap across reboots, so the installer resolves the index from
   the MAC in `BLE_ADAPTER`; re-run it if the adapters ever renumber.
 - **`--primary-interface enp97s0`** — Ubuntu's predictable interface name, not `wlan0`. Ethernet since 2026-09-12; it was `wlp1s0` while the board was on Wi-Fi.
+  **This is a *system* unit** (`/etc/systemd/system/matter-server.service`), so
+  `systemctl --user is-active matter-server` reports `not-found` and tells you
+  nothing. When the interface changes, re-run `scripts/install-matter-server.sh`
+  — it is idempotent and now defaults to `enp97s0` — or edit the unit by hand.
+  Either way it needs a sudo password, and until it is done the server runs
+  `active` while bound to an interface that does not exist.
 - **The client must keep `start_listening()` running.** python-matter-server only fills
   its node cache, and only resolves command futures, while that background task is
   alive. Connecting without it makes `get_nodes()` return an empty list and every
