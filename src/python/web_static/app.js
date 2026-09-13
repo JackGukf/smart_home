@@ -5870,7 +5870,12 @@ document.addEventListener("click", async (event) => {
    others, so any arrangement — including stacked columns — sticks. */
 const HOME_CARD_LAYOUT_KEY = "home_card_layout";
 const HOME_GRID_COLS = 12;
+/* Fallback row height, used only where the grid has no measurable height yet
+   (first paint) or is stacked into a flex column on a phone. Above 1101px the
+   CSS divides the real height into HOME_GRID_ROWS shares instead - see
+   "Fit the Home view to the screen" in styles.css. */
 const HOME_GRID_ROW = 40;
+const HOME_GRID_ROWS = 20;
 const HOME_GRID_GAP = 16;
 
 /* Three columns of four on the grid:
@@ -5881,9 +5886,22 @@ const HOME_GRID_GAP = 16;
 
    Alarm sits directly under Camera, matching the phone order in index.html:
    a camera view and "is anything open" answer the same question, so they are
-   read together. Temperatures moved left to make room, which also evens the
-   columns out - Alarm on the left had made that column half again as tall as
-   the others.
+   read together.
+
+   Every column totals exactly HOME_GRID_ROWS, and that is the whole point:
+   with 1fr rows the three columns then end flush with each other and with the
+   bottom of the screen, instead of being tuned to agree. Change a height here
+   and change another in the same column to match, or that column stops lining
+   up - the totals are the invariant, not the individual numbers.
+
+     left    3 + 9 + 8  = 20     Weather, Climate, Temperatures
+     middle 11 + 9      = 20     Camera, Alarm
+     right  20          = 20     Areas
+
+   The previous table totalled 20 / 15 / 12, which on the 1920x1080 wall panel
+   meant the left column ran 220px past the bottom of the screen while Areas
+   stopped 228px short of it. Camera took most of the freed space because it is
+   the card that uses it; Weather gave up two rows it was not using.
 
    Only applies to a browser with no saved layout - an existing one is left
    alone, and Reset Layout is what adopts this. A browser that already has a
@@ -5891,12 +5909,12 @@ const HOME_GRID_GAP = 16;
    back to this table for any card the saved layout has no entry for; what it
    will not do is move a card the user has already placed. */
 const DEFAULT_HOME_LAYOUT = {
-  weather:     { x: 1, y: 1,  w: 4, h: 5 },
-  climate:     { x: 1, y: 6,  w: 4, h: 9 },
-  tempsensors: { x: 1, y: 15, w: 4, h: 6 },
-  camera:      { x: 5, y: 1,  w: 4, h: 7 },
-  alarm:       { x: 5, y: 8,  w: 4, h: 8 },
-  areas:       { x: 9, y: 1,  w: 4, h: 12 },
+  weather:     { x: 1, y: 1,  w: 4, h: 3 },
+  climate:     { x: 1, y: 4,  w: 4, h: 9 },
+  tempsensors: { x: 1, y: 13, w: 4, h: 8 },
+  camera:      { x: 5, y: 1,  w: 4, h: 11 },
+  alarm:       { x: 5, y: 12, w: 4, h: 9 },
+  areas:       { x: 9, y: 1,  w: 4, h: 20 },
 };
 
 function loadHomeLayout() {
@@ -5995,7 +6013,9 @@ function placeHomeCardAtBottom(id) {
     .filter(Boolean);
 
   const bottom = occupied.reduce((max, cell) => Math.max(max, cell.y + cell.h), 1);
-  layout[id] = { x: 1, y: bottom, w: size.w, h: size.h };
+  // The grid is a fixed HOME_GRID_ROWS tall, so "the bottom" has a limit now.
+  const y = Math.min(bottom, Math.max(1, HOME_GRID_ROWS - size.h + 1));
+  layout[id] = { x: 1, y, w: size.w, h: size.h };
   saveHomeLayout(layout);
 }
 
@@ -6170,9 +6190,16 @@ function applyHomeCardLayout() {
   if (changed) saveHomeLayout(layout);
 }
 
+/* Rows are a share of the screen now, so drag and resize cannot assume 40px:
+   on this panel a row is nearer 29px, and a card would jump about a third
+   further than the pointer. Measure the row the grid actually drew. */
 function homeGridPitch(grid) {
   const cellW = (grid.clientWidth - HOME_GRID_GAP * (HOME_GRID_COLS - 1)) / HOME_GRID_COLS;
-  return { pitchX: cellW + HOME_GRID_GAP, pitchY: HOME_GRID_ROW + HOME_GRID_GAP };
+  const usableH = grid.clientHeight - HOME_GRID_GAP * (HOME_GRID_ROWS - 1);
+  const rowH = usableH > 0 ? usableH / HOME_GRID_ROWS : 0;
+  // Before first layout, or stacked on a phone, fall back to the fixed row.
+  const pitchY = rowH > 1 ? rowH + HOME_GRID_GAP : HOME_GRID_ROW + HOME_GRID_GAP;
+  return { pitchX: cellW + HOME_GRID_GAP, pitchY };
 }
 
 
@@ -6212,7 +6239,9 @@ function homeGridPitch(grid) {
       const dx = Math.round((point.clientX - startX) / pitchX);
       const dy = Math.round((point.clientY - startY) / pitchY);
       lay.x = Math.min(Math.max(1, originX + dx), HOME_GRID_COLS - lay.w + 1);
-      lay.y = Math.max(1, originY + dy);
+      // The grid is exactly HOME_GRID_ROWS tall. Dragging past the last row used
+      // to create implicit rows, which is what put a card below the screen.
+      lay.y = Math.min(Math.max(1, originY + dy), Math.max(1, HOME_GRID_ROWS - lay.h + 1));
       setCardCell(card, lay);
     };
     trackDrag(event, {
@@ -6244,7 +6273,8 @@ function homeGridPitch(grid) {
     const onMove = (point) => {
       // Overlapping is allowed, so a card grows freely past its neighbours.
       lay.w = Math.min(Math.max(2, startW + Math.round((point.clientX - startX) / pitchX)), HOME_GRID_COLS - lay.x + 1);
-      lay.h = Math.max(3, startH + Math.round((point.clientY - startY) / pitchY));
+      lay.h = Math.min(Math.max(3, startH + Math.round((point.clientY - startY) / pitchY)),
+                       Math.max(3, HOME_GRID_ROWS - lay.y + 1));
       setCardCell(card, lay);
       refitHomeCards();
     };

@@ -3650,6 +3650,57 @@ aside {
   gap: 16px;
 }
 
+/* ── Fit the Home view to the screen ───────────────────────────────────────
+   Above the stacking breakpoint the twenty rows divide the height that is
+   actually there instead of being 40px each, so a card's span is a share of
+   the screen rather than a pixel count.
+
+   Why: on the wall panel (1920x1080) the grid gets 884px and the old fixed
+   rows asked for 1104 - twenty 40px rows plus nineteen 16px gaps - so the left
+   column ran off the bottom while Areas stopped 228px short. Whether it fitted
+   was luck, and on that panel the luck was bad.
+
+   Every column in DEFAULT_HOME_LAYOUT totals twenty rows, so with 1fr rows the
+   three columns end flush by construction rather than by tuning. The same
+   layout then fits a laptop or a 4K screen with no numbers to retune.
+
+   The height has to be handed down the whole chain - .content already has a
+   definite height from main's calc(100vh - 72px), and each wrapper below it
+   passes that on. min-height: 0 at every level is what lets a flex child be
+   shorter than its content instead of pushing the page taller.
+
+   Scoped to the home panel on purpose: Cameras and Devices are lists and are
+   supposed to scroll. */
+@media (min-width: 1101px) {
+  .view-panel.active[data-view-panel="home"] {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  #homeOverview {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  #homeOverview > .home-layout {
+    flex: 1 1 auto;
+    min-height: 0;
+    grid-auto-rows: unset;
+    grid-template-rows: repeat(20, minmax(0, 1fr));
+  }
+
+  /* A card is now a fixed box rather than one that grows with its content, so
+     anything too tall scrolls inside its own card instead of pushing the page. */
+  #homeOverview > .home-layout > .home-card {
+    min-height: 0;
+    overflow: auto;
+  }
+}
+
 /* [hidden] must beat the flex display below, same idiom as .room-item[hidden].
    Without this, hiding a card from the Cards modal does nothing at all. */
 .home-card[hidden] { display: none; }
