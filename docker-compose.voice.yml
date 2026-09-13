@@ -1,0 +1,73 @@
+# Speech-to-text and text-to-speech for Home Assistant's Assist pipeline.
+#
+# Separate file for the same reason docker-compose.zigbee.yml is separate: the
+# dashboard and go2rtc are systemd *user* units on this board, and bringing a
+# stack up must never start a second copy of either.
+#
+#   cd /home/orangepi/smart_home_AI
+#   docker compose -f docker-compose.voice.yml up -d
+#
+# This Home Assistant is the plain container, not HA OS, so there is no
+# Supervisor and no add-on store - the usual "install the Whisper add-on" does
+# not exist here. These are the same Wyoming services the add-ons wrap, run
+# directly. Both publish linux/arm64.
+#
+# Loopback only, on purpose, and it costs nothing: Home Assistant runs with
+# network_mode host, so 127.0.0.1 reaches these from inside it. Same reasoning
+# as the two LLM endpoints - see docs/local-ai.md.
+#
+# Memory caps are not bookkeeping on this board. There is no swap, so pressure
+# does not degrade, it hits a wall and the kernel kills whichever process asks
+# for memory next - very likely Home Assistant rather than the thing that
+# caused it.
+
+services:
+  whisper:
+    image: rhasspy/wyoming-whisper:latest
+    container_name: wyoming-whisper
+    network_mode: host
+    restart: unless-stopped
+    command: >
+      --model base.en
+      --language en
+      --beam-size 1
+      --device cpu
+      --compute-type int8
+      --uri tcp://127.0.0.1:10300
+      --data-dir /data
+      --download-dir /data
+    volumes:
+      - whisper-data:/data
+    environment:
+      TZ: ${TZ:-America/Vancouver}
+    # int8, not the default: ctranslate2 infers float16 from the saved model,
+    # finds no efficient fp16 on this CPU and silently falls back to float32 -
+    # slower and heavier than the int8 the model is fine at.
+    # The A720 cores are interleaved on this CPU - 0,1,6-11 - and CIX's own
+    # documented list is wrong for this board. Four of them is enough for a
+    # three second utterance and leaves the house its cores.
+    cpuset: "0,1,6,7"
+    mem_limit: 2g
+    oom_kill_disable: false
+
+  piper:
+    image: rhasspy/wyoming-piper:latest
+    container_name: wyoming-piper
+    network_mode: host
+    restart: unless-stopped
+    command: >
+      --voice en_US-lessac-medium
+      --uri tcp://127.0.0.1:10200
+      --data-dir /data
+      --download-dir /data
+    volumes:
+      - piper-data:/data
+    environment:
+      TZ: ${TZ:-America/Vancouver}
+    cpuset: "8,9"
+    mem_limit: 512m
+    oom_kill_disable: false
+
+volumes:
+  whisper-data:
+  piper-data:

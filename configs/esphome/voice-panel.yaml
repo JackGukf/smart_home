@@ -1,0 +1,155 @@
+# Waveshare ESP32-S3-Touch-LCD-4B as a Home Assistant voice satellite.
+#
+# Voice only, display deliberately absent. The board drives a 480x480 RGB panel,
+# which has no frame memory of its own: the S3 shifts 450KB out of PSRAM
+# continuously, roughly 27MB/s, and the wake word inference wants the same
+# PSRAM. ESPHome's own reference voice devices all use SPI or QSPI displays that
+# hold their own frame memory, avoiding that by construction. So voice is proven
+# first and the screen is added afterwards - that way a wake word that degrades
+# when the display arrives has exactly one suspect.
+#
+# Pin map is from Waveshare's own demos (ESP32-S3-Touch-LCD-4B-Demos.zip),
+# not guessed:
+#   Mylibrary/pin_config.h      I2S pins below
+#   examples/*/*.ino            Wire.begin(47, 48) and the expander at 0x20
+#
+# The two codecs share one I2S bus - one MCLK, BCLK and LRCK between them, with
+# separate data lines - which is what the demo's
+# i2s.setPins(BCLK, LRCK, ES8311_DOUT, ES7210_DIN, MCLK) says.
+
+substitutions:
+  name: voice-panel
+  friendly_name: Voice Panel
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2024.7.0
+  on_boot:
+    - priority: 600
+      then:
+        # The demos set expander pin 3 high before touching either codec. It is
+        # the audio enable: without it the ES8311 plays into nothing and the
+        # ES7210 hears nothing, with no error from either.
+        - switch.turn_on: audio_enable
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+# ESP32-S3-WROOM-1-N16R8: 8MB octal PSRAM. micro_wake_word needs it, and octal
+# at 80MHz is the configuration its inference is sized against.
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+api:
+  encryption:
+    key: !secret api_encryption_key
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# No credentials in the repo and none in the image. improv_serial lets the
+# browser that flashes the device hand it the network over the same USB cable,
+# so the password goes straight from you to the device. If it ever cannot join,
+# it raises its own access point and captive_portal asks again.
+wifi:
+  ap:
+    ssid: "${friendly_name} Setup"
+
+captive_portal:
+improv_serial:
+
+i2c:
+  sda: GPIO47
+  scl: GPIO48
+  scan: true
+  id: bus_a
+
+# TCA9554 IO expander. Pins 0, 1, 2 and 7 bit-bang SPI to the ST7701 display;
+# pin 3 is the audio enable and the only one this config touches.
+pca9554:
+  - id: io_expander
+    address: 0x20
+
+switch:
+  - platform: gpio
+    id: audio_enable
+    name: "Audio enable"
+    entity_category: config
+    restore_mode: ALWAYS_ON
+    pin:
+      pca9554: io_expander
+      number: 3
+      mode:
+        output: true
+
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin: GPIO7
+    i2s_bclk_pin: GPIO16
+    i2s_mclk_pin: GPIO5
+
+audio_adc:
+  - platform: es7210
+    id: es7210_adc
+    i2c_id: bus_a
+    address: 0x40
+    bits_per_sample: 16bit
+    sample_rate: 16000
+    mic_gain: 24dB
+
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_bus
+    i2s_din_pin: GPIO15
+    adc_type: external
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    i2c_id: bus_a
+    address: 0x18
+    bits_per_sample: 16bit
+    sample_rate: 16000
+    use_mclk: true
+
+speaker:
+  - platform: i2s_audio
+    id: spkr
+    i2s_audio_id: i2s_bus
+    i2s_dout_pin: GPIO6
+    dac_type: external
+    audio_dac: es8311_dac
+    bits_per_sample: 16bit
+    sample_rate: 16000
+    channel: mono
+
+micro_wake_word:
+  id: wake_word
+  microphone:
+    microphone: mic
+  models:
+    - model: okay_nabu
+  on_wake_word_detected:
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+
+voice_assistant:
+  id: assist
+  microphone:
+    microphone: mic
+  speaker: spkr
+  on_end:
+    - micro_wake_word.start:
+
+binary_sensor:
+  - platform: status
+    name: "Status"

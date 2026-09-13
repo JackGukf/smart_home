@@ -103,3 +103,8 @@ dashboard_home_alarm.json
 # Morning digest written by house-digest.timer at runtime.
 house_digest.json
 house_digest.jsonl
+
+# ESPHome secrets and build artefacts (device config lives in configs/esphome/)
+configs/esphome/secrets.yaml
+configs/esphome/.esphome/
+configs/esphome/*.bin
