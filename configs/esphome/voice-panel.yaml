@@ -156,13 +156,16 @@ media_player:
   - platform: speaker
     id: media_out
     name: "Media"
-    # The range is the usable part of the dial, found by listening rather than
-    # assumed. With volume_multiplier back at 1.0 the codec is clean to at least
-    # 0.8, where it sits at a normal speaking level - so 0.8 belongs in the
-    # middle of the control, not at the top, and the old 0.3 floor was below
-    # anything worth hearing.
+    # The usable part of the dial, found by listening at each end rather than
+    # assumed. Clean at 0.8 (a normal speaking level) and at 0.9; harsh at 1.0,
+    # so the top tenth is where this 2W amp and its small speaker stop being
+    # linear and it is simply kept out of reach.
+    #
+    # Worth knowing which fault this was: distortion that appears only when loud
+    # is amplitude, not bandwidth. A sample rate that is too low sounds thin at
+    # *every* volume, so raising it further would not have touched this.
     volume_min: 0.5
-    volume_max: 1.0
+    volume_max: 0.9
     # Two pipelines, and both are needed. announcement_pipeline carries
     # assist_satellite.announce and the assistant's replies; media_pipeline
     # carries media_player.play_media. Defining only the first left play_media
