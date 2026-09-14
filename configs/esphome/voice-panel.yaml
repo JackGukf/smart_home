@@ -54,14 +54,13 @@ psram:
   mode: octal
   speed: 80MHz
 
-# VERBOSE on micro_wake_word prints a probability per inference, which is the
-# only way to tell the three failure modes apart: the engine not running at all
-# (no lines), the engine running but hearing nothing (probabilities pinned near
-# zero), and the engine hearing speech but never crossing the cutoff.
+# DEBUG, the default, is enough to see the wake word. micro_wake_word has no
+# VERBOSE lines at all - it never prints a probability per inference - so what
+# answers "is it listening" is "State changed from X to DETECTING_WAKE_WORD",
+# and the Microphone capturing sensor below. VERBOSE was tried and only added
+# noise: its silence was read as the engine not running when it was.
 logger:
-  level: VERBOSE
-  logs:
-    micro_wake_word: VERBOSE
+  level: DEBUG
 api:
   encryption:
     key: !secret api_encryption_key
@@ -206,6 +205,13 @@ media_player:
     # the satellite sat in "responding".
     #
     # So the microphone steps aside for playback and comes back afterwards.
+    #
+    # Coming back is the hard half, and it was the "wake word never runs" fault.
+    # After an announcement the media player goes idle ~90 ms before
+    # voice_assistant does, so an instant "if not voice_assistant.is_running"
+    # here refused the restart and nothing retried: the wake word stayed stopped
+    # until a reboot, after every announcement and every spoken reply. So the
+    # restart waits for the bus to actually be free - see restart_wake_word.
     on_announcement:
       - if:
           condition:
@@ -213,12 +219,7 @@ media_player:
           then:
             - micro_wake_word.stop:
     on_idle:
-      - if:
-          condition:
-            not:
-              voice_assistant.is_running:
-          then:
-            - micro_wake_word.start:
+      - script.execute: restart_wake_word
 
 micro_wake_word:
   id: wake_word
@@ -248,8 +249,33 @@ voice_assistant:
   # amplifier. Doubling the TTS before it reaches a codec that is already near
   # full scale is the other half of the clipping.
   volume_multiplier: 1.0
+  # A session can end without playing anything (an error, an empty reply), in
+  # which case the media player never goes idle and would never restart the
+  # wake word. Not on_idle: in this ESPHome that fires only in continuous mode,
+  # so for an on-device wake word it never runs at all.
   on_end:
-    - micro_wake_word.start:
+    - script.execute: restart_wake_word
+  on_error:
+    - script.execute: restart_wake_word
+
+# The one place the wake word comes back after the microphone stepped aside.
+# Every exit path calls it, and it waits rather than checks, because each
+# "done" signal arrives before the bus is actually free:
+#   - voice_assistant is still running ~90 ms after the media player goes idle
+#   - the I2S speaker holds the bus for its 500 ms timeout after the last write
+# mode: restart, so several callers collapse into one wait instead of queueing.
+script:
+  - id: restart_wake_word
+    mode: restart
+    then:
+      - wait_until:
+          condition:
+            and:
+              - not:
+                  voice_assistant.is_running:
+              - media_player.is_idle: media_out
+              - speaker.is_stopped: i2s_out
+      - micro_wake_word.start:
 
 binary_sensor:
   - platform: status

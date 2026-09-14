@@ -4,7 +4,36 @@ Written to be picked up cold. Voice is the open work and comes first; everything
 else this session is finished and summarised at the end with pointers to where
 it is recorded.
 
-## The one open fault
+## Resolved 2026-09-13 (evening): the wake word stopped after the first playback
+
+**Cause.** The engine ran from boot and was stopped for every announcement or
+reply (the shared I2S bus, trap 4), then never restarted. The media player went
+idle ~90 ms before `voice_assistant`, so `on_idle`'s instant
+`not voice_assistant.is_running` check refused the restart, and nothing retried.
+Two more restart paths were dead: `voice_assistant: on_idle` fires only in
+continuous mode, and the I2S speaker holds the bus for its 500 ms timeout.
+
+**Fix.** One `restart_wake_word` script, `mode: restart`, that *waits* for
+assistant not running, media player idle and `i2s_out` stopped, then starts the
+engine. Called from the media player's `on_idle` and `voice_assistant`'s
+`on_end` / `on_error`.
+
+**Verified** (firmware `config_hash 0xabc55d0c`): announce → `DETECTING_WAKE_WORD
+→ STOPPED` → playback → `STOPPED → DETECTING_WAKE_WORD` 17 ms after idle; mic
+capturing back `on`; repeated announcements restart every time, zero
+`Parent bus is busy`. Before the fix, capturing went `off` after the first
+announcement and stayed off.
+
+**Not yet verified by a person:** saying "Okay Nabu" and seeing
+`Detected 'Okay Nabu'` in the log followed by a pipeline run. The engine is now
+demonstrably listening; whether it detects at cutoff 0.97 in this room is the
+next question.
+
+VERBOSE logging is reverted to DEBUG. The device now runs `config_hash
+0xfdc46cc5`, which differs from the verified build only in log level; after that
+flash the microphone came back capturing on its own.
+
+## The original fault, as written before it was found
 
 **The on-device wake word never runs.** Everything around it works.
 
@@ -16,7 +45,22 @@ it is recorded.
 | Intent / reply | ✅ working | "what time is it" → "7:42 PM" in **0.57 s**, local matcher |
 | **Wake word** | ❌ **not running** | zero inference lines at VERBOSE; no pipeline run has ever had a `wake_word-end` event |
 
-### Why the evidence is conclusive rather than suggestive
+> **Correction, 2026-09-13 (later session): the evidence below is not evidence.**
+> The compiled `micro_wake_word` (ESPHome 2026.8.2) contains **no `ESP_LOGV` at
+> all** — it never prints per-inference probabilities at any level, so silence
+> at VERBOSE is what a healthy engine prints. And an on-device detection starts
+> Home Assistant's pipeline at **STT** (`USE_WAKE_WORD` is only sent for
+> server-side wake words), so `wake_word-end` never appears for this device
+> either. What the engine does log is `[D] State changed from … to …`.
+>
+> A live capture then showed the real fault: the engine **was** in
+> `DETECTING_WAKE_WORD` until the first announcement, stopped for playback, and
+> never restarted — the speaker went idle ~90 ms *before* `voice_assistant`, so
+> `on_idle`'s guard refused the restart and nothing retried. Microphone
+> capturing went `off` and stayed off. The fix restarts from whichever side goes
+> idle second; see `configs/esphome/voice-panel.yaml`.
+
+### Why the evidence is conclusive rather than suggestive (superseded — see above)
 
 - **VERBOSE logging demonstrably works.** Other components print `[V]` lines in
   the same capture — the Wi-Fi roam scans are there — while `micro_wake_word`
@@ -134,11 +178,8 @@ the repo or the image.
 
 ## Temporary diagnostics in the current firmware
 
-**Revert once the wake word works:**
-
-- `logger: level: VERBOSE` and `logs: micro_wake_word: VERBOSE`. Noisy and not
-  free on a device doing real-time audio. VERBOSE per-component requires the
-  global level to be at least as verbose — ESPHome refuses the config otherwise.
+**Reverted 2026-09-13:** `logger` is back to `DEBUG`. The VERBOSE setting never
+showed anything about the wake word — `micro_wake_word` has no VERBOSE lines.
 
 **Keep or drop, cheap either way:**
 

@@ -11,7 +11,9 @@
 >
 > **Voice, in progress (2026-09-13).** Whisper and Piper run on the board and
 > Assist answers; the ESP32-S3-Touch-LCD-4B satellite is flashed, plays audio and
-> captures from its microphone — but its **on-device wake word never runs**.
+> captures from its microphone. Its on-device wake word looked dead but was
+> stopped for the first playback and never restarted — fixed and verified the
+> same evening; detection by a real voice is the next check.
 > Start here: **`docs/handoff-2026-09-13-voice-satellite.md`**.
 >
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
