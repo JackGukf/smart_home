@@ -1,0 +1,39 @@
+# Home Assistant's state for one on/off light, drawn onto its card and onto the
+# full-screen page when that light is open. A binary_sensor entry, included
+# with vars: key, entity, room. Updating widgets does not fire their on_change,
+# so a state from Home Assistant is never sent back to it.
+platform: homeassistant
+id: ${key}_on
+entity_id: ${entity}
+internal: true
+on_state:
+  - lvgl.widget.update:
+      id: ${key}_card
+      state:
+        checked: !lambda return x;
+  - lvgl.widget.update:
+      id: ${key}_switch
+      state:
+        checked: !lambda return x;
+  - lvgl.label.update:
+      id: ${key}_sub
+      text: !lambda 'return std::string(x ? "On" : "Off") + " • ${room}";'
+  - if:
+      condition:
+        lambda: return x;
+      then:
+        - lvgl.image.update:
+            id: ${key}_lamp
+            src: lamp_on
+      else:
+        - lvgl.image.update:
+            id: ${key}_lamp
+            src: lamp_off
+  - if:
+      condition:
+        lambda: 'return id(detail_entity) == "${entity}";'
+      then:
+        - script.execute:
+            id: detail_refresh
+            is_on: !lambda return x;
+            level: 0

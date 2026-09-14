@@ -26,6 +26,38 @@ esphome:
   friendly_name: ${friendly_name}
   min_version: 2024.7.0
   on_boot:
+    # Flash 6: the display power-up exactly as Waveshare's demo does it, in
+    # its order and with its delays. Priority 700 runs after the expander (900)
+    # and before the display (600), and a lambda's delay() blocks, so the
+    # display's setup cannot start until this is done. mipi_rgb's own reset is
+    # a 5 ms pulse and it only raises pin 7; the demo holds reset low 200 ms.
+    #   Arduino_XCA9554SWSPI::begin(): pin 7 LOW 10 ms, HIGH 100 ms;
+    #     CS (0), SCK (2), MOSI (1) outputs, HIGH. The clock must already idle
+    #     high: expander outputs start low, and in MODE3 the first transfer
+    #     would otherwise raise it with CS low - a spurious bit that corrupts
+    #     the first command (the software reset).
+    #   sketch setup(): pin 6 LOW, 200 ms; pin 5 LOW, 200 ms; HIGH, 200 ms.
+    - priority: 700
+      then:
+        - lambda: |-
+            auto *x = id(io_expander);
+            auto out = [x](uint8_t pin, bool level) {
+              x->digital_write(pin, level);
+              x->pin_mode(pin, gpio::FLAG_OUTPUT);
+            };
+            out(7, false);
+            delay(10);
+            out(7, true);
+            delay(100);
+            out(0, true);
+            out(2, true);
+            out(1, true);
+            out(6, false);
+            delay(200);
+            out(5, false);
+            delay(200);
+            out(5, true);
+            delay(200);
     - priority: 600
       then:
         # The demos set expander pin 3 high before touching either codec. It is
@@ -47,6 +79,18 @@ esp32:
   flash_size: 16MB
   framework:
     type: esp-idf
+    # The RGB panel has no frame memory: the S3 must clock every frame out on
+    # time. After an OTA reboot the screen flickered until the first LVGL redraw
+    # (tapping the button), which re-synchronised it - the signal lost sync
+    # while boot was busy with flash and PSRAM. Espressif's fixes for RGB drift:
+    #   RESTART_IN_VSYNC  re-align the stream at every vertical sync
+    #   ISR_IRAM_SAFE     keep refreshing while the flash cache is off (NVS, OTA)
+    #   XIP_FROM_PSRAM    run code from PSRAM so flash access cannot stall it;
+    #                     costs about 1.7 MB of the PSRAM the wake word shares
+    sdkconfig_options:
+      CONFIG_LCD_RGB_RESTART_IN_VSYNC: y
+      CONFIG_LCD_RGB_ISR_IRAM_SAFE: y
+      CONFIG_SPIRAM_XIP_FROM_PSRAM: y
 
 # ESP32-S3-WROOM-1-N16R8: 8MB octal PSRAM. micro_wake_word needs it, and octal
 # at 80MHz is the configuration its inference is sized against.
@@ -106,6 +150,14 @@ spi:
     mosi_pin:
       pca9554: io_expander
       number: 1
+
+# A warm restart from Home Assistant. The screen flickered after an OTA reboot
+# (a software reset: the panel and the expander stay powered) and was steady
+# after a USB power cycle, so this reproduces the case without re-flashing.
+button:
+  - platform: restart
+    name: "Restart"
+    entity_category: diagnostic
 
 switch:
   - platform: gpio
@@ -293,6 +345,109 @@ script:
               - speaker.is_stopped: i2s_out
       - micro_wake_word.start:
 
+  - id: update_clock
+    then:
+      - lvgl.label.update:
+          id: clock_label
+          text: !lambda |-
+            auto t = id(ha_time).now();
+            if (!t.is_valid()) return std::string("--:--");
+            return t.strftime("%H:%M");
+
+  - id: thermo_refresh
+    then:
+      - lvgl.label.update:
+          id: thermo_temp
+          text: !lambda |-
+            float t = id(thermo_target).state;
+            if (std::isnan(t)) return std::string("--");
+            char buf[16];
+            snprintf(buf, sizeof(buf), fmod(t, 1.0f) == 0 ? "%.0f°C" : "%.1f°C", t);
+            return std::string(buf);
+      - lvgl.label.update:
+          id: thermo_sub
+          text: !lambda |-
+            const std::string &a = id(thermo_action).state;
+            std::string mode = a == "heating" ? "Heating" : a == "cooling" ? "Cooling"
+                             : a == "idle" ? "Idle" : a == "off" ? "Off" : a.empty() ? "--" : a;
+            float r = id(thermo_room).state;
+            if (std::isnan(r)) return mode;
+            char buf[48];
+            snprintf(buf, sizeof(buf), "%s • room %.1f°C", mode.c_str(), r);
+            return std::string(buf);
+
+  # One tap is one degree, clamped to the design's 10-26 °C. The card moves at
+  # once; Home Assistant's own update confirms or corrects it.
+  - id: thermo_step
+    parameters:
+      delta: float
+    then:
+      - if:
+          condition:
+            lambda: return !std::isnan(id(thermo_target).state);
+          then:
+            - lambda: |-
+                float t = std::max(10.0f, std::min(26.0f, id(thermo_target).state + delta));
+                id(thermo_target).publish_state(t);
+            - homeassistant.action:
+                action: climate.set_temperature
+                data:
+                  entity_id: climate.my_ecobee
+                  temperature: !lambda return to_string(id(thermo_target).state);
+
+  - id: open_light
+    parameters:
+      entity: string
+      name: string
+      room: string
+      dimmer: bool
+      is_on: bool
+      level: int
+    then:
+      - globals.set:
+          id: detail_entity
+          value: !lambda return entity;
+      - globals.set:
+          id: detail_room
+          value: !lambda return room;
+      - globals.set:
+          id: detail_dimmer
+          value: !lambda return dimmer;
+      - lvgl.label.update:
+          id: detail_name
+          text: !lambda return name;
+      - script.execute:
+          id: detail_refresh
+          is_on: !lambda return is_on;
+          level: !lambda return level;
+      - lvgl.page.show: light_page
+
+  - id: detail_refresh
+    parameters:
+      is_on: bool
+      level: int
+    then:
+      - lvgl.label.update:
+          id: detail_state
+          text: !lambda 'return is_on ? std::string("ON") : std::string("OFF");'
+      - lvgl.label.update:
+          id: detail_level
+          text: !lambda |-
+            if (!id(detail_dimmer)) return id(detail_room);
+            if (!is_on) return std::string("Dimmer • off");
+            return "Brightness " + to_string(level) + "%";
+      - if:
+          condition:
+            lambda: return is_on;
+          then:
+            - lvgl.image.update:
+                id: detail_lamp
+                src: dome_on
+          else:
+            - lvgl.image.update:
+                id: detail_lamp
+                src: dome_off
+
 binary_sensor:
   - platform: status
     name: "Status"
@@ -317,6 +472,27 @@ binary_sensor:
     entity_category: diagnostic
     lambda: return id(touch)->is_failed();
 
+  # The six lights on Home, from Home Assistant. The TP-Link originals, not the
+  # Dashboard Bridge twins - except Stick S3, which only exists through it.
+  - !include
+    file: panel/ha-toggle.yaml
+    vars: {key: master, entity: light.bedroom_master_bedroom_light, room: Bedroom}
+  - !include
+    file: panel/ha-toggle.yaml
+    vars: {key: living2, entity: light.living_room_living_room_switch_2, room: Living Room}
+  - !include
+    file: panel/ha-toggle.yaml
+    vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, room: Bedroom}
+  - !include
+    file: panel/ha-toggle.yaml
+    vars: {key: stick, entity: light.stick_s3, room: Office}
+  - !include
+    file: panel/ha-dimmer-on.yaml
+    vars: {key: kitchen, entity: light.kitchen_light_switch}
+  - !include
+    file: panel/ha-dimmer-on.yaml
+    vars: {key: family, entity: light.family_room_switch}
+
 # ── Display, phase 1: bring-up only ───────────────────────────────────────────
 #
 # Voice was proven first on purpose (docs/voice-assistant-proposal.md): this RGB
@@ -334,30 +510,18 @@ display:
     id: panel
     model: CUSTOM
     spi_id: lcd_spi
+    # Fourth flash. Arduino_GFX's XCA9554SWSPI idles the clock HIGH (mode 3);
+    # the CUSTOM model defaults to MODE0. ESPHome's own Waveshare ST7701 model
+    # uses MODE3 at 2MHz. Over an I2C expander the rate is nominal anyway.
+    spi_mode: MODE3
+    data_rate: 2MHz
     cs_pin:
       pca9554: io_expander
       number: 0
-    # Every Waveshare display demo does, before the panel init:
-    #   expander pin 6 LOW; pin 5 LOW -> HIGH
-    # and then GT911.setPins(-1, -1) - touch has no reset or interrupt line. So
-    # pin 5 is the display reset and pin 6 a display enable held low. The first
-    # flash gave 5 and 6 to the touch driver, which runs after the display: the
-    # ST7701 took its init and was then reset blank by the touch setup. Black
-    # screen, clean log. The driver pulses reset_pin and raises enable_pin
-    # before the init sequence, so pin 6 is inverted to be driven low.
-    reset_pin:
-      pca9554: io_expander
-      number: 5
-    # Second flash: still completely dark, not even the backlight. Arduino_GFX's
-    # XCA9554SWSPI::begin() also drives the pin it calls "rst" - expander pin 7 -
-    # low then high, and leaves it high as an output. Nothing drove pin 7 here,
-    # so it is raised with the other enable before the reset and init.
-    enable_pin:
-      - pca9554: io_expander
-        number: 6
-        inverted: true
-      - pca9554: io_expander
-        number: 7
+    # Reset (expander 5) and enables (6 low, 7 high) are driven by the on_boot
+    # lambda with the demo's timing, not by reset_pin/enable_pins - see there.
+    # Flashes 1-5 used those options; the history is in
+    # docs/handoff-2026-09-14-panel-display.md.
     dimensions:
       width: 480
       height: 480
@@ -380,10 +544,15 @@ display:
     vsync_front_porch: 10
     vsync_pulse_width: 8
     vsync_back_porch: 20
+    # Red and blue are exchanged against the demo's pin names (R 40-1, B 10-14).
+    # With those names, text drawn red showed blue and blue showed red, while
+    # green was right (flash 7). color_order cannot fix it here: for a CUSTOM
+    # model mipi_rgb stores it but never sends it, and appends MADCTL 0x00 after
+    # init_sequence, so a BGR bit in the table is overwritten.
     data_pins:
-      red: [40, 41, 42, 2, 1]
+      red: [10, 11, 12, 13, 14]
       green: [21, 8, 18, {number: 45, ignore_strapping_warning: true}, 38, 39]
-      blue: [10, 11, 12, 13, 14]
+      blue: [40, 41, 42, 2, 1]
     # IPS panel: the demo sends INVON. ESPHome appends INVON/INVOFF, pixel
     # format, MADCTL, SLPOUT and DISPON itself, so those are not repeated below.
     invert_colors: true
@@ -393,7 +562,11 @@ display:
     # Waveshare's st7701_type1_init_operations, register setup only. The demo
     # waits 120 ms after reset before the first command; ESPHome's driver
     # releases reset and writes immediately, which an ST7701 can ignore.
+    # Arduino_RGB_Display::begin() has no reset pin, so it sends a software
+    # reset (0x01) and waits 120 ms before the table; mipi_rgb never sends one.
     init_sequence:
+      - delay 120ms
+      - [0x01]
       - delay 120ms
       - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]
       - [0xC0, 0x3B, 0x00]
@@ -437,47 +610,344 @@ touchscreen:
     i2c_id: bus_a
     display: panel
 
-# One static test page. A small draw buffer (a quarter of the screen) keeps the
-# display's PSRAM footprint down while the wake word is re-measured.
+# The GUI, phase 2 of docs/design/voice-panel-screens.html: Home (the six lights
+# from the dashboard's Lights card and the ecobee) and the full-screen page per
+# light. Every card follows Home Assistant, so voice, dashboard and panel agree.
+# Geometry is the design's, at 480 px: 24 px gutters, 209 px cards, 13 px gaps.
+# The room photo is not in yet - a warm gradient stands in for it.
 lvgl:
   id: ui
   displays: [panel]
   touchscreens: [touch]
   buffer_size: 25%
   pages:
-    - id: test_page
-      bg_color: 0x1B2233
+    - id: home_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
       widgets:
         - label:
-            align: TOP_MID
-            y: 48
-            text: "Voice Panel"
+            x: 24
+            y: 20
+            text: ""
+            text_font: montserrat_22
             text_color: 0xF2F5F8
-            text_font: montserrat_28
         - label:
-            id: touch_label
-            align: CENTER
-            text: "Display up. Tap the button."
-            text_color: 0xC7CED8
-            text_font: montserrat_20
+            x: 60
+            y: 19
+            text: "home"
+            text_font: montserrat_22
+            text_color: 0xF2F5F8
+        # Green while the wake word is listening, grey while it is not.
+        - obj:
+            id: listen_dot
+            x: 296
+            y: 27
+            width: 9
+            height: 9
+            radius: 5
+            border_width: 0
+            pad_all: 0
+            bg_color: 0x6B7280
+            scrollable: false
+        - label:
+            x: 311
+            y: 22
+            text: "Okay Nabu"
+            text_font: montserrat_14
+            text_color: 0xCCD1D6
+        - label:
+            id: clock_label
+            align: TOP_RIGHT
+            x: -24
+            y: 21
+            text: "--:--"
+            text_font: montserrat_16
+            text_color: 0xCCD1D6
+        # Everything under the bar scrolls; the bar stays.
+        - obj:
+            id: home_scroll
+            x: 0
+            y: 64
+            width: 480
+            height: 416
+            radius: 0
+            border_width: 0
+            bg_opa: 0%
+            pad_top: 0
+            pad_bottom: 24
+            pad_left: 24
+            pad_right: 24
+            scrollbar_mode: "OFF"
+            scroll_dir: VER
+            widgets:
+              - !include
+                file: panel/card-toggle.yaml
+                vars: {key: master, entity: light.bedroom_master_bedroom_light, name: "MASTER BEDROOM LIGHT", room: Bedroom, x: 0, y: 0}
+              - !include
+                file: panel/card-toggle.yaml
+                vars: {key: living2, entity: light.living_room_living_room_switch_2, name: "LIVING ROOM SWITCH 2", room: Living Room, x: 222, y: 0}
+              - !include
+                file: panel/card-dimmer.yaml
+                vars: {key: kitchen, entity: light.kitchen_light_switch, name: "KITCHEN LIGHT SWITCH", room: Kitchen, y: 143}
+              - obj:
+                  id: thermo_card
+                  x: 0
+                  y: 262
+                  width: 431
+                  height: 106
+                  radius: 16
+                  pad_all: 0
+                  border_width: 0
+                  bg_color: 0x3E444E
+                  bg_opa: 74%
+                  scrollable: false
+                  widgets:
+                    - label:
+                        x: 14
+                        y: 30
+                        text: "THERMOSTAT"
+                        text_font: montserrat_14
+                        text_color: 0xF2F5F8
+                    - label:
+                        id: thermo_sub
+                        x: 14
+                        y: 54
+                        text: "--"
+                        text_font: montserrat_14
+                        text_color: 0xD1D6DC
+                    - button:
+                        x: 207
+                        y: 32
+                        width: 42
+                        height: 42
+                        radius: 21
+                        bg_opa: 0%
+                        shadow_width: 0
+                        border_width: 0
+                        on_click:
+                          - script.execute:
+                              id: thermo_step
+                              delta: 1.0
+                        widgets:
+                          - label:
+                              align: CENTER
+                              text: "+"
+                              text_font: montserrat_28
+                              text_color: 0xF2F5F8
+                    - label:
+                        id: thermo_temp
+                        x: 251
+                        y: 32
+                        width: 116
+                        text_align: CENTER
+                        text: "--"
+                        text_font: montserrat_40
+                        text_color: 0xF2F5F8
+                    - button:
+                        x: 373
+                        y: 32
+                        width: 42
+                        height: 42
+                        radius: 21
+                        bg_color: 0x14161A
+                        bg_opa: 55%
+                        shadow_width: 0
+                        border_width: 0
+                        on_click:
+                          - script.execute:
+                              id: thermo_step
+                              delta: -1.0
+                        widgets:
+                          - label:
+                              align: CENTER
+                              text: "-"
+                              text_font: montserrat_28
+                              text_color: 0xF2F5F8
+              - !include
+                file: panel/card-dimmer.yaml
+                vars: {key: family, entity: light.family_room_switch, name: "FAMILY ROOM SWITCH", room: Family room, y: 381}
+              - label:
+                  x: 4
+                  y: 500
+                  text: "BEDROOM • OFFICE"
+                  text_font: montserrat_14
+                  text_color: 0xA8ADB3
+              - !include
+                file: panel/card-toggle.yaml
+                vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, name: "NORTH BEDROOM LIGHT SWITCH", room: Bedroom, x: 0, y: 526}
+              - !include
+                file: panel/card-toggle.yaml
+                vars: {key: stick, entity: light.stick_s3, name: "STICK S3", room: Office, x: 222, y: 526}
+
+    # One light, full screen: name and state top left, the lamp on its cord,
+    # one round power button. open_light fills it in; the house goes back.
+    - id: light_page
+      bg_color: 0x26324A
+      bg_grad_color: 0x161D2D
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        - image:
+            id: detail_lamp
+            src: dome_off
+            align: TOP_MID
+            y: 0
         - button:
-            id: test_button
-            align: BOTTOM_MID
-            y: -64
-            width: 180
-            height: 72
-            radius: 36
-            bg_color: 0x1E6CE8
+            x: 24
+            y: 24
+            width: 53
+            height: 53
+            radius: 27
+            bg_color: 0xFFFFFF
+            bg_opa: 8%
+            shadow_width: 0
+            border_width: 0
             on_click:
-              - lvgl.label.update:
-                  id: touch_label
-                  text: "Touch works."
+              - lvgl.page.show: home_page
             widgets:
               - label:
                   align: CENTER
-                  text: "Tap"
+                  text: ""
+                  text_font: montserrat_22
+                  text_color: 0xF2F5F8
+        - label:
+            id: detail_name
+            x: 91
+            y: 28
+            width: 200
+            height: 20
+            long_mode: dot
+            text: ""
+            text_font: montserrat_16
+            text_color: 0xF2F5F8
+        - label:
+            id: detail_state
+            x: 91
+            y: 50
+            text: "OFF"
+            text_font: montserrat_16
+            text_color: 0xF2F5F8
+        - label:
+            id: detail_level
+            align: TOP_MID
+            y: 266
+            text: ""
+            text_font: montserrat_16
+            text_color: 0xBFC5CC
+        - obj:
+            x: 24
+            y: 346
+            width: 432
+            height: 115
+            radius: 24
+            border_width: 0
+            pad_all: 0
+            bg_color: 0xFFFFFF
+            bg_opa: 5%
+            scrollable: false
+        - button:
+            id: detail_power
+            # Centred in the dock. The design lifts it 58 px above centre, which
+            # put its top and glow over the level text.
+            x: 199
+            y: 362
+            width: 82
+            height: 82
+            radius: 41
+            bg_color: 0x1E6CE8
+            shadow_color: 0x3C8CFF
+            shadow_width: 28
+            shadow_opa: 55%
+            border_width: 0
+            on_click:
+              - homeassistant.action:
+                  action: light.toggle
+                  data:
+                    entity_id: !lambda return id(detail_entity);
+            widgets:
+              - label:
+                  align: CENTER
+                  text: ""
+                  text_font: montserrat_32
                   text_color: 0xFFFFFF
-                  text_font: montserrat_20
+
+# The header clock, from Home Assistant's time.
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      - script.execute: update_clock
+    on_time:
+      - seconds: 0
+        then:
+          - script.execute: update_clock
+
+interval:
+  - interval: 2s
+    then:
+      - if:
+          condition:
+            micro_wake_word.is_running:
+          then:
+            - lvgl.widget.update:
+                id: listen_dot
+                bg_color: 0x6FD3A7
+          else:
+            - lvgl.widget.update:
+                id: listen_dot
+                bg_color: 0x6B7280
+
+# Which light the full-screen page is showing.
+globals:
+  - id: detail_entity
+    type: std::string
+    initial_value: '""'
+  - id: detail_room
+    type: std::string
+    initial_value: '""'
+  - id: detail_dimmer
+    type: bool
+    initial_value: "false"
+
+# Rendered from the design's SVGs by scripts/render-panel-icons.py.
+image:
+  - file: panel/images/lamp_on.png
+    id: lamp_on
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/lamp_off.png
+    id: lamp_off
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/bulb_on.png
+    id: bulb_on
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/bulb_off.png
+    id: bulb_off
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/dome_on.png
+    id: dome_on
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/dome_off.png
+    id: dome_off
+    type: RGB565
+    transparency: alpha_channel
+
+text_sensor:
+  - platform: homeassistant
+    id: thermo_action
+    entity_id: climate.my_ecobee
+    attribute: hvac_action
+    internal: true
+    on_value:
+      - script.execute: thermo_refresh
 
 # How much memory the display leaves the wake word. Compare against the same
 # sensors once the full GUI is in.
@@ -495,3 +965,26 @@ sensor:
     psram:
       name: "PSRAM free"
       entity_category: diagnostic
+
+  - !include
+    file: panel/ha-dimmer-level.yaml
+    vars: {key: kitchen, entity: light.kitchen_light_switch}
+  - !include
+    file: panel/ha-dimmer-level.yaml
+    vars: {key: family, entity: light.family_room_switch}
+
+  # The ecobee card: target and room temperature.
+  - platform: homeassistant
+    id: thermo_target
+    entity_id: climate.my_ecobee
+    attribute: temperature
+    internal: true
+    on_value:
+      - script.execute: thermo_refresh
+  - platform: homeassistant
+    id: thermo_room
+    entity_id: climate.my_ecobee
+    attribute: current_temperature
+    internal: true
+    on_value:
+      - script.execute: thermo_refresh

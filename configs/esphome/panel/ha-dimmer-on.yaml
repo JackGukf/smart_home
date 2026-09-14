@@ -1,0 +1,39 @@
+# Home Assistant's on/off for one dimmer. A binary_sensor entry, included with
+# vars: key, entity. The level arrives separately (panel/ha-dimmer-level.yaml)
+# and only while the light is on - an off light has no brightness attribute -
+# so "off" is what puts the slider back to zero.
+platform: homeassistant
+id: ${key}_on
+entity_id: ${entity}
+internal: true
+on_state:
+  - lvgl.label.update:
+      id: ${key}_sub
+      text: !lambda 'return x ? std::string("On • dimmer") : std::string("Off • dimmer");'
+  - if:
+      condition:
+        lambda: return x;
+      then:
+        - lvgl.image.update:
+            id: ${key}_bulb
+            src: bulb_on
+      else:
+        - lvgl.image.update:
+            id: ${key}_bulb
+            src: bulb_off
+        - lvgl.slider.update:
+            id: ${key}_slider
+            value: 0
+        - lvgl.label.update:
+            id: ${key}_pct
+            text: "0%"
+  - if:
+      condition:
+        lambda: 'return id(detail_entity) == "${entity}";'
+      then:
+        - script.execute:
+            id: detail_refresh
+            is_on: !lambda return x;
+            level: !lambda |-
+              float b = id(${key}_brightness).state;
+              return std::isnan(b) ? 0 : (int) roundf(b * 100.0f / 255.0f);

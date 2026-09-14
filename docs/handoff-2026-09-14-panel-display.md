@@ -119,6 +119,67 @@ How ESPHome's `mipi_rgb` (2026.8.2) actually behaves — read from its source:
 | 1 (`0x8ed1ba34`) | first config; reset = expander 7; GT911 reset = 5, interrupt = 6 | black; GT911 setup ran *after* the display and pulsed pin 5, which is the display reset — would have blanked it |
 | 2 (`0x9a3a6d4f`) | reset = 5, enable = 6 (inverted); GT911 without pins | black, completely dark |
 | 3 (`0xa8c115df`) | + enable expander 7 HIGH, + `delay 120ms` before init; failure sensors | black, completely dark, also after USB power cycle; failure sensors off |
+| 4 (`0x8d1fc1ae`) | + `spi_mode: MODE3`, `data_rate: 2MHz`, software reset `0x01` + 120 ms prepended to `init_sequence` | **backlight now on** (faint glow), still no picture — first change the panel reacted to. Note: ESPHome's bit-bang SPI samples on the rising edge in both MODE0 and MODE3, so the software reset is the likelier cause |
+| 5 (`0xaf0ec229`) | LVGL commented out, `show_test_card: true`, `update_interval: 5s` — separates panel from LVGL | backlight on, black. **Not LVGL.** |
+| 6 | `reset_pin`/`enable_pins` removed; demo-exact sequence in a blocking `on_boot` lambda at priority 700 (pin 7 pulse; CS/SCK/MOSI high; 6 low; 5 low 200 ms → high 200 ms) | **test card visible — the display works under ESPHome** (`0x2ad30547`) |
+| 7 | test card → driver `lambda` drawing text; "RED/GREEN/BLUE" each in its own colour to check channel order | text sharp and placed right; **green correct, red and blue swapped** (`0xeffb189e`) |
+| 8 | red and blue `data_pins` lists exchanged (`color_order` is ignored for a CUSTOM model, and the appended MADCTL `0x00` would overwrite a BGR bit in the table); LVGL test page restored (`update_interval: never`, no lambda/font) — checks colours, LVGL and GT911 touch | **colours correct, LVGL renders, touch works** (`0x111b2b3e`). The screen **flickered after the OTA reboot**; after a USB power cycle, no flicker. Open: does a warm restart (OTA, HA restart) bring it back? |
+| 9 (`0xb440d6e2`) | + `button: restart` (diagnostic), to reproduce a warm restart from HA | after the OTA reboot **flickered again until Tap was pressed**, then stable. A redraw, not a re-init, cures it → the RGB stream loses sync during a busy boot. `mipi_rgb` calls `esp_lcd_rgb_panel_restart` every `loop()`, but `CONFIG_LCD_RGB_RESTART_IN_VSYNC` was off |
+| 10 | + `sdkconfig_options`: `LCD_RGB_RESTART_IN_VSYNC`, `LCD_RGB_ISR_IRAM_SAFE`, `SPIRAM_XIP_FROM_PSRAM` (Espressif's RGB drift fixes; XIP costs ~1.7 MB PSRAM) | **no flicker** (`0xb62d785a`) after the OTA reboot and after two `button.voice_panel_restart` presses from HA — fixed. PSRAM free 6.26 MB, heap free 96.8 KB (largest block 56 KB), mic capturing |
+
+After flash 10 the Waveshare-demo test page was replaced by the first GUI phase
+(below), flash `0xab924b1d`.
+
+## GUI phase 2: Home and the full-screen light (flashed 2026-09-14)
+
+Built from `docs/design/voice-panel-screens.html` (step 2 of its build order).
+Step 1's wake-word re-measure with the display on is **still owed** — it needs a
+person speaking; the header's "Okay Nabu" dot shows whether the engine is running.
+
+- **Entities** (resolved against HA's registry, not by name — every wall switch
+  has a same-named Dashboard Bridge twin, and only the TP-Link originals carry
+  brightness): toggles `light.bedroom_master_bedroom_light`,
+  `light.living_room_living_room_switch_2` (both `switch_as_x` over HS200),
+  `light.bedroom_north_bedroom_light_switch`, `light.stick_s3` (bridge only);
+  dimmers `light.kitchen_light_switch`, `light.family_room_switch` (HS220);
+  thermostat `climate.my_ecobee` (HomeKit, heat mode, single `temperature`).
+- **HA permission changed:** the Voice Panel's ESPHome entry had
+  `allow_service_calls: false`, which silently drops every `homeassistant.action`
+  from the device. Set to true through the options flow. *Not yet codified* in
+  `scripts/setup-ha-voice.py` — a rebuild would lose it.
+- **Files:** `configs/esphome/panel/card-{toggle,dimmer}.yaml` (card templates via
+  `!include` vars), `panel/ha-{toggle,dimmer-on,dimmer-level}.yaml` (state feeds),
+  `panel/images/*.png` rendered by `scripts/render-panel-icons.py` (the ESPHome
+  image has no cairosvg, so the design's SVGs are redrawn in Pillow).
+- **Behaviour:** switches send explicit on/off; sliders send one `light.turn_on
+  brightness_pct` on release (0 → off); thermostat ±1 °C clamped 10–26, shown at
+  once and corrected by HA; lamp/bulb icons open the full-screen page, whose
+  power button sends `light.toggle`; the house returns. Menu icon is a no-op
+  until Scenes exists. Warm gradient stands in for the room photo.
+- **Owner-tested 2026-09-14: everything works.** Fixed after that test:
+  - card names overlapped the state line: LVGL's `long_mode: dot` only truncates
+    with a **fixed height**; with content height it wraps
+  - on the light page the power button covered the level text: the design lifts
+    it 58 px above the dock's centre, so it is now centred, with the text at y 266
+  - icons: the big lamp's glow was clipped into a rectangle, the small glow muddy
+- **Cost:** flash 2.37 MB, PSRAM free 6.26 → 5.60 MB, heap free 102.8 KB
+  (largest block 62 KB), microphone capturing, satellite idle.
+
+Ruled out between flashes 5 and 6, from source rather than by flashing:
+
+- **The init table is correct.** Parsed Arduino_GFX's `st7701_type1_init_operations`
+  and compared op by op with `init_sequence`: all 33 register commands identical.
+  ESPHome appends `0x3A 0x66` (the demo sends `0x60`), `0x36 0x00`, `0x21`, `0x11`, `0x29`.
+- **The bit protocol matches.** The demo writes MOSI, SCK low, SCK high, idle high —
+  ESPHome's MODE3. CS per 9-bit word (ESPHome) vs per batch (demo) is what ESPHome's
+  working Waveshare ST7701 model already does.
+- **But MODE3 lost the first command.** Expander outputs start low; ESPHome's first
+  transfer drops CS, then raises SCK to idle — a spurious rising edge that shifts
+  the first word. That word was the software reset. Flash 6 pre-drives SCK high.
+- Pixel clock: the demo uses 12 MHz on octal PSRAM, same as here. Data pin order is
+  byte-swapped by ESPHome on purpose (big-endian buffer); wrong order would give
+  wrong colours, not black. An IPS panel is black when not driven, so black alone
+  does not prove the ST7701 is asleep.
 
 ## Differences still left, most likely first
 

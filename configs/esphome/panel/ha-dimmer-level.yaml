@@ -1,0 +1,26 @@
+# Home Assistant's brightness (0-255) for one dimmer, shown as 0-100 %. A sensor
+# entry, included with vars: key, entity.
+platform: homeassistant
+id: ${key}_brightness
+entity_id: ${entity}
+attribute: brightness
+internal: true
+on_value:
+  - if:
+      condition:
+        lambda: return !std::isnan(x);
+      then:
+        - lvgl.slider.update:
+            id: ${key}_slider
+            value: !lambda return roundf(x * 100.0f / 255.0f);
+        - lvgl.label.update:
+            id: ${key}_pct
+            text: !lambda return to_string((int) roundf(x * 100.0f / 255.0f)) + "%";
+        - if:
+            condition:
+              lambda: 'return id(detail_entity) == "${entity}";'
+            then:
+              - script.execute:
+                  id: detail_refresh
+                  is_on: !lambda return id(${key}_on).state;
+                  level: !lambda return (int) roundf(x * 100.0f / 255.0f);
