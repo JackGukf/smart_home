@@ -14,6 +14,10 @@
 > captures from its microphone. Its on-device wake word looked dead but was
 > stopped for the first playback and never restarted — fixed and verified the
 > same evening; detection by a real voice is the next check.
+> Since 2026-09-14 the panel's commands go through a **voice resolver**
+> (`configs/homeassistant/custom_components/voice_resolver`): HA's own matcher
+> first, then a deterministic fuzzy match with "Did you mean …?" — no model.
+> Its logic is `resolver.py`, testable without HA.
 > Start here: **`docs/handoff-2026-09-13-voice-satellite.md`**.
 >
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd

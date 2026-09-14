@@ -225,15 +225,18 @@ async def point_pipeline_at(ha: HomeAssistantWS, stt_entity: str, tts_entity: st
 VOICE_PIPELINE_NAME = "Voice Panel"
 # Home Assistant's built-in agent: the local intent matcher and nothing behind it.
 VOICE_AGENT = "conversation.home_assistant"
+# The resolver runs that same matcher first and only repairs what it rejects
+# (configs/homeassistant/custom_components/voice_resolver). Still no model.
+RESOLVER_DOMAIN = "voice_resolver"
 SATELLITE_PIPELINE_SELECT = "select.voice_panel_assistant"
 
 
 def voice_pipeline_fields(stt_entity: str, stt_language: str,
-                          tts_entity: str, tts_language: str) -> dict:
+                          tts_entity: str, tts_language: str, agent: str = VOICE_AGENT) -> dict:
     return {
         "name": VOICE_PIPELINE_NAME,
         "language": "en",
-        "conversation_engine": VOICE_AGENT,
+        "conversation_engine": agent,
         "conversation_language": "en",
         "prefer_local_intents": False,  # there is nothing non-local to prefer over
         "stt_engine": stt_entity,
@@ -247,12 +250,12 @@ def voice_pipeline_fields(stt_entity: str, stt_language: str,
 
 
 async def ensure_voice_pipeline(ha: HomeAssistantWS, stt_entity: str, tts_entity: str,
-                                apply: bool) -> list[str]:
+                                apply: bool, agent: str = VOICE_AGENT) -> list[str]:
     stt_language = best_language((await engine_languages(ha, "stt")).get(stt_entity, []))
     tts_language = best_language((await engine_languages(ha, "tts")).get(tts_entity, []))
     if not stt_language or not tts_language:
         return [f"{stt_entity} or {tts_entity} offers no English; voice pipeline left alone"]
-    want = voice_pipeline_fields(stt_entity, stt_language, tts_entity, tts_language)
+    want = voice_pipeline_fields(stt_entity, stt_language, tts_entity, tts_language, agent)
 
     listing = await ha.call(type="assist_pipeline/pipeline/list")
     pipelines = listing["pipelines"] if isinstance(listing, dict) else listing
@@ -260,7 +263,7 @@ async def ensure_voice_pipeline(ha: HomeAssistantWS, stt_entity: str, tts_entity
     if have is None:
         if apply:
             await ha.call(type="assist_pipeline/pipeline/create", **want)
-        return [f"create pipeline {VOICE_PIPELINE_NAME!r} (agent {VOICE_AGENT})"]
+        return [f"create pipeline {VOICE_PIPELINE_NAME!r} (agent {agent})"]
     changes = [f"{k}={v}" for k, v in want.items() if have.get(k) != v]
     if not changes:
         return []
@@ -337,6 +340,9 @@ async def ensure_wake_echo_automation(session, headers, base, apply: bool) -> li
 # so it stays.
 BRIDGE_VIA_DEVICE = "Dashboard Bridge"
 JUNK_MANUFACTURERS = frozenset({"TEST_VENDOR"})  # a leftover Matter test light
+# Zigbee repeaters expose their status LED as a light, so "turn on the family
+# room light" also lit a mains repeater. They are infrastructure, not lights.
+NEVER_EXPOSE_DEVICE_WORDS = ("zigbee repeater",)
 SWITCHABLE_DOMAINS = frozenset({"light", "switch", "fan"})
 # Devices voice must never switch, matched by name because they may not be in
 # Home Assistant yet (and new entities are exposed to Assist by default). The
@@ -387,7 +393,8 @@ def plan_exposure(entities: list[dict], devices: list[dict], states: dict[str, d
                         and friendly(entity) in native_switchables)
         device_name = str(device.get("name_by_user") or device.get("name") or "").strip().lower()
         protected = (friendly(entity) in never_expose_names or device_name in never_expose_names
-                     or entity_id in NEVER_EXPOSE_ENTITY_IDS)
+                     or entity_id in NEVER_EXPOSE_ENTITY_IDS
+                     or any(word in device_name for word in NEVER_EXPOSE_DEVICE_WORDS))
         # An entity Home Assistant itself hides - notably the original switch
         # behind a "show as light" wrapper - shares its name with what replaced
         # it, so leaving it exposed recreates "multiple devices called ...".
@@ -501,6 +508,69 @@ def ensure_custom_sentences(config_dir: Path, apply: bool) -> list[str]:
     return changes
 
 
+CUSTOM_COMPONENT = PROJECT_ROOT / "configs" / "homeassistant" / "custom_components" / RESOLVER_DOMAIN
+COMPONENT_FILES = ("__init__.py", "config_flow.py", "conversation.py", "resolver.py", "manifest.json")
+
+
+def ensure_custom_component(config_dir: Path, apply: bool) -> list[str]:
+    """Copy the voice resolver integration into Home Assistant's config directory."""
+    if not config_dir.is_dir():
+        return [f"Home Assistant config directory {config_dir} not found; resolver left alone"]
+    target = config_dir / "custom_components" / RESOLVER_DOMAIN
+    changes = []
+    for name in COMPONENT_FILES:
+        source, dest = CUSTOM_COMPONENT / name, target / name
+        text = source.read_text(encoding="utf-8")
+        existed = dest.is_file()
+        if existed and dest.read_text(encoding="utf-8") == text:
+            continue
+        if apply:
+            target.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+        changes.append(f"{'update' if existed else 'install'} {dest}")
+    return changes
+
+
+async def restart_home_assistant(session, headers, base) -> None:
+    """A new or changed custom integration is only loaded at startup."""
+    async with session.post(f"{base}/api/services/homeassistant/restart", headers=headers, json={}) as response:
+        response.raise_for_status()
+    await asyncio.sleep(10)  # let it actually go down before polling for it to come back
+    for _ in range(90):
+        try:
+            async with session.get(f"{base}/api/config", headers=headers) as response:
+                if response.status == 200 and (await response.json()).get("state") == "RUNNING":
+                    return
+        except Exception:  # noqa: BLE001 - connection refused while it restarts
+            pass
+        await asyncio.sleep(2)
+    raise RuntimeError("Home Assistant did not come back within three minutes")
+
+
+async def ensure_resolver_entry(session, headers, base, apply: bool) -> list[str]:
+    async with session.get(f"{base}/api/config/config_entries/entry", headers=headers) as response:
+        entries = [e for e in await response.json() if e.get("domain") == RESOLVER_DOMAIN]
+    if entries:
+        return []
+    if apply:
+        async with session.post(f"{base}/api/config/config_entries/flow", headers=headers,
+                                json={"handler": RESOLVER_DOMAIN}) as response:
+            result = await response.json()
+        if result.get("type") != "create_entry":
+            raise RuntimeError(f"voice resolver config flow did not create an entry: {result}")
+        await asyncio.sleep(3)  # let the agent entity register
+    return ["add the Voice resolver integration"]
+
+
+async def resolver_agent_entity(ha: HomeAssistantWS) -> str | None:
+    """The resolver's conversation entity, found in the registry rather than assumed."""
+    for entity in await ha.call(type="config/entity_registry/list"):
+        if entity.get("platform") == RESOLVER_DOMAIN and entity["entity_id"].startswith("conversation.") \
+                and not entity.get("disabled_by"):
+            return entity["entity_id"]
+    return None
+
+
 async def run(args: argparse.Namespace) -> int:
     try:
         import aiohttp
@@ -530,6 +600,16 @@ async def run(args: argparse.Namespace) -> int:
     apply = args.apply
 
     async with aiohttp.ClientSession() as session:
+        component_changes = ensure_custom_component(Path(args.config_dir), apply)
+        for line in component_changes:
+            print(("" if apply else "would ") + line)
+        if apply and component_changes and "not found" not in component_changes[0]:
+            print("restarting Home Assistant to load the voice resolver ...")
+            await restart_home_assistant(session, headers, base)
+            print("Home Assistant is back")
+        for line in await ensure_resolver_entry(session, headers, base, apply):
+            print(("" if apply else "would ") + line)
+
         have = await existing_wyoming_entries(session, headers, base)
         for name, host, port in SERVICES:
             key = SERVICE_TITLES[port]
@@ -565,7 +645,12 @@ async def run(args: argparse.Namespace) -> int:
             ha = HomeAssistantWS(ws)
             for line in await point_pipeline_at(ha, local_stt, local_tts, apply):
                 print(("" if apply else "would ") + line)
-            for line in await ensure_voice_pipeline(ha, local_stt, local_tts, apply):
+            # Falls back to the plain matcher if the resolver did not load, so a
+            # broken integration can never leave the panel without an agent.
+            agent = await resolver_agent_entity(ha) or VOICE_AGENT
+            if agent == VOICE_AGENT and apply:
+                print("voice resolver agent not found; Voice Panel keeps Home Assistant's own agent")
+            for line in await ensure_voice_pipeline(ha, local_stt, local_tts, apply, agent):
                 print(("" if apply else "would ") + line)
 
         async with session.ws_connect(ws_url) as ws:

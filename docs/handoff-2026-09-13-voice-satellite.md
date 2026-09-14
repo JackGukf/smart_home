@@ -173,6 +173,58 @@ its entry: `light.h6076`, renamed "Living room ambient light" with the device in
 Living Room. "Is the living room ambient light on" → "Yes"; it is also counted
 by "which lights are on". The Voice Panel pipeline survived the restart.
 
+### Then: "can't find the device" when the device is there (2026-09-14)
+
+"Turn on living room switch 2" failed three times. Whisper heard **"Turn on
+leaving room switch to"** (twice) and **"Turn on leaving long switch too."**,
+and Home Assistant's matcher needs the exact name. Recognition-only checks
+showed "switch two", "switch too", "switch to" and "living room switch" all
+miss. Three changes, in the order of the proposal the owner approved:
+
+**1. Whisper gets the house's vocabulary** (`--initial-prompt` in
+`docker-compose.voice.yml`: device and room names). Measured on Piper-spoken
+commands: identical transcripts, +0.06 s, and on 2 s of silence it returned
+nothing where the plain model invented "You". Synthetic speech cannot show
+whether it fixes the owner's "leaving room"; only real use can. Update the
+prompt when a device is renamed.
+
+**2. Room hygiene.** Both Zigbee repeaters' status LEDs are hidden from Assist
+(they were lit by "turn on the family room light"), and "Family room LED" moved
+from Living Room to Family room, as the owner confirmed.
+
+**3. A voice resolver** — `configs/homeassistant/custom_components/voice_resolver`,
+installed by `setup-ha-voice.py` (which restarts HA once when its files change)
+and set as the Voice Panel pipeline's agent. It runs Home Assistant's own
+matcher first and returns its answer untouched; only on `no_valid_targets` or
+`no_intent_match` does `resolver.py` step in:
+
+- repairs the transcript ("leaving" → "living", trailing "to/too/two" → "2",
+  "stick s three" → "stick s3"), parses on/off commands;
+- scores against switchable devices **exposed to voice** (so the Raspberry PI
+  plug is unreachable) by spelling, consonant outline and words, with a
+  penalty for a different or missing number and for a missing distinctive word;
+- **acts** at ≥ 0.84 with a 0.10 lead; **asks** "Did you mean …?" at ≥ 0.52 and
+  keeps listening (`continue_conversation`); answers "yes", "no", "the second
+  one" or part of a name; otherwise says what it heard.
+
+No model: every decision is a pure function, pinned by
+`tests/python/test_voice_resolver.py` against the real transcripts above.
+
+**Verified on the board, switching nothing on:** a known question still comes
+straight from HA; "turn on the living room switch" → "Did you mean Living room
+switch 2?", "no" → "Okay, never mind."; the real misheard transcript as a turn
+*off* while the light was off → "Turned off Living room switch 2."; an unknown
+device → "I heard garage door opener, but no device has a name like that."
+
+**First deploy crashed every miss** with `unknown_error`: in HA 2026 an entity's
+alias set can hold a `ComputedNameType` placeholder, not a string, and the
+websocket listing does not show it. Only strings are used now, and a test
+covers it.
+
+**Still open:** a real test by voice; spoken aliases for number-named switches
+(owner to choose the names); and adding each future miss's transcript to the
+test file.
+
 No wake chime, by choice: the mic and speaker share one bus, so a chime would
 push the start of listening back and eat the start of the command.
 

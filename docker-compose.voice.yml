@@ -36,10 +36,17 @@ services:
       --uri tcp://127.0.0.1:10300
       --data-dir /data
       --download-dir /data
+      --initial-prompt "Living room switch 2, Living room cabinet LED, Living room ambient light, Kitchen light switch, Master bedroom light, North Bedroom Light Switch, North bedroom night light, Family room switch, Family room LED, Office switch, Stick S3. Turn on, turn off. Living room, kitchen, bedroom, family room, office, front door."
     volumes:
       - whisper-data:/data
     environment:
       TZ: ${TZ:-America/Vancouver}
+    # The initial prompt is the house's own vocabulary, handed to Whisper as if
+    # it had just heard it. The panel turned "living room switch 2" into
+    # "leaving room switch to". Measured 2026-09-14 on Piper-spoken commands:
+    # identical transcripts, +0.06 s, and on 2 s of silence the prompted model
+    # returned nothing where the plain one invented "You". Keep it to names and
+    # rooms; update it when a device is renamed.
     # int8, not the default: ctranslate2 infers float16 from the saved model,
     # finds no efficient fp16 on this CPU and silently falls back to float32 -
     # slower and heavier than the int8 the model is fine at.

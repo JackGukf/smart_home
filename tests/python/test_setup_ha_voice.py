@@ -32,6 +32,30 @@ def test_the_voice_pipeline_has_no_model_in_it() -> None:
     assert "qwen" not in str(fields).lower()
 
 
+def test_the_resolver_pipeline_still_has_no_model_in_it() -> None:
+    fields = voice.voice_pipeline_fields("stt.faster_whisper", "en", "tts.piper", "en_US",
+                                         agent="conversation.voice_resolver")
+    assert fields["conversation_engine"] == "conversation.voice_resolver"
+    assert "qwen" not in str(fields).lower()
+
+
+def test_the_resolver_integration_is_copied_only_with_apply(tmp_path) -> None:
+    assert voice.ensure_custom_component(tmp_path, apply=False)
+    assert not (tmp_path / "custom_components").exists()
+    installed = voice.ensure_custom_component(tmp_path, apply=True)
+    assert {Path(line.split()[-1]).name for line in installed} == set(voice.COMPONENT_FILES)
+    assert voice.ensure_custom_component(tmp_path, apply=True) == []  # a rerun must not restart HA again
+
+
+def test_the_integration_ships_every_file_home_assistant_needs() -> None:
+    import json
+    manifest = json.loads((voice.CUSTOM_COMPONENT / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["domain"] == voice.RESOLVER_DOMAIN and manifest["config_flow"] is True
+    assert "version" in manifest  # custom integrations without a version are refused
+    for name in voice.COMPONENT_FILES:
+        assert (voice.CUSTOM_COMPONENT / name).is_file(), name
+
+
 def test_the_voice_pipeline_keeps_the_negotiated_languages() -> None:
     """Piper takes en_US and not en; the pipeline must carry what was negotiated."""
     fields = voice.voice_pipeline_fields("stt.faster_whisper", "en", "tts.piper", "en_US")
@@ -253,6 +277,17 @@ def test_the_plug_that_powers_the_wall_panel_is_never_reachable_by_voice() -> No
     exposed["switch.raspberry_pi"] = {"conversation": True}
     _, hide = voice.plan_exposure(entities, devices, states, exposed)
     assert "switch.raspberry_pi" in hide
+
+
+def test_a_zigbee_repeaters_status_led_is_not_a_light_for_voice() -> None:
+    """'turn on the family room light' used to light the mains repeater too."""
+    entities, devices, states, exposed = _registry()
+    devices.append({"id": "rep", "name": "Zigbee repeater family room", "manufacturer": "Tuya"})
+    entities.append({"entity_id": "light.0xa4c1388a8c96685c", "platform": "mqtt", "device_id": "rep"})
+    states["light.0xa4c1388a8c96685c"] = {"attributes": {"friendly_name": "Zigbee repeater family room"}}
+    exposed["light.0xa4c1388a8c96685c"] = {"conversation": True}
+    _, hide = voice.plan_exposure(entities, devices, states, exposed)
+    assert "light.0xa4c1388a8c96685c" in hide
 
 
 def test_the_speaker_is_kept_through_apple_tv_not_cast() -> None:

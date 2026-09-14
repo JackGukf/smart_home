@@ -1,0 +1,13 @@
+{
+  "domain": "voice_resolver",
+  "name": "Voice resolver",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/JackGukf/smart_home",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "1.0.0"
+}
