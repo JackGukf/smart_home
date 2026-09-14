@@ -503,7 +503,7 @@ script:
                   entity_id: !lambda return id(detail_entity);
                   brightness_pct: !lambda return to_string(pct);
 
-  # The menu: 0 Home, 1 Scenes, 2 Security, 3 Cameras.
+  # The menu: 0 Home, 1 Scenes, 2 Security, 3 Cameras, 4 Wall panel.
   - id: go_page
     parameters:
       page: int
@@ -526,11 +526,15 @@ script:
           id: nav_cameras
           state:
             checked: !lambda return page == 3;
+      - lvgl.widget.update:
+          id: nav_wall
+          state:
+            checked: !lambda return page == 4;
       - lvgl.label.update:
           id: page_title
           text: !lambda |-
             std::string title = page == 1 ? "scenes" : page == 2 ? "security"
-                              : page == 3 ? "cameras" : "home";
+                              : page == 3 ? "cameras" : page == 4 ? "wall panel" : "home";
             return title;
       # Leaving the Cameras page frees the snapshot's memory, which the wake
       # word shares.
@@ -567,6 +571,12 @@ script:
             - script.execute: camera_open
       - if:
           condition:
+            lambda: return page == 4;
+          then:
+            - script.execute: wall_refresh
+            - lvgl.page.show: wall_page
+      - if:
+          condition:
             lambda: return page == 0;
           then:
             - lvgl.page.show: home_page
@@ -583,6 +593,64 @@ script:
                 id: cam_busy
                 value: "true"
             - component.update: front_cam
+
+  # Highlight the view last sent to the wall panel.
+  - id: wall_refresh
+    then:
+      - lvgl.widget.update:
+          id: home_view_card
+          state:
+            checked: !lambda 'return id(wall_view) == "home";'
+      - lvgl.label.update:
+          id: home_view_sub
+          text: !lambda |-
+            std::string text = id(wall_view) == "home" ? "Showing" : "Show";
+            return text;
+      - lvgl.widget.update:
+          id: cameras_view_card
+          state:
+            checked: !lambda 'return id(wall_view) == "cameras";'
+      - lvgl.label.update:
+          id: cameras_view_sub
+          text: !lambda |-
+            std::string text = id(wall_view) == "cameras" ? "Showing" : "Show";
+            return text;
+      - lvgl.widget.update:
+          id: alarm_view_card
+          state:
+            checked: !lambda 'return id(wall_view) == "alarm";'
+      - lvgl.label.update:
+          id: alarm_view_sub
+          text: !lambda |-
+            std::string text = id(wall_view) == "alarm" ? "Showing" : "Show";
+            return text;
+      - lvgl.widget.update:
+          id: devices_view_card
+          state:
+            checked: !lambda 'return id(wall_view) == "devices";'
+      - lvgl.label.update:
+          id: devices_view_sub
+          text: !lambda |-
+            std::string text = id(wall_view) == "devices" ? "Showing" : "Show";
+            return text;
+      - lvgl.widget.update:
+          id: climate_view_card
+          state:
+            checked: !lambda 'return id(wall_view) == "climate";'
+      - lvgl.label.update:
+          id: climate_view_sub
+          text: !lambda |-
+            std::string text = id(wall_view) == "climate" ? "Showing" : "Show";
+            return text;
+      - lvgl.widget.update:
+          id: status_view_card
+          state:
+            checked: !lambda 'return id(wall_view) == "status";'
+      - lvgl.label.update:
+          id: status_view_sub
+          text: !lambda |-
+            std::string text = id(wall_view) == "status" ? "Showing" : "Show";
+            return text;
 
   # Opening the Cameras page: show the relay's last view first - it answers at
   # once, while the live frames take 2-3 s to start - then go live.
@@ -1086,6 +1154,30 @@ lvgl:
                       text: "   Cameras"
                       text_font: montserrat_20
                       text_color: 0xF2F5F8
+            - button:
+                id: nav_wall
+                x: 16
+                y: 300
+                width: 246
+                height: 54
+                radius: 12
+                bg_color: 0x647696
+                bg_opa: 0%
+                shadow_width: 0
+                border_width: 0
+                checked:
+                  bg_opa: 55%
+                on_click:
+                  - script.execute:
+                      id: go_page
+                      page: 4
+                widgets:
+                  - label:
+                      x: 14
+                      align: LEFT_MID
+                      text: "   Wall panel"
+                      text_font: montserrat_20
+                      text_color: 0xF2F5F8
 
   pages:
     - id: home_page
@@ -1417,6 +1509,31 @@ lvgl:
                   text_font: montserrat_14
                   text_color: 0xF2F5F8
 
+    # Wall panel: a remote for the hallway screen (the Raspberry Pi showing the
+    # dashboard). The six views are the owner's decision; Security is the
+    # dashboard's "alarm" view. Only that browser obeys - see panel/card-view.yaml.
+    - id: wall_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        - !include {file: panel/card-view.yaml, vars: {key: home, title: "Home", icon: "", x: 24, y: 70}}
+        - !include {file: panel/card-view.yaml, vars: {key: cameras, title: "Cameras", icon: "", x: 247, y: 70}}
+        - !include {file: panel/card-view.yaml, vars: {key: alarm, title: "Security", icon: "", x: 24, y: 179}}
+        - !include {file: panel/card-view.yaml, vars: {key: devices, title: "Devices", icon: "", x: 247, y: 179}}
+        - !include {file: panel/card-view.yaml, vars: {key: climate, title: "Climate", icon: "", x: 24, y: 288}}
+        - !include {file: panel/card-view.yaml, vars: {key: status, title: "Status", icon: "", x: 247, y: 288}}
+        - label:
+            id: wall_toast
+            x: 28
+            y: 402
+            width: 424
+            text: "Tap a view to show it on the hallway wall panel"
+            text_font: montserrat_14
+            text_color: 0x9EE6C5
+
     # One light, full screen: name and state top left, the lamp on its cord,
     # one round power button. A dimmer also gets a brightness bar and presets,
     # and its lamp moves left to make room. open_light fills it in.
@@ -1621,6 +1738,11 @@ globals:
   - id: family_pct
     type: int
     initial_value: "0"
+  # The view last sent to the hallway wall panel (panel/card-view.yaml). The
+  # wall panel boots into Home, so that is where this starts.
+  - id: wall_view
+    type: std::string
+    initial_value: '"home"'
   # A snapshot download is in flight (camera_fetch).
   - id: cam_busy
     type: bool

@@ -8868,6 +8868,18 @@ function scheduleLiveRefresh() {
   }, LIVE_REFRESH_DEBOUNCE_MS);
 }
 
+/* The view a "show_view" frame asks for, or null. Checked here as well as on the
+   server, so a malformed frame can never open an arbitrary panel. */
+const WALL_PANEL_VIEWS = new Set(["home", "cameras", "alarm", "devices", "climate", "status"]);
+function wallPanelView(data) {
+  try {
+    const view = String(JSON.parse(data || "{}").view || "").toLowerCase();
+    return WALL_PANEL_VIEWS.has(view) ? view : null;
+  } catch {
+    return null;
+  }
+}
+
 function connectLiveUpdates() {
   if (typeof EventSource !== "function") return;   /* older Safari: poll only */
   /* The whole wiring is guarded, not just the constructor. This is an
@@ -8879,6 +8891,13 @@ function connectLiveUpdates() {
     if (!source || typeof source.addEventListener !== "function") return;
 
     source.addEventListener("changed", scheduleLiveRefresh);
+
+    /* The Voice Panel's wall-panel remote. The server only sends this to the
+       wall panel's own stream, never to a phone or the PC. */
+    source.addEventListener("show_view", (event) => {
+      const view = wallPanelView(event.data);
+      if (view) activateView(view);
+    });
 
     source.addEventListener("unavailable", (event) => {
       /* The server reached a conclusion rather than failing: no token, no

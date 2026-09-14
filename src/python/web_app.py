@@ -1031,7 +1031,7 @@ def create_app(
         return {"events": events, "retention_days": MOTION_LOG_MAX_DAYS}
 
     @app.get("/api/events/stream")
-    async def events_stream() -> StreamingResponse:
+    async def events_stream(request: Request) -> StreamingResponse:
         """Push notification of Home Assistant state changes, for live updates.
 
         Additive on purpose: the client keeps its 60 s poll, so if this stream
@@ -1039,6 +1039,8 @@ def create_app(
         """
         ha_config = _load_home_assistant_config(app.state.config_path)
         token = os.getenv(ha_config.token_env)
+        # Only the wall panel (a trusted host) follows "show this view" requests.
+        wall_panel = _host_is_trusted(request.client.host if request.client else None, _trusted_hosts)
 
         async def body() -> AsyncIterator[str]:
             if not token:
@@ -1047,7 +1049,8 @@ def create_app(
             async def fresh_switches(since: float) -> bool:
                 return await _fresh_device_cache(app, since)
 
-            async for frame in _home_assistant_event_stream(ha_config, token, fresh_switches):
+            async for frame in _home_assistant_event_stream(ha_config, token, fresh_switches,
+                                                            follow_wall_panel=wall_panel):
                 yield frame
 
         return StreamingResponse(
@@ -4383,6 +4386,12 @@ _EVENT_COALESCE_SECONDS = 0.4
 # Changes worth re-reading the TP-Link switches for: the dashboard serves those
 # cards from its own poll, not from Home Assistant's state (see _fresh_device_cache).
 _EVENT_REFRESH_DOMAINS = frozenset({"light", "switch"})
+# The Voice Panel's "show this on the wall panel" request. ESPHome fires it as a
+# Home Assistant event (its names must start with "esphome."); only the event
+# streams of trusted hosts - the wall panel - subscribe to it, so a phone or the
+# PC never changes view on its own.
+WALL_PANEL_VIEW_EVENT = "esphome.wall_panel_show_view"
+WALL_PANEL_VIEWS = frozenset({"home", "cameras", "alarm", "devices", "climate", "status"})
 # Proxies and browsers drop an idle event stream. A comment frame is not an
 # event, so it costs the client nothing but keeps the socket alive.
 _EVENT_KEEPALIVE_SECONDS = 20.0
@@ -4391,6 +4400,7 @@ _EVENT_KEEPALIVE_SECONDS = 20.0
 async def _home_assistant_event_stream(
     config: HomeAssistantConfig, token: str,
     before_notify: "Callable[[float], Awaitable[bool]] | None" = None,
+    follow_wall_panel: bool = False,
 ) -> "AsyncIterator[str]":
     """Yield SSE frames as Home Assistant reports state changes.
 
@@ -4425,6 +4435,11 @@ async def _home_assistant_event_stream(
                     return
                 await ws.send_json({"id": 1, "type": "subscribe_events", "event_type": "state_changed"})
                 await ws.receive_json()  # subscription result
+                if follow_wall_panel:
+                    # Its result arrives as a non-event message, which the
+                    # coalescer skips like any other.
+                    await ws.send_json({"id": 2, "type": "subscribe_events",
+                                        "event_type": WALL_PANEL_VIEW_EVENT})
                 yield 'event: ready\ndata: {}\n\n'
 
                 async def receive(timeout: float) -> dict[str, Any]:
@@ -4436,6 +4451,14 @@ async def _home_assistant_event_stream(
         raise
     except Exception as exc:  # noqa: BLE001 - a dead stream must never break the page
         yield f"event: unavailable\ndata: {json.dumps({'reason': str(exc)[:120]})}\n\n"
+
+
+def _wall_panel_frame(data: dict[str, Any]) -> str | None:
+    """An SSE frame telling the wall panel which view to show, or None if invalid."""
+    view = str(data.get("view") or "").strip().lower()
+    if view not in WALL_PANEL_VIEWS:
+        return None
+    return f"event: show_view\ndata: {json.dumps({'view': view})}\n\n"
 
 
 def _changed_frame(entity_id: str) -> str:
@@ -4475,6 +4498,14 @@ async def _coalesced_changes(
 
         if message is not None:
             if message.get("type") != "event":
+                continue
+            event = message.get("event") or {}
+            if event.get("event_type") == WALL_PANEL_VIEW_EVENT:
+                # A deliberate request, not a state change: sent at once, and it
+                # neither waits for nor disturbs a coalescing window.
+                frame = _wall_panel_frame(event.get("data") or {})
+                if frame:
+                    yield frame
                 continue
             entity_id = str(((message.get("event") or {}).get("data") or {}).get("entity_id") or "")
             domain = _home_assistant_entity_domain(entity_id)
