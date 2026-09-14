@@ -1,0 +1,16 @@
+# The settle window after a tap on one light's switch. A script entry,
+# included with vars: key.
+#
+# While it runs, panel/ha-toggle.yaml does not redraw the card, so what was
+# tapped stays on screen even when Home Assistant sends an update that crosses
+# the command (Stick S3 went on, flipped off, then on again). When it ends,
+# the card shows the state Home Assistant actually has - so a command that
+# failed shows as failed, a few seconds later, not as a flicker. A second tap
+# restarts the window.
+id: ${key}_settle
+mode: restart
+then:
+  - delay: 5s
+  - script.execute:
+      id: ${key}_show
+      is_on: !lambda return id(${key}_on).state;

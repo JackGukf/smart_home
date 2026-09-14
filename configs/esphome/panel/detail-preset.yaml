@@ -1,0 +1,27 @@
+# One brightness preset beside the light page's bar. Included with vars: pct, y.
+button:
+  x: 72
+  y: ${y}
+  width: 76
+  height: 44
+  radius: 12
+  bg_color: 0xFFFFFF
+  bg_opa: 10%
+  shadow_width: 0
+  border_width: 0
+  on_click:
+    - lvgl.slider.update:
+        id: detail_slider
+        value: ${pct}
+    - lvgl.label.update:
+        id: detail_level
+        text: "Brightness ${pct}%"
+    - script.execute:
+        id: set_brightness
+        pct: ${pct}
+  widgets:
+    - label:
+        align: CENTER
+        text: "${pct}%"
+        text_font: montserrat_16
+        text_color: 0xF2F5F8

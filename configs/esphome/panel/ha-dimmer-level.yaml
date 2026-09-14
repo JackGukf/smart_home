@@ -1,5 +1,7 @@
-# Home Assistant's brightness (0-255) for one dimmer, shown as 0-100 %. A sensor
-# entry, included with vars: key, entity.
+# Home Assistant's brightness (0-255) for one dimmer, kept as a percentage in
+# the global ${key}_pct for its full-screen page. A sensor entry, included with
+# vars: key, entity. An off light has no brightness attribute, so this only
+# updates while the light is on; the page shows 0 for an off light itself.
 platform: homeassistant
 id: ${key}_brightness
 entity_id: ${entity}
@@ -10,12 +12,9 @@ on_value:
       condition:
         lambda: return !std::isnan(x);
       then:
-        - lvgl.slider.update:
-            id: ${key}_slider
-            value: !lambda return roundf(x * 100.0f / 255.0f);
-        - lvgl.label.update:
+        - globals.set:
             id: ${key}_pct
-            text: !lambda return to_string((int) roundf(x * 100.0f / 255.0f)) + "%";
+            value: !lambda return (int) roundf(x * 100.0f / 255.0f);
         - if:
             condition:
               lambda: 'return id(detail_entity) == "${entity}";'
@@ -23,4 +22,4 @@ on_value:
               - script.execute:
                   id: detail_refresh
                   is_on: !lambda return id(${key}_on).state;
-                  level: !lambda return (int) roundf(x * 100.0f / 255.0f);
+                  level: !lambda return id(${key}_pct);

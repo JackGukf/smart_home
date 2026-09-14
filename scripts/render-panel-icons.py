@@ -8,7 +8,7 @@ antialiased the way a browser would draw them.
 
     python3 scripts/render-panel-icons.py
 
-writes configs/esphome/panel/images/{lamp,bulb,dome}_{on,off}.png.
+writes configs/esphome/panel/images/{lamp,bulb,dome}_{on,off}.png and movie.png.
 """
 
 from pathlib import Path
@@ -80,6 +80,20 @@ def bulb_icon(on: bool, size: int = 40) -> None:
     finish(img, size, f"bulb_{'on' if on else 'off'}.png")
 
 
+def movie_icon(size: int = 40) -> None:
+    """The Movie mode scene's art: viewBox 24, a clapperboard in #B9A8F2."""
+    img, k = canvas(24, size)
+    d = ImageDraw.Draw(img)
+    colour = rgba("#B9A8F2")
+    w = round(2 * k)
+    # rect x=3 y=6 w=18 h=12 rx=2; M3 10h18; M7 6l2 4 M12 6l2 4 M17 6l2 4
+    d.rounded_rectangle([3 * k, 6 * k, 21 * k, 18 * k], radius=round(2 * k), outline=colour, width=w)
+    d.line([(3 * k, 10 * k), (21 * k, 10 * k)], fill=colour, width=w)
+    for x in (7, 12, 17):
+        d.line([(x * k, 6 * k), ((x + 2) * k, 10 * k)], fill=colour, width=w)
+    finish(img, size, "movie.png")
+
+
 def vertical_gradient(size, top, bottom) -> Image.Image:
     grad = Image.new("RGBA", (1, 256))
     for y in range(256):
@@ -142,6 +156,7 @@ def main() -> None:
         lamp_icon(on)
         bulb_icon(on)
         dome_lamp(on)
+    movie_icon()
     for p in sorted(OUT.glob("*.png")):
         print(p.relative_to(OUT.parents[2]), Image.open(p).size)
 

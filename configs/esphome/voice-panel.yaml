@@ -416,11 +416,39 @@ script:
       - lvgl.label.update:
           id: detail_name
           text: !lambda return name;
+      - if:
+          condition:
+            lambda: return dimmer;
+          then:
+            - lvgl.widget.show: detail_dim_box
+            - lvgl.widget.update:
+                id: detail_lamp
+                x: -70
+            - lvgl.widget.update:
+                id: detail_level
+                x: -70
+          else:
+            - lvgl.widget.hide: detail_dim_box
+            - lvgl.widget.update:
+                id: detail_lamp
+                x: 0
+            - lvgl.widget.update:
+                id: detail_level
+                x: 0
       - script.execute:
           id: detail_refresh
           is_on: !lambda return is_on;
           level: !lambda return level;
+      - lvgl.widget.hide: header_bar
       - lvgl.page.show: light_page
+
+  - id: close_light
+    then:
+      - globals.set:
+          id: detail_entity
+          value: '""'
+      - lvgl.widget.show: header_bar
+      - lvgl.page.show: home_page
 
   - id: detail_refresh
     parameters:
@@ -434,8 +462,15 @@ script:
           id: detail_level
           text: !lambda |-
             if (!id(detail_dimmer)) return id(detail_room);
-            if (!is_on) return std::string("Dimmer • off");
+            if (!is_on) return std::string("Off");
             return "Brightness " + to_string(level) + "%";
+      - if:
+          condition:
+            lambda: return id(detail_dimmer);
+          then:
+            - lvgl.slider.update:
+                id: detail_slider
+                value: !lambda 'return is_on ? level : 0;'
       - if:
           condition:
             lambda: return is_on;
@@ -447,6 +482,91 @@ script:
             - lvgl.image.update:
                 id: detail_lamp
                 src: dome_off
+
+  # The open dimmer to a brightness in %; 0 turns it off.
+  - id: set_brightness
+    parameters:
+      pct: int
+    then:
+      - if:
+          condition:
+            lambda: return pct < 1;
+          then:
+            - homeassistant.action:
+                action: light.turn_off
+                data:
+                  entity_id: !lambda return id(detail_entity);
+          else:
+            - homeassistant.action:
+                action: light.turn_on
+                data:
+                  entity_id: !lambda return id(detail_entity);
+                  brightness_pct: !lambda return to_string(pct);
+
+  # The menu: 0 Home, 1 Scenes.
+  - id: go_page
+    parameters:
+      page: int
+    then:
+      - lvgl.widget.hide: menu_drawer
+      - lvgl.widget.hide: menu_scrim
+      - lvgl.widget.update:
+          id: nav_home
+          state:
+            checked: !lambda return page == 0;
+      - lvgl.widget.update:
+          id: nav_scenes
+          state:
+            checked: !lambda return page == 1;
+      - lvgl.label.update:
+          id: page_title
+          text: !lambda 'return page == 1 ? std::string("scenes") : std::string("home");'
+      - if:
+          condition:
+            lambda: return page == 1;
+          then:
+            - lvgl.page.show: scenes_page
+          else:
+            - lvgl.page.show: home_page
+
+  # Per light: draw its card, and hold a tap for a few seconds before showing
+  # Home Assistant's state again (panel/light-show.yaml, panel/light-settle.yaml).
+  - !include
+    file: panel/light-show.yaml
+    vars: {key: master, room: Bedroom}
+  - !include
+    file: panel/light-settle.yaml
+    vars: {key: master}
+  - !include
+    file: panel/light-show.yaml
+    vars: {key: living2, room: Living Room}
+  - !include
+    file: panel/light-settle.yaml
+    vars: {key: living2}
+  - !include
+    file: panel/light-show.yaml
+    vars: {key: kitchen, room: Kitchen}
+  - !include
+    file: panel/light-settle.yaml
+    vars: {key: kitchen}
+  - !include
+    file: panel/light-show.yaml
+    vars: {key: family, room: Family room}
+  - !include
+    file: panel/light-settle.yaml
+    vars: {key: family}
+  - !include
+    file: panel/light-show.yaml
+    vars: {key: north, room: Bedroom}
+  - !include
+    file: panel/light-settle.yaml
+    vars: {key: north}
+  - !include
+    file: panel/light-show.yaml
+    vars: {key: stick, room: Office}
+  - !include
+    file: panel/light-settle.yaml
+    vars: {key: stick}
 
 binary_sensor:
   - platform: status
@@ -476,22 +596,22 @@ binary_sensor:
   # Dashboard Bridge twins - except Stick S3, which only exists through it.
   - !include
     file: panel/ha-toggle.yaml
-    vars: {key: master, entity: light.bedroom_master_bedroom_light, room: Bedroom}
+    vars: {key: master, entity: light.bedroom_master_bedroom_light, room: Bedroom, level: "0"}
   - !include
     file: panel/ha-toggle.yaml
-    vars: {key: living2, entity: light.living_room_living_room_switch_2, room: Living Room}
+    vars: {key: living2, entity: light.living_room_living_room_switch_2, room: Living Room, level: "0"}
   - !include
     file: panel/ha-toggle.yaml
-    vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, room: Bedroom}
+    vars: {key: kitchen, entity: light.kitchen_light_switch, room: Kitchen, level: "id(kitchen_pct)"}
   - !include
     file: panel/ha-toggle.yaml
-    vars: {key: stick, entity: light.stick_s3, room: Office}
+    vars: {key: family, entity: light.family_room_switch, room: Family room, level: "id(family_pct)"}
   - !include
-    file: panel/ha-dimmer-on.yaml
-    vars: {key: kitchen, entity: light.kitchen_light_switch}
+    file: panel/ha-toggle.yaml
+    vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, room: Bedroom, level: "0"}
   - !include
-    file: panel/ha-dimmer-on.yaml
-    vars: {key: family, entity: light.family_room_switch}
+    file: panel/ha-toggle.yaml
+    vars: {key: stick, entity: light.stick_s3, room: Office, level: "0"}
 
 # ── Display, phase 1: bring-up only ───────────────────────────────────────────
 #
@@ -610,16 +730,167 @@ touchscreen:
     i2c_id: bus_a
     display: panel
 
-# The GUI, phase 2 of docs/design/voice-panel-screens.html: Home (the six lights
-# from the dashboard's Lights card and the ecobee) and the full-screen page per
-# light. Every card follows Home Assistant, so voice, dashboard and panel agree.
-# Geometry is the design's, at 480 px: 24 px gutters, 209 px cards, 13 px gaps.
+# The GUI, from docs/design/voice-panel-screens.html: Home (the six lights from
+# the dashboard's Lights card and the ecobee), Scenes, and a full-screen page
+# per light. Every card follows Home Assistant, so voice, dashboard and panel
+# agree. Geometry is the design's, at 480 px: 24 px gutters, 209 px cards.
 # The room photo is not in yet - a warm gradient stands in for it.
 lvgl:
   id: ui
   displays: [panel]
   touchscreens: [touch]
   buffer_size: 25%
+
+  # The bar and the menu are on the top layer, so every page shares one of each.
+  # The full-screen light page hides the bar.
+  top_layer:
+    widgets:
+      - obj:
+          id: header_bar
+          x: 0
+          y: 0
+          width: 480
+          height: 64
+          radius: 0
+          pad_all: 0
+          border_width: 0
+          bg_opa: 0%
+          scrollable: false
+          clickable: false
+          widgets:
+            - button:
+                x: 12
+                y: 8
+                width: 48
+                height: 48
+                bg_opa: 0%
+                shadow_width: 0
+                border_width: 0
+                on_click:
+                  - lvgl.widget.show: menu_scrim
+                  - lvgl.widget.show: menu_drawer
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: ""
+                      text_font: montserrat_22
+                      text_color: 0xF2F5F8
+            - label:
+                id: page_title
+                x: 64
+                y: 19
+                text: "home"
+                text_font: montserrat_22
+                text_color: 0xF2F5F8
+            # Green while the wake word is listening, grey while it is not.
+            - obj:
+                id: listen_dot
+                x: 296
+                y: 27
+                width: 9
+                height: 9
+                radius: 5
+                border_width: 0
+                pad_all: 0
+                bg_color: 0x6B7280
+                scrollable: false
+            - label:
+                x: 311
+                y: 22
+                text: "Okay Nabu"
+                text_font: montserrat_14
+                text_color: 0xCCD1D6
+            - label:
+                id: clock_label
+                align: TOP_RIGHT
+                x: -24
+                y: 21
+                text: "--:--"
+                text_font: montserrat_16
+                text_color: 0xCCD1D6
+      - obj:
+          id: menu_scrim
+          x: 0
+          y: 0
+          width: 480
+          height: 480
+          radius: 0
+          border_width: 0
+          bg_color: 0x000000
+          bg_opa: 45%
+          hidden: true
+          on_click:
+            - lvgl.widget.hide: menu_drawer
+            - lvgl.widget.hide: menu_scrim
+      - obj:
+          id: menu_drawer
+          x: 0
+          y: 0
+          width: 278
+          height: 480
+          radius: 0
+          pad_all: 0
+          border_width: 0
+          bg_color: 0x1C1F26
+          bg_opa: 95%
+          scrollable: false
+          hidden: true
+          widgets:
+            - label:
+                x: 28
+                y: 26
+                text: "VOICE PANEL"
+                text_font: montserrat_14
+                text_color: 0x8C9097
+            - button:
+                id: nav_home
+                x: 16
+                y: 60
+                width: 246
+                height: 54
+                radius: 12
+                bg_color: 0x647696
+                bg_opa: 0%
+                shadow_width: 0
+                border_width: 0
+                checked:
+                  bg_opa: 55%
+                on_click:
+                  - script.execute:
+                      id: go_page
+                      page: 0
+                widgets:
+                  - label:
+                      x: 14
+                      align: LEFT_MID
+                      text: "   Home"
+                      text_font: montserrat_20
+                      text_color: 0xF2F5F8
+            - button:
+                id: nav_scenes
+                x: 16
+                y: 120
+                width: 246
+                height: 54
+                radius: 12
+                bg_color: 0x647696
+                bg_opa: 0%
+                shadow_width: 0
+                border_width: 0
+                checked:
+                  bg_opa: 55%
+                on_click:
+                  - script.execute:
+                      id: go_page
+                      page: 1
+                widgets:
+                  - label:
+                      x: 14
+                      align: LEFT_MID
+                      text: "   Scenes"
+                      text_font: montserrat_20
+                      text_color: 0xF2F5F8
+
   pages:
     - id: home_page
       bg_color: 0x3A2618
@@ -628,44 +899,6 @@ lvgl:
       scrollable: false
       pad_all: 0
       widgets:
-        - label:
-            x: 24
-            y: 20
-            text: ""
-            text_font: montserrat_22
-            text_color: 0xF2F5F8
-        - label:
-            x: 60
-            y: 19
-            text: "home"
-            text_font: montserrat_22
-            text_color: 0xF2F5F8
-        # Green while the wake word is listening, grey while it is not.
-        - obj:
-            id: listen_dot
-            x: 296
-            y: 27
-            width: 9
-            height: 9
-            radius: 5
-            border_width: 0
-            pad_all: 0
-            bg_color: 0x6B7280
-            scrollable: false
-        - label:
-            x: 311
-            y: 22
-            text: "Okay Nabu"
-            text_font: montserrat_14
-            text_color: 0xCCD1D6
-        - label:
-            id: clock_label
-            align: TOP_RIGHT
-            x: -24
-            y: 21
-            text: "--:--"
-            text_font: montserrat_16
-            text_color: 0xCCD1D6
         # Everything under the bar scrolls; the bar stays.
         - obj:
             id: home_scroll
@@ -685,17 +918,20 @@ lvgl:
             widgets:
               - !include
                 file: panel/card-toggle.yaml
-                vars: {key: master, entity: light.bedroom_master_bedroom_light, name: "MASTER BEDROOM LIGHT", room: Bedroom, x: 0, y: 0}
+                vars: {key: master, entity: light.bedroom_master_bedroom_light, name: "MASTER BEDROOM LIGHT", room: Bedroom, x: 0, y: 0, dimmer: "false", level: "0"}
               - !include
                 file: panel/card-toggle.yaml
-                vars: {key: living2, entity: light.living_room_living_room_switch_2, name: "LIVING ROOM SWITCH 2", room: Living Room, x: 222, y: 0}
+                vars: {key: living2, entity: light.living_room_living_room_switch_2, name: "LIVING ROOM SWITCH 2", room: Living Room, x: 222, y: 0, dimmer: "false", level: "0"}
               - !include
-                file: panel/card-dimmer.yaml
-                vars: {key: kitchen, entity: light.kitchen_light_switch, name: "KITCHEN LIGHT SWITCH", room: Kitchen, y: 143}
+                file: panel/card-toggle.yaml
+                vars: {key: kitchen, entity: light.kitchen_light_switch, name: "KITCHEN LIGHT SWITCH", room: Kitchen, x: 0, y: 143, dimmer: "true", level: "id(kitchen_pct)"}
+              - !include
+                file: panel/card-toggle.yaml
+                vars: {key: family, entity: light.family_room_switch, name: "FAMILY ROOM SWITCH", room: Family room, x: 222, y: 143, dimmer: "true", level: "id(family_pct)"}
               - obj:
                   id: thermo_card
                   x: 0
-                  y: 262
+                  y: 286
                   width: 431
                   height: 106
                   radius: 16
@@ -766,24 +1002,49 @@ lvgl:
                               text: "-"
                               text_font: montserrat_28
                               text_color: 0xF2F5F8
-              - !include
-                file: panel/card-dimmer.yaml
-                vars: {key: family, entity: light.family_room_switch, name: "FAMILY ROOM SWITCH", room: Family room, y: 381}
               - label:
                   x: 4
-                  y: 500
+                  y: 405
                   text: "BEDROOM • OFFICE"
                   text_font: montserrat_14
                   text_color: 0xA8ADB3
               - !include
                 file: panel/card-toggle.yaml
-                vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, name: "NORTH BEDROOM LIGHT SWITCH", room: Bedroom, x: 0, y: 526}
+                vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, name: "NORTH BEDROOM LIGHT SWITCH", room: Bedroom, x: 0, y: 431, dimmer: "false", level: "0"}
               - !include
                 file: panel/card-toggle.yaml
-                vars: {key: stick, entity: light.stick_s3, name: "STICK S3", room: Office, x: 222, y: 526}
+                vars: {key: stick, entity: light.stick_s3, name: "STICK S3", room: Office, x: 222, y: 431, dimmer: "false", level: "0"}
+
+    # Scenes are Home Assistant scripts (scripts/install-panel-scenes.py), so a
+    # tap here, "Okay Nabu, movie mode" and the dashboard run the same ones.
+    - id: scenes_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        - !include
+          file: panel/card-scene.yaml
+          vars: {key: all_on, script: script.panel_all_lights_on, title: "ALL LIGHTS ON", sub: "6 lights", art: bulb_on, toast: "All 6 lights on", y: 76}
+        - !include
+          file: panel/card-scene.yaml
+          vars: {key: all_off, script: script.panel_all_lights_off, title: "ALL LIGHTS OFF", sub: "6 lights", art: bulb_off, toast: "All 6 lights off", y: 189}
+        - !include
+          file: panel/card-scene.yaml
+          vars: {key: movie, script: script.movie_mode, title: "MOVIE MODE", sub: "Living room switch 2 and cabinet LED off, ambient light on", art: movie, toast: "Movie mode: living room dark, ambient light on", y: 302}
+        - label:
+            id: scene_toast
+            x: 28
+            y: 418
+            width: 424
+            text: ""
+            text_font: montserrat_14
+            text_color: 0x9EE6C5
 
     # One light, full screen: name and state top left, the lamp on its cord,
-    # one round power button. open_light fills it in; the house goes back.
+    # one round power button. A dimmer also gets a brightness bar and presets,
+    # and its lamp moves left to make room. open_light fills it in.
     - id: light_page
       bg_color: 0x26324A
       bg_grad_color: 0x161D2D
@@ -807,7 +1068,7 @@ lvgl:
             shadow_width: 0
             border_width: 0
             on_click:
-              - lvgl.page.show: home_page
+              - script.execute: close_light
             widgets:
               - label:
                   align: CENTER
@@ -838,6 +1099,59 @@ lvgl:
             text: ""
             text_font: montserrat_16
             text_color: 0xBFC5CC
+        # Dimmers only. The bar sends one command when released; a preset
+        # sends one at once.
+        - obj:
+            id: detail_dim_box
+            x: 318
+            y: 88
+            width: 150
+            height: 222
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            scrollable: false
+            hidden: true
+            widgets:
+              - slider:
+                  id: detail_slider
+                  x: 0
+                  y: 0
+                  width: 60
+                  height: 220
+                  min_value: 0
+                  max_value: 100
+                  value: 0
+                  radius: 18
+                  bg_color: 0x0E1422
+                  bg_opa: 60%
+                  indicator:
+                    radius: 18
+                    bg_color: 0xF8E2B2
+                    bg_grad_color: 0x7A6448
+                    bg_grad_dir: VER
+                  knob:
+                    bg_opa: 0%
+                    border_width: 0
+                    shadow_width: 0
+                  on_value:
+                    - lvgl.label.update:
+                        id: detail_level
+                        # Two statements on purpose: a one-line return here is
+                        # pasted straight into lv_label_set_text(), which takes
+                        # a const char*, and a std::string does not compile.
+                        text: !lambda |-
+                          std::string text = "Brightness " + to_string((int) x) + "%";
+                          return text;
+                  on_release:
+                    - script.execute:
+                        id: set_brightness
+                        pct: !lambda return (int) x;
+              - !include {file: panel/detail-preset.yaml, vars: {pct: 100, y: 0}}
+              - !include {file: panel/detail-preset.yaml, vars: {pct: 75, y: 59}}
+              - !include {file: panel/detail-preset.yaml, vars: {pct: 50, y: 118}}
+              - !include {file: panel/detail-preset.yaml, vars: {pct: 25, y: 177}}
         - obj:
             x: 24
             y: 346
@@ -912,6 +1226,13 @@ globals:
   - id: detail_dimmer
     type: bool
     initial_value: "false"
+  # The dimmers' last brightness in %, from panel/ha-dimmer-level.yaml.
+  - id: kitchen_pct
+    type: int
+    initial_value: "0"
+  - id: family_pct
+    type: int
+    initial_value: "0"
 
 # Rendered from the design's SVGs by scripts/render-panel-icons.py.
 image:
@@ -937,6 +1258,10 @@ image:
     transparency: alpha_channel
   - file: panel/images/dome_off.png
     id: dome_off
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/movie.png
+    id: movie
     type: RGB565
     transparency: alpha_channel
 

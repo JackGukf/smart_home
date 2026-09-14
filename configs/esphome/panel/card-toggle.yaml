@@ -1,5 +1,10 @@
-# One on/off light as a Home card (design: .card.light, 209 x 130 at 480 px).
-# Included from voice-panel.yaml with vars: key, entity, name, room, x, y.
+# One light as a Home card (design: .card.light, 209 x 130 at 480 px). Every
+# light, dimmers included, is an on/off card: the switch toggles it, the lamp
+# opens it full screen, where a dimmer also gets its brightness control.
+# Included from voice-panel.yaml with vars:
+#   key, entity, name, room, x, y
+#   dimmer   "true" for a dimmer, else "false"
+#   level    C++ expression for its brightness in %: "id(kitchen_pct)", or "0"
 # Its state comes from panel/ha-toggle.yaml with the same key.
 obj:
   id: ${key}_card
@@ -17,7 +22,6 @@ obj:
     bg_color: 0x647696
     bg_opa: 90%
   widgets:
-    # The lamp opens the light full screen; the switch toggles it in place.
     - image:
         id: ${key}_lamp
         src: lamp_off
@@ -30,9 +34,9 @@ obj:
               entity: "${entity}"
               name: "${name}"
               room: "${room}"
-              dimmer: false
+              dimmer: ${dimmer}
               is_on: !lambda return id(${key}_on).state;
-              level: 0
+              level: !lambda return ${level};
     - switch:
         id: ${key}_switch
         x: 137
@@ -48,9 +52,14 @@ obj:
             bg_opa: 100%
         knob:
           bg_color: 0xFFFFFF
-        # Explicit on/off rather than toggle: a tap that crosses an update from
-        # Home Assistant still ends in the state the switch shows.
+        # The whole card follows the tap at once and holds it for the settle
+        # window (panel/light-settle.yaml). Explicit on/off rather than toggle:
+        # a tap that crosses an update still asks for the state it shows.
         on_change:
+          - script.execute:
+              id: ${key}_show
+              is_on: !lambda return x;
+          - script.execute: ${key}_settle
           - if:
               condition:
                 lambda: return x;
@@ -64,8 +73,8 @@ obj:
                     action: light.turn_off
                     data:
                       entity_id: ${entity}
-    # Two lines at most, then dots: a fixed height keeps a long name off the
-    # state line below it.
+    # Two lines at most, then dots: long_mode dot only truncates with a fixed
+    # height, and without one a long name ran into the state line.
     - label:
         text: "${name}"
         x: 14

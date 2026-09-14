@@ -1,34 +1,27 @@
-# Home Assistant's state for one on/off light, drawn onto its card and onto the
+# Home Assistant's on/off for one light, drawn onto its card and onto the
 # full-screen page when that light is open. A binary_sensor entry, included
-# with vars: key, entity, room. Updating widgets does not fire their on_change,
-# so a state from Home Assistant is never sent back to it.
+# with vars: key, entity, room, level (as for panel/card-toggle.yaml).
 platform: homeassistant
 id: ${key}_on
 entity_id: ${entity}
 internal: true
+# Without this, on_state does not fire for the state received when the panel
+# connects - ESPHome's default since trigger_on_initial_state replaced
+# publish_initial_state - so a light already on at boot showed as off until it
+# next changed. The lights that happened to be off looked right.
+trigger_on_initial_state: true
 on_state:
-  - lvgl.widget.update:
-      id: ${key}_card
-      state:
-        checked: !lambda return x;
-  - lvgl.widget.update:
-      id: ${key}_switch
-      state:
-        checked: !lambda return x;
-  - lvgl.label.update:
-      id: ${key}_sub
-      text: !lambda 'return std::string(x ? "On" : "Off") + " • ${room}";'
+  # For a few seconds after a tap the card keeps what was tapped and
+  # ${key}_settle draws the real state when it ends: an update in flight
+  # otherwise flipped the switch back and forth (panel/light-settle.yaml).
   - if:
       condition:
-        lambda: return x;
+        not:
+          script.is_running: ${key}_settle
       then:
-        - lvgl.image.update:
-            id: ${key}_lamp
-            src: lamp_on
-      else:
-        - lvgl.image.update:
-            id: ${key}_lamp
-            src: lamp_off
+        - script.execute:
+            id: ${key}_show
+            is_on: !lambda return x;
   - if:
       condition:
         lambda: 'return id(detail_entity) == "${entity}";'
@@ -36,4 +29,4 @@ on_state:
         - script.execute:
             id: detail_refresh
             is_on: !lambda return x;
-            level: 0
+            level: !lambda return ${level};

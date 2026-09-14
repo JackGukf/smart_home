@@ -1,0 +1,88 @@
+# One scene as a wide card on the Scenes page (design: .card.wide.scene). The
+# blue button runs a Home Assistant script; the card that ran is outlined green
+# and the line under the cards says what happened. Included with vars:
+#   key, script, title, sub, art (an image id), toast, y
+obj:
+  id: ${key}_scene
+  x: 24
+  y: ${y}
+  width: 432
+  height: 100
+  radius: 16
+  pad_all: 0
+  border_width: 0
+  border_color: 0x6FD3A7
+  bg_color: 0x3E444E
+  bg_opa: 74%
+  scrollable: false
+  widgets:
+    - obj:
+        x: 14
+        y: 19
+        width: 62
+        height: 62
+        radius: 14
+        pad_all: 0
+        border_width: 0
+        bg_color: 0x14161A
+        bg_opa: 40%
+        scrollable: false
+        widgets:
+          - image:
+              align: CENTER
+              src: ${art}
+    - label:
+        text: "${title}"
+        x: 92
+        y: 22
+        width: 250
+        height: 20
+        long_mode: dot
+        text_font: montserrat_16
+        text_color: 0xF2F5F8
+    - label:
+        text: "${sub}"
+        x: 92
+        y: 46
+        width: 250
+        height: 36
+        long_mode: dot
+        text_font: montserrat_14
+        text_color: 0xD1D6DC
+    - button:
+        x: 362
+        y: 23
+        width: 54
+        height: 54
+        radius: 27
+        bg_color: 0x1E6CE8
+        shadow_color: 0x3C8CFF
+        shadow_width: 16
+        shadow_opa: 55%
+        border_width: 0
+        on_click:
+          - homeassistant.action:
+              action: script.turn_on
+              data:
+                entity_id: ${script}
+          - lvgl.widget.update:
+              id: all_on_scene
+              border_width: 0
+          - lvgl.widget.update:
+              id: all_off_scene
+              border_width: 0
+          - lvgl.widget.update:
+              id: movie_scene
+              border_width: 0
+          - lvgl.widget.update:
+              id: ${key}_scene
+              border_width: 3
+          - lvgl.label.update:
+              id: scene_toast
+              text: "${toast}"
+        widgets:
+          - label:
+              align: CENTER
+              text: ""
+              text_font: montserrat_20
+              text_color: 0xFFFFFF

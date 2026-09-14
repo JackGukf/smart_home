@@ -1,0 +1,34 @@
+# Draw one light's card as on or off: background, switch, state line, lamp.
+# A script entry, included with vars: key, room. Called with Home Assistant's
+# state by panel/ha-toggle.yaml and panel/light-settle.yaml, and with the
+# tapped state by the card's switch. Updating the switch does not fire its
+# on_change, so drawing never sends a command.
+id: ${key}_show
+mode: queued
+parameters:
+  is_on: bool
+then:
+  - lvgl.widget.update:
+      id: ${key}_card
+      state:
+        checked: !lambda return is_on;
+  - lvgl.widget.update:
+      id: ${key}_switch
+      state:
+        checked: !lambda return is_on;
+  - lvgl.label.update:
+      id: ${key}_sub
+      text: !lambda |-
+        std::string text = std::string(is_on ? "On" : "Off") + " • ${room}";
+        return text;
+  - if:
+      condition:
+        lambda: return is_on;
+      then:
+        - lvgl.image.update:
+            id: ${key}_lamp
+            src: lamp_on
+      else:
+        - lvgl.image.update:
+            id: ${key}_lamp
+            src: lamp_off

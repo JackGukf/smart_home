@@ -165,6 +165,48 @@ person speaking; the header's "Okay Nabu" dot shows whether the engine is runnin
 - **Cost:** flash 2.37 MB, PSRAM free 6.26 → 5.60 MB, heap free 102.8 KB
   (largest block 62 KB), microphone capturing, satellite idle.
 
+## GUI phase 3: Scenes, the menu, and dimmers as on/off cards (flashed 2026-09-14)
+
+Committed phase 2 first (`493c676`). Then, flash `0x37252aef`:
+
+- **Dimmers changed by the owner's choice** (of three proposals): most of the time
+  only on/off is wanted, so Kitchen and Family room are now ordinary on/off cards.
+  Tapping the lamp opens the full-screen page, which for a dimmer adds a tall
+  brightness bar (one command on release) and 100/75/50/25 % presets, with the
+  lamp shifted left. `card-dimmer.yaml` and `ha-dimmer-on.yaml` are gone; every
+  light uses `card-toggle.yaml` + `ha-toggle.yaml` with vars `dimmer` and `level`,
+  and `ha-dimmer-level.yaml` keeps `kitchen_pct` / `family_pct`.
+- **Scenes are Home Assistant scripts**, installed by
+  `scripts/install-panel-scenes.py --apply` through the config API (validated and
+  reloaded): `script.panel_all_lights_on`, `script.panel_all_lights_off`,
+  `script.movie_mode`. `tests/python/test_install_panel_scenes.py` checks the six
+  lights match the panel's cards and Movie mode is the owner's decision. The two
+  scenes already in HA ("Turn on all lights" and pair) were not reused — they are
+  not in `scenes.yaml` and what they switch is not visible.
+- **Scenes page** (`panel/card-scene.yaml`): blue play button runs the script, the
+  card is outlined green and a line says what ran. **≡ menu**: the header moved to
+  LVGL's `top_layer` (one bar for every page, hidden on the light page), with a
+  drawer for Home and Scenes.
+- **Trap:** ESPHome pastes a one-line `!lambda return …` for `lvgl.label.update`
+  straight into `lv_label_set_text()`, which takes `const char*` — a `std::string`
+  expression then fails to compile. Use a two-statement lambda. And quote any
+  lambda containing `a ? b : c`, or YAML reads `b : c` as a mapping.
+- **Owner-found state bugs, fixed next flash:**
+  - *Kitchen and Family room showed off while on.* A `homeassistant`
+    binary_sensor's `on_state` does not fire for the state received on connect
+    unless `trigger_on_initial_state: true` (ESPHome's default since that option
+    replaced `publish_initial_state`). Lights off at boot looked right by luck;
+    before, the dimmers' brightness sensor (a `sensor`, which does fire) hid it.
+  - *Stick S3 flipped off and back on after a tap.* An HA update crossing the
+    command redrew the card. Now a tap draws the whole card at once and starts
+    `${key}_settle` (5 s, restart mode); while it runs HA updates do not redraw
+    the card, and when it ends the card shows HA's actual state — a failed
+    command shows up then, not as a flicker (`panel/light-show.yaml`,
+    `panel/light-settle.yaml`).
+- Not yet: scripts exposed to Assist ("Okay Nabu, movie mode"); `allow_service_calls`
+  still not codified in `setup-ha-voice.py`; wake word not re-measured with the
+  display on.
+
 Ruled out between flashes 5 and 6, from source rather than by flashing:
 
 - **The init table is correct.** Parsed Arduino_GFX's `st7701_type1_init_operations`
