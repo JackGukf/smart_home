@@ -59,6 +59,38 @@ Measured through the new pipeline with text input: "Okay, Naboo." → empty, no
 TTS, 0.01 s; "What time is it?" → "8:16 PM", 0.02 s; "Naboo is a device." →
 "Sorry, I couldn't understand that", 0.07 s.
 
+### Then: "Sorry, I couldn't understand that" to ordinary questions
+
+With no model behind the matcher, only Home Assistant's built-in sentences are
+understood, and they are narrow. Built-in time is `what time is it [[right]
+now]` and `<what_is> the [current] time`; date has **no "what day" form at
+all**. On the panel, "What time is now?", "What day is today?" and Whisper's
+"What a time is now." all failed, and "What's today?" was read as a device
+called "today".
+
+`configs/homeassistant/custom_sentences/en/voice_time_date.yaml` adds those
+phrasings to the built-in `HassGetCurrentTime` / `HassGetCurrentDate` intents,
+and overrides the date answer to lead with the weekday — the built-in says only
+"September 13th, 2026", which does not answer "what day". `setup-ha-voice.py`
+copies it into `/home/orangepi/homeassistant-config/custom_sentences/en/` and
+reloads conversation. Checked through the agent: every failed phrasing now
+answers ("Sunday, September 13th, 2026", "8:31 PM"); "What is the weather
+today?" still does not match. **New question types need a sentence here** —
+that is the price of keeping the model out.
+
+### Latency, measured, not yet changed
+
+Uncached reply, 03:25:46 run, from the device log: end of speech
+`STOP_MICROPHONE` 53.64 → response starts 54.47 → FLAC header 59.24 → decoded
+62.49 → **about 9 s to sound**. A cached reply ("Sorry, …") took about 2 s. Parts:
+
+| | |
+| --- | --- |
+| Whisper | 0.80 s for 2–3 s clips; one 5.09 s clip took **13.1 s** (outlier, cause unknown) |
+| Piper direct over Wyoming | 0.9–1.6 s, whole clip at once; cores 8,9 **100 % busy** throughout |
+| Through HA `tts_proxy` | 2.7–3.2 s, WAV and FLAC alike — so not transcoding |
+| HA agent | 0.01–0.1 s |
+
 No wake chime, by choice: the mic and speaker share one bus, so a chime would
 push the start of listening back and eat the start of the command.
 

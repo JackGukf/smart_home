@@ -64,3 +64,72 @@ def test_no_ignored_phrase_is_a_real_command() -> None:
 
 def test_the_automation_id_is_fixed_so_re_running_replaces_rather_than_duplicates() -> None:
     assert voice.WAKE_ECHO_AUTOMATION_ID == "voice_ignore_repeated_wake_word"
+
+
+# --- custom sentences -------------------------------------------------------
+
+SENTENCES_FILE = voice.CUSTOM_SENTENCES / "voice_time_date.yaml"
+
+
+def _expand(template: str) -> set[str]:
+    """Expand hassil's [optional] and (a|b) syntax into every plain sentence."""
+    match = re.search(r"\[([^\[\]]*)\]|\(([^()]*)\)", template)
+    if not match:
+        return {" ".join(template.split())}
+    if match.group(1) is not None:
+        options = [""] + match.group(1).split("|")
+    else:
+        options = match.group(2).split("|")
+    out: set[str] = set()
+    for option in options:
+        out |= _expand(template[:match.start()] + option + template[match.end():])
+    return out
+
+
+def _sentences() -> dict[str, set[str]]:
+    import yaml
+    data = yaml.safe_load(SENTENCES_FILE.read_text(encoding="utf-8"))
+    return {intent: {s for block in body["data"] for t in block["sentences"] for s in _expand(t)}
+            for intent, body in data["intents"].items()}
+
+
+def test_sentences_only_extend_home_assistants_own_time_and_date_intents() -> None:
+    assert set(_sentences()) == {"HassGetCurrentTime", "HassGetCurrentDate"}
+
+
+def test_the_phrasings_that_failed_on_the_panel_are_covered() -> None:
+    """Verbatim Whisper transcripts that got "Sorry, I couldn't understand that"."""
+    sentences = _sentences()
+    assert _normalise("What time is now?") in sentences["HassGetCurrentTime"]
+    for heard in ["What day is today?", "What day is it?", "What day is it today?",
+                  "What's today?", "Today's date"]:
+        assert _normalise(heard.replace("'", "")) in {_normalise(s.replace("'", ""))
+                                                      for s in sentences["HassGetCurrentDate"]}, heard
+
+
+def test_no_sentence_is_shared_between_time_and_date() -> None:
+    sentences = _sentences()
+    assert not sentences["HassGetCurrentTime"] & sentences["HassGetCurrentDate"]
+
+
+def test_the_date_answer_names_the_weekday() -> None:
+    """Rendered with real Jinja against the slot Home Assistant passes: a date."""
+    import datetime
+
+    import jinja2
+    import yaml
+    data = yaml.safe_load(SENTENCES_FILE.read_text(encoding="utf-8"))
+    template = data["responses"]["intents"]["HassGetCurrentDate"]["default"]
+    render = jinja2.Environment().from_string(template).render
+    assert render(slots={"date": datetime.date(2026, 9, 13)}).strip() == "Sunday, September 13th, 2026"
+    assert render(slots={"date": datetime.date(2026, 10, 1)}).strip() == "Thursday, October 1st, 2026"
+    assert render(slots={"date": datetime.date(2026, 11, 12)}).strip() == "Thursday, November 12th, 2026"
+    assert render(slots={"date": datetime.date(2026, 12, 22)}).strip() == "Tuesday, December 22nd, 2026"
+
+
+def test_sentences_are_written_only_with_apply(tmp_path) -> None:
+    assert voice.ensure_custom_sentences(tmp_path, apply=False)
+    assert not (tmp_path / "custom_sentences").exists()
+    voice.ensure_custom_sentences(tmp_path, apply=True)
+    assert (tmp_path / "custom_sentences" / "en" / SENTENCES_FILE.name).is_file()
+    assert voice.ensure_custom_sentences(tmp_path, apply=True) == []

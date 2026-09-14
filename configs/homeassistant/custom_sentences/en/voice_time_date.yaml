@@ -1,0 +1,53 @@
+# Extra phrasings for Home Assistant's own time and date intents.
+#
+# Installed into <HA config>/custom_sentences/en/ by scripts/setup-ha-voice.py.
+#
+# The voice pipeline has no model behind the matcher, so anything the built-in
+# sentences do not cover gets "Sorry, I couldn't understand that". Measured on
+# 2026-09-13: "What time is it?" matched but "What time is now?" did not, and no
+# "what day ..." phrasing matched at all - "What's today?" was even read as a
+# device called "today". These map the way people actually ask onto the same
+# built-in intents, so the answer and its wording are still Home Assistant's.
+#
+# Syntax: [optional], (this|that). Case and punctuation are ignored.
+language: "en"
+intents:
+  HassGetCurrentTime:
+    data:
+      - sentences:
+          # "What a time is now." is verbatim from Whisper on the panel.
+          - "what [a] time is now"
+          - "what's the time now"
+          - "what is the time now"
+          - "(what's|what is) the current time"
+          - "what time [is it] right now"
+          - "(do|can) you [please] tell me the time"
+          - "do you know [what] the time [is]"
+          - "[the] time [please]"
+  HassGetCurrentDate:
+    data:
+      - sentences:
+          - "what day is (today|it) [today]"
+          - "which day is (today|it) [today]"
+          - "(what's|what is) today"
+          - "what day of the week is (it|today)"
+          - "what date is (it|today)"
+          - "(what's|what is) the date"
+          - "today's date [please]"
+          - "(do|can) you [please] tell me [the|today's] date"
+
+# "What day is today?" deserves the day. The built-in answer is only
+# "September 13th, 2026", so this is Home Assistant's own template with the
+# weekday in front. It replaces the answer for every date question, built-in
+# phrasings included. weekday() rather than strftime("%A"), which follows the
+# container's locale.
+responses:
+  intents:
+    HassGetCurrentDate:
+      default: >-
+        {% set days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] %}
+        {% set months = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+                         'August', 'September', 'October', 'November', 'December'] %}
+        {% set d = slots.date.day %}
+        {% set suffix = 'th' if 11 <= d <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(d % 10, 'th') %}
+        {{ days[slots.date.weekday()] }}, {{ months[slots.date.month - 1] }} {{ d }}{{ suffix }}, {{ slots.date.year }}

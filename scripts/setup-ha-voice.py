@@ -326,6 +326,33 @@ async def ensure_wake_echo_automation(session, headers, base, apply: bool) -> li
     return [f"{'update' if current else 'create'} automation {WAKE_ECHO_AUTOMATION_ID!r}"]
 
 
+CUSTOM_SENTENCES = PROJECT_ROOT / "configs" / "homeassistant" / "custom_sentences" / "en"
+
+
+def ensure_custom_sentences(config_dir: Path, apply: bool) -> list[str]:
+    """Copy the repo's custom sentences into Home Assistant's config directory.
+
+    With no model behind the voice pipeline, the matcher's own sentences are all
+    it understands, and they miss ordinary phrasings ("what day is today"). The
+    files only add sentences for Home Assistant's built-in intents.
+    """
+    if not config_dir.is_dir():
+        return [f"Home Assistant config directory {config_dir} not found; sentences left alone"]
+    target = config_dir / "custom_sentences" / "en"
+    changes = []
+    for source in sorted(CUSTOM_SENTENCES.glob("*.yaml")):
+        dest = target / source.name
+        text = source.read_text(encoding="utf-8")
+        existed = dest.is_file()
+        if existed and dest.read_text(encoding="utf-8") == text:
+            continue
+        if apply:
+            target.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+        changes.append(f"{'update' if existed else 'install'} sentences {dest}")
+    return changes
+
+
 async def run(args: argparse.Namespace) -> int:
     try:
         import aiohttp
@@ -400,6 +427,17 @@ async def run(args: argparse.Namespace) -> int:
         for line in await ensure_wake_echo_automation(session, headers, base, apply):
             print(("" if apply else "would ") + line)
 
+        sentence_changes = ensure_custom_sentences(Path(args.config_dir), apply)
+        for line in sentence_changes:
+            print(("" if apply else "would ") + line)
+        if apply and sentence_changes and "not found" not in sentence_changes[0]:
+            # Custom sentences are read when conversation loads; reload picks
+            # them up without restarting Home Assistant.
+            async with session.post(f"{base}/api/services/conversation/reload",
+                                    headers=headers, json={}) as response:
+                response.raise_for_status()
+            print("reloaded conversation")
+
     if not apply:
         print("\ndry run - nothing changed. Re-run with --apply.")
     return 0
@@ -410,6 +448,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base-url", default=os.getenv("HOME_ASSISTANT_URL", "http://127.0.0.1:8123"))
+    ap.add_argument("--config-dir",
+                    default=os.getenv("HOME_ASSISTANT_CONFIG_DIR",
+                                      "/home/orangepi/homeassistant-config"),
+                    help="Home Assistant's config directory, for custom sentences")
     ap.add_argument("--apply", action="store_true",
                     help="make the changes (default is a dry run)")
     return asyncio.run(run(ap.parse_args()))
