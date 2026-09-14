@@ -91,6 +91,22 @@ pca9554:
   - id: io_expander
     address: 0x20
 
+# The ST7701 is configured over a bit-banged 3-wire SPI that runs through the
+# TCA9554, not over MCU pins: Waveshare's demo builds it as
+# Arduino_XCA9554SWSPI(rst=7, cs=0, sck=2, mosi=1, &Wire, 0x20). ESPHome's SPI
+# accepts expander pins in software mode, and mipi_rgb sends 9-bit words (the
+# D/C bit in front) when there is no DC pin, which is what 3-wire ST7701 needs.
+# Slow, but it only carries the one-time init sequence; pixels go over RGB.
+spi:
+  - id: lcd_spi
+    interface: software
+    clk_pin:
+      pca9554: io_expander
+      number: 2
+    mosi_pin:
+      pca9554: io_expander
+      number: 1
+
 switch:
   - platform: gpio
     id: audio_enable
@@ -288,3 +304,194 @@ binary_sensor:
     name: "Microphone capturing"
     entity_category: diagnostic
     lambda: return id(mic)->is_running();
+
+  # A display or touch setup error is logged once at boot, before Wi-Fi and the
+  # API are up, so a log client never sees it. These carry the failed flag to
+  # Home Assistant instead.
+  - platform: template
+    name: "Display failed"
+    entity_category: diagnostic
+    lambda: return id(panel)->is_failed();
+  - platform: template
+    name: "Touch failed"
+    entity_category: diagnostic
+    lambda: return id(touch)->is_failed();
+
+# ── Display, phase 1: bring-up only ───────────────────────────────────────────
+#
+# Voice was proven first on purpose (docs/voice-assistant-proposal.md): this RGB
+# panel has no frame memory, so the S3 streams 480x480 out of the same PSRAM the
+# wake word uses. Phase 1 is one static test page, so any change in wake-word
+# behaviour has exactly one suspect. The GUI in the design proposal comes after
+# the wake word has been re-measured with this running.
+#
+# Every pin and timing value is from Waveshare's ESP32-S3-Touch-LCD-4B demo
+# (01_HelloWorld.ino). ESPHome's built-in WAVESHARE-4-480X480 model is a
+# different board: its data pins include GPIO5 and GPIO47/48, which are the I2S
+# clock and the I2C bus here.
+display:
+  - platform: mipi_rgb
+    id: panel
+    model: CUSTOM
+    spi_id: lcd_spi
+    cs_pin:
+      pca9554: io_expander
+      number: 0
+    # Every Waveshare display demo does, before the panel init:
+    #   expander pin 6 LOW; pin 5 LOW -> HIGH
+    # and then GT911.setPins(-1, -1) - touch has no reset or interrupt line. So
+    # pin 5 is the display reset and pin 6 a display enable held low. The first
+    # flash gave 5 and 6 to the touch driver, which runs after the display: the
+    # ST7701 took its init and was then reset blank by the touch setup. Black
+    # screen, clean log. The driver pulses reset_pin and raises enable_pin
+    # before the init sequence, so pin 6 is inverted to be driven low.
+    reset_pin:
+      pca9554: io_expander
+      number: 5
+    # Second flash: still completely dark, not even the backlight. Arduino_GFX's
+    # XCA9554SWSPI::begin() also drives the pin it calls "rst" - expander pin 7 -
+    # low then high, and leaves it high as an output. Nothing drove pin 7 here,
+    # so it is raised with the other enable before the reset and init.
+    enable_pin:
+      - pca9554: io_expander
+        number: 6
+        inverted: true
+      - pca9554: io_expander
+        number: 7
+    dimensions:
+      width: 480
+      height: 480
+    de_pin: 17
+    hsync_pin:
+      number: 46
+      ignore_strapping_warning: true
+    vsync_pin:
+      number: 3
+      ignore_strapping_warning: true
+    pclk_pin: 9
+    # The demo leaves the clock at Arduino_GFX's default; 12 MHz is what ESPHome
+    # uses for Waveshare's other 480x480 ST7701 panel, ~42 Hz here, and less
+    # PSRAM traffic than 16 MHz while the wake word shares that memory.
+    pclk_frequency: 12MHz
+    pclk_inverted: false
+    hsync_front_porch: 10
+    hsync_pulse_width: 8
+    hsync_back_porch: 50
+    vsync_front_porch: 10
+    vsync_pulse_width: 8
+    vsync_back_porch: 20
+    data_pins:
+      red: [40, 41, 42, 2, 1]
+      green: [21, 8, 18, {number: 45, ignore_strapping_warning: true}, 38, 39]
+      blue: [10, 11, 12, 13, 14]
+    # IPS panel: the demo sends INVON. ESPHome appends INVON/INVOFF, pixel
+    # format, MADCTL, SLPOUT and DISPON itself, so those are not repeated below.
+    invert_colors: true
+    pixel_mode: 18bit
+    auto_clear_enabled: false
+    update_interval: never
+    # Waveshare's st7701_type1_init_operations, register setup only. The demo
+    # waits 120 ms after reset before the first command; ESPHome's driver
+    # releases reset and writes immediately, which an ST7701 can ignore.
+    init_sequence:
+      - delay 120ms
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]
+      - [0xC0, 0x3B, 0x00]
+      - [0xC1, 0x0D, 0x02]
+      - [0xC2, 0x31, 0x05]
+      - [0xCD, 0x08]
+      - [0xB0, 0x00, 0x11, 0x18, 0x0E, 0x11, 0x06, 0x07, 0x08, 0x07, 0x22, 0x04, 0x12, 0x0F, 0xAA, 0x31, 0x18]
+      - [0xB1, 0x00, 0x11, 0x19, 0x0E, 0x12, 0x07, 0x08, 0x08, 0x08, 0x22, 0x04, 0x11, 0x11, 0xA9, 0x32, 0x18]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]
+      - [0xB0, 0x60]
+      - [0xB1, 0x32]
+      - [0xB2, 0x07]
+      - [0xB3, 0x80]
+      - [0xB5, 0x49]
+      - [0xB7, 0x85]
+      - [0xB8, 0x21]
+      - [0xC1, 0x78]
+      - [0xC2, 0x78]
+      - [0xE0, 0x00, 0x1B, 0x02]
+      - [0xE1, 0x08, 0xA0, 0x00, 0x00, 0x07, 0xA0, 0x00, 0x00, 0x00, 0x44, 0x44]
+      - [0xE2, 0x11, 0x11, 0x44, 0x44, 0xED, 0xA0, 0x00, 0x00, 0xEC, 0xA0, 0x00, 0x00]
+      - [0xE3, 0x00, 0x00, 0x11, 0x11]
+      - [0xE4, 0x44, 0x44]
+      - [0xE5, 0x0A, 0xE9, 0xD8, 0xA0, 0x0C, 0xEB, 0xD8, 0xA0, 0x0E, 0xED, 0xD8, 0xA0, 0x10, 0xEF, 0xD8, 0xA0]
+      - [0xE6, 0x00, 0x00, 0x11, 0x11]
+      - [0xE7, 0x44, 0x44]
+      - [0xE8, 0x09, 0xE8, 0xD8, 0xA0, 0x0B, 0xEA, 0xD8, 0xA0, 0x0D, 0xEC, 0xD8, 0xA0, 0x0F, 0xEE, 0xD8, 0xA0]
+      - [0xEB, 0x02, 0x00, 0xE4, 0xE4, 0x88, 0x00, 0x40]
+      - [0xEC, 0x3C, 0x00]
+      - [0xED, 0xAB, 0x89, 0x76, 0x54, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x20, 0x45, 0x67, 0x98, 0xBA]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]
+      - [0xE5, 0xE4]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]
+
+# GT911 on the shared I2C bus, with no reset or interrupt line: Waveshare's
+# demos call GT911.setPins(-1, -1). The driver tries 0x5D then 0x14 (the I2C
+# scan found it at 0x14) and polls.
+touchscreen:
+  - platform: gt911
+    id: touch
+    i2c_id: bus_a
+    display: panel
+
+# One static test page. A small draw buffer (a quarter of the screen) keeps the
+# display's PSRAM footprint down while the wake word is re-measured.
+lvgl:
+  id: ui
+  displays: [panel]
+  touchscreens: [touch]
+  buffer_size: 25%
+  pages:
+    - id: test_page
+      bg_color: 0x1B2233
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 48
+            text: "Voice Panel"
+            text_color: 0xF2F5F8
+            text_font: montserrat_28
+        - label:
+            id: touch_label
+            align: CENTER
+            text: "Display up. Tap the button."
+            text_color: 0xC7CED8
+            text_font: montserrat_20
+        - button:
+            id: test_button
+            align: BOTTOM_MID
+            y: -64
+            width: 180
+            height: 72
+            radius: 36
+            bg_color: 0x1E6CE8
+            on_click:
+              - lvgl.label.update:
+                  id: touch_label
+                  text: "Touch works."
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Tap"
+                  text_color: 0xFFFFFF
+                  text_font: montserrat_20
+
+# How much memory the display leaves the wake word. Compare against the same
+# sensors once the full GUI is in.
+debug:
+  update_interval: 30s
+
+sensor:
+  - platform: debug
+    free:
+      name: "Heap free"
+      entity_category: diagnostic
+    block:
+      name: "Heap largest block"
+      entity_category: diagnostic
+    psram:
+      name: "PSRAM free"
+      entity_category: diagnostic

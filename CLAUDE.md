@@ -20,6 +20,12 @@
 > Its logic is `resolver.py`, testable without HA.
 > Start here: **`docs/handoff-2026-09-13-voice-satellite.md`**.
 >
+> **Panel touch screen, in progress (2026-09-14).** The 4" LCD is being brought up
+> under ESPHome and is still **completely dark** (it worked with Waveshare's demo
+> firmware, so it is config, not hardware); voice is unaffected. Approved GUI
+> design: `docs/design/voice-panel-screens.html`.
+> Start here: **`docs/handoff-2026-09-14-panel-display.md`**.
+>
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
 > *user* unit), exposing 5 devices and commissioned into three fabrics —
 > chip-tool, Home Assistant, and Apple Home. Build or re-commission it with
@@ -259,6 +265,10 @@ Three things that will waste a day if you do not know them:
   that is already owned, and the four traps (no add-ons in this HA install, the
   panel's browser cannot open a mic over HTTP, the LLM must stay out of the voice
   path, and audio is the next thing the Wi-Fi will break)
+- `docs/handoff-2026-09-14-panel-display.md` — **pick the panel screen up cold**:
+  the dark-screen bring-up, every verified pin and init step from Waveshare's
+  demo, what ESPHome's `mipi_rgb` does differently, the next tests in order, and
+  the approved GUI design and decisions
 - `docs/handoff-2026-09-13-voice-satellite.md` — **pick the voice work up cold**:
   what is built and measured, the one open fault (the wake word never runs), the
   evidence that pins it, the next test, and thirteen traps from getting audio

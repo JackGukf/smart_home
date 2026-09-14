@@ -1,0 +1,810 @@
+<title>Voice Panel Screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Montserrat:wght@500;600;700;800&display=swap">
+<style>
+:root {
+  --ground: #EEF2EF;
+  --surface: #FFFFFF;
+  --ink: #1A2420;
+  --ink-soft: #4C5A55;
+  --ink-faint: #74827C;
+  --rule: #D5DDD8;
+  --amber: #A86C0F;
+  --amber-fill: #FBEFD9;
+  --ok: #2E8C66;
+  --ok-fill: #E1F2EA;
+  --alert: #C4452F;
+  --alert-fill: #FBE6E1;
+  --blue: #2D6FD6;
+  --blue-fill: #E3EDFB;
+  --wall: #C9CBC7;
+  --wall-shade: #B3B6B1;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0F1513;
+    --surface: #161E1B;
+    --ink: #E4ECE8;
+    --ink-soft: #A9B6B0;
+    --ink-faint: #7D8A84;
+    --rule: #26302C;
+    --amber: #E3A23B;
+    --amber-fill: #2B2415;
+    --ok: #5CC39A;
+    --ok-fill: #15261F;
+    --alert: #EE7A64;
+    --alert-fill: #2C1915;
+    --blue: #7AAEF5;
+    --blue-fill: #16233A;
+    --wall: #3A3E3B;
+    --wall-shade: #2C302D;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0F1513;
+  --surface: #161E1B;
+  --ink: #E4ECE8;
+  --ink-soft: #A9B6B0;
+  --ink-faint: #7D8A84;
+  --rule: #26302C;
+  --amber: #E3A23B;
+  --amber-fill: #2B2415;
+  --ok: #5CC39A;
+  --ok-fill: #15261F;
+  --alert: #EE7A64;
+  --alert-fill: #2C1915;
+  --blue: #7AAEF5;
+  --blue-fill: #16233A;
+  --wall: #3A3E3B;
+  --wall-shade: #2C302D;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 15px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding-inline: 20px;
+  padding-block: 32px 64px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; }
+h1, h2, h3 { font-family: "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif; text-wrap: balance; margin: 0; }
+h1 { font-size: 34px; line-height: 1.1; letter-spacing: -0.01em; }
+h2 { font-size: 21px; line-height: 1.25; }
+h3 { font-size: 16px; line-height: 1.3; }
+p { margin: 0; }
+.mono { font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 13px; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+
+header.top { display: grid; gap: 10px; max-width: 780px; margin-bottom: 28px; }
+header.top p { color: var(--ink-soft); max-width: 68ch; }
+
+.layout { display: grid; grid-template-columns: minmax(300px, 500px) minmax(0, 1fr); gap: 40px; align-items: start; }
+@media (max-width: 920px) { .layout { grid-template-columns: 1fr; } }
+
+/* ── The wall and the device ─────────────────────────────────────────── */
+.device-col { position: sticky; top: 24px; display: grid; gap: 12px; }
+@media (max-width: 920px) { .device-col { position: static; max-width: 500px; margin: 0 auto; width: 100%; } }
+.wall {
+  border-radius: 18px;
+  padding: 26px;
+  background:
+    radial-gradient(120% 90% at 20% 10%, rgba(255,255,255,0.18), transparent 60%),
+    repeating-radial-gradient(circle at 30% 40%, var(--wall) 0 2px, var(--wall-shade) 2px 3px);
+}
+.housing {
+  background: linear-gradient(145deg, #F4F5F6, #D9DCDF);
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 22px 40px -24px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(0,0,0,0.06);
+  position: relative;
+}
+.housing::after { /* the side buttons */
+  content: ""; position: absolute; right: -5px; top: 22%; width: 5px; height: 38%;
+  background: linear-gradient(#DADDE0 0 18%, transparent 18% 30%, #DADDE0 30% 48%, transparent 48% 62%, #DADDE0 62% 100%);
+  border-radius: 0 3px 3px 0;
+}
+.screen {
+  container-type: inline-size;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  max-width: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  font-family: "Montserrat", system-ui, sans-serif;
+  color: #F2F5F8;
+  background: #1A120C;
+}
+.caption { font-size: 13px; color: var(--ink-faint); text-align: center; }
+
+/* The room photo, pre-blurred once into the firmware. Drawn here with gradients. */
+.room {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(40% 30% at 78% 18%, rgba(255,214,150,0.55), transparent 70%),
+    radial-gradient(50% 40% at 18% 70%, rgba(255,190,120,0.25), transparent 70%),
+    linear-gradient(90deg, transparent 0 8%, rgba(255,210,160,0.20) 8% 13%, transparent 13% 44%, rgba(255,210,160,0.16) 44% 48%, transparent 48% 81%, rgba(255,220,170,0.24) 81% 86%, transparent 86%),
+    linear-gradient(180deg, #3A2618 0%, #2A1A10 45%, #1C120B 100%);
+}
+.room.navy { background: radial-gradient(70% 55% at 50% 38%, #26324A, #161D2D 70%); }
+
+.app { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr; }
+.bar { display: flex; align-items: center; justify-content: space-between; padding: 4.4cqw 5cqw 2.6cqw; }
+.bar-left { display: flex; align-items: center; gap: 2.6cqw; }
+.icon-btn { all: unset; cursor: pointer; display: grid; place-items: center; width: 7.4cqw; height: 7.4cqw; border-radius: 2cqw; color: #F2F5F8; }
+.icon-btn svg { width: 5.4cqw; height: 5.4cqw; }
+.icon-btn:focus-visible { outline: 0.6cqw solid #8DB9FF; }
+.bar-title { font-size: 4.6cqw; font-weight: 700; text-transform: lowercase; letter-spacing: 0.01em; }
+.bar-right { display: flex; align-items: center; gap: 2.6cqw; font-size: 3.2cqw; font-weight: 600; color: rgba(242,245,248,0.8); }
+.listen { display: inline-flex; align-items: center; gap: 1.2cqw; }
+.listen i { width: 1.8cqw; height: 1.8cqw; border-radius: 50%; background: #6FD3A7; box-shadow: 0 0 1.6cqw #6FD3A7; display: inline-block; }
+
+.page { display: none; overflow-y: auto; min-height: 0; padding: 0 5cqw 5cqw; scrollbar-width: none; }
+.page::-webkit-scrollbar { display: none; }
+.page.active { display: block; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2.8cqw; }
+
+.card {
+  background: rgba(62, 68, 78, 0.74);
+  border-radius: 3.4cqw;
+  padding: 3.2cqw 3.4cqw;
+  position: relative;
+  box-shadow: inset 0 0 0 0.25cqw rgba(255,255,255,0.06);
+  min-width: 0;
+}
+.card.wide { grid-column: span 2; }
+.card.lit { background: rgba(100, 118, 150, 0.9); }
+.label { font-size: 3.1cqw; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1.2; }
+.sub { font-size: 2.9cqw; font-weight: 500; color: rgba(242,245,248,0.82); margin-top: 0.6cqw; }
+
+.light { min-height: 27cqw; display: grid; grid-template-rows: 1fr auto; gap: 1.4cqw; }
+.light .top { display: flex; align-items: flex-start; justify-content: space-between; }
+.lamp-btn { all: unset; cursor: pointer; border-radius: 2cqw; }
+.lamp-btn svg { width: 12cqw; height: 12cqw; display: block; }
+.lamp-btn:focus-visible { outline: 0.6cqw solid #8DB9FF; }
+
+.toggle { all: unset; cursor: pointer; width: 9.6cqw; height: 5.2cqw; border-radius: 3cqw; background: rgba(255,255,255,0.28); position: relative; flex-shrink: 0; }
+.toggle::after { content: ""; position: absolute; top: 0.6cqw; left: 0.6cqw; width: 4cqw; height: 4cqw; border-radius: 50%; background: #FFFFFF; box-shadow: 0 0.4cqw 1cqw rgba(0,0,0,0.25); transition: transform .18s ease; }
+.toggle[aria-checked="true"] { background: linear-gradient(90deg, #F3B23A 0 55%, #F7D27E 55%); }
+.toggle[aria-checked="true"]::after { transform: translateX(4.4cqw); }
+.toggle:focus-visible { outline: 0.6cqw solid #8DB9FF; outline-offset: 0.4cqw; }
+
+.dim { min-height: 22cqw; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 3cqw; }
+.dim .who { display: grid; gap: 0.6cqw; max-width: 24cqw; }
+.dim .who svg { width: 8cqw; height: 8cqw; }
+.slider { position: relative; height: 12.4cqw; border-radius: 3cqw; background: rgba(20,22,26,0.45); touch-action: none; cursor: pointer; }
+.slider:focus-visible { outline: 0.6cqw solid #8DB9FF; outline-offset: 0.4cqw; }
+.slider .fill { position: absolute; inset: 0 auto 0 0; border-radius: 3cqw; background: linear-gradient(90deg, #7A6448, #E7C488 70%, #F8E2B2); }
+.slider .knob { position: absolute; top: 50%; width: 10cqw; height: 10cqw; margin-left: -5cqw; margin-top: -5cqw; border-radius: 50%; background: rgba(170,196,230,0.35); box-shadow: inset 0 0 0 0.7cqw rgba(215,232,255,0.85), 0 0 2.4cqw rgba(160,200,255,0.45); }
+.slider.off .fill { background: linear-gradient(90deg, #4A4F57, #6A7079); }
+.pct { font-size: 4.2cqw; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 10cqw; text-align: right; }
+
+.thermo { min-height: 22cqw; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2cqw; }
+.thermo .who { display: grid; gap: 0.6cqw; }
+.thermo .who svg { width: 11cqw; height: 6cqw; }
+.set { display: flex; align-items: center; gap: 2.6cqw; }
+.round { all: unset; cursor: pointer; width: 7cqw; height: 7cqw; border-radius: 50%; display: grid; place-items: center; font-size: 5cqw; font-weight: 600; line-height: 1; }
+.round.plus { color: #F2F5F8; }
+.round.minus { background: rgba(20,22,26,0.55); color: #F2F5F8; }
+.round:focus-visible { outline: 0.6cqw solid #8DB9FF; }
+.temp { font-size: 8.4cqw; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.temp small { font-size: 3.6cqw; font-weight: 600; }
+
+.section-label { grid-column: span 2; font-size: 2.8cqw; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(242,245,248,0.62); margin: 1.4cqw 0 -0.6cqw 0.6cqw; }
+
+/* Scenes */
+.scene { display: grid; grid-template-columns: 13cqw 1fr auto; align-items: center; gap: 3cqw; min-height: 21cqw; }
+.scene .art { width: 13cqw; height: 13cqw; border-radius: 3cqw; display: grid; place-items: center; background: rgba(20,22,26,0.4); }
+.scene .art svg { width: 8cqw; height: 8cqw; }
+.play { all: unset; cursor: pointer; width: 11cqw; height: 11cqw; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 40% 35%, #4E9BFF, #1E6CE8); box-shadow: 0 0 3cqw rgba(60,140,255,0.55); }
+.play svg { width: 5cqw; height: 5cqw; color: #FFF; }
+.play:focus-visible { outline: 0.6cqw solid #CFE2FF; outline-offset: 0.5cqw; }
+.scene.done { box-shadow: inset 0 0 0 0.45cqw rgba(111,211,167,0.75); }
+.toast { grid-column: span 2; font-size: 3cqw; font-weight: 600; color: #9EE6C5; min-height: 4cqw; padding-left: 0.6cqw; }
+
+/* Security */
+.shield { display: grid; grid-template-columns: 12cqw 1fr auto; align-items: center; gap: 3cqw; min-height: 19cqw; }
+.shield svg { width: 11cqw; height: 11cqw; }
+.pill { font-size: 2.8cqw; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 3cqw; padding: 1.2cqw 2.6cqw; background: rgba(111,211,167,0.22); color: #9EE6C5; }
+.sensor { min-height: 18cqw; display: grid; grid-template-rows: auto 1fr auto; gap: 0.8cqw; }
+.sensor svg { width: 6.4cqw; height: 6.4cqw; color: rgba(242,245,248,0.85); }
+.sensor .state { font-size: 3cqw; font-weight: 700; color: #9EE6C5; }
+.sensor.alert { background: rgba(120, 52, 42, 0.82); }
+.sensor.alert .state { color: #FFB3A2; }
+
+/* Cameras */
+.pick { all: unset; cursor: pointer; display: grid; grid-template-columns: auto 1fr; gap: 2.4cqw; align-items: center; min-height: 15cqw; }
+.pick svg { width: 7cqw; height: 7cqw; }
+.pick:focus-visible { outline: 0.6cqw solid #8DB9FF; outline-offset: 0.4cqw; }
+.shot { padding: 0; overflow: hidden; }
+.shot canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; max-width: 100%; }
+.shot .meta { position: absolute; left: 3cqw; right: 3cqw; bottom: 2.4cqw; display: flex; justify-content: space-between; font-size: 2.9cqw; font-weight: 700; text-shadow: 0 0 1.2cqw rgba(0,0,0,.85); }
+.shot .tag { position: absolute; top: 2.4cqw; left: 3cqw; font-size: 2.6cqw; font-weight: 800; letter-spacing: 0.05em; background: rgba(12,14,18,0.6); border-radius: 1.8cqw; padding: 0.8cqw 1.8cqw; }
+
+/* Wall panel remote */
+.view-card { all: unset; cursor: pointer; min-height: 17cqw; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2.6cqw; }
+.view-card svg { width: 7cqw; height: 7cqw; }
+.view-card:focus-visible { outline: 0.6cqw solid #8DB9FF; outline-offset: 0.4cqw; }
+
+/* Drawer */
+.scrim { position: absolute; inset: 0; background: rgba(0,0,0,0.45); display: none; }
+.scrim.open { display: block; }
+.drawer { position: absolute; top: 0; bottom: 0; left: 0; width: 58%; background: rgba(28, 31, 38, 0.95); padding: 5cqw 3.6cqw; display: grid; align-content: start; gap: 1.2cqw; transform: translateX(-102%); transition: transform .2s ease; }
+.drawer.open { transform: none; }
+.drawer .who { font-size: 3cqw; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(242,245,248,0.55); padding: 0 2.4cqw 2cqw; }
+.nav-item { all: unset; cursor: pointer; display: grid; grid-template-columns: 7cqw 1fr; align-items: center; gap: 2.6cqw; padding: 2.6cqw 2.4cqw; border-radius: 2.6cqw; font-size: 4cqw; font-weight: 600; }
+.nav-item svg { width: 5.6cqw; height: 5.6cqw; }
+.nav-item[aria-current="page"] { background: rgba(100,118,150,0.55); }
+.nav-item:focus-visible { outline: 0.6cqw solid #8DB9FF; }
+
+/* Full-screen light page */
+.detail { position: absolute; inset: 0; display: none; }
+.detail.open { display: block; }
+.detail .head { position: absolute; top: 5cqw; left: 5cqw; display: flex; align-items: center; gap: 3cqw; }
+.detail .home { all: unset; cursor: pointer; width: 11cqw; height: 11cqw; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,0.08); }
+.detail .home svg { width: 5.6cqw; height: 5.6cqw; }
+.detail .home:focus-visible { outline: 0.6cqw solid #8DB9FF; }
+.detail .name { font-size: 3.4cqw; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+.detail .st { font-size: 3.4cqw; font-weight: 700; margin-top: 0.6cqw; }
+.detail .lamp { position: absolute; left: 50%; top: 0; width: 54cqw; margin-left: -27cqw; }
+.detail .lamp svg { width: 100%; height: auto; display: block; }
+.detail .level { position: absolute; left: 0; right: 0; top: 61cqw; text-align: center; font-size: 3.4cqw; font-weight: 600; color: rgba(242,245,248,0.75); }
+.detail .dock { position: absolute; left: 5cqw; right: 5cqw; bottom: 4cqw; height: 24cqw; border-radius: 5cqw; background: rgba(255,255,255,0.05); display: grid; place-items: center; }
+.power { all: unset; cursor: pointer; width: 17cqw; height: 17cqw; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 40% 35%, #4E9BFF, #1E6CE8); box-shadow: 0 0 0 2.2cqw rgba(40,70,120,0.35), 0 0 5cqw rgba(60,140,255,0.55); margin-top: -12cqw; }
+.power svg { width: 7.4cqw; height: 7.4cqw; color: #FFF; }
+.power:focus-visible { outline: 0.6cqw solid #CFE2FF; outline-offset: 2.6cqw; }
+
+/* ── The proposal column ────────────────────────────────── */
+.doc { display: grid; gap: 34px; min-width: 0; }
+section { display: grid; gap: 14px; }
+section > p, li { max-width: 68ch; }
+.screen-spec { background: var(--surface); border-radius: 14px; padding: 20px 22px; display: grid; gap: 12px; box-shadow: 0 0 0 1px var(--rule); }
+.screen-spec .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.screen-spec p { color: var(--ink-soft); }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; }
+dl.facts dt { color: var(--ink-faint); font-size: 13px; }
+dl.facts dd { margin: 0; font-size: 14px; }
+
+.feasible { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.feat { background: var(--surface); border-radius: 12px; padding: 14px 16px; display: grid; gap: 6px; box-shadow: 0 0 0 1px var(--rule); align-content: start; }
+.chip { justify-self: start; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; border-radius: 999px; padding: 2px 10px; }
+.chip.yes { color: var(--ok); background: var(--ok-fill); }
+.chip.care { color: var(--amber); background: var(--amber-fill); }
+.chip.new { color: var(--alert); background: var(--alert-fill); }
+.feat p { font-size: 14px; color: var(--ink-soft); }
+
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+td.num { font-variant-numeric: tabular-nums; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; white-space: nowrap; }
+
+ol.phases { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; counter-reset: ph; }
+ol.phases li { counter-increment: ph; display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; }
+ol.phases li::before { content: counter(ph); font-family: "Bricolage Grotesque", sans-serif; font-weight: 700; font-size: 15px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); box-shadow: 0 0 0 1px var(--rule); color: var(--ink); }
+ol.phases b { display: block; }
+ol.phases span { color: var(--ink-soft); font-size: 14px; }
+
+.decisions { display: grid; gap: 10px; }
+.decision { border-left: 3px solid var(--ok); padding: 2px 0 2px 14px; display: grid; gap: 2px; }
+.decision b { font-weight: 600; }
+.decision span { color: var(--ink-soft); font-size: 14px; }
+.decided { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ok); margin-left: 8px; }
+
+@media (prefers-reduced-motion: reduce) { .toggle::after, .drawer { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">Design proposal · Waveshare ESP32-S3-Touch-LCD-4B · 480 × 480 · LVGL 9.5</span>
+    <h1>A touch face for the Voice Panel</h1>
+    <p>Styled after Waveshare's own demo screens for this board: frosted cards over a warm room photo, a room menu, and a full-screen page per light with a single round power button. Tap the preview — ≡ opens the menu, a lamp icon opens its light, sliders drag. Device names, rooms and sensors are this house's; the on/off states are examples.</p>
+  </header>
+
+  <div class="layout">
+    <div class="device-col">
+      <div class="wall">
+        <div class="housing">
+          <div class="screen" id="screen">
+            <div class="room" id="room"></div>
+
+            <div class="app" id="app">
+              <div class="bar">
+                <div class="bar-left">
+                  <button class="icon-btn" id="menu-btn" aria-label="Open menu" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h11M4 17h16"/></svg>
+                  </button>
+                  <span class="bar-title" id="bar-title">home</span>
+                </div>
+                <div class="bar-right"><span class="listen"><i></i>Okay Nabu</span><span id="clock">20:41</span></div>
+              </div>
+
+              <div>
+                <!-- Home: lights and climate -->
+                <div class="page active" id="page-home" style="height:100%">
+                  <div class="grid" id="home-grid"></div>
+                </div>
+
+                <!-- Scenes -->
+                <div class="page" id="page-scenes" style="height:100%">
+                  <div class="grid">
+                    <div class="card wide scene" id="scene-card-all-on">
+                      <span class="art"><svg viewBox="0 0 24 24" fill="none" stroke="#F3B23A" stroke-width="2" stroke-linecap="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/></svg></span>
+                      <span><span class="label">All lights on</span><div class="sub">6 lights</div></span>
+                      <button class="play" data-scene="all-on" id="scene-all-on" aria-label="Run All lights on"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+                    </div>
+                    <div class="card wide scene" id="scene-card-all-off">
+                      <span class="art"><svg viewBox="0 0 24 24" fill="none" stroke="#C7CED8" stroke-width="2" stroke-linecap="round"><path d="M9 18h6M10 21h4M8.5 13.5A6 6 0 0 1 16 5M17.6 8.3c.3.9.4 1.8.2 2.8M3 3l18 18"/></svg></span>
+                      <span><span class="label">All lights off</span><div class="sub">6 lights</div></span>
+                      <button class="play" data-scene="all-off" id="scene-all-off" aria-label="Run All lights off"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+                    </div>
+                    <div class="card wide scene" id="scene-card-movie">
+                      <span class="art"><svg viewBox="0 0 24 24" fill="none" stroke="#B9A8F2" stroke-width="2" stroke-linecap="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M7 6l2 4M12 6l2 4M17 6l2 4"/></svg></span>
+                      <span><span class="label">Movie mode</span><div class="sub">Living room switch 2 and cabinet LED off, ambient light on</div></span>
+                      <button class="play" data-scene="movie" id="scene-movie" aria-label="Run Movie mode"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+                    </div>
+                    <p class="toast" id="scene-toast" aria-live="polite"></p>
+                  </div>
+                </div>
+
+                <!-- Security -->
+                <div class="page" id="page-security" style="height:100%">
+                  <div class="grid">
+                    <div class="card wide shield">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#9EE6C5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+                      <span><span class="label">All clear</span><div class="sub">Alarm disarmed · 6 sensors</div></span>
+                      <span class="pill">Clear</span>
+                    </div>
+                    <div class="card sensor alert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="7" r="3"/><path d="M6 20c.5-4 3-6 6-6s5.5 2 6 6"/></svg><span class="label">Front yard</span><span class="state">Person · 20:38</span></div>
+                    <div class="card sensor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 21V4h11l3 2v15"/><path d="M13 12h1"/></svg><span class="label">Front door</span><span class="state">Closed</span></div>
+                    <div class="card sensor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M12 4v16M4 12h16"/></svg><span class="label">Office window</span><span class="state">Closed</span></div>
+                    <div class="card sensor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3c3 4-2 5-1 9 .4 1.5-.6 3-2.2 3A3 3 0 0 1 6 12c0-2.8 2-4 3-6.5M13 14c.4 2 2.2 3.3 4.2 3 2.2-.4 3.6-2.4 3.1-4.6"/></svg><span class="label">Kitchen smoke</span><span class="state">No smoke</span></div>
+                    <div class="card sensor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="7" r="3"/><path d="M6 20c.5-4 3-6 6-6s5.5 2 6 6"/></svg><span class="label">Front door</span><span class="state">No one</span></div>
+                    <div class="card sensor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 10l9-6 9 6v10H3z"/><path d="M7 20v-6h10v6"/></svg><span class="label">Garage</span><span class="state">No one</span></div>
+                  </div>
+                </div>
+
+                <!-- Cameras -->
+                <div class="page" id="page-cameras" style="height:100%">
+                  <div class="grid">
+                    <button class="card pick lit" data-cam="front" id="cam-front" aria-pressed="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 21V4h11l3 2v15"/><path d="M13 12h1"/></svg>
+                      <span><span class="label">Front door</span><div class="sub">every 2 s</div></span>
+                    </button>
+                    <button class="card pick" data-cam="garage" id="cam-garage" aria-pressed="false">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 10l9-6 9 6v10H3z"/><path d="M7 20v-6h10v6"/></svg>
+                      <span><span class="label">Garage</span><div class="sub">every 2 s</div></span>
+                    </button>
+                    <div class="card wide shot">
+                      <canvas id="cam-canvas" width="480" height="270"></canvas>
+                      <span class="tag">SNAPSHOT</span>
+                      <div class="meta"><span id="cam-name">Front door camera</span><span id="cam-time">20:41:07</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Wall panel remote -->
+                <div class="page" id="page-panel" style="height:100%">
+                  <div class="grid" id="panel-grid"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Full-screen light -->
+            <div class="detail" id="detail">
+              <div class="lamp" id="detail-lamp"></div>
+              <div class="head">
+                <button class="home" id="detail-home" aria-label="Back to home"><svg viewBox="0 0 24 24" fill="none" stroke="#F2F5F8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7v9H4z"/><path d="M10 20v-5h4v5"/></svg></button>
+                <div><div class="name" id="detail-name">Kitchen light switch</div><div class="st" id="detail-state">OFF</div></div>
+              </div>
+              <div class="level" id="detail-level"></div>
+              <div class="dock"><button class="power" id="detail-power" aria-label="Turn on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.4 6.6a8 8 0 1 0 11.2 0"/></svg></button></div>
+            </div>
+
+            <div class="scrim" id="scrim"></div>
+            <nav class="drawer" id="drawer" aria-label="Panel menu"></nav>
+          </div>
+        </div>
+      </div>
+      <p class="caption">Interactive preview · 480 × 480 · ≡ menu, lamp icons, toggles, sliders, scenes, cameras</p>
+    </div>
+
+    <div class="doc">
+      <section aria-live="polite">
+        <span class="eyebrow">This screen</span>
+        <div class="screen-spec" id="screen-spec"></div>
+      </section>
+
+      <section>
+        <h2>What the board can do, checked</h2>
+        <p>Checked against the ESPHome 2026.8.2 image the panel already runs, which pulls LVGL 9.5.0, and against the live services in the house. Waveshare's product page refused an automated fetch, so the style follows the demo screenshots from that page.</p>
+        <div class="feasible">
+          <div class="feat"><span class="chip yes">In LVGL today</span><h3>This look</h3><p>Radius, opacity, gradients, shadows, background images, <span class="mono">switch</span>, <span class="mono">slider</span>, <span class="mono">img</span>, <span class="mono">tileview</span>, animations — all exposed by ESPHome's <span class="mono">lvgl</span>.</p></div>
+          <div class="feat"><span class="chip care">Pre-blur it</span><h3>The room photo</h3><p>LVGL 9.5 can blur live (<span class="mono">blur_backdrop</span>), but with no GPU that recomputes on every redraw. The photo is blurred once and stored; cards are drawn slightly translucent over it.</p></div>
+          <div class="feat"><span class="chip yes">Dimmers too</span><h3>Lights</h3><p>Kitchen light switch and Family room switch are HS220 dimmers, so they get slider cards; the other four get toggle cards.</p></div>
+          <div class="feat"><span class="chip care">Snapshots, not video</span><h3>Cameras</h3><p><span class="mono">online_image</span> decodes JPEG on the device: a still every 2 s is realistic, a live stream is not.</p></div>
+          <div class="feat"><span class="chip new">Needs new plumbing</span><h3>Wall panel views</h3><p>The dashboard has no remote "show this view" yet. A small server event on the stream it already listens to adds it.</p></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>The two cameras, measured</h2>
+        <p>Full-size snapshots from go2rtc on the board today. The panel asks for a 480-wide copy, which cuts both the download and the decode.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Camera</th><th>go2rtc stream</th><th>Snapshot</th><th>Fetch time</th></tr></thead>
+            <tbody>
+              <tr><td>Front door</td><td class="mono">front_door_camera</td><td class="num">121 KB</td><td class="num">1.66 s</td></tr>
+              <tr><td>Garage</td><td class="mono">garage_camera</td><td class="num">45 KB</td><td class="num">0.52 s</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>The risk that decides the order</h2>
+        <p>The display is an RGB panel with no memory of its own: the ESP32-S3 streams 480×480 pixels out of its 8 MB PSRAM continuously, and the wake-word model uses that same PSRAM. Translucent cards over a photo add blending on every redraw. So the screen comes up static first, the wake word is measured with it running, and effects are added only while it stays healthy. If it degrades, the fallback is the same layout on a solid dark background. Cameras are last because a JPEG decode is the biggest memory spike.</p>
+      </section>
+
+      <section>
+        <h2>Build order</h2>
+        <ol class="phases">
+          <li><div><b>Display on, voice re-measured</b><span>Bring up the RGB panel and touch with one static screen and the pre-blurred background. Repeat the wake-word checks; if detection or audio degrades, lower the refresh or drop the photo before adding anything.</span></div></li>
+          <li><div><b>Home: lights and thermostat</b><span>Four toggle cards, two dimmer sliders, the ecobee card, and the full-screen page per light — all bound to Home Assistant states, so voice, dashboard and panel always agree.</span></div></li>
+          <li><div><b>Scenes</b><span>All on, all off and Movie mode as Home Assistant scripts, so "Okay Nabu, movie mode" and the dashboard run the same ones.</span></div></li>
+          <li><div><b>Security</b><span>The six sensors the dashboard's alarm card already watches, plus the alarm state, read-only.</span></div></li>
+          <li><div><b>Wall panel remote</b><span>A "show view" event on the dashboard's existing event stream, sent by a Home Assistant action, obeyed only by the hallway panel's browser.</span></div></li>
+          <li><div><b>Cameras</b><span>Front door and garage as separate 480-wide snapshots every 2 s, only while the screen is open.</span></div></li>
+          <li><div><b>Sleep and wake</b><span>Dim after a minute idle, wake on touch; "Okay Nabu" shows a listening overlay on whatever screen is up.</span></div></li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Decisions</h2>
+        <div class="decisions">
+          <div class="decision"><b>Movie mode<span class="decided">Decided</span></b><span>Living room switch 2 off, Living room cabinet LED off, Living room ambient light on.</span></div>
+          <div class="decision"><b>Light cards<span class="decided">Decided</span></b><span>The six lights on the dashboard's Lights card, including Stick S3. Plugs are not on the panel.</span></div>
+          <div class="decision"><b>Wall-panel views<span class="decided">Decided</span></b><span>Home, Cameras, Security, Devices, Climate and Status. Only the hallway panel follows them, never a phone or the PC.</span></div>
+          <div class="decision"><b>Camera refresh<span class="decided">Decided</span></b><span>Every 2 s while the Cameras screen is open, nothing otherwise.</span></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const lights = [
+    { id: "master", name: "Master bedroom light", room: "Bedroom", on: true },
+    { id: "living2", name: "Living room switch 2", room: "Living Room", on: false },
+    { id: "kitchen", name: "Kitchen light switch", room: "Kitchen", on: true, dim: true, level: 85 },
+    { id: "family", name: "Family room switch", room: "Family room", on: false, dim: true, level: 40 },
+    { id: "north", name: "North Bedroom Light Switch", room: "Bedroom", on: false },
+    { id: "stick", name: "Stick S3", room: "Office", on: false },
+  ];
+  const thermostat = { name: "My ecobee", target: 17, room: 22.9, mode: "Heating" };
+  const byId = (id) => lights.find((l) => l.id === id);
+
+  const lampIcon = (on) => `
+    <svg viewBox="0 0 40 40" aria-hidden="true">
+      <line x1="20" y1="0" x2="20" y2="9" stroke="#D6DDE6" stroke-width="1.4"/>
+      <rect x="17" y="8.5" width="6" height="5" rx="1" fill="#C8955B"/>
+      <path d="M6 27a14 13.5 0 0 1 28 0z" fill="#EEF1F5"/>
+      <path d="M6 27a14 13.5 0 0 1 28 0z" fill="url(#shade)" opacity=".35"/>
+      <ellipse cx="20" cy="28" rx="4.4" ry="2.6" fill="${on ? "#FFD98A" : "#B9C0C9"}"/>
+      ${on ? '<ellipse cx="20" cy="33" rx="12" ry="5" fill="#FFD98A" opacity=".28"/>' : ""}
+    </svg>`;
+  const bulbIcon = (on) => `<svg viewBox="0 0 24 24" fill="none" stroke="${on ? "#F7D27E" : "#C7CED8"}" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/></svg>`;
+  const bigLamp = (on) => `
+    <svg viewBox="0 0 200 200" aria-hidden="true">
+      <defs>
+        <linearGradient id="dome" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#C9CFD7"/></linearGradient>
+        <linearGradient id="wood" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#B7844E"/><stop offset="1" stop-color="#DDAA6E"/></linearGradient>
+        <radialGradient id="glow" cx=".5" cy=".2" r=".7"><stop offset="0" stop-color="#FFE1A0" stop-opacity=".75"/><stop offset="1" stop-color="#FFE1A0" stop-opacity="0"/></radialGradient>
+      </defs>
+      ${on ? '<ellipse cx="100" cy="160" rx="95" ry="55" fill="url(#glow)"/>' : ""}
+      <line x1="100" y1="0" x2="100" y2="62" stroke="#E3E8EE" stroke-width="1.6"/>
+      <rect x="93" y="58" width="14" height="16" rx="2" fill="url(#wood)"/>
+      <path d="M38 128a62 58 0 0 1 124 0z" fill="url(#dome)"/>
+      <rect x="38" y="126" width="124" height="4" rx="2" fill="#AEB5BE"/>
+      <circle cx="100" cy="134" r="10" fill="${on ? "#FFE7B0" : "#DDE1E7"}"/>
+      ${on ? '<circle cx="100" cy="134" r="18" fill="#FFE1A0" opacity=".35"/>' : ""}
+    </svg>`;
+
+  // ── Home ────────────────────────────────────────────────
+  const homeGrid = document.getElementById("home-grid");
+  function lightCard(l) {
+    return `
+      <div class="card light${l.on ? " lit" : ""}" id="card-${l.id}">
+        <div class="top">
+          <button class="lamp-btn" data-open="${l.id}" aria-label="Open ${l.name}">${lampIcon(l.on)}</button>
+          <button class="toggle" role="switch" aria-checked="${l.on}" data-toggle="${l.id}" id="toggle-${l.id}" aria-label="${l.name}"></button>
+        </div>
+        <div><div class="label">${l.name}</div><div class="sub">${l.on ? "On" : "Off"} · ${l.room}</div></div>
+      </div>`;
+  }
+  function dimCard(l) {
+    const pct = l.on ? l.level : 0;
+    return `
+      <div class="card wide dim${l.on ? "" : ""}" id="card-${l.id}">
+        <div class="who">
+          <button class="lamp-btn" data-open="${l.id}" aria-label="Open ${l.name}">${bulbIcon(l.on)}</button>
+          <div class="label">${l.name}</div><div class="sub">${l.on ? "On · dimmer" : "Off · dimmer"}</div>
+        </div>
+        <div class="slider${l.on ? "" : " off"}" data-slide="${l.id}" id="slider-${l.id}" role="slider" tabindex="0"
+             aria-label="${l.name} brightness" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
+          <div class="fill" style="width:${Math.max(pct, 12)}%"></div>
+          <div class="knob" style="left:${Math.min(Math.max(pct, 8), 92)}%"></div>
+        </div>
+        <span class="pct">${pct}%</span>
+      </div>`;
+  }
+  function thermoCard() {
+    return `
+      <div class="card wide thermo" id="card-thermo">
+        <div class="who">
+          <svg viewBox="0 0 44 24" aria-hidden="true"><rect x="1" y="3" width="42" height="14" rx="3" fill="#EEF1F5"/><rect x="5" y="12" width="34" height="2" rx="1" fill="#9AA3AD"/><circle cx="36" cy="7.5" r="1.4" fill="#6FD3A7"/></svg>
+          <div class="label">Thermostat</div><div class="sub">${thermostat.mode} · room ${thermostat.room}°C</div>
+        </div>
+        <div class="set">
+          <button class="round plus" data-temp="1" id="temp-up" aria-label="Raise target">+</button>
+          <span class="temp" aria-live="polite">${thermostat.target}<small>°C</small></span>
+          <button class="round minus" data-temp="-1" id="temp-down" aria-label="Lower target">−</button>
+        </div>
+      </div>`;
+  }
+  function renderHome() {
+    homeGrid.innerHTML =
+      lightCard(byId("master")) + lightCard(byId("living2")) +
+      dimCard(byId("kitchen")) +
+      thermoCard() +
+      dimCard(byId("family")) +
+      `<span class="section-label">Bedroom · Office</span>` +
+      lightCard(byId("north")) + lightCard(byId("stick"));
+  }
+  homeGrid.addEventListener("click", (e) => {
+    const tog = e.target.closest("[data-toggle]");
+    if (tog) { const l = byId(tog.dataset.toggle); l.on = !l.on; renderHome(); document.getElementById(`toggle-${l.id}`).focus(); return; }
+    const open = e.target.closest("[data-open]");
+    if (open) { openDetail(open.dataset.open); return; }
+    const t = e.target.closest("[data-temp]");
+    if (t) { thermostat.target = Math.min(26, Math.max(10, thermostat.target + Number(t.dataset.temp))); renderHome(); document.getElementById(t.id).focus(); }
+  });
+  function setLevel(l, pct) {
+    l.level = Math.round(Math.min(100, Math.max(0, pct)));
+    l.on = l.level > 0;
+    if (!l.on) l.level = 40;
+  }
+  homeGrid.addEventListener("pointerdown", (e) => {
+    const s = e.target.closest("[data-slide]");
+    if (!s) return;
+    const l = byId(s.dataset.slide);
+    const move = (ev) => {
+      const r = s.getBoundingClientRect();
+      const pct = ((ev.clientX - r.left) / r.width) * 100;
+      if (pct < 4) { l.on = false; } else { l.on = true; l.level = Math.round(Math.min(100, Math.max(5, pct))); }
+      const node = document.getElementById(`card-${l.id}`);
+      node.outerHTML = dimCard(l);
+    };
+    move(e);
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
+  homeGrid.addEventListener("keydown", (e) => {
+    const s = e.target.closest("[data-slide]");
+    if (!s || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    e.preventDefault();
+    const l = byId(s.dataset.slide);
+    const now = l.on ? l.level : 0;
+    const next = now + (e.key === "ArrowRight" ? 5 : -5);
+    if (next <= 0) l.on = false; else { l.on = true; l.level = Math.min(100, next); }
+    renderHome();
+    document.getElementById(`slider-${l.id}`).focus();
+  });
+  renderHome();
+
+  // ── Full-screen light ───────────────────────────────────
+  let detailId = null;
+  const detail = document.getElementById("detail");
+  const room = document.getElementById("room");
+  const app = document.getElementById("app");
+  function renderDetail() {
+    const l = byId(detailId);
+    document.getElementById("detail-lamp").innerHTML = bigLamp(l.on);
+    document.getElementById("detail-name").textContent = l.name;
+    document.getElementById("detail-state").textContent = l.on ? "ON" : "OFF";
+    document.getElementById("detail-level").textContent = l.dim ? (l.on ? `Brightness ${l.level}%` : "Dimmer · off") : l.room;
+    document.getElementById("detail-power").setAttribute("aria-label", l.on ? `Turn off ${l.name}` : `Turn on ${l.name}`);
+  }
+  function openDetail(id) {
+    detailId = id;
+    renderDetail();
+    detail.classList.add("open");
+    app.style.visibility = "hidden";
+    room.classList.add("navy");
+    document.getElementById("detail-power").focus();
+    renderSpec("light");
+  }
+  function closeDetail() {
+    detail.classList.remove("open");
+    app.style.visibility = "";
+    room.classList.remove("navy");
+    renderHome();
+    renderSpec(currentPage);
+    const back = document.querySelector(`[data-open="${detailId}"]`);
+    if (back) back.focus();
+  }
+  document.getElementById("detail-power").addEventListener("click", () => { const l = byId(detailId); l.on = !l.on; renderDetail(); });
+  document.getElementById("detail-home").addEventListener("click", closeDetail);
+
+  // ── Scenes ──────────────────────────────────────────────
+  const toast = document.getElementById("scene-toast");
+  document.getElementById("page-scenes").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-scene]");
+    if (!b) return;
+    const kind = b.dataset.scene;
+    if (kind === "all-on") lights.forEach((l) => (l.on = true));
+    if (kind === "all-off") lights.forEach((l) => (l.on = false));
+    if (kind === "movie") byId("living2").on = false;
+    renderHome();
+    document.querySelectorAll(".scene").forEach((c) => c.classList.toggle("done", c.id === `scene-card-${kind}`));
+    toast.textContent = {
+      "all-on": "All 6 lights on",
+      "all-off": "All 6 lights off",
+      movie: "Movie mode · living room dark, ambient light on",
+    }[kind];
+  });
+
+  // ── Cameras ─────────────────────────────────────────────
+  let cam = "front";
+  const canvas = document.getElementById("cam-canvas");
+  function drawCam() {
+    const c = canvas.getContext("2d");
+    const w = canvas.width, h = canvas.height;
+    const g = c.createLinearGradient(0, 0, 0, h);
+    if (cam === "front") {
+      g.addColorStop(0, "#2B3A44"); g.addColorStop(0.55, "#3E4B45"); g.addColorStop(1, "#262B27");
+      c.fillStyle = g; c.fillRect(0, 0, w, h);
+      c.fillStyle = "#1B2226"; c.fillRect(300, 40, 120, 190);
+      c.fillStyle = "#C9A15A"; c.fillRect(398, 135, 8, 8);
+      c.fillStyle = "#4E5A53"; c.fillRect(0, 210, w, 60);
+      c.fillStyle = "#6E7D74"; c.fillRect(40, 180, 170, 10);
+      c.fillStyle = "#344038"; c.beginPath(); c.arc(90, 120, 44, 0, Math.PI * 2); c.fill();
+    } else {
+      g.addColorStop(0, "#23282A"); g.addColorStop(1, "#171B1C");
+      c.fillStyle = g; c.fillRect(0, 0, w, h);
+      c.strokeStyle = "#3A4245"; c.lineWidth = 4;
+      for (let y = 60; y <= 200; y += 28) { c.beginPath(); c.moveTo(60, y); c.lineTo(420, y); c.stroke(); }
+      c.fillStyle = "#2F3638"; c.fillRect(0, 215, w, 55);
+      c.fillStyle = "#566064"; c.fillRect(130, 225, 220, 30);
+      c.fillStyle = "#E3A23B"; c.fillRect(140, 232, 18, 8); c.fillRect(322, 232, 18, 8);
+    }
+    document.getElementById("cam-name").textContent = cam === "front" ? "Front door camera" : "Garage camera";
+    document.getElementById("cam-time").textContent = new Date().toTimeString().slice(0, 8);
+  }
+  document.getElementById("page-cameras").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-cam]");
+    if (!b) return;
+    cam = b.dataset.cam;
+    document.querySelectorAll("[data-cam]").forEach((x) => { const on = x === b; x.setAttribute("aria-pressed", String(on)); x.classList.toggle("lit", on); });
+    drawCam();
+  });
+  drawCam();
+
+  // ── Wall panel remote ───────────────────────────────────
+  const panelViews = {
+    Home: '<path d="M4 11l8-7 8 7v9H4z"/><path d="M10 20v-5h4v5"/>',
+    Cameras: '<rect x="3" y="7" width="13" height="10" rx="2"/><path d="M16 11l5-3v8l-5-3z"/>',
+    Security: '<path d="M12 3l7 3v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6z"/>',
+    Devices: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+    Climate: '<path d="M14 14.5V5a2 2 0 0 0-4 0v9.5a4 4 0 1 0 4 0z"/>',
+    Status: '<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>',
+  };
+  let shown = "Home";
+  const panelGrid = document.getElementById("panel-grid");
+  function renderPanel() {
+    panelGrid.innerHTML = Object.entries(panelViews).map(([name, path]) => `
+      <button class="card view-card${name === shown ? " lit" : ""}" data-view="${name}" id="view-${name.toLowerCase()}" aria-pressed="${name === shown}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>
+        <span><span class="label">${name}</span><div class="sub">${name === shown ? "On the wall panel" : "Show"}</div></span>
+      </button>`).join("") +
+      `<p class="toast" aria-live="polite">Hallway wall panel is showing ${shown}</p>`;
+  }
+  panelGrid.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-view]");
+    if (!b) return;
+    shown = b.dataset.view;
+    renderPanel();
+    document.getElementById(`view-${shown.toLowerCase()}`).focus();
+  });
+  renderPanel();
+
+  // ── Menu and pages ──────────────────────────────────────
+  const pages = [
+    { id: "home", title: "home", icon: '<path d="M4 11l8-7 8 7v9H4z"/><path d="M10 20v-5h4v5"/>' },
+    { id: "scenes", title: "scenes", icon: '<path d="M12 3l2.4 5 5.6.8-4 3.9.9 5.5L12 15.6 7.1 18.2l.9-5.5-4-3.9 5.6-.8z"/>' },
+    { id: "security", title: "security", icon: '<path d="M12 3l7 3v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6z"/>' },
+    { id: "cameras", title: "cameras", icon: '<rect x="3" y="7" width="13" height="10" rx="2"/><path d="M16 11l5-3v8l-5-3z"/>' },
+    { id: "panel", title: "wall panel", icon: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>' },
+  ];
+  let currentPage = "home";
+  const drawer = document.getElementById("drawer");
+  const scrim = document.getElementById("scrim");
+  const menuBtn = document.getElementById("menu-btn");
+  function renderDrawer() {
+    drawer.innerHTML = `<div class="who">Voice Panel</div>` + pages.map((p) => `
+      <button class="nav-item" data-page="${p.id}" id="nav-${p.id}" ${p.id === currentPage ? 'aria-current="page"' : ""}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p.icon}</svg>${p.title[0].toUpperCase() + p.title.slice(1)}
+      </button>`).join("");
+  }
+  function setMenu(open) {
+    drawer.classList.toggle("open", open);
+    scrim.classList.toggle("open", open);
+    menuBtn.setAttribute("aria-expanded", String(open));
+    if (open) { renderDrawer(); document.getElementById(`nav-${currentPage}`).focus(); }
+  }
+  function go(id) {
+    currentPage = id;
+    pages.forEach((p) => document.getElementById(`page-${p.id}`).classList.toggle("active", p.id === id));
+    document.getElementById("bar-title").textContent = pages.find((p) => p.id === id).title;
+    if (id === "home") renderHome();
+    if (id === "cameras") drawCam();
+    renderSpec(id);
+  }
+  menuBtn.addEventListener("click", () => setMenu(!drawer.classList.contains("open")));
+  scrim.addEventListener("click", () => { setMenu(false); menuBtn.focus(); });
+  drawer.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-page]");
+    if (!b) return;
+    go(b.dataset.page);
+    setMenu(false);
+    menuBtn.focus();
+  });
+
+  // ── The proposal column follows the screen ──────────────
+  const specs = {
+    home: {
+      title: "Home", tag: "≡ room menu · scrolls",
+      body: "The page Waveshare's demo opens on: frosted cards over the room photo. The six lights from the dashboard's Lights card — four toggle cards, and slider cards for the two HS220 dimmers — plus the ecobee as a − 17°C + card. Every card follows Home Assistant, so a light turned off by voice or on the wall panel changes here too.",
+      facts: [["Toggle cards", "Master bedroom, Living room switch 2, North Bedroom, Stick S3"], ["Dimmer sliders", "Kitchen light switch, Family room switch"], ["Thermostat", "My ecobee target, ±1 °C per tap"], ["Tap a lamp icon", "opens that light full screen"]],
+    },
+    light: {
+      title: "One light, full screen", tag: "from Waveshare's dome-light demo",
+      body: "Tapping a lamp opens the light on its own: the name and state top-left, the lamp hanging from its cord, and one round power button. The lamp glows when on. Dimmers also show their brightness. The house icon returns home.",
+      facts: [["Power", "light.toggle / switch.toggle"], ["Glow", "a pre-drawn image swapped on state, not a live effect"], ["Back", "house icon, or swipe right"]],
+    },
+    scenes: {
+      title: "Scenes", tag: "3 Home Assistant scripts",
+      body: "Scenes live in Home Assistant as scripts, not on the panel, so the same Movie mode runs from a tap, from \"Okay Nabu, movie mode\", or from the dashboard, and is changed in one place.",
+      facts: [["All lights on / off", "the six light cards"], ["Movie mode", "Living room switch 2 and cabinet LED off, ambient light on"], ["Blue button", "runs it; the card outlines green when done"]],
+    },
+    security: {
+      title: "Security", tag: "read-only",
+      body: "The six sensors the dashboard's alarm card already watches, with the alarm state on top. Anything needing attention turns red and moves to the front.",
+      facts: [["Contacts", "front door, office window"], ["Smoke", "kitchen fire alarm detector"], ["People", "NPU detector: front yard, front door, garage"]],
+    },
+    cameras: {
+      title: "Cameras", tag: "front door · garage",
+      body: "Front door and garage one at a time, picked with the two cards on top. The panel pulls a 480-wide JPEG from go2rtc every 2 s, only while this page is open, and stops as soon as it closes.",
+      facts: [["Endpoint", "go2rtc /api/frame.jpeg?src=front_door_camera"], ["Decode", "on the panel, online_image JPEG"], ["Refresh", "2 s, paused when the page closes"]],
+    },
+    panel: {
+      title: "Wall panel", tag: "remote for the hallway screen",
+      body: "Choose what the hallway wall panel shows. The panel sends a Home Assistant action; the dashboard passes a \"show view\" event down the event stream the wall panel already listens to, and only that browser obeys it.",
+      facts: [["Views", "Home, Cameras, Security, Devices, Climate, Status"], ["Path", "panel → HA action → dashboard event → wall panel"], ["Scope", "hallway panel only, never phones or the PC"]],
+    },
+  };
+  function renderSpec(key) {
+    const s = specs[key];
+    document.getElementById("screen-spec").innerHTML = `
+      <div class="head"><h2>${s.title}</h2><span class="mono" style="color:var(--ink-faint)">${s.tag}</span></div>
+      <p>${s.body}</p>
+      <dl class="facts">${s.facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+  }
+  go("home");
+})();
+</script>
