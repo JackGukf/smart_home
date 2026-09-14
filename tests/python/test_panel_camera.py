@@ -42,6 +42,7 @@ def test_ffmpeg_reads_go2rtc_locally_at_the_panels_exact_size() -> None:
 
 def test_only_named_streams_are_served() -> None:
     assert relay.settings_from_env({}).streams == {"front_door_camera"}
+    assert relay.settings_from_env({}).save_dir == relay.DEFAULT_SAVE_DIR
     settings = relay.settings_from_env({"PANEL_CAMERA_STREAMS": "front_door_camera, garage_camera,../etc,A B"})
     assert settings.streams == {"front_door_camera", "garage_camera"}
 
@@ -81,14 +82,14 @@ def quick(monkeypatch):
     monkeypatch.setattr(relay, "RESTART_BACKOFF_SECONDS", 0.01)
 
 
-def _feeds(clock, processes: list[FakeProcess]):
+def _feeds(clock, processes: list[FakeProcess], save_dir=None):
     spawned: list[list[str]] = []
 
     async def spawn(command):
         spawned.append(command)
         return processes[min(len(spawned), len(processes)) - 1]
 
-    settings = relay.settings_from_env({})
+    settings = relay.Settings(streams=frozenset({"front_door_camera"}), save_dir=save_dir)
     feed = relay.CameraFeed("front_door_camera", settings, clock=clock, spawn=spawn)
     return {"front_door_camera": feed}, feed, spawned
 
@@ -168,3 +169,61 @@ async def test_a_dead_ffmpeg_is_restarted_while_someone_is_watching() -> None:
 
     clock.now += relay.IDLE_STOP_SECONDS + 1
     await asyncio.wait_for(feed.task, 1.0)
+
+
+# --- the last frame, shown while the fresh ones start --------------------------
+
+@pytest.mark.asyncio
+async def test_the_last_view_is_served_after_decoding_stopped(tmp_path) -> None:
+    clock = FakeClock()
+    feeds, feed, _ = _feeds(clock, [FakeProcess([_jpeg(b"seen")]), FakeProcess([])], save_dir=tmp_path)
+    relay.frame_response(feeds, "front_door_camera")
+    await asyncio.sleep(0.02)
+    clock.now += relay.IDLE_STOP_SECONDS + 1
+    await asyncio.wait_for(feed.task, 1.0)
+    assert feed.frame is None                        # not current any more ...
+
+    status, body, headers = relay.last_response(feeds, "front_door_camera")
+    assert status == 200 and body == _jpeg(b"seen")   # ... but still the last view
+    assert headers["Content-Type"] == "image/jpeg"
+    assert relay.frame_response(feeds, "front_door_camera")[0] == 503
+
+    clock.now += relay.IDLE_STOP_SECONDS + 1
+    await asyncio.wait_for(feed.task, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_asking_for_the_last_view_starts_the_fresh_frames(tmp_path) -> None:
+    clock = FakeClock()
+    feeds, feed, spawned = _feeds(clock, [FakeProcess([_jpeg(b"new")])], save_dir=tmp_path)
+
+    status, _, _ = relay.last_response(feeds, "front_door_camera")
+    assert status == 404                              # nothing seen yet
+    await asyncio.sleep(0.02)
+    assert len(spawned) == 1
+    assert relay.frame_response(feeds, "front_door_camera")[1] == _jpeg(b"new")
+
+    clock.now += relay.IDLE_STOP_SECONDS + 1
+    await asyncio.wait_for(feed.task, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_the_last_view_survives_a_restart_of_the_relay(tmp_path) -> None:
+    clock = FakeClock()
+    feeds, feed, _ = _feeds(clock, [FakeProcess([_jpeg(b"kept")])], save_dir=tmp_path)
+    relay.frame_response(feeds, "front_door_camera")
+    await asyncio.sleep(0.02)
+    clock.now += relay.IDLE_STOP_SECONDS + 1
+    await asyncio.wait_for(feed.task, 1.0)
+
+    assert (tmp_path / "front_door_camera.jpg").read_bytes() == _jpeg(b"kept")
+    assert not list(tmp_path.glob("*.tmp")), "written atomically"
+
+    restarted, _, _ = _feeds(FakeClock(), [FakeProcess([])], save_dir=tmp_path)
+    assert restarted["front_door_camera"].last == _jpeg(b"kept")
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_camera_has_no_last_view() -> None:
+    feeds, _, _ = _feeds(FakeClock(), [FakeProcess([])])
+    assert relay.last_response(feeds, "garage_camera")[0] == 404

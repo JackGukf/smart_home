@@ -543,6 +543,12 @@ script:
                 id: cam_status
                 text: "Loading..."
             - online_image.release: front_cam
+            # Release cuts off a download in flight without calling
+            # on_download_finished or on_error, so nothing else would clear
+            # this: the next visit's camera_fetch saw "busy" and never asked.
+            - globals.set:
+                id: cam_busy
+                value: "false"
       - if:
           condition:
             lambda: return page == 1;
@@ -558,7 +564,7 @@ script:
             lambda: return page == 3;
           then:
             - lvgl.page.show: cameras_page
-            - script.execute: camera_fetch
+            - script.execute: camera_open
       - if:
           condition:
             lambda: return page == 0;
@@ -577,6 +583,28 @@ script:
                 id: cam_busy
                 value: "true"
             - component.update: front_cam
+
+  # Opening the Cameras page: show the relay's last view first - it answers at
+  # once, while the live frames take 2-3 s to start - then go live.
+  - id: camera_open
+    then:
+      - globals.set:
+          id: cam_busy
+          value: "false"
+      - globals.set:
+          id: cam_phase
+          value: "0"
+      - globals.set:
+          id: cam_opened_ms
+          value: !lambda return millis();
+      - lvgl.label.update:
+          id: cam_status
+          text: "Loading..."
+      - online_image.set_url:
+          id: front_cam
+          url: "http://192.168.0.83:1985/camera/front_door_camera/last.jpg"
+          update: false
+      - script.execute: camera_fetch
 
   # The Security page's top card: red when any sensor needs attention or the
   # alarm is triggered, with the alarm's own state underneath.
@@ -1361,9 +1389,10 @@ lvgl:
                   y: 0
                   hidden: true
               - label:
+                  id: cam_tag
                   x: 12
                   y: 10
-                  text: "SNAPSHOT"
+                  text: "LAST VIEW"
                   text_font: montserrat_14
                   text_color: 0xF2F5F8
                   bg_color: 0x0C0E12
@@ -1596,9 +1625,17 @@ globals:
   - id: cam_busy
     type: bool
     initial_value: "false"
-  # Failed fetches in a row (the relay's 503 while it starts counts as one).
-  - id: cam_errors
+  # 0: fetching the relay's last view on opening the page; 1: live frames.
+  - id: cam_phase
     type: int
+    initial_value: "0"
+  # millis() when the page opened, and of the last picture received. "Camera not
+  # answering" waits 8 s from the later of the two.
+  - id: cam_opened_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: cam_last_ok_ms
+    type: uint32_t
     initial_value: "0"
 
 # Rendered from the design's SVGs by scripts/render-panel-icons.py.
@@ -1686,36 +1723,68 @@ image:
           id: cam_busy
           value: "false"
       - globals.set:
-          id: cam_errors
-          value: "0"
+          id: cam_last_ok_ms
+          value: !lambda return millis();
       - lvgl.image.update:
           id: cam_view
           src: front_cam
       - lvgl.widget.show: cam_view
-      - lvgl.label.update:
-          id: cam_time
-          text: !lambda |-
-            auto t = id(ha_time).now();
-            std::string text = t.is_valid() ? t.strftime("%H:%M:%S") : std::string("");
-            return text;
-    # The relay answers 503 for the second ffmpeg takes to start, so one
-    # failure is normal; only a run of them (~3 s) is worth saying so.
+      - if:
+          condition:
+            lambda: return id(cam_phase) == 0;
+          then:
+            # The last view is on screen at once; switch the same image to the
+            # live frames, which the last-view request has already started.
+            - lvgl.label.update:
+                id: cam_tag
+                text: "LAST VIEW"
+            - lvgl.label.update:
+                id: cam_time
+                text: ""
+            - globals.set:
+                id: cam_phase
+                value: "1"
+            - online_image.set_url:
+                id: front_cam
+                url: "http://192.168.0.83:1985/camera/front_door_camera.jpg"
+                update: false
+          else:
+            - lvgl.label.update:
+                id: cam_tag
+                text: "LIVE"
+            - lvgl.label.update:
+                id: cam_time
+                text: !lambda |-
+                  auto t = id(ha_time).now();
+                  std::string text = t.is_valid() ? t.strftime("%H:%M:%S") : std::string("");
+                  return text;
+    # 404 on the last view (nothing saved yet) goes straight to live; the relay's
+    # 503 while ffmpeg starts is normal for 2-3 s, so only 8 s with no picture at
+    # all is worth saying so.
     on_error:
       - globals.set:
           id: cam_busy
           value: "false"
-      - globals.set:
-          id: cam_errors
-          value: !lambda return id(cam_errors) + 1;
       - if:
           condition:
-            lambda: return id(cam_errors) >= 10;
+            lambda: return id(cam_phase) == 0;
+          then:
+            - globals.set:
+                id: cam_phase
+                value: "1"
+            - online_image.set_url:
+                id: front_cam
+                url: "http://192.168.0.83:1985/camera/front_door_camera.jpg"
+                update: false
+      - if:
+          condition:
+            lambda: return millis() - std::max(id(cam_opened_ms), id(cam_last_ok_ms)) > 8000;
           then:
             - lvgl.label.update:
                 id: cam_status
                 text: "Camera not answering"
 
-# The camera snapshot is fetched over plain HTTP from go2rtc on the board.
+# Camera frames are fetched over plain HTTP from the board's camera relay.
 http_request:
   timeout: 10s
   verify_ssl: false

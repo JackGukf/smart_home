@@ -20,8 +20,13 @@ and it serves only the streams it is told to (PANEL_CAMERA_STREAMS). Like go2rtc
 own API it answers the LAN without authentication, because the panel has no way to
 log in; it exposes nothing but those frames.
 
+The last frame is kept when ffmpeg stops, and saved to disk, so a panel opening
+the page can show the last view at once instead of "Loading..." for the 2-3 s
+ffmpeg needs to start (a frame is ~17 KB).
+
     python -m src.python.panel_camera            # scripts/run-panel-camera.sh
-    GET http://<board>:1985/camera/front_door_camera.jpg
+    GET http://<board>:1985/camera/front_door_camera.jpg        a fresh frame, or 503
+    GET http://<board>:1985/camera/front_door_camera/last.jpg   the last frame, any age, or 404
 """
 
 from __future__ import annotations
@@ -31,7 +36,8 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 LOG = logging.getLogger("panel_camera")
@@ -46,6 +52,7 @@ DEFAULT_HEIGHT = 243
 DEFAULT_FPS = 4
 DEFAULT_STREAMS = "front_door_camera"
 DEFAULT_RTSP_BASE = "rtsp://127.0.0.1:8554"
+DEFAULT_SAVE_DIR = Path.home() / ".cache" / "panel-camera"
 
 # Nobody has asked for a frame for this long: stop decoding.
 IDLE_STOP_SECONDS = 20.0
@@ -56,6 +63,9 @@ READ_TIMEOUT_SECONDS = 5.0
 RESTART_BACKOFF_SECONDS = 2.0
 # A stream that never closes a frame must not grow the buffer without bound.
 MAX_PARTIAL_BYTES = 2_000_000
+# While watched, the last frame is also written to disk this often, so a crash or
+# a reboot still leaves a recent one.
+SAVE_EVERY_SECONDS = 60.0
 
 
 def split_jpeg_frames(buffer: bytes) -> tuple[list[bytes], bytes]:
@@ -99,6 +109,7 @@ class Settings:
     height: int = DEFAULT_HEIGHT
     fps: int = DEFAULT_FPS
     rtsp_base: str = DEFAULT_RTSP_BASE
+    save_dir: Path | None = field(default=None)
 
 
 def settings_from_env(env: Mapping[str, str]) -> Settings:
@@ -112,6 +123,7 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         bind=env.get("PANEL_CAMERA_BIND", "0.0.0.0"),
         fps=int(env.get("PANEL_CAMERA_FPS", DEFAULT_FPS)),
         rtsp_base=env.get("PANEL_CAMERA_RTSP", DEFAULT_RTSP_BASE),
+        save_dir=Path(env["PANEL_CAMERA_SAVE_DIR"]) if env.get("PANEL_CAMERA_SAVE_DIR") else DEFAULT_SAVE_DIR,
     )
 
 
@@ -137,6 +149,39 @@ class CameraFeed:
         self.frame_at = float("-inf")
         self.last_request = float("-inf")
         self.task: asyncio.Task | None = None
+        # The most recent frame of any age: kept when ffmpeg stops, and on disk.
+        self.last: bytes | None = self._load_saved()
+        self.saved_at = float("-inf")
+
+    @property
+    def saved_path(self) -> Path | None:
+        return self.settings.save_dir / f"{self.stream}.jpg" if self.settings.save_dir else None
+
+    def _load_saved(self) -> bytes | None:
+        path = self.saved_path
+        try:
+            return path.read_bytes() if path is not None and path.is_file() else None
+        except OSError:
+            return None
+
+    def save(self) -> None:
+        """Write the last frame to disk, atomically. Failure is logged, not raised."""
+        path = self.saved_path
+        if path is None or self.last is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_bytes(self.last)
+            os.replace(tmp, path)
+            self.saved_at = self.clock()
+        except OSError as exc:
+            LOG.warning("%s: could not save the last frame: %s", self.stream, exc)
+
+    def request_last(self) -> bytes | None:
+        """Note that someone is looking, and return the last frame of any age."""
+        self.request()
+        return self.last
 
     def request(self) -> bytes | None:
         """Note that someone is looking, and return the latest frame if it is fresh."""
@@ -172,13 +217,16 @@ class CameraFeed:
                     if len(buffer) > MAX_PARTIAL_BYTES:
                         buffer = b""
                     if frames:
-                        self.frame = frames[-1]
+                        self.frame = self.last = frames[-1]
                         self.frame_at = self.clock()
+                        if self.clock() - self.saved_at >= SAVE_EVERY_SECONDS:
+                            self.save()
             finally:
                 await _stop(proc)
             if self.watched():
                 await asyncio.sleep(RESTART_BACKOFF_SECONDS)
         LOG.info("%s: nobody watching, ffmpeg stopped", self.stream)
+        self.save()
         self.frame = None
 
 
@@ -205,6 +253,21 @@ def frame_response(feeds: Mapping[str, CameraFeed], stream: str) -> tuple[int, b
     return 200, frame, {"Content-Type": "image/jpeg", "Cache-Control": "no-store"}
 
 
+def last_response(feeds: Mapping[str, CameraFeed], stream: str) -> tuple[int, bytes, dict[str, str]]:
+    """Status, body and headers for GET /camera/<stream>/last.jpg. Never waits.
+
+    Also starts decoding, so the panel's first request on opening the page both
+    gets something to show and has the fresh frames on their way.
+    """
+    feed = feeds.get(stream)
+    if feed is None:
+        return 404, b"unknown camera\n", {"Content-Type": "text/plain"}
+    frame = feed.request_last()
+    if frame is None:
+        return 404, b"no frame yet\n", {"Content-Type": "text/plain", "Cache-Control": "no-store"}
+    return 200, frame, {"Content-Type": "image/jpeg", "Cache-Control": "no-store"}
+
+
 def main() -> None:
     from aiohttp import web
 
@@ -216,8 +279,13 @@ def main() -> None:
         status, body, headers = frame_response(feeds, request.match_info["name"])
         return web.Response(status=status, body=body, headers=headers)
 
+    async def last(request: web.Request) -> web.Response:
+        status, body, headers = last_response(feeds, request.match_info["name"])
+        return web.Response(status=status, body=body, headers=headers)
+
     app = web.Application()
     app.router.add_get("/camera/{name}.jpg", camera)
+    app.router.add_get("/camera/{name}/last.jpg", last)
     LOG.info("serving %s on %s:%d", ", ".join(sorted(feeds)) or "no cameras", settings.bind, settings.port)
     web.run_app(app, host=settings.bind, port=settings.port, print=None)
 

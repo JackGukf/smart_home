@@ -297,6 +297,24 @@ Panel (`0x4313aaa5`): fetches from the relay every 300 ms while the Cameras page
 shows (skipped while one is in flight), **never while `voice_assistant.is_running`**,
 and says "Camera not answering" only after 10 failures in a row.
 
+**Last view first** (flash `0xfec65508`, after the owner saw "Loading..." → "Camera
+not answering" → picture on opening the page): the relay keeps the last frame when
+ffmpeg stops and saves it to `~/.cache/panel-camera/<stream>.jpg` (~17 KB, atomic,
+also every 60 s while watched), served at `/camera/<stream>/last.jpg` (200 in ~2 ms,
+404 if none; the request also starts ffmpeg). The panel fetches that first, tagged
+LAST VIEW, then switches the same `online_image` (`set_url`, no second buffer) to
+live frames, tagged LIVE. The old "10 failures" message fired during the normal
+2–3 s warm-up; now it needs 8 s with no picture since opening or the last frame.
+Panel memory is unchanged: `runtime_image` and the download buffer allocate with
+`RAMAllocator`, i.e. PSRAM first.
+
+**Trap (owner found it on the second visit):** `online_image.release` ends a
+download in flight *without* calling `on_download_finished` or `on_error`. Frames
+are fetched back to back, so leaving the page almost always cut one off, and
+`cam_busy` stayed true: on returning, the relay's log showed no request at all from
+the panel, and the page sat on "Loading...". `go_page` now clears `cam_busy` after
+the release, and `camera_open` clears it again.
+
 **Owner-tested 2026-09-14:** picture good, voice works with the Cameras page open,
 no flicker. Heap free read 80 KB (largest block 40 KB) straight after that flash,
 against 94 KB / 53 KB before — recheck before adding the garage camera.
