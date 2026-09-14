@@ -33,7 +33,8 @@ def main() -> None:
         raise SystemExit("No camera streams found. Check configs/devices.local.yaml and .env.")
 
     OUTPUT_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_CONFIG.write_text(
+    _write_private(
+        OUTPUT_CONFIG,
         yaml.safe_dump(
             {
                 "api": {
@@ -52,9 +53,29 @@ def main() -> None:
             },
             sort_keys=False,
         ),
-        encoding="utf-8",
     )
     print(f"Wrote {OUTPUT_CONFIG} with {len(streams)} stream(s).")
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Write owner-only, atomically.
+
+    The stream URLs carry every camera's password in plain text (percent-encoded
+    at most). write_text left the file 0664, readable by any account on the
+    board, and it is regenerated on every go2rtc start, so a one-off chmod does
+    not stick. The temporary file is created 0600 and renamed over, so there is
+    no moment at which the new contents are readable by others.
+    """
+    tmp = path.with_name(f".{path.name}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(tmp, 0o600)  # O_CREAT's mode does not apply if tmp already existed
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _load_env(path: Path) -> None:
