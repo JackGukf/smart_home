@@ -8,7 +8,7 @@ antialiased the way a browser would draw them.
 
     python3 scripts/render-panel-icons.py
 
-writes configs/esphome/panel/images/{lamp,bulb,dome}_{on,off}.png and movie.png.
+writes configs/esphome/panel/images/{lamp,bulb,dome}_{on,off}.png movie.png and the Security icons.
 """
 
 from pathlib import Path
@@ -94,6 +94,69 @@ def movie_icon(size: int = 40) -> None:
     finish(img, size, "movie.png")
 
 
+def stroke_icon(name: str, draw_fn, colour: str = "#F2F5F8", alpha: float = 0.85, size: int = 32) -> None:
+    """A stroked 24-unit icon from the design's Security page."""
+    img, k = canvas(24, size)
+    draw_fn(ImageDraw.Draw(img), k, rgba(colour, alpha), round(2 * k))
+    finish(img, size, f"{name}.png")
+
+
+def _person(d, k, c, w):
+    # circle cx=12 cy=7 r=3; M6 20c.5-4 3-6 6-6s5.5 2 6 6
+    d.ellipse([9 * k, 4 * k, 15 * k, 10 * k], outline=c, width=w)
+    d.arc([6 * k, 14 * k, 18 * k, 26 * k], 180, 360, fill=c, width=w)
+
+
+def _door(d, k, c, w):
+    # M5 21V4h11l3 2v15; M13 12h1
+    d.line([(5 * k, 21 * k), (5 * k, 4 * k), (16 * k, 4 * k), (19 * k, 6 * k), (19 * k, 21 * k)],
+           fill=c, width=w, joint="curve")
+    d.line([(13 * k, 12 * k), (14 * k, 12 * k)], fill=c, width=w)
+
+
+def _window(d, k, c, w):
+    # rect 4,4 16x16 rx1.5; M12 4v16 M4 12h16
+    d.rounded_rectangle([4 * k, 4 * k, 20 * k, 20 * k], radius=round(1.5 * k), outline=c, width=w)
+    d.line([(12 * k, 4 * k), (12 * k, 20 * k)], fill=c, width=w)
+    d.line([(4 * k, 12 * k), (20 * k, 12 * k)], fill=c, width=w)
+
+
+def _smoke(d, k, c, w):
+    # A flame: the design's path, approximated with two arcs and a tip.
+    d.arc([6 * k, 9 * k, 18 * k, 21 * k], 150, 30, fill=c, width=w)
+    d.line([(6.8 * k, 12 * k), (10 * k, 7 * k), (12 * k, 3 * k), (14 * k, 7 * k), (17.2 * k, 12 * k)],
+           fill=c, width=w, joint="curve")
+
+
+def _garage(d, k, c, w):
+    # M3 10l9-6 9 6v10H3z; M7 20v-6h10v6
+    d.line([(3 * k, 20 * k), (3 * k, 10 * k), (12 * k, 4 * k), (21 * k, 10 * k), (21 * k, 20 * k), (3 * k, 20 * k)],
+           fill=c, width=w, joint="curve")
+    d.line([(7 * k, 20 * k), (7 * k, 14 * k), (17 * k, 14 * k), (17 * k, 20 * k)], fill=c, width=w, joint="curve")
+
+
+def _shield(tick: bool):
+    def draw(d, k, c, w):
+        # M12 3l7 3v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6z, then a tick or a "!"
+        outline = [(12, 3), (19, 6), (19, 11), (18.2, 15), (15.5, 18.6), (12, 21),
+                   (8.5, 18.6), (5.8, 15), (5, 11), (5, 6), (12, 3)]
+        d.line([(x * k, y * k) for x, y in outline], fill=c, width=round(w * 0.9), joint="curve")
+        if tick:
+            d.line([(9 * k, 12 * k), (11 * k, 14 * k), (15 * k, 10 * k)], fill=c, width=w, joint="curve")
+        else:
+            d.line([(12 * k, 8 * k), (12 * k, 13 * k)], fill=c, width=w)
+            d.ellipse([11 * k, 15 * k, 13 * k, 17 * k], fill=c)
+    return draw
+
+
+def security_icons() -> None:
+    for name, fn in (("person", _person), ("door", _door), ("window", _window),
+                     ("smoke", _smoke), ("garage", _garage)):
+        stroke_icon(name, fn)
+    stroke_icon("shield_ok", _shield(True), colour="#9EE6C5", alpha=1.0, size=52)
+    stroke_icon("shield_alert", _shield(False), colour="#FFB3A2", alpha=1.0, size=52)
+
+
 def vertical_gradient(size, top, bottom) -> Image.Image:
     grad = Image.new("RGBA", (1, 256))
     for y in range(256):
@@ -157,6 +220,7 @@ def main() -> None:
         bulb_icon(on)
         dome_lamp(on)
     movie_icon()
+    security_icons()
     for p in sorted(OUT.glob("*.png")):
         print(p.relative_to(OUT.parents[2]), Image.open(p).size)
 

@@ -222,6 +222,21 @@ Committed phase 2 first (`493c676`). Then, flash `0x37252aef`:
   still not codified in `setup-ha-voice.py`; wake word not re-measured with the
   display on.
 
+## GUI phase 4: Security (flashed 2026-09-14, `0x2569d1af`)
+
+- Read-only page, third menu entry. Top card: shield, "ALL CLEAR" / "ATTENTION",
+  "Alarm <state> • 6 sensors", and a CLEAR / ALERT pill — red when any sensor is on
+  or `alarm_control_panel.duo_gong_neng_bao_jing_zhu_ji` is `triggered`
+  (`security_refresh` script).
+- Six cards from the board's `dashboard_home_alarm.json`: front yard, front door
+  camera and garage person detection (NPU), front door and office window
+  contacts, fire alarm detector smoke. A card turns red with its state ("Open",
+  "SMOKE", "Person • HH:MM" — the panel's own clock at the moment it fired).
+- `panel/card-security.yaml` + `panel/ha-security.yaml` (again with
+  `trigger_on_initial_state: true`); icons drawn by `render-panel-icons.py`.
+- Not done from the design: a sensor needing attention does not *move to the
+  front* — reordering LVGL cards was left out; it turns red in place.
+
 Ruled out between flashes 5 and 6, from source rather than by flashing:
 
 - **The init table is correct.** Parsed Arduino_GFX's `st7701_type1_init_operations`

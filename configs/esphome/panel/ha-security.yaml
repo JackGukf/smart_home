@@ -1,0 +1,35 @@
+# Home Assistant's state for one Security sensor. A binary_sensor entry,
+# included with vars: key, entity, off_text, on_expr.
+#   on_expr   C++ expression for the text when it fires, e.g. 'std::string("Open")'
+# trigger_on_initial_state: a door already open when the panel connects must
+# show as open (see panel/ha-toggle.yaml for why this is not the default).
+platform: homeassistant
+id: ${key}_sec
+entity_id: ${entity}
+internal: true
+trigger_on_initial_state: true
+on_state:
+  - if:
+      condition:
+        lambda: return x;
+      then:
+        - lvgl.widget.update:
+            id: ${key}_sec_card
+            bg_color: 0x78342A
+            bg_opa: 82%
+        - lvgl.label.update:
+            id: ${key}_sec_state
+            text_color: 0xFFB3A2
+            text: !lambda |-
+              std::string text = ${on_expr};
+              return text;
+      else:
+        - lvgl.widget.update:
+            id: ${key}_sec_card
+            bg_color: 0x3E444E
+            bg_opa: 74%
+        - lvgl.label.update:
+            id: ${key}_sec_state
+            text_color: 0x9EE6C5
+            text: "${off_text}"
+  - script.execute: security_refresh

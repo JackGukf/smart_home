@@ -503,7 +503,7 @@ script:
                   entity_id: !lambda return id(detail_entity);
                   brightness_pct: !lambda return to_string(pct);
 
-  # The menu: 0 Home, 1 Scenes.
+  # The menu: 0 Home, 1 Scenes, 2 Security.
   - id: go_page
     parameters:
       page: int
@@ -518,16 +518,81 @@ script:
           id: nav_scenes
           state:
             checked: !lambda return page == 1;
+      - lvgl.widget.update:
+          id: nav_security
+          state:
+            checked: !lambda return page == 2;
       - lvgl.label.update:
           id: page_title
-          text: !lambda 'return page == 1 ? std::string("scenes") : std::string("home");'
+          text: !lambda |-
+            std::string title = page == 1 ? "scenes" : page == 2 ? "security" : "home";
+            return title;
       - if:
           condition:
             lambda: return page == 1;
           then:
             - lvgl.page.show: scenes_page
-          else:
+      - if:
+          condition:
+            lambda: return page == 2;
+          then:
+            - lvgl.page.show: security_page
+      - if:
+          condition:
+            lambda: return page == 0;
+          then:
             - lvgl.page.show: home_page
+
+  # The Security page's top card: red when any sensor needs attention or the
+  # alarm is triggered, with the alarm's own state underneath.
+  - id: security_refresh
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(frontyard_sec).state || id(door_sec).state || id(window_sec).state ||
+                     id(smoke_sec).state || id(doorcam_sec).state || id(garage_sec).state ||
+                     id(alarm_state).state == "triggered";
+          then:
+            - lvgl.label.update:
+                id: sec_title
+                text: "ATTENTION"
+            - lvgl.image.update:
+                id: sec_shield
+                src: shield_alert
+            - lvgl.widget.update:
+                id: sec_pill
+                bg_color: 0xE07A64
+                bg_opa: 30%
+            - lvgl.label.update:
+                id: sec_pill_text
+                text: "ALERT"
+                text_color: 0xFFB3A2
+          else:
+            - lvgl.label.update:
+                id: sec_title
+                text: "ALL CLEAR"
+            - lvgl.image.update:
+                id: sec_shield
+                src: shield_ok
+            - lvgl.widget.update:
+                id: sec_pill
+                bg_color: 0x6FD3A7
+                bg_opa: 22%
+            - lvgl.label.update:
+                id: sec_pill_text
+                text: "CLEAR"
+                text_color: 0x9EE6C5
+      - lvgl.label.update:
+          id: sec_sub
+          text: !lambda |-
+            const std::string &a = id(alarm_state).state;
+            std::string words = a == "disarmed" ? "disarmed" : a == "armed_home" ? "armed home"
+                              : a == "armed_away" ? "armed away" : a == "armed_night" ? "armed night"
+                              : a == "triggered" ? "TRIGGERED" : a == "arming" ? "arming"
+                              : a == "pending" ? "pending" : a.empty() ? "--" : a;
+            std::string text = "Alarm " + words + " • 6 sensors";
+            return text;
 
   # Per light: draw its card, and hold a tap for a few seconds before showing
   # Home Assistant's state again (panel/light-show.yaml, panel/light-settle.yaml).
@@ -612,6 +677,26 @@ binary_sensor:
   - !include
     file: panel/ha-toggle.yaml
     vars: {key: stick, entity: light.stick_s3, room: Office, level: "0"}
+
+  # The Security page's sensors (panel/ha-security.yaml).
+  - !include
+    file: panel/ha-security.yaml
+    vars: {key: frontyard, entity: binary_sensor.frontyard_camera_npu_person, off_text: "No one", on_expr: 'id(ha_time).now().is_valid() ? "Person • " + id(ha_time).now().strftime("%H:%M") : std::string("Person")'}
+  - !include
+    file: panel/ha-security.yaml
+    vars: {key: door, entity: binary_sensor.0xa4c138813abdffff_contact, off_text: "Closed", on_expr: 'std::string("Open")'}
+  - !include
+    file: panel/ha-security.yaml
+    vars: {key: window, entity: binary_sensor.0xffffdc2350fe16ab_contact, off_text: "Closed", on_expr: 'std::string("Open")'}
+  - !include
+    file: panel/ha-security.yaml
+    vars: {key: smoke, entity: binary_sensor.fire_alarm_detector_smoke, off_text: "No smoke", on_expr: 'std::string("SMOKE")'}
+  - !include
+    file: panel/ha-security.yaml
+    vars: {key: doorcam, entity: binary_sensor.front_door_camera_npu_person, off_text: "No one", on_expr: 'id(ha_time).now().is_valid() ? "Person • " + id(ha_time).now().strftime("%H:%M") : std::string("Person")'}
+  - !include
+    file: panel/ha-security.yaml
+    vars: {key: garage, entity: binary_sensor.garage_camera_npu_person, off_text: "No one", on_expr: 'id(ha_time).now().is_valid() ? "Person • " + id(ha_time).now().strftime("%H:%M") : std::string("Person")'}
 
 # ── Display, phase 1: bring-up only ───────────────────────────────────────────
 #
@@ -890,6 +975,30 @@ lvgl:
                       text: "   Scenes"
                       text_font: montserrat_20
                       text_color: 0xF2F5F8
+            - button:
+                id: nav_security
+                x: 16
+                y: 180
+                width: 246
+                height: 54
+                radius: 12
+                bg_color: 0x647696
+                bg_opa: 0%
+                shadow_width: 0
+                border_width: 0
+                checked:
+                  bg_opa: 55%
+                on_click:
+                  - script.execute:
+                      id: go_page
+                      page: 2
+                widgets:
+                  - label:
+                      x: 14
+                      align: LEFT_MID
+                      text: "   Security"
+                      text_font: montserrat_20
+                      text_color: 0xF2F5F8
 
   pages:
     - id: home_page
@@ -1041,6 +1150,89 @@ lvgl:
             text: ""
             text_font: montserrat_14
             text_color: 0x9EE6C5
+
+    # Security, read-only: the alarm and the six sensors the dashboard's alarm
+    # card watches (dashboard_home_alarm.json on the board). A sensor needing
+    # attention turns red; the top card sums them up with the alarm's state.
+    - id: security_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        - obj:
+            id: sec_summary
+            x: 24
+            y: 70
+            width: 432
+            height: 86
+            radius: 16
+            pad_all: 0
+            border_width: 0
+            bg_color: 0x3E444E
+            bg_opa: 74%
+            scrollable: false
+            widgets:
+              - image:
+                  id: sec_shield
+                  src: shield_ok
+                  x: 12
+                  y: 17
+              - label:
+                  id: sec_title
+                  x: 78
+                  y: 20
+                  text: "ALL CLEAR"
+                  text_font: montserrat_16
+                  text_color: 0xF2F5F8
+              - label:
+                  id: sec_sub
+                  x: 78
+                  y: 46
+                  width: 250
+                  height: 18
+                  long_mode: dot
+                  text: "Alarm -- • 6 sensors"
+                  text_font: montserrat_14
+                  text_color: 0xD1D6DC
+              - obj:
+                  id: sec_pill
+                  x: 334
+                  y: 27
+                  width: 84
+                  height: 32
+                  radius: 16
+                  pad_all: 0
+                  border_width: 0
+                  bg_color: 0x6FD3A7
+                  bg_opa: 22%
+                  scrollable: false
+                  widgets:
+                    - label:
+                        id: sec_pill_text
+                        align: CENTER
+                        text: "CLEAR"
+                        text_font: montserrat_14
+                        text_color: 0x9EE6C5
+        - !include
+          file: panel/card-security.yaml
+          vars: {key: frontyard, name: "FRONT YARD", icon: person, off_text: "No one", x: 24, y: 168}
+        - !include
+          file: panel/card-security.yaml
+          vars: {key: door, name: "FRONT DOOR", icon: door, off_text: "Closed", x: 247, y: 168}
+        - !include
+          file: panel/card-security.yaml
+          vars: {key: window, name: "OFFICE WINDOW", icon: window, off_text: "Closed", x: 24, y: 270}
+        - !include
+          file: panel/card-security.yaml
+          vars: {key: smoke, name: "KITCHEN SMOKE", icon: smoke, off_text: "No smoke", x: 247, y: 270}
+        - !include
+          file: panel/card-security.yaml
+          vars: {key: doorcam, name: "FRONT DOOR CAMERA", icon: person, off_text: "No one", x: 24, y: 372}
+        - !include
+          file: panel/card-security.yaml
+          vars: {key: garage, name: "GARAGE", icon: garage, off_text: "No one", x: 247, y: 372}
 
     # One light, full screen: name and state top left, the lamp on its cord,
     # one round power button. A dimmer also gets a brightness bar and presets,
@@ -1264,8 +1456,42 @@ image:
     id: movie
     type: RGB565
     transparency: alpha_channel
+  - file: panel/images/person.png
+    id: person
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/door.png
+    id: door
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/window.png
+    id: window
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/smoke.png
+    id: smoke
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/garage.png
+    id: garage
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/shield_ok.png
+    id: shield_ok
+    type: RGB565
+    transparency: alpha_channel
+  - file: panel/images/shield_alert.png
+    id: shield_alert
+    type: RGB565
+    transparency: alpha_channel
 
 text_sensor:
+  - platform: homeassistant
+    id: alarm_state
+    entity_id: alarm_control_panel.duo_gong_neng_bao_jing_zhu_ji
+    internal: true
+    on_value:
+      - script.execute: security_refresh
   - platform: homeassistant
     id: thermo_action
     entity_id: climate.my_ecobee

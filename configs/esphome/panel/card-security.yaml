@@ -1,0 +1,40 @@
+# One sensor on the Security page (design: .card.sensor), read-only. Included
+# with vars: key, name, icon (an image id), off_text, x, y.
+# Its state comes from panel/ha-security.yaml with the same key; a sensor that
+# needs attention turns red.
+obj:
+  id: ${key}_sec_card
+  x: ${x}
+  y: ${y}
+  width: 209
+  height: 90
+  radius: 16
+  pad_all: 0
+  border_width: 0
+  bg_color: 0x3E444E
+  bg_opa: 74%
+  scrollable: false
+  widgets:
+    - image:
+        src: ${icon}
+        x: 12
+        y: 10
+    - label:
+        text: "${name}"
+        x: 14
+        y: 44
+        width: 185
+        height: 18
+        long_mode: dot
+        text_font: montserrat_14
+        text_color: 0xF2F5F8
+    - label:
+        id: ${key}_sec_state
+        text: "${off_text}"
+        x: 14
+        y: 64
+        width: 185
+        height: 18
+        long_mode: dot
+        text_font: montserrat_14
+        text_color: 0x9EE6C5
