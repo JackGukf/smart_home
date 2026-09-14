@@ -64,7 +64,11 @@ services:
       - piper-data:/data
     environment:
       TZ: ${TZ:-America/Vancouver}
-    cpuset: "8,9"
+    # Four A720 cores, not two. Piper is CPU-bound - both cores sat at 100% for
+    # the whole synthesis - and it only uses them while it speaks, so sharing
+    # costs nothing at idle. Measured 2026-09-13 on the same six short replies:
+    # 8,9 mean 2.02 s (0.76x real time), 8-11 mean 0.84 s (0.32x real time).
+    cpuset: "8,9,10,11"
     mem_limit: 512m
     oom_kill_disable: false
 

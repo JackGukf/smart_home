@@ -78,7 +78,22 @@ answers ("Sunday, September 13th, 2026", "8:31 PM"); "What is the weather
 today?" still does not match. **New question types need a sentence here** —
 that is the price of keeping the model out.
 
-### Latency, measured, not yet changed
+### Latency
+
+**Changed: Piper now has four cores** (`cpuset "8,9,10,11"` in
+`docker-compose.voice.yml`, was `"8,9"`). It was CPU-bound on two. Same six
+short replies, direct over Wyoming: **2.02 s → 0.84 s** mean (0.76× → 0.32×
+real time). Nothing else is pinned to 10–11; Ollama's `0,1,6-11` already
+overlapped 8–9 and unloads when idle.
+
+Through Home Assistant's `tts_proxy` — what the panel actually waits on — an
+uncached reply went from **2.7–3.2 s to 1.04–1.27 s**. The first request after
+recreating the container took 2.5 s while the voice loaded.
+
+Not yet re-measured end to end on the panel (end of speech → sound, ~9 s
+before). Whisper's one 13 s outlier is unexplained.
+
+Measured before that change:
 
 Uncached reply, 03:25:46 run, from the device log: end of speech
 `STOP_MICROPHONE` 53.64 → response starts 54.47 → FLAC header 59.24 → decoded
