@@ -326,6 +326,93 @@ async def ensure_wake_echo_automation(session, headers, base, apply: bool) -> li
     return [f"{'update' if current else 'create'} automation {WAKE_ECHO_AUTOMATION_ID!r}"]
 
 
+# --- what Assist can reach -----------------------------------------------------
+
+# Our own Matter bridge exports the dashboard's devices to Apple Home, and it is
+# commissioned into Home Assistant as well - so each bridged Kasa switch appears
+# twice, as the native tplink entity and as a Matter entity of the same name.
+# Assist then refuses both: "Sorry, there are multiple devices called Kitchen
+# light switch". The Matter copy is hidden from Assist where a native twin
+# exists; a bridged device with no twin (Stick S3) is only reachable that way,
+# so it stays.
+BRIDGE_VIA_DEVICE = "Dashboard Bridge"
+JUNK_MANUFACTURERS = frozenset({"TEST_VENDOR"})  # a leftover Matter test light
+SWITCHABLE_DOMAINS = frozenset({"light", "switch", "fan"})
+# Devices voice must never switch, matched by name because they may not be in
+# Home Assistant yet (and new entities are exposed to Assist by default). The
+# "Raspberry PI" plug powers the wall panel: a misheard "turn off" would cut it.
+NEVER_EXPOSE_NAMES = frozenset({"raspberry pi"})
+# Readings people ask about by room. Batteries, tamper, signal and the like are
+# left out on purpose - they are noise to a voice and are on the dashboard.
+READING_CLASSES = {
+    "binary_sensor": frozenset({"door", "window", "opening", "moisture", "smoke", "gas",
+                                "carbon_monoxide", "occupancy", "motion"}),
+    "sensor": frozenset({"temperature", "humidity", "illuminance"}),
+}
+
+
+def plan_exposure(entities: list[dict], devices: list[dict], states: dict[str, dict],
+                  exposed: dict[str, dict], never_expose_names: frozenset[str] = NEVER_EXPOSE_NAMES
+                  ) -> tuple[list[str], list[str]]:
+    """Return (entity ids to expose to Assist, entity ids to hide from it)."""
+    devices_by_id = {d["id"]: d for d in devices}
+
+    def friendly(entity: dict) -> str:
+        attributes = (states.get(entity["entity_id"]) or {}).get("attributes") or {}
+        return str(attributes.get("friendly_name") or entity.get("name")
+                   or entity.get("original_name") or "").strip().lower()
+
+    def is_exposed(entity_id: str) -> bool:
+        return bool((exposed.get(entity_id) or {}).get("conversation"))
+
+    live = [e for e in entities if not e.get("disabled_by")]
+    native_switchables = {friendly(e) for e in live
+                          if e["platform"] != "matter"
+                          and e["entity_id"].split(".")[0] in SWITCHABLE_DOMAINS}
+
+    expose: list[str] = []
+    hide: list[str] = []
+    for entity in live:
+        entity_id = entity["entity_id"]
+        domain = entity_id.split(".")[0]
+        device = devices_by_id.get(entity.get("device_id")) or {}
+        via = devices_by_id.get(device.get("via_device_id")) or {}
+        bridged_twin = (entity["platform"] == "matter"
+                        and (via.get("name_by_user") or via.get("name")) == BRIDGE_VIA_DEVICE
+                        and friendly(entity) in native_switchables)
+        device_name = str(device.get("name_by_user") or device.get("name") or "").strip().lower()
+        protected = friendly(entity) in never_expose_names or device_name in never_expose_names
+        if bridged_twin or device.get("manufacturer") in JUNK_MANUFACTURERS or protected:
+            if is_exposed(entity_id):
+                hide.append(entity_id)
+            continue
+        device_class = ((states.get(entity_id) or {}).get("attributes") or {}).get("device_class")
+        if (device_class in READING_CLASSES.get(domain, ())
+                and not entity.get("entity_category")
+                and not entity.get("hidden_by")
+                and not is_exposed(entity_id)):
+            expose.append(entity_id)
+    return sorted(expose), sorted(hide)
+
+
+async def ensure_assist_exposure(ha: HomeAssistantWS, apply: bool) -> list[str]:
+    entities = await ha.call(type="config/entity_registry/list")
+    devices = await ha.call(type="config/device_registry/list")
+    states = {s["entity_id"]: s for s in await ha.call(type="get_states")}
+    exposed = (await ha.call(type="homeassistant/expose_entity/list") or {}).get("exposed_entities", {})
+    expose, hide = plan_exposure(entities, devices, states, exposed)
+    lines = []
+    for ids, should_expose, why in ((hide, False, "hide from Assist (duplicate or test device)"),
+                                    (expose, True, "expose to Assist (room reading)")):
+        if not ids:
+            continue
+        if apply:
+            await ha.call(type="homeassistant/expose_entity", assistants=["conversation"],
+                          entity_ids=ids, should_expose=should_expose)
+        lines.append(f"{why}: {', '.join(ids)}")
+    return lines
+
+
 CUSTOM_SENTENCES = PROJECT_ROOT / "configs" / "homeassistant" / "custom_sentences" / "en"
 
 
@@ -418,6 +505,8 @@ async def run(args: argparse.Namespace) -> int:
             for line in await point_pipeline_at(ha, local_stt, local_tts, apply):
                 print(("" if apply else "would ") + line)
             for line in await ensure_voice_pipeline(ha, local_stt, local_tts, apply):
+                print(("" if apply else "would ") + line)
+            for line in await ensure_assist_exposure(ha, apply):
                 print(("" if apply else "would ") + line)
 
         if apply:

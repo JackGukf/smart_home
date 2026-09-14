@@ -1,0 +1,100 @@
+# Status questions by room, for Home Assistant's own HassGetState and
+# HassClimateGetTemperature intents.
+#
+# Installed into <HA config>/custom_sentences/en/ by scripts/setup-ha-voice.py.
+#
+# The built-in sentences answer these by exact device name only ("is Door
+# sensor front door open"), which nobody says. Measured through the voice agent
+# on 2026-09-13, all of these got "Sorry, ...": "is the kitchen light on", "is
+# the front door open", "is there water in the kitchen", "what is the
+# temperature in the family room", "what's the humidity in the bedroom", "what
+# is the thermostat set to". These route the way people ask onto the same
+# intents, filtered by room and kind of device.
+#
+# {area} and the {..._states} lists are Home Assistant's own.
+language: "en"
+intents:
+  HassGetState:
+    data:
+      # "is the kitchen light on" -> "Yes, Kitchen light switch" / "No"
+      - sentences:
+          - "(is|are) [the] {area} light[s] {on_off_states:state}"
+          - "(is|are) [the] light[s] in [the] {area} {on_off_states:state}"
+        slots:
+          domain:
+            - light
+            - switch
+        response: any
+
+      # "is the front door open" - the area here is itself called "Front door"
+      - sentences:
+          - "(is|are) [the] {area} [door|doors|window|windows] {bs_door_states:state}"
+          - "(is|are) [the] (door|doors|window|windows) (in|at) [the] {area} {bs_door_states:state}"
+        slots:
+          domain: binary_sensor
+          device_class:
+            - door
+            - window
+            - opening
+        response: any
+
+      # "is there water in the kitchen"
+      - sentences:
+          - "is there [any] (water|a leak|a water leak) (in|on|at) [the] {area}"
+          - "is [the] {area} (wet|flooded|leaking)"
+        slots:
+          domain: binary_sensor
+          device_class: moisture
+          state: "on"
+        response: any
+
+      # "what's the temperature in the family room" - rooms have several sensors
+      - sentences:
+          - "(what's|what is|tell me) the temperature (in|at) [the] {area}"
+          - "how (warm|hot|cold) is (it in [the] {area}|[the] {area})"
+        slots:
+          domain: sensor
+          device_class: temperature
+        response: room_reading
+      - sentences:
+          - "(what's|what is|tell me) the humidity (in|at) [the] {area}"
+          - "how humid is (it in [the] {area}|[the] {area})"
+        slots:
+          domain: sensor
+          device_class: humidity
+        response: room_reading
+
+  HassClimateGetTemperature:
+    data:
+      - sentences:
+          - "what [temperature] is the thermostat set to"
+          - "(what's|what is) the thermostat set to"
+          - "(what's|what is) the (target|set) temperature"
+        response: target
+
+responses:
+  intents:
+    HassGetState:
+      # Average of the room's numeric readings, spoken with words rather than
+      # symbols so Piper does not read out "degree sign C".
+      room_reading: >-
+        {% set ns = namespace(total=0.0, count=0, unit='') %}
+        {% for s in query.matched %}
+        {% if s.state | is_number %}
+        {% set ns.total = ns.total + (s.state | float) %}
+        {% set ns.count = ns.count + 1 %}
+        {% set ns.unit = s.attributes.get('unit_of_measurement', '') %}
+        {% endif %}
+        {% endfor %}
+        {% set words = {'°C': ' degrees', '°F': ' degrees', '%': ' percent'} %}
+        {% if ns.count == 0 %}I don't have a reading for that right now
+        {%- else %}{{ (ns.total / ns.count) | round(1) }}{{ words.get(ns.unit, ' ' ~ ns.unit) }}
+        {%- if ns.count > 1 %}, across {{ ns.count }} sensors{% endif %}{% endif %}
+    HassClimateGetTemperature:
+      target: >-
+        {% set target = state_attr(state.entity_id, 'temperature') %}
+        {% set low = state_attr(state.entity_id, 'target_temp_low') %}
+        {% set high = state_attr(state.entity_id, 'target_temp_high') %}
+        {% if target is not none %}The thermostat is set to {{ target }} degrees
+        {%- elif low is not none and high is not none %}The thermostat is set between {{ low }} and {{ high }} degrees
+        {%- else %}The thermostat has no set temperature right now{% endif %}
