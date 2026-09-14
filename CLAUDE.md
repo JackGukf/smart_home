@@ -20,10 +20,11 @@
 > Its logic is `resolver.py`, testable without HA.
 > Start here: **`docs/handoff-2026-09-13-voice-satellite.md`**.
 >
-> **Panel touch screen, in progress (2026-09-14).** The 4" LCD is being brought up
-> under ESPHome and is still **completely dark** (it worked with Waveshare's demo
-> firmware, so it is config, not hardware); voice is unaffected. Approved GUI
-> design: `docs/design/voice-panel-screens.html`.
+> **Panel touch screen, working (2026-09-14).** The 4" LCD runs under ESPHome with
+> the approved GUI (`docs/design/voice-panel-screens.html`) through Home, Scenes,
+> Security and a near-live front door camera. The camera frames come from
+> `panel-camera.service` on the board (`src/python/panel_camera.py`): fetching
+> snapshots from go2rtc directly blocked the panel's main loop and garbled voice.
 > Start here: **`docs/handoff-2026-09-14-panel-display.md`**.
 >
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd

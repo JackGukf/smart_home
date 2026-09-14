@@ -6,27 +6,19 @@ else from the 2026-09-13/14 sessions is finished and listed at the end.
 
 ## Where it stands
 
-**The screen is completely dark** — no picture and no backlight glow, even after
-a USB power cycle. **Voice is unaffected**: wake word, microphone and the voice
-resolver all work with the display firmware running.
+**Updated end of 2026-09-14: the screen works, and the GUI is built through
+Cameras.** Owner-tested: Home (six lights and the ecobee, dimmers' brightness on
+the full-screen light page), Scenes (HA scripts, also by voice), Security, and a
+near-live front door camera from the board's relay (`panel-camera.service`). Voice
+works on every page; no flicker. The sections below record how the dark screen
+was brought up (flashes 1–10) and each GUI phase after it.
 
-**The LCD itself is fine.** Before the Voice Panel firmware, the board ran
-Waveshare's demo firmware and the screen worked. So the fault is a difference
-between `configs/esphome/voice-panel.yaml` and Waveshare's demo, not hardware.
+Next, from the design's build order: garage camera (recheck the panel's heap
+first), wall-panel remote ("show view" event), sleep/wake. Still open: re-measure
+the wake word with the display on; codify `allow_service_calls` in
+`setup-ha-voice.py`; a Security card that fires does not move to the front.
 
-What the firmware reports (Home Assistant, config_hash `0xa8c115df`):
-
-| Signal | Value | Meaning |
-| --- | --- | --- |
-| `binary_sensor.voice_panel_display_failed` | off | `esp_lcd_new_rgb_panel` + reset + init returned OK |
-| `binary_sensor.voice_panel_touch_failed` | off | GT911 answered (dump says address `0x5D`) |
-| `sensor.voice_panel_psram_free` | 7,866,692 B | of 8,388,608 → ~510 KB used ≈ the 460 KB RGB frame buffer: the panel *was* created |
-| microphone capturing / satellite | on / idle | wake word healthy |
-
-So the MCU side of the RGB panel runs. What is not happening is the ST7701
-coming out of sleep (and/or the backlight coming on). The init commands go over
-a **bit-banged 3-wire SPI through the TCA9554 expander** — the most likely place
-for the difference.
+The bring-up notes below were written while the screen was still dark.
 
 ## What the demo does, verified
 
@@ -236,6 +228,78 @@ Committed phase 2 first (`493c676`). Then, flash `0x37252aef`:
   `trigger_on_initial_state: true`); icons drawn by `render-panel-icons.py`.
 - Not done from the design: a sensor needing attention does not *move to the
   front* — reordering LVGL cards was left out; it turns red in place.
+
+Security committed as `b002a05`.
+
+## Dashboard: switch cards lagged after a light changed elsewhere (fixed and deployed 2026-09-14)
+
+Owner saw some lights update on the PC dashboard at once and others seconds later.
+Measured 2026-09-14 with the panel's scenes (HA history + dashboard access log +
+a websocket recorder):
+
+- HA reported every light within 0.1–1.8 s (Master bedroom's HS200 up to 5 s).
+- Matter lights (Stick S3, North Bedroom) are read from HA on every dashboard
+  refresh — correct at once. TP-Link switches (Master bedroom, Living room switch
+  2, Kitchen, Family room) come from `/api/devices`, a cache polled in the
+  background at most every `DEVICE_CACHE_STALE_AFTER` (10 s); the refresh each HA
+  report triggered read the pre-change state.
+- They corrected only when something else refreshed the page — the Dashboard
+  Bridge's Matter copies of those switches, which change on the bridge's 10 s poll
+  of `/bridge/state/all`: 3–10 s later.
+- The event stream also *dropped* changes inside its 0.4 s window: a scene of ~10
+  changes reached browsers as 3–4.
+- A real poll of all 8 switches takes 1.6 s (4 at a time), so polling is not slow.
+
+Fix in `web_app.py`: `_coalesced_changes` holds a change inside the window and sends
+it when the window ends; a light/switch change is sent at once *and again* after
+`_fresh_device_cache` sees a switch poll that began after the change (shared by all
+browsers, capped at `EVENT_REFRESH_TIMEOUT` 4 s). Tests:
+`tests/python/test_event_stream_freshness.py`; full suite 2230 passed. **Committing
+it deploys the dashboard** (post-commit hook).
+
+## GUI phase 5: Cameras, front door first
+
+- go2rtc on the board answers `http://192.168.0.83:1984/api/frame.jpeg?src=front_door_camera&width=432`
+  over the LAN without auth: ~25 KB, 1.7–1.9 s (mostly waiting for a frame). Garage
+  at 480 wide took 7.3 s once — measure again before adding it.
+- `image: platform: online_image` (the top-level `online_image:` key is deprecated
+  until 2027.1), JPEG → RGB565 432×243, `http_request` added. Fetched by
+  `camera_fetch` every 2 s only while `cameras_page` shows, never while one is
+  still downloading (`cam_busy`); `go_page` releases it on leaving.
+- **Trap:** once any `image:` entry has a `platform:`, every entry needs one — the
+  file images are now `platform: file`.
+
+### Owner test of the 2 s snapshots, and the relay that replaced them
+
+Owner: not live; voice could not turn Living room switch 2 off *while on the camera
+page* (fine back on Home); screen flickered. Evidence:
+
+- `online_image::update()` opens the HTTP request and waits for the response
+  headers **inside the main loop**; go2rtc sends no headers until the camera's
+  next frame, 1.2–2.2 s (five back-to-back tries). At one fetch per 2 s the loop
+  was blocked most of the time.
+- HA's pipeline debug for the Voice Panel at those minutes: heard
+  `" Turn on, turn on, turn on, switch 2."` and `" Turn off."` — audio stalled and
+  repeated — then the full command worked once off the page.
+- go2rtc's `stream.mjpeg` is 404 in this build.
+
+Fix: **`src/python/panel_camera.py`**, `panel-camera.service` (user unit), installed
+with `scripts/install-panel-camera.sh` on the board. While the panel asks, ffmpeg
+decodes go2rtc's local RTSP (`rtsp://127.0.0.1:8554/<stream>`, no credentials) to
+432×243 JPEG at 4 fps — measured 0.7 s to first frame in isolation, ~17 KB, 23% of
+one core — and keeps the latest. `GET :1985/camera/front_door_camera.jpg` answers in
+~2 ms with that frame, or 503 immediately while none is fresh (≈2.5 s after the
+first request as installed); 20 s without requests stops ffmpeg. Only
+`PANEL_CAMERA_STREAMS` are served (default front door); LAN-open like go2rtc.
+Tests: `tests/python/test_panel_camera.py`.
+
+Panel (`0x4313aaa5`): fetches from the relay every 300 ms while the Cameras page
+shows (skipped while one is in flight), **never while `voice_assistant.is_running`**,
+and says "Camera not answering" only after 10 failures in a row.
+
+**Owner-tested 2026-09-14:** picture good, voice works with the Cameras page open,
+no flicker. Heap free read 80 KB (largest block 40 KB) straight after that flash,
+against 94 KB / 53 KB before — recheck before adding the garage camera.
 
 Ruled out between flashes 5 and 6, from source rather than by flashing:
 

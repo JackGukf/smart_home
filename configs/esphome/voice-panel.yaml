@@ -503,7 +503,7 @@ script:
                   entity_id: !lambda return id(detail_entity);
                   brightness_pct: !lambda return to_string(pct);
 
-  # The menu: 0 Home, 1 Scenes, 2 Security.
+  # The menu: 0 Home, 1 Scenes, 2 Security, 3 Cameras.
   - id: go_page
     parameters:
       page: int
@@ -522,11 +522,27 @@ script:
           id: nav_security
           state:
             checked: !lambda return page == 2;
+      - lvgl.widget.update:
+          id: nav_cameras
+          state:
+            checked: !lambda return page == 3;
       - lvgl.label.update:
           id: page_title
           text: !lambda |-
-            std::string title = page == 1 ? "scenes" : page == 2 ? "security" : "home";
+            std::string title = page == 1 ? "scenes" : page == 2 ? "security"
+                              : page == 3 ? "cameras" : "home";
             return title;
+      # Leaving the Cameras page frees the snapshot's memory, which the wake
+      # word shares.
+      - if:
+          condition:
+            lambda: return page != 3;
+          then:
+            - lvgl.widget.hide: cam_view
+            - lvgl.label.update:
+                id: cam_status
+                text: "Loading..."
+            - online_image.release: front_cam
       - if:
           condition:
             lambda: return page == 1;
@@ -539,9 +555,28 @@ script:
             - lvgl.page.show: security_page
       - if:
           condition:
+            lambda: return page == 3;
+          then:
+            - lvgl.page.show: cameras_page
+            - script.execute: camera_fetch
+      - if:
+          condition:
             lambda: return page == 0;
           then:
             - lvgl.page.show: home_page
+
+  # One snapshot, unless one is still downloading - a slow frame must not queue
+  # a second request behind it.
+  - id: camera_fetch
+    then:
+      - if:
+          condition:
+            lambda: return !id(cam_busy);
+          then:
+            - globals.set:
+                id: cam_busy
+                value: "true"
+            - component.update: front_cam
 
   # The Security page's top card: red when any sensor needs attention or the
   # alarm is triggered, with the alarm's own state underneath.
@@ -999,6 +1034,30 @@ lvgl:
                       text: "   Security"
                       text_font: montserrat_20
                       text_color: 0xF2F5F8
+            - button:
+                id: nav_cameras
+                x: 16
+                y: 240
+                width: 246
+                height: 54
+                radius: 12
+                bg_color: 0x647696
+                bg_opa: 0%
+                shadow_width: 0
+                border_width: 0
+                checked:
+                  bg_opa: 55%
+                on_click:
+                  - script.execute:
+                      id: go_page
+                      page: 3
+                widgets:
+                  - label:
+                      x: 14
+                      align: LEFT_MID
+                      text: "   Cameras"
+                      text_font: montserrat_20
+                      text_color: 0xF2F5F8
 
   pages:
     - id: home_page
@@ -1234,6 +1293,101 @@ lvgl:
           file: panel/card-security.yaml
           vars: {key: garage, name: "GARAGE", icon: garage, off_text: "No one", x: 247, y: 372}
 
+    # Cameras: near-live JPEG frames, not video - the S3 cannot decode video.
+    # Frames come from the board's camera relay (src/python/panel_camera.py),
+    # which keeps the latest 432x243 frame ready and answers at once. Asking
+    # go2rtc directly took 1.2-2.2 s per snapshot, and online_image waits for
+    # the response inside the main loop: voice commands spoken on this page
+    # arrived garbled and the screen flickered. Fetched only while this page
+    # shows and never during a voice session; released when it closes.
+    - id: cameras_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        - obj:
+            x: 24
+            y: 70
+            width: 209
+            height: 72
+            radius: 16
+            pad_all: 0
+            border_width: 0
+            bg_color: 0x647696
+            bg_opa: 90%
+            scrollable: false
+            widgets:
+              - image:
+                  src: door
+                  x: 14
+                  y: 20
+              - label:
+                  x: 58
+                  y: 16
+                  text: "FRONT DOOR"
+                  text_font: montserrat_14
+                  text_color: 0xF2F5F8
+              - label:
+                  x: 58
+                  y: 38
+                  text: "near-live"
+                  text_font: montserrat_14
+                  text_color: 0xD1D6DC
+        - obj:
+            x: 24
+            y: 156
+            width: 432
+            height: 243
+            radius: 16
+            pad_all: 0
+            border_width: 0
+            bg_color: 0x14161A
+            bg_opa: 80%
+            clip_corner: true
+            scrollable: false
+            widgets:
+              - label:
+                  id: cam_status
+                  align: CENTER
+                  text: "Loading..."
+                  text_font: montserrat_16
+                  text_color: 0xA8ADB3
+              - image:
+                  id: cam_view
+                  src: movie
+                  x: 0
+                  y: 0
+                  hidden: true
+              - label:
+                  x: 12
+                  y: 10
+                  text: "SNAPSHOT"
+                  text_font: montserrat_14
+                  text_color: 0xF2F5F8
+                  bg_color: 0x0C0E12
+                  bg_opa: 60%
+                  radius: 8
+                  pad_left: 8
+                  pad_right: 8
+                  pad_top: 3
+                  pad_bottom: 3
+              - label:
+                  x: 12
+                  y: 216
+                  text: "Front door camera"
+                  text_font: montserrat_14
+                  text_color: 0xF2F5F8
+              - label:
+                  id: cam_time
+                  align: TOP_RIGHT
+                  x: -12
+                  y: 216
+                  text: ""
+                  text_font: montserrat_14
+                  text_color: 0xF2F5F8
+
     # One light, full screen: name and state top left, the lamp on its cord,
     # one round power button. A dimmer also gets a brightness bar and presets,
     # and its lamp moves left to make room. open_light fills it in.
@@ -1406,6 +1560,19 @@ interval:
             - lvgl.widget.update:
                 id: listen_dot
                 bg_color: 0x6B7280
+  # The next frame as soon as the last one is in (camera_fetch skips while one
+  # is downloading), but never during a voice session: the audio goes out
+  # through the same main loop a download holds.
+  - interval: 300ms
+    then:
+      - if:
+          condition:
+            and:
+              - lvgl.page.is_showing: cameras_page
+              - not:
+                  voice_assistant.is_running:
+          then:
+            - script.execute: camera_fetch
 
 # Which light the full-screen page is showing.
 globals:
@@ -1425,65 +1592,133 @@ globals:
   - id: family_pct
     type: int
     initial_value: "0"
+  # A snapshot download is in flight (camera_fetch).
+  - id: cam_busy
+    type: bool
+    initial_value: "false"
+  # Failed fetches in a row (the relay's 503 while it starts counts as one).
+  - id: cam_errors
+    type: int
+    initial_value: "0"
 
 # Rendered from the design's SVGs by scripts/render-panel-icons.py.
 image:
-  - file: panel/images/lamp_on.png
+  - platform: file
+    file: panel/images/lamp_on.png
     id: lamp_on
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/lamp_off.png
+  - platform: file
+    file: panel/images/lamp_off.png
     id: lamp_off
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/bulb_on.png
+  - platform: file
+    file: panel/images/bulb_on.png
     id: bulb_on
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/bulb_off.png
+  - platform: file
+    file: panel/images/bulb_off.png
     id: bulb_off
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/dome_on.png
+  - platform: file
+    file: panel/images/dome_on.png
     id: dome_on
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/dome_off.png
+  - platform: file
+    file: panel/images/dome_off.png
     id: dome_off
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/movie.png
+  - platform: file
+    file: panel/images/movie.png
     id: movie
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/person.png
+  - platform: file
+    file: panel/images/person.png
     id: person
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/door.png
+  - platform: file
+    file: panel/images/door.png
     id: door
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/window.png
+  - platform: file
+    file: panel/images/window.png
     id: window
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/smoke.png
+  - platform: file
+    file: panel/images/smoke.png
     id: smoke
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/garage.png
+  - platform: file
+    file: panel/images/garage.png
     id: garage
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/shield_ok.png
+  - platform: file
+    file: panel/images/shield_ok.png
     id: shield_ok
     type: RGB565
     transparency: alpha_channel
-  - file: panel/images/shield_alert.png
+  - platform: file
+    file: panel/images/shield_alert.png
     id: shield_alert
     type: RGB565
     transparency: alpha_channel
+  - platform: online_image
+    id: front_cam
+    url: "http://192.168.0.83:1985/camera/front_door_camera.jpg"
+    format: JPEG
+    type: RGB565
+    resize: 432x243
+    buffer_size: 65536
+    update_interval: never
+    on_download_finished:
+      - globals.set:
+          id: cam_busy
+          value: "false"
+      - globals.set:
+          id: cam_errors
+          value: "0"
+      - lvgl.image.update:
+          id: cam_view
+          src: front_cam
+      - lvgl.widget.show: cam_view
+      - lvgl.label.update:
+          id: cam_time
+          text: !lambda |-
+            auto t = id(ha_time).now();
+            std::string text = t.is_valid() ? t.strftime("%H:%M:%S") : std::string("");
+            return text;
+    # The relay answers 503 for the second ffmpeg takes to start, so one
+    # failure is normal; only a run of them (~3 s) is worth saying so.
+    on_error:
+      - globals.set:
+          id: cam_busy
+          value: "false"
+      - globals.set:
+          id: cam_errors
+          value: !lambda return id(cam_errors) + 1;
+      - if:
+          condition:
+            lambda: return id(cam_errors) >= 10;
+          then:
+            - lvgl.label.update:
+                id: cam_status
+                text: "Camera not answering"
+
+# The camera snapshot is fetched over plain HTTP from go2rtc on the board.
+http_request:
+  timeout: 10s
+  verify_ssl: false
 
 text_sensor:
   - platform: homeassistant

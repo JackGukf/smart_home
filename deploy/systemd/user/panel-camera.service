@@ -1,0 +1,18 @@
+[Unit]
+Description=Voice Panel camera relay (near-live JPEG frames from go2rtc)
+After=network-online.target go2rtc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/scripts/run-panel-camera.sh
+Restart=always
+RestartSec=5
+# Idle it holds one frame per camera; while the panel watches, ffmpeg decodes
+# 432x243 at 4 fps (~23% of one core). No swap on this board, so bound it.
+MemoryMax=512M
+OOMPolicy=stop
+
+[Install]
+WantedBy=default.target
