@@ -1,0 +1,39 @@
+# The Voice Panel's scenes by voice: "Okay Nabu, movie mode".
+#
+# Installed into <HA config>/custom_sentences/en/ by scripts/setup-ha-voice.py.
+#
+# The scenes are Home Assistant scripts (scripts/install-panel-scenes.py), the
+# same ones the panel's Scenes page runs. Home Assistant's own sentences reach an
+# exposed script only as "turn on <name>", and nobody says "turn on movie mode" -
+# they say "movie mode". These map the ways people do say it onto Home
+# Assistant's own HassTurnOn, with the script named, so the action and the reply
+# are still Home Assistant's.
+#
+# "Turn on all the lights" is left to Home Assistant's built-in sentence, which
+# means every light in the house; "all lights on" here is the panel's six.
+#
+# Syntax: [optional], (this|that). Case and punctuation are ignored.
+language: "en"
+intents:
+  HassTurnOn:
+    data:
+      - sentences:
+          - "[the] movie mode"
+          - "(start|run|activate|turn on|switch on|put on) [the] movie mode"
+          - "movie (time|night)"
+          - "(let's|lets) watch a movie"
+        slots:
+          name: "Movie mode"
+          domain: "script"
+      - sentences:
+          - "all [the] lights on"
+          - "(run|start|activate) all [the] lights on"
+        slots:
+          name: "All lights on"
+          domain: "script"
+      - sentences:
+          - "all [the] lights off"
+          - "(run|start|activate) all [the] lights off"
+        slots:
+          name: "All lights off"
+          domain: "script"

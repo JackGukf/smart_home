@@ -203,7 +203,22 @@ Committed phase 2 first (`493c676`). Then, flash `0x37252aef`:
     the card, and when it ends the card shows HA's actual state — a failed
     command shows up then, not as a flicker (`panel/light-show.yaml`,
     `panel/light-settle.yaml`).
-- Not yet: scripts exposed to Assist ("Okay Nabu, movie mode"); `allow_service_calls`
+- **Committed** as `e0a01a7` after the owner confirmed the state fixes.
+
+## Voice scenes (applied 2026-09-14)
+
+- `scripts/setup-ha-voice.py` now keeps `VOICE_SCRIPTS` (the three scene scripts)
+  exposed to Assist — a new script is not exposed by default.
+- `configs/homeassistant/custom_sentences/en/voice_scenes.yaml` maps "movie mode",
+  "start movie mode", "movie night", "let's watch a movie", "all lights on/off" onto
+  HA's own `HassTurnOn` with `name` + `domain: script`. "Turn on all the lights" is
+  deliberately left to HA's built-in sentence (every light in the house).
+- Applied with `setup-ha-voice.py --apply` (exposure + sentences + conversation
+  reload, no restart). `tests/python/test_voice_scenes.py` checks the names match the
+  installer's aliases, the phrasings, and that exposure is stable.
+- Trap: the test helpers' template expander does not handle `(a|b)` nested inside
+  `[ ]`; the sentence file avoids nesting so the tests and HA read it the same.
+- Not yet: `allow_service_calls`
   still not codified in `setup-ha-voice.py`; wake word not re-measured with the
   display on.
 

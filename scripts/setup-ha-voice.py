@@ -360,6 +360,10 @@ READING_CLASSES = {
                                 "carbon_monoxide", "occupancy", "motion"}),
     "sensor": frozenset({"temperature", "humidity", "illuminance"}),
 }
+# The Voice Panel's scenes (scripts/install-panel-scenes.py). A new script is not
+# exposed to Assist by default, and "Okay Nabu, movie mode" has to reach it.
+VOICE_SCRIPTS = frozenset({"script.panel_all_lights_on", "script.panel_all_lights_off",
+                           "script.movie_mode"})
 
 
 def plan_exposure(entities: list[dict], devices: list[dict], states: dict[str, dict],
@@ -402,6 +406,10 @@ def plan_exposure(entities: list[dict], devices: list[dict], states: dict[str, d
         if bridged_twin or device.get("manufacturer") in JUNK_MANUFACTURERS or protected or hidden:
             if is_exposed(entity_id):
                 hide.append(entity_id)
+            continue
+        if entity_id in VOICE_SCRIPTS:
+            if not is_exposed(entity_id):
+                expose.append(entity_id)
             continue
         device_class = ((states.get(entity_id) or {}).get("attributes") or {}).get("device_class")
         if (device_class in READING_CLASSES.get(domain, ())
@@ -471,7 +479,7 @@ async def ensure_assist_exposure(ha: HomeAssistantWS, apply: bool) -> list[str]:
     expose, hide = plan_exposure(entities, devices, states, exposed)
     lines = []
     for ids, should_expose, why in ((hide, False, "hide from Assist (duplicate or test device)"),
-                                    (expose, True, "expose to Assist (room reading)")):
+                                    (expose, True, "expose to Assist (room reading or scene)")):
         if not ids:
             continue
         if apply:
