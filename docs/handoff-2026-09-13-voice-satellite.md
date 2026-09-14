@@ -142,6 +142,16 @@ switched in testing.
   TP-Link login. `switch.living_room_cabinet_led` is in Living Room and exposed;
   `switch.raspberry_pi` was hidden from Assist by the script on its next run,
   as designed.
+
+  **Do not test the Pi plug by saying "turn off the raspberry pi"** — it powers
+  the wall panel. It was verified from the code instead: HA's default agent,
+  after failing on exposed entities, retries with unexposed ones only to word
+  its error (`conversation/default_agent.py` ~685), which is why the matcher
+  debug still lists `switch.raspberry_pi` as a target. But target matching drops
+  entities not exposed to the asking assistant (`helpers/intent.py` ~535), and
+  the turn on/off handler passes that assistant through (~1042→1055). The
+  read-only "is the raspberry pi on" shows it: `success: []`, and the half
+  sentence "No," — the yes/no template with no state to fill.
 - ~~LLANO-S450 is exposed twice~~ — **resolved**: it was in three integrations
   once the discovered DLNA entry was added too. Kept through Apple TV
   (`media_player.llano_s450_289cb541_2`); the Google Cast and DLNA copies
