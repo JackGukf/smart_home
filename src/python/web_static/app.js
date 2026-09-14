@@ -3210,6 +3210,72 @@ function dismissNotification(id) {
   renderNotifications();
 }
 
+// "New device" banners are per browser, but whether a device is still new is the
+// server's answer, shared by every screen. Closing a banner on the PC tells the
+// server, yet the wall panel - which never reloads - kept its own copy for ever,
+// until a stack of stale banners covered the whole panel. Every refresh now drops
+// the banners the server no longer flags. notifSeen keeps their keys, so a
+// dropped banner is not pushed again.
+const NOTIF_MAX_NEW_DEVICES = 2;
+
+function syncNewDeviceNotifications(entities) {
+  // An empty list means Home Assistant did not answer, not "nothing is new":
+  // clearing on it would silently lose banners nobody has acted on yet.
+  if (!Array.isArray(entities) || entities.length === 0) return false;
+  const stillNew = new Set(entities.filter((entity) => entity.is_new).map((entity) => entity.entity_id));
+  let changed = false;
+  for (const [id, notif] of [...notifMap]) {
+    if (notif.type === "new_device" && notif.entityId && !stillNew.has(notif.entityId)) {
+      notifMap.delete(id);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// Urgent banners (fire, alarm, doorbell) always show. New-device banners are
+// capped so they can never crowd those out or fill the screen; the rest collapse
+// into one "+N more" line.
+function notificationsToShow(notifs, maxNewDevices = NOTIF_MAX_NEW_DEVICES) {
+  const others = notifs.filter((notif) => notif.type !== "new_device");
+  const newDevices = notifs.filter((notif) => notif.type === "new_device");
+  const shownNewDevices = newDevices.slice(0, maxNewDevices);
+  return { shown: [...others, ...shownNewDevices], hiddenNewDevices: newDevices.length - shownNewDevices.length };
+}
+
+function notificationsMarkup(notifs) {
+  const { shown, hiddenNewDevices } = notificationsToShow(notifs);
+  const banners = shown.map((n) => {
+    const urgent = n.type !== "doorbell";
+    return `
+      <div class="notif-banner ${urgent ? "urgent" : "mild"}">
+        <div class="notif-icon">${notifIconSVG(n.type)}</div>
+        <div class="notif-content">
+          <p class="notif-title">${escapeHtml(n.title)}</p>
+          <p class="notif-message">${escapeHtml(n.message)}</p>
+          <div class="notif-actions">
+            <button class="notif-btn ${urgent ? "respond-urgent" : "respond-mild"}"
+              data-notif-respond="${escapeHtml(n.id)}">Respond</button>
+            <button class="notif-btn notif-close"
+              data-notif-close="${escapeHtml(n.id)}">Close</button>
+          </div>
+        </div>
+      </div>`;
+  });
+  if (hiddenNewDevices > 0) {
+    banners.push(`
+      <div class="notif-banner mild notif-more">
+        <div class="notif-content">
+          <p class="notif-title">+${hiddenNewDevices} more new device${hiddenNewDevices === 1 ? "" : "s"}</p>
+          <div class="notif-actions">
+            <button class="notif-btn notif-close" data-notif-dismiss-new="all">Dismiss all new devices</button>
+          </div>
+        </div>
+      </div>`);
+  }
+  return banners.join("");
+}
+
 function notifIconSVG(type) {
   if (type === "doorbell") {
     return `<svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 1.2c-.6 0-1 .45-1 1v.4C4.9 3 3.4 4.8 3.4 7v2.6L2 11.4v.6h12v-.6l-1.4-1.8V7c0-2.2-1.5-4-3.6-4.4v-.4c0-.55-.45-1-1-1z" fill="var(--t-glow)" style="filter:drop-shadow(0 0 3px var(--t-glow))"/><path d="M6.3 12.6a1.7 1.7 0 003.4 0z" fill="var(--t-glow)"/></svg>`;
@@ -3245,6 +3311,7 @@ function notifyDoorbellEvents(cameras) {
 }
 
 function notifySeenNewHomeAssistantDevices(entities) {
+  if (syncNewDeviceNotifications(entities)) renderNotifications();
   for (const entity of entities || []) {
     if (!entity.is_new) continue;
     pushNotification(
@@ -3271,23 +3338,7 @@ function renderNotifications() {
   const area = document.querySelector("#notifArea");
   if (!area) return;
   if (notifMap.size === 0) { area.innerHTML = ""; return; }
-  area.innerHTML = [...notifMap.values()].map((n) => {
-    const urgent = n.type !== "doorbell";
-    return `
-      <div class="notif-banner ${urgent ? "urgent" : "mild"}">
-        <div class="notif-icon">${notifIconSVG(n.type)}</div>
-        <div class="notif-content">
-          <p class="notif-title">${escapeHtml(n.title)}</p>
-          <p class="notif-message">${escapeHtml(n.message)}</p>
-          <div class="notif-actions">
-            <button class="notif-btn ${urgent ? "respond-urgent" : "respond-mild"}"
-              data-notif-respond="${escapeHtml(n.id)}">Respond</button>
-            <button class="notif-btn notif-close"
-              data-notif-close="${escapeHtml(n.id)}">Close</button>
-          </div>
-        </div>
-      </div>`;
-  }).join("");
+  area.innerHTML = notificationsMarkup([...notifMap.values()]);
 }
 
 function respondToNotification(notif) {
@@ -8110,6 +8161,21 @@ document.addEventListener("click", async (event) => {
 
 /* ── Notification actions ── */
 document.addEventListener("click", (event) => {
+  // Tells the server about every new device, exactly as Close does for one, so
+  // the other screens drop them on their next refresh too.
+  const dismissNewBtn = event.target.closest("button[data-notif-dismiss-new]");
+  if (dismissNewBtn) {
+    for (const [id, notif] of [...notifMap]) {
+      if (notif.type !== "new_device") continue;
+      if (notif.entityId) {
+        requestJson(`/api/home-assistant/devices/${encodeURIComponent(notif.entityId)}/ignore`, { method: "POST" }).catch(console.error);
+      }
+      notifMap.delete(id);
+    }
+    renderNotifications();
+    return;
+  }
+
   const closeBtn = event.target.closest("button[data-notif-close]");
   if (closeBtn) {
     const notif = notifMap.get(closeBtn.dataset.notifClose);

@@ -2585,6 +2585,13 @@ aside {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* Banners must never take the screen. On the wall panel a stack of stale
+     new-device banners pushed every card off it; the area now stops at 40% of
+     the viewport and scrolls inside itself. */
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  flex-shrink: 0;
 }
 .notif-area:empty { display: none; }
 
