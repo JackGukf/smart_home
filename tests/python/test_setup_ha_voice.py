@@ -204,6 +204,46 @@ def test_nothing_changes_once_the_plan_has_been_applied() -> None:
     assert voice.plan_exposure(entities, devices, states, exposed) == ([], [])
 
 
+def test_a_switch_hidden_behind_its_light_wrapper_is_not_left_exposed() -> None:
+    """switch_as_x hides the original switch; exposed, it duplicates the light's name."""
+    entities, devices, states, exposed = _registry()
+    devices.append({"id": "wall", "name": "Master bedroom light", "manufacturer": "TP-Link"})
+    entities += [
+        {"entity_id": "switch.master_bedroom_light", "platform": "tplink", "device_id": "wall",
+         "hidden_by": "integration"},
+        {"entity_id": "light.master_bedroom_light_3", "platform": "switch_as_x", "device_id": "wall"},
+    ]
+    for eid in ("switch.master_bedroom_light", "light.master_bedroom_light_3"):
+        states[eid] = {"attributes": {"friendly_name": "Master bedroom light"}}
+        exposed[eid] = {"conversation": True}
+    _, hide = voice.plan_exposure(entities, devices, states, exposed)
+    assert "switch.master_bedroom_light" in hide
+    assert "light.master_bedroom_light_3" not in hide
+
+
+def test_a_switch_is_known_to_be_wrapped_by_its_device_not_its_name() -> None:
+    """The wrapper is named after the device ("light.bedroom_master_bedroom_light"),
+    not the switch, so a name match missed it and a rerun wrapped it again."""
+    entities = [
+        {"entity_id": "switch.master_bedroom_light", "platform": "tplink", "device_id": "wall-1",
+         "hidden_by": "integration"},
+        {"entity_id": "light.bedroom_master_bedroom_light", "platform": "switch_as_x", "device_id": "wall-1"},
+        {"entity_id": "switch.master_bedroom_light_led", "platform": "tplink", "device_id": "wall-1"},
+        {"entity_id": "switch.living_room_switch_2", "platform": "tplink", "device_id": "wall-2"},
+        {"entity_id": "switch.office_switch", "platform": "tplink", "device_id": None},
+    ]
+    wrapped = voice.switches_already_wrapped(entities)
+    assert "switch.master_bedroom_light" in wrapped
+    assert "switch.living_room_switch_2" not in wrapped  # not wrapped yet: a rerun must still do it
+    assert "switch.office_switch" not in wrapped          # no device must never count as wrapped
+
+
+def test_only_wall_switches_become_lights_never_plugs() -> None:
+    assert set(voice.WALL_SWITCHES_AS_LIGHTS) == {"switch.master_bedroom_light", "switch.living_room_switch_2"}
+    assert not any("plug" in eid or "night_light" in eid or "office" in eid
+                   for eid in voice.WALL_SWITCHES_AS_LIGHTS)
+
+
 def test_the_plug_that_powers_the_wall_panel_is_never_reachable_by_voice() -> None:
     """Home Assistant exposes a newly added switch by default; this takes it back."""
     entities, devices, states, exposed = _registry()

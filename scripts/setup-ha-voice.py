@@ -382,7 +382,11 @@ def plan_exposure(entities: list[dict], devices: list[dict], states: dict[str, d
                         and friendly(entity) in native_switchables)
         device_name = str(device.get("name_by_user") or device.get("name") or "").strip().lower()
         protected = friendly(entity) in never_expose_names or device_name in never_expose_names
-        if bridged_twin or device.get("manufacturer") in JUNK_MANUFACTURERS or protected:
+        # An entity Home Assistant itself hides - notably the original switch
+        # behind a "show as light" wrapper - shares its name with what replaced
+        # it, so leaving it exposed recreates "multiple devices called ...".
+        hidden = bool(entity.get("hidden_by"))
+        if bridged_twin or device.get("manufacturer") in JUNK_MANUFACTURERS or protected or hidden:
             if is_exposed(entity_id):
                 hide.append(entity_id)
             continue
@@ -393,6 +397,57 @@ def plan_exposure(entities: list[dict], devices: list[dict], states: dict[str, d
                 and not is_exposed(entity_id)):
             expose.append(entity_id)
     return sorted(expose), sorted(hide)
+
+
+# Wall switches that switch lights but are filed as `switch` by the tplink
+# integration (HS200), so "which lights are on" and "turn off the lights in the
+# living room" skip them. Home Assistant's own "show as light" helper wraps each
+# in a light entity and hides the original. Plugs stay switches on purpose.
+WALL_SWITCHES_AS_LIGHTS = ("switch.master_bedroom_light", "switch.living_room_switch_2")
+
+
+def switches_already_wrapped(entities: list[dict]) -> set[str]:
+    """Switch entity ids that already have a switch_as_x wrapper.
+
+    Matched through the device registry, not by name: the wrapper is created on
+    the switch's own device, while an entry title or friendly name can differ
+    from the switch's (the first version matched titles, missed, and a second
+    --apply started a second wrapper for each switch).
+    """
+    wrapped_devices = {e.get("device_id") for e in entities
+                       if e.get("platform") == "switch_as_x" and e.get("device_id")}
+    return {e["entity_id"] for e in entities
+            if e["entity_id"].startswith("switch.") and e.get("platform") != "switch_as_x"
+            and e.get("device_id") in wrapped_devices}
+
+
+async def ensure_wall_switches_as_lights(ha: HomeAssistantWS, session, headers, base,
+                                         apply: bool) -> list[str]:
+    entities = await ha.call(type="config/entity_registry/list")
+    wrapped = switches_already_wrapped(entities)
+    known = {e["entity_id"]: e for e in entities}
+
+    lines = []
+    for entity_id in WALL_SWITCHES_AS_LIGHTS:
+        if entity_id not in known:
+            lines.append(f"{entity_id} does not exist; not shown as a light")
+            continue
+        entity = known[entity_id]
+        name = entity.get("name") or entity.get("original_name") or entity_id
+        if entity_id in wrapped:
+            continue
+        if apply:
+            async with session.post(f"{base}/api/config/config_entries/flow", headers=headers,
+                                    json={"handler": "switch_as_x"}) as response:
+                flow = await response.json()
+            async with session.post(f"{base}/api/config/config_entries/flow/{flow['flow_id']}",
+                                    headers=headers,
+                                    json={"entity_id": entity_id, "target_domain": "light"}) as response:
+                result = await response.json()
+            if result.get("type") != "create_entry":
+                raise RuntimeError(f"switch_as_x refused {entity_id}: {result}")
+        lines.append(f"show {entity_id} ({name}) as a light")
+    return lines
 
 
 async def ensure_assist_exposure(ha: HomeAssistantWS, apply: bool) -> list[str]:
@@ -506,6 +561,19 @@ async def run(args: argparse.Namespace) -> int:
                 print(("" if apply else "would ") + line)
             for line in await ensure_voice_pipeline(ha, local_stt, local_tts, apply):
                 print(("" if apply else "would ") + line)
+
+        async with session.ws_connect(ws_url) as ws:
+            await ws.receive_json()
+            await ws.send_json({"type": "auth", "access_token": token})
+            if (await ws.receive_json()).get("type") != "auth_ok":
+                print("websocket auth failed", file=sys.stderr)
+                return 1
+            ha = HomeAssistantWS(ws)
+            wall_changes = await ensure_wall_switches_as_lights(ha, session, headers, base, apply)
+            for line in wall_changes:
+                print(("" if apply else "would ") + line)
+            if apply and any(line.startswith("show ") for line in wall_changes):
+                await asyncio.sleep(4)  # let the wrapper entities register before planning exposure
             for line in await ensure_assist_exposure(ha, apply):
                 print(("" if apply else "would ") + line)
 

@@ -106,6 +106,61 @@ Uncached reply, 03:25:46 run, from the device log: end of speech
 | Through HA `tts_proxy` | 2.7–3.2 s, WAV and FLAC alike — so not transcoding |
 | HA agent | 0.01–0.1 s |
 
+### Then: controlling and asking about the house
+
+"Turn off kitchen light switch" got **"Sorry, there are multiple devices called
+Kitchen light switch"**. Our own Matter bridge (`Dashboard Bridge`, exporting to
+Apple Home) is also commissioned into Home Assistant, so every bridged Kasa
+switch existed twice under one name, both exposed to Assist.
+
+`setup-ha-voice.py --apply` now also (idempotent; two reruns print nothing):
+
+- **Hides bridged Matter duplicates** of native entities (kitchen, master
+  bedroom, family room, living room 2) and a leftover Matter `TEST_PRODUCT`
+  light. **Stick S3 stays** — the bridge is its only way into Home Assistant.
+- **Wraps the two HS200 wall switches as lights** (`switch_as_x`):
+  `light.bedroom_master_bedroom_light`, `light.living_room_living_room_switch_2`.
+  Filed as `switch`, they were skipped by "which lights are on". The first
+  version matched wrappers by entry title, which is the switch's object id, not
+  its name — a rerun created a second pair. Now matched by device; the extras
+  were deleted, which un-hid the original switches, so they were re-hidden.
+- **Never exposes the "Raspberry PI" plug**, by device name: it is not in Home
+  Assistant yet, new entities are exposed by default, and it powers the wall
+  panel.
+- **Exposes room readings**: occupancy, smoke, water leak, light level.
+- `custom_sentences/en/voice_device_status.yaml`: "is the kitchen light on",
+  "is the front door open", "is there water in the kitchen", "what's the
+  temperature / humidity in <room>" (averaged, e.g. "22.9 degrees, across 2
+  sensors"), "what is the thermostat set to" (the target: "17.0 degrees").
+
+Checked read-only through the agent: all 19 status questions answer. Nothing was
+switched in testing.
+
+**Still open, needs a person:**
+
+- **Two plugs are not in Home Assistant**: "Raspberry PI" (.161) and "Living
+  room cabinet LED" (.165). HA discovered both; their firmware wants a TP-Link
+  account login (Settings → Devices & services → Discovered → TP-Link). After
+  that, rerun the script: the Pi plug is kept off voice automatically; set the
+  cabinet LED's area.
+- **LLANO-S450 is exposed twice** — once via Google Cast (unavailable), once via
+  Apple TV (idle). Voice commands to it will say "multiple devices" until one is
+  unexposed or removed.
+- **"Family room LED" is in the Living Room area**, so it answers "are any
+  lights on in the living room". Fix the area if that is wrong.
+- **The Govee Bluetooth lamps** (mirror light, TV backlight) cannot join Home
+  Assistant; voice cannot reach them.
+
+**Home Assistant's network adapter was still the old one.** Discovery was
+enabled only on `docker0`; `enp97s0` was disabled with no IPv4 in HA's view —
+the third thing left behind by the 09-12 move to Ethernet. That is why HA's
+Govee LAN scan found nothing while the same scan from the board got an answer
+from the H6076 at 192.168.0.153. Set to `enp97s0` and restarted HA (back in
+14 s, now sees `192.168.0.83` on `enp97s0`). The Govee LAN flow then created
+its entry: `light.h6076`, renamed "Living room ambient light" with the device in
+Living Room. "Is the living room ambient light on" → "Yes"; it is also counted
+by "which lights are on". The Voice Panel pipeline survived the restart.
+
 No wake chime, by choice: the mic and speaker share one bus, so a chime would
 push the start of listening back and eat the start of the command.
 
