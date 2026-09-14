@@ -15,7 +15,7 @@ import contextlib
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator, Literal
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Literal
 from urllib.parse import urlencode
 from urllib.parse import quote
 from urllib.parse import quote_plus
@@ -155,6 +155,10 @@ SWITCH_EVICT_AFTER_FAILURES = 2
 # off. The dashboard re-polls every 60s, so this keeps the cache warm without
 # letting a burst of requests each start their own refresh.
 DEVICE_CACHE_STALE_AFTER = 10.0
+# How long the event stream waits for a fresh switch poll after a light or switch
+# changes. All eight switches answer in about 1.6 s; a dead one is capped far
+# below this by SWITCH_STATUS_TIMEOUT_FAILING.
+EVENT_REFRESH_TIMEOUT = 4.0
 # The direct-Tuya half of /api/tuya/devices goes to Tuya's cloud and takes ~2.9s
 # against ~0.13s for the Home Assistant half. It is only consulted for sensors
 # Home Assistant does not expose, which change slowly, so it is cached harder
@@ -1040,7 +1044,10 @@ def create_app(
             if not token:
                 yield 'event: unavailable\ndata: {"reason": "no Home Assistant token"}\n\n'
                 return
-            async for frame in _home_assistant_event_stream(ha_config, token):
+            async def fresh_switches(since: float) -> bool:
+                return await _fresh_device_cache(app, since)
+
+            async for frame in _home_assistant_event_stream(ha_config, token, fresh_switches):
                 yield frame
 
         return StreamingResponse(
@@ -1545,6 +1552,40 @@ def _schedule_device_refresh(app: FastAPI) -> None:
     cache["task"] = asyncio.create_task(_refresh_device_cache(app))
 
 
+async def _fresh_device_cache(app: FastAPI, since: float,
+                              timeout: float | None = None) -> bool:
+    """Wait until the cached switch states come from a poll that began after `since`.
+
+    Home Assistant reports a switch the moment it changes, but /api/devices answers
+    from a cache polled in the background at most every DEVICE_CACHE_STALE_AFTER
+    seconds. A browser refreshing on that report got the pre-change state, and
+    stayed wrong until something else made it refresh again - measured on
+    2026-09-14 as 3-10 s, the Matter bridge's own copy of the switch updating.
+
+    A poll already in flight when the change happened may have read the switch
+    too early, so it is waited out and a new one started. Every caller shares the
+    same poll. Returns False if no fresh poll finished within `timeout`.
+    """
+    cache = app.state.device_cache
+    deadline = time.monotonic() + (EVENT_REFRESH_TIMEOUT if timeout is None else timeout)
+    while cache.get("started", float("-inf")) < since:
+        task = cache.get("task")
+        scheduled = task is None or task.done()
+        if scheduled:
+            _schedule_device_refresh(app)
+            task = cache["task"]
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        try:
+            await asyncio.wait_for(asyncio.shield(task), remaining)
+        except (asyncio.TimeoutError, TimeoutError):
+            return False
+        if scheduled and cache.get("started", float("-inf")) < since:
+            return False  # the poll we started failed; do not start another
+    return True
+
+
 async def _refresh_device_cache(app: FastAPI) -> None:
     # Noted before polling, not after: what matters is whether a command landed
     # after this poll had already read the switch.
@@ -1557,6 +1598,9 @@ async def _refresh_device_cache(app: FastAPI) -> None:
     _reapply_commands_since(app, cards, started)
     app.state.device_cache["cards"] = cards
     app.state.device_cache["at"] = time.monotonic()
+    # When this poll began reading the switches, so a caller can tell whether
+    # it could have seen a change that happened at a given moment.
+    app.state.device_cache["started"] = started
 
 
 def _reapply_commands_since(app: FastAPI, cards: list[dict[str, Any]], started: float) -> None:
@@ -4336,13 +4380,17 @@ _EVENT_WAKE_DOMAINS = frozenset({"binary_sensor", "light", "switch", "lock", "co
 # A burst of state_changed events (a bridge reconnecting republishes everything)
 # would otherwise trigger a reload per event.
 _EVENT_COALESCE_SECONDS = 0.4
+# Changes worth re-reading the TP-Link switches for: the dashboard serves those
+# cards from its own poll, not from Home Assistant's state (see _fresh_device_cache).
+_EVENT_REFRESH_DOMAINS = frozenset({"light", "switch"})
 # Proxies and browsers drop an idle event stream. A comment frame is not an
 # event, so it costs the client nothing but keeps the socket alive.
 _EVENT_KEEPALIVE_SECONDS = 20.0
 
 
 async def _home_assistant_event_stream(
-    config: HomeAssistantConfig, token: str
+    config: HomeAssistantConfig, token: str,
+    before_notify: "Callable[[float], Awaitable[bool]] | None" = None,
 ) -> "AsyncIterator[str]":
     """Yield SSE frames as Home Assistant reports state changes.
 
@@ -4367,7 +4415,6 @@ async def _home_assistant_event_stream(
         return
 
     ws_url = config.base_url.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
-    last_sent = 0.0
     try:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(ws_url, heartbeat=30) as ws:
@@ -4380,26 +4427,79 @@ async def _home_assistant_event_stream(
                 await ws.receive_json()  # subscription result
                 yield 'event: ready\ndata: {}\n\n'
 
-                while True:
-                    try:
-                        message = await asyncio.wait_for(ws.receive_json(), timeout=_EVENT_KEEPALIVE_SECONDS)
-                    except asyncio.TimeoutError:
-                        yield ": keepalive\n\n"
-                        continue
-                    if message.get("type") != "event":
-                        continue
-                    entity_id = str(((message.get("event") or {}).get("data") or {}).get("entity_id") or "")
-                    if _home_assistant_entity_domain(entity_id) not in _EVENT_WAKE_DOMAINS:
-                        continue
-                    now = time.monotonic()
-                    if now - last_sent < _EVENT_COALESCE_SECONDS:
-                        continue
-                    last_sent = now
-                    yield f"event: changed\ndata: {json.dumps({'entity_id': entity_id})}\n\n"
+                async def receive(timeout: float) -> dict[str, Any]:
+                    return await asyncio.wait_for(ws.receive_json(), timeout=timeout)
+
+                async for frame in _coalesced_changes(receive, before_notify):
+                    yield frame
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 - a dead stream must never break the page
         yield f"event: unavailable\ndata: {json.dumps({'reason': str(exc)[:120]})}\n\n"
+
+
+def _changed_frame(entity_id: str) -> str:
+    return f"event: changed\ndata: {json.dumps({'entity_id': entity_id})}\n\n"
+
+
+async def _coalesced_changes(
+    receive: "Callable[[float], Awaitable[dict[str, Any]]]",
+    before_notify: "Callable[[float], Awaitable[bool]] | None" = None,
+) -> "AsyncIterator[str]":
+    """Turn Home Assistant websocket messages into SSE frames for the dashboard.
+
+    A burst is coalesced but never dropped: a change inside the coalescing window
+    is held and sent when the window ends. Dropping it lost the last changes of a
+    scene - "All lights on" reached a browser as 3 or 4 of its 10 changes.
+
+    A light or switch change is sent at once, so what the browser reads straight
+    from Home Assistant (a Matter light) updates immediately. Then `before_notify`
+    waits for a fresh poll of the TP-Link switches, and a second frame makes the
+    browser read those too; without it their cards showed the old state until
+    something unrelated made the page refresh again.
+    """
+    last_sent = float("-inf")
+    pending: dict[str, Any] | None = None
+    while True:
+        if pending is None:
+            timeout = _EVENT_KEEPALIVE_SECONDS
+        else:
+            timeout = max(0.0, last_sent + _EVENT_COALESCE_SECONDS - time.monotonic())
+        try:
+            message: dict[str, Any] | None = await receive(timeout)
+        except (asyncio.TimeoutError, TimeoutError):
+            if pending is None:
+                yield ": keepalive\n\n"
+                continue
+            message = None
+
+        if message is not None:
+            if message.get("type") != "event":
+                continue
+            entity_id = str(((message.get("event") or {}).get("data") or {}).get("entity_id") or "")
+            domain = _home_assistant_entity_domain(entity_id)
+            if domain not in _EVENT_WAKE_DOMAINS:
+                continue
+            refresh = domain in _EVENT_REFRESH_DOMAINS
+            if pending is None:
+                pending = {"entity_id": entity_id, "since": time.monotonic(), "refresh": refresh}
+            else:
+                # The latest change sets how fresh the switch poll must be.
+                pending["since"] = time.monotonic()
+                if refresh or not pending["refresh"]:
+                    pending["entity_id"] = entity_id
+                pending["refresh"] = pending["refresh"] or refresh
+            if time.monotonic() - last_sent < _EVENT_COALESCE_SECONDS:
+                continue
+
+        if pending is None:
+            continue
+        change, pending = pending, None
+        yield _changed_frame(change["entity_id"])
+        last_sent = time.monotonic()
+        if change["refresh"] and before_notify is not None and await before_notify(change["since"]):
+            yield _changed_frame(change["entity_id"])
+            last_sent = time.monotonic()
 
 
 def default_home_alarm_sensors(zones: list[dict[str, Any]]) -> list[str]:
