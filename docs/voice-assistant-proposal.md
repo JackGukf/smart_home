@@ -238,20 +238,35 @@ Staged the way the AI restore was, so an unexpected problem points at one change
 0.78 ms to the router at 0% loss, against 333 ms and ~5% on Wi-Fi. This was the
 prerequisite and it is no longer in the way.
 
-**1. Piper (TTS).** One container, `MemoryMax` set the way `install-ollama.sh`
+**1. ~~Piper (TTS).~~ Done 2026-09-13.** `tts.piper` via
+`docker-compose.voice.yml`, capped with `mem_limit` rather than `MemoryMax`
+because it runs in Docker beside zigbee2mqtt. One trap: Piper advertises `en_US`,
+not `en`, and a pipeline set to `en` refuses every announcement.
+*Original plan:* One container, `MemoryMax` set the way `install-ollama.sh`
 does it. Replaces `tts.google_translate_en_com`, which is the last cloud
 dependency in the house's speech path. *Verify:* a `tts.piper` entity appears,
 and `tts.speak` produces audio. Useful on its own — spoken notifications — before
 any microphone exists.
 
-**2. Whisper (STT), and measure before committing.** Start at `base.en` int8 and
+**2. ~~Whisper (STT), and measure before committing.~~ Done 2026-09-13.**
+Measured: 3.29 s of speech transcribed in **0.98 s**, exactly — 0.30× real time,
+well inside the 1.5 s threshold, so `base.en` stays. `int8` must be set
+explicitly; left alone ctranslate2 falls back to float32 and uses 423 MB instead
+of 166 MB.
+*Original plan:* Start at `base.en` int8 and
 time a real 3-second utterance on the board's own cores. *Estimate:* 0.5–1.5 s,
 but that number is exactly the kind this project has been burned by, so treat it
 as unknown until measured. If it lands above ~1.5 s, drop to `tiny.en`; if it
 lands well under, `small.en` buys accuracy. *Verify:* HA's Assist debug page,
 typed first, then an uploaded audio file.
 
-**3. Microphone — now the cheapest stage, not the most expensive.** A USB mic on
+**3. Microphone — in progress 2026-09-13.** The USB-mic-on-the-board step was
+skipped; the ESP32-S3 board went straight in, headless, voice first, as planned.
+The pin map is resolved (from Waveshare's own demo sources). Speaker, microphone
+capture, STT and intent all work; **the on-device wake word does not run.** Pick
+it up at `docs/handoff-2026-09-13-voice-satellite.md`, which has the evidence and
+the next test.
+*Original plan:* A USB mic on
 the Orange Pi for an afternoon (option C) proves the pipeline end to end with no
 firmware involved. Then the ESP32-S3 board, and do it in **two steps, voice
 first**: bring it up as a headless `voice_assistant` + `micro_wake_word` satellite

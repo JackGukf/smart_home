@@ -54,7 +54,14 @@ psram:
   mode: octal
   speed: 80MHz
 
+# VERBOSE on micro_wake_word prints a probability per inference, which is the
+# only way to tell the three failure modes apart: the engine not running at all
+# (no lines), the engine running but hearing nothing (probabilities pinned near
+# zero), and the engine hearing speech but never crossing the cutoff.
 logger:
+  level: VERBOSE
+  logs:
+    micro_wake_word: VERBOSE
 api:
   encryption:
     key: !secret api_encryption_key
@@ -247,3 +254,11 @@ voice_assistant:
 binary_sensor:
   - platform: status
     name: "Status"
+
+  # Is the microphone actually capturing? Everything so far has been inferred
+  # from silence, which cannot distinguish "not listening" from "listening and
+  # hearing nothing".
+  - platform: template
+    name: "Microphone capturing"
+    entity_category: diagnostic
+    lambda: return id(mic)->is_running();

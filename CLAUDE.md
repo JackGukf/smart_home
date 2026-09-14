@@ -4,11 +4,15 @@
 > the PCIe slot: dashboard, go2rtc, Home Assistant, Zigbee (5 devices), Matter
 > controller, resource-logger — all enabled and surviving a reboot.
 >
-> **Local AI, staged** — Ollama is live and alone; **run one LLM, not both**,
-> there is no swap. The NPU detector is **blocked**: the model was retrained and
-> the graph runs on the device at full speed but computes the wrong answer, and
-> `disable_cpu_ep_fallback` proves only *where* a graph ran, not *what* it
-> computed. Start here: **`docs/handoff-2026-09-08-local-ai.md`**.
+> **Local AI** — Ollama is live and alone; **run one LLM, not both**, there is no
+> swap. The NPU detector is **live since 2026-09-09** on five cameras: the
+> detection head is cut off the graph and decoded in numpy. See
+> `docs/npu-model-pipeline.md`.
+>
+> **Voice, in progress (2026-09-13).** Whisper and Piper run on the board and
+> Assist answers; the ESP32-S3-Touch-LCD-4B satellite is flashed, plays audio and
+> captures from its microphone — but its **on-device wake word never runs**.
+> Start here: **`docs/handoff-2026-09-13-voice-satellite.md`**.
 >
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
 > *user* unit), exposing 5 devices and commissioned into three fabrics —
@@ -249,6 +253,10 @@ Three things that will waste a day if you do not know them:
   that is already owned, and the four traps (no add-ons in this HA install, the
   panel's browser cannot open a mic over HTTP, the LLM must stay out of the voice
   path, and audio is the next thing the Wi-Fi will break)
+- `docs/handoff-2026-09-13-voice-satellite.md` — **pick the voice work up cold**:
+  what is built and measured, the one open fault (the wake word never runs), the
+  evidence that pins it, the next test, and thirteen traps from getting audio
+  working on a board whose microphone and speaker share one I2S bus
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
 
