@@ -342,6 +342,11 @@ SWITCHABLE_DOMAINS = frozenset({"light", "switch", "fan"})
 # Home Assistant yet (and new entities are exposed to Assist by default). The
 # "Raspberry PI" plug powers the wall panel: a misheard "turn off" would cut it.
 NEVER_EXPOSE_NAMES = frozenset({"raspberry pi"})
+# One device added by three integrations, same name, so voice cannot choose.
+# LLANO-S450 is kept through Apple TV (media_player.llano_s450_289cb541_2); the
+# Google Cast and DLNA copies are hidden from Assist, not removed.
+NEVER_EXPOSE_ENTITY_IDS = frozenset({"media_player.llano_s450_289cb541",
+                                     "media_player.llano_s450_289cb541_3"})
 # Readings people ask about by room. Batteries, tamper, signal and the like are
 # left out on purpose - they are noise to a voice and are on the dashboard.
 READING_CLASSES = {
@@ -381,7 +386,8 @@ def plan_exposure(entities: list[dict], devices: list[dict], states: dict[str, d
                         and (via.get("name_by_user") or via.get("name")) == BRIDGE_VIA_DEVICE
                         and friendly(entity) in native_switchables)
         device_name = str(device.get("name_by_user") or device.get("name") or "").strip().lower()
-        protected = friendly(entity) in never_expose_names or device_name in never_expose_names
+        protected = (friendly(entity) in never_expose_names or device_name in never_expose_names
+                     or entity_id in NEVER_EXPOSE_ENTITY_IDS)
         # An entity Home Assistant itself hides - notably the original switch
         # behind a "show as light" wrapper - shares its name with what replaced
         # it, so leaving it exposed recreates "multiple devices called ...".

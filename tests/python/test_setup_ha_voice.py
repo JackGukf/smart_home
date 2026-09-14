@@ -255,6 +255,21 @@ def test_the_plug_that_powers_the_wall_panel_is_never_reachable_by_voice() -> No
     assert "switch.raspberry_pi" in hide
 
 
+def test_the_speaker_is_kept_through_apple_tv_not_cast() -> None:
+    entities, devices, states, exposed = _registry()
+    devices.append({"id": "llano", "name": "LLANO-S450 289CB541", "manufacturer": "Apple"})
+    for eid, platform in (("media_player.llano_s450_289cb541", "cast"),
+                          ("media_player.llano_s450_289cb541_2", "apple_tv"),
+                          ("media_player.llano_s450_289cb541_3", "dlna_dmr")):
+        entities.append({"entity_id": eid, "platform": platform, "device_id": "llano"})
+        states[eid] = {"attributes": {"friendly_name": "LLANO-S450 289CB541"}}
+        exposed[eid] = {"conversation": True}
+    _, hide = voice.plan_exposure(entities, devices, states, exposed)
+    assert "media_player.llano_s450_289cb541" in hide
+    assert "media_player.llano_s450_289cb541_3" in hide
+    assert "media_player.llano_s450_289cb541_2" not in hide
+
+
 def test_the_protected_plug_is_matched_by_device_even_if_the_entity_is_renamed() -> None:
     entities, devices, states, exposed = _registry()
     devices.append({"id": "pi-plug", "name": "Raspberry PI", "manufacturer": "TP-Link"})

@@ -138,14 +138,16 @@ switched in testing.
 
 **Still open, needs a person:**
 
-- **Two plugs are not in Home Assistant**: "Raspberry PI" (.161) and "Living
-  room cabinet LED" (.165). HA discovered both; their firmware wants a TP-Link
-  account login (Settings → Devices & services → Discovered → TP-Link). After
-  that, rerun the script: the Pi plug is kept off voice automatically; set the
-  cabinet LED's area.
-- **LLANO-S450 is exposed twice** — once via Google Cast (unavailable), once via
-  Apple TV (idle). Voice commands to it will say "multiple devices" until one is
-  unexposed or removed.
+- ~~Two plugs are not in Home Assistant~~ — **resolved**: added by hand with the
+  TP-Link login. `switch.living_room_cabinet_led` is in Living Room and exposed;
+  `switch.raspberry_pi` was hidden from Assist by the script on its next run,
+  as designed.
+- ~~LLANO-S450 is exposed twice~~ — **resolved**: it was in three integrations
+  once the discovered DLNA entry was added too. Kept through Apple TV
+  (`media_player.llano_s450_289cb541_2`); the Google Cast and DLNA copies
+  (`…_289cb541`, `…_289cb541_3`) are hidden from Assist by
+  `NEVER_EXPOSE_ENTITY_IDS`, not removed. Nothing in the repo, the dashboard
+  config or HA's dashboards referenced them.
 - **"Family room LED" is in the Living Room area**, so it answers "are any
   lights on in the living room". Fix the area if that is wrong.
 - **The Govee Bluetooth lamps** (mirror light, TV backlight) cannot join Home
