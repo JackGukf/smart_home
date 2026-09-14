@@ -21,13 +21,23 @@ so there is no Supervisor and no add-on store. The add-ons are wrappers around
 exactly these Wyoming services, so running them directly is the same thing
 without the wrapper.
 
-## What this does not touch
+## A pipeline of its own for the satellite, with no model in it
 
-The conversation agent. `prefer_local_intents` and the two Qwen agents are
-scripts/setup-ha-ollama.py's business, and the reasoning there still holds: the
-matcher answers in ~0.02 s and the model takes ~22 s, so voice rides the
-default pipeline and the model stays a fallback. Speech in and speech out is
-all this adds.
+The default pipeline falls back to Qwen for anything the matcher cannot parse,
+which is right for typed Assist and wrong for a voice. Measured on the panel on
+2026-09-13: a mishearing waited 17 s and 57 s in silence on the model, which
+then answered the noise ("I don't recognize Naboo as a device"). So the
+satellite gets a "Voice Panel" pipeline - the same Whisper and Piper, Home
+Assistant's own agent only - and its pipeline select is pointed at it. The
+default pipeline, and the Qwen agents, stay scripts/setup-ha-ollama.py's
+business and are not touched.
+
+## The wake word said twice
+
+The satellite gives no sign that it woke, so people say the wake word again,
+and Whisper transcribes that as the command ("Okay, Naboo."). A sentence-trigger
+automation answers exactly those transcripts with nothing, so a repeat is
+silently ignored instead of becoming "Sorry, I couldn't understand that".
 
 Idempotent. Re-running reports what is already there and changes nothing.
 """
@@ -212,6 +222,110 @@ async def point_pipeline_at(ha: HomeAssistantWS, stt_entity: str, tts_entity: st
     return [f"pipeline {default['name']!r}: {', '.join(changes)}"]
 
 
+VOICE_PIPELINE_NAME = "Voice Panel"
+# Home Assistant's built-in agent: the local intent matcher and nothing behind it.
+VOICE_AGENT = "conversation.home_assistant"
+SATELLITE_PIPELINE_SELECT = "select.voice_panel_assistant"
+
+
+def voice_pipeline_fields(stt_entity: str, stt_language: str,
+                          tts_entity: str, tts_language: str) -> dict:
+    return {
+        "name": VOICE_PIPELINE_NAME,
+        "language": "en",
+        "conversation_engine": VOICE_AGENT,
+        "conversation_language": "en",
+        "prefer_local_intents": False,  # there is nothing non-local to prefer over
+        "stt_engine": stt_entity,
+        "stt_language": stt_language,
+        "tts_engine": tts_entity,
+        "tts_language": tts_language,
+        "tts_voice": None,
+        "wake_word_entity": None,
+        "wake_word_id": None,
+    }
+
+
+async def ensure_voice_pipeline(ha: HomeAssistantWS, stt_entity: str, tts_entity: str,
+                                apply: bool) -> list[str]:
+    stt_language = best_language((await engine_languages(ha, "stt")).get(stt_entity, []))
+    tts_language = best_language((await engine_languages(ha, "tts")).get(tts_entity, []))
+    if not stt_language or not tts_language:
+        return [f"{stt_entity} or {tts_entity} offers no English; voice pipeline left alone"]
+    want = voice_pipeline_fields(stt_entity, stt_language, tts_entity, tts_language)
+
+    listing = await ha.call(type="assist_pipeline/pipeline/list")
+    pipelines = listing["pipelines"] if isinstance(listing, dict) else listing
+    have = next((p for p in pipelines if p["name"] == VOICE_PIPELINE_NAME), None)
+    if have is None:
+        if apply:
+            await ha.call(type="assist_pipeline/pipeline/create", **want)
+        return [f"create pipeline {VOICE_PIPELINE_NAME!r} (agent {VOICE_AGENT})"]
+    changes = [f"{k}={v}" for k, v in want.items() if have.get(k) != v]
+    if not changes:
+        return []
+    if apply:
+        await ha.call(type="assist_pipeline/pipeline/update", pipeline_id=have["id"], **want)
+    return [f"pipeline {VOICE_PIPELINE_NAME!r}: {', '.join(changes)}"]
+
+
+async def point_satellite_at_voice_pipeline(session, headers, base, apply: bool) -> list[str]:
+    async with session.get(f"{base}/api/states/{SATELLITE_PIPELINE_SELECT}",
+                           headers=headers) as response:
+        if response.status == 404:
+            return [f"{SATELLITE_PIPELINE_SELECT} does not exist; satellite left alone"]
+        state = await response.json()
+    if state["state"] == VOICE_PIPELINE_NAME:
+        return []
+    # The select lists pipelines as they exist, so on a dry run before the
+    # pipeline is created the option is legitimately absent.
+    if apply and VOICE_PIPELINE_NAME not in state["attributes"].get("options", []):
+        return [f"{SATELLITE_PIPELINE_SELECT} does not offer {VOICE_PIPELINE_NAME!r} yet"]
+    if apply:
+        async with session.post(f"{base}/api/services/select/select_option", headers=headers,
+                                json={"entity_id": SATELLITE_PIPELINE_SELECT,
+                                      "option": VOICE_PIPELINE_NAME}) as response:
+            response.raise_for_status()
+    return [f"{SATELLITE_PIPELINE_SELECT}: {state['state']!r} -> {VOICE_PIPELINE_NAME!r}"]
+
+
+WAKE_ECHO_AUTOMATION_ID = "voice_ignore_repeated_wake_word"
+# What Whisper base.en makes of "Okay Nabu" - "Okay, Naboo." is verbatim from the
+# pipeline debug record. The matcher ignores case and punctuation.
+WAKE_ECHO_PHRASES = ["okay nabu", "ok nabu", "okay naboo", "ok naboo",
+                     "okay nabu nabu", "okay naboo naboo"]
+
+
+def wake_echo_automation() -> dict:
+    return {
+        "alias": "Voice: ignore the wake word said again as the command",
+        "description": "Managed by scripts/setup-ha-voice.py. The satellite gives no "
+                       "sign it woke, so people repeat the wake word; answer that with "
+                       "nothing rather than an error.",
+        "triggers": [{"trigger": "conversation", "command": WAKE_ECHO_PHRASES}],
+        "conditions": [],
+        "actions": [{"set_conversation_response": ""}],
+        "mode": "parallel",
+    }
+
+
+async def ensure_wake_echo_automation(session, headers, base, apply: bool) -> list[str]:
+    url = f"{base}/api/config/automation/config/{WAKE_ECHO_AUTOMATION_ID}"
+    async with session.get(url, headers=headers) as response:
+        current = await response.json() if response.status == 200 else None
+    want = wake_echo_automation()
+    if current is not None and all(current.get(k) == v for k, v in want.items()):
+        return []
+    if apply:
+        # Home Assistant's config API validates and reloads, so a bad trigger is
+        # refused here rather than written and left to fail.
+        async with session.post(url, headers=headers, json=want) as response:
+            if response.status != 200:
+                raise RuntimeError(f"automation refused {response.status}: "
+                                   f"{(await response.text())[:400]}")
+    return [f"{'update' if current else 'create'} automation {WAKE_ECHO_AUTOMATION_ID!r}"]
+
+
 async def run(args: argparse.Namespace) -> int:
     try:
         import aiohttp
@@ -276,6 +390,15 @@ async def run(args: argparse.Namespace) -> int:
             ha = HomeAssistantWS(ws)
             for line in await point_pipeline_at(ha, local_stt, local_tts, apply):
                 print(("" if apply else "would ") + line)
+            for line in await ensure_voice_pipeline(ha, local_stt, local_tts, apply):
+                print(("" if apply else "would ") + line)
+
+        if apply:
+            await asyncio.sleep(2)  # the select picks up the new pipeline as an option
+        for line in await point_satellite_at_voice_pipeline(session, headers, base, apply):
+            print(("" if apply else "would ") + line)
+        for line in await ensure_wake_echo_automation(session, headers, base, apply):
+            print(("" if apply else "would ") + line)
 
     if not apply:
         print("\ndry run - nothing changed. Re-run with --apply.")

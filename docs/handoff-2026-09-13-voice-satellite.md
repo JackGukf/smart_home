@@ -24,10 +24,49 @@ capturing back `on`; repeated announcements restart every time, zero
 `Parent bus is busy`. Before the fix, capturing went `off` after the first
 announcement and stayed off.
 
-**Not yet verified by a person:** saying "Okay Nabu" and seeing
-`Detected 'Okay Nabu'` in the log followed by a pipeline run. The engine is now
-demonstrably listening; whether it detects at cutoff 0.97 in this room is the
-next question.
+**Verified by a person, 03:09–03:12:** three spoken "Okay Nabu"s, three
+detections — `sliding average probability is 0.98 and max probability is 1.00`
+against the 0.97 cutoff — and the wake word restarted after each run, including
+after a spoken reply and after `stt-no-text-recognized`.
+
+## What the first real use turned up, and what changed
+
+The wake word worked; everything after it was the problem.
+
+| Run | Transcript | What happened |
+| --- | --- | --- |
+| 03:09:53 | *(nothing)* | `stt-no-text-recognized`, back to listening |
+| 03:10:28 | "I'm going to think about it a little bit." | 17 s on Qwen, answered the noise |
+| 03:11:25 | "Okay, Naboo." — the wake word, said again | **57 s** on Qwen: "I don't recognize Naboo as a device" |
+
+Two causes. The satellite gives no sign it woke, so people repeat the wake word
+and it becomes the command. And the satellite used the `preferred` pipeline,
+whose unmatched speech falls back to Qwen — against the proposal's own rule,
+"Do not put Qwen in the voice path, on either pipeline".
+
+Fixed by `scripts/setup-ha-voice.py --apply` (idempotent; a second run changes
+nothing):
+
+- **A "Voice Panel" pipeline** — same Whisper and Piper, agent
+  `conversation.home_assistant` only — and `select.voice_panel_assistant` set to
+  it. The default pipeline keeps its Qwen fallback for typed Assist.
+- **Automation `voice_ignore_repeated_wake_word`** — a sentence trigger on
+  "okay nabu" / "okay naboo" and variants that answers with an empty response.
+  Home Assistant 2026.6.3 skips TTS on an empty reply (`pipeline.py`: no
+  `tts_input.strip()` → `PipelineStage.END`), so a repeat is silence.
+
+Measured through the new pipeline with text input: "Okay, Naboo." → empty, no
+TTS, 0.01 s; "What time is it?" → "8:16 PM", 0.02 s; "Naboo is a device." →
+"Sorry, I couldn't understand that", 0.07 s.
+
+No wake chime, by choice: the mic and speaker share one bus, so a chime would
+push the start of listening back and eat the start of the command.
+
+**One thing seen, not fixed:** when Home Assistant continues a conversation
+(a reply ending in a question), the microphone is reopened while the I2S speaker
+still holds the bus — `i2s_audio.microphone: Driver failed to start; retrying in
+1 second` — and recovers a second later. Rare now that no model writes the
+replies; if it matters, lower the speaker's 500 ms `timeout`.
 
 VERBOSE logging is reverted to DEBUG. The device now runs `config_hash
 0xfdc46cc5`, which differs from the verified build only in log level; after that
@@ -231,8 +270,10 @@ Each cost time. Several present as a different problem than they are.
 
 - **The wake word** — above.
 - **Revert VERBOSE logging** once it works.
-- **Stale duplicate entities** in HA: `select.voice_panel_assistant_2`,
-  `select.voice_panel_wake_word_2`. Left from an earlier registration.
+- ~~Stale duplicate entities~~ — **not stale.** `select.voice_panel_assistant_2`
+  and `select.voice_panel_wake_word_2` have unique ids `…-pipeline_2` and
+  `…-wake_word_2`: ESPHome's *second* wake word slot, set to `no_wake_word`. Leave
+  them.
 - **The device address is a DHCP lease.** Reserve `192.168.0.58` for
   `94:A9:90:DE:C0:18`, alongside the two already recorded in `configs/hosts.env`.
 - **Push to GitHub.** Commits after `711785e` are local only.
