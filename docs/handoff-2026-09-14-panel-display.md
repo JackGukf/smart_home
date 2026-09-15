@@ -6,17 +6,32 @@ else from the 2026-09-13/14 sessions is finished and listed at the end.
 
 ## Where it stands
 
-**Updated end of 2026-09-14: the screen works, and the GUI is built through
-Cameras.** Owner-tested: Home (six lights and the ecobee, dimmers' brightness on
-the full-screen light page), Scenes (HA scripts, also by voice), Security, and a
-near-live front door camera from the board's relay (`panel-camera.service`). Voice
-works on every page; no flicker. The sections below record how the dark screen
-was brought up (flashes 1–10) and each GUI phase after it.
+**Updated 2026-09-15: the Voice Panel's screen and GUI are finished and pushed**
+(tag `voice-panel-v0.1.0` marks the pre-launcher state; `main` is newer).
+Owner-tested, in order of the design's build list:
 
-Next, from the design's build order: garage camera (recheck the panel's heap
-first), wall-panel remote ("show view" event), sleep/wake. Still open: re-measure
-the wake word with the display on; codify `allow_service_calls` in
-`setup-ha-voice.py`; a Security card that fires does not move to the front.
+| Built | Where |
+| --- | --- |
+| Screen working under ESPHome (demo-exact expander reset, R/B swap, RGB drift fixes) | flashes 1–10 below |
+| App launcher: clock, date, listening dot, inside temperature, six tiles with badges | GUI revision 2 |
+| Lights (six on/off cards; dimmer brightness on the light page), Climate (target ±1 °C, room °C, humidity) | GUI revision 2 |
+| Scenes (HA scripts, also by voice), Security (alarm + six sensors), Wall panel remote | phases 3–4, wall panel |
+| Cameras: front door and garage, near-live via `panel-camera.service`, opening on the last view | phase 5, garage camera |
+| Back button and swipe right; sleep after 2 min (black cover + LVGL paused); wake on touch or "Okay Nabu"; voice pill | swipe, sleep and wake |
+| Clock correct from boot (`timezone: America/Vancouver`) | time zone at boot |
+| Dashboard: switch cards correct ~2 s after a light changes elsewhere | dashboard section |
+
+**Still open**, most useful first:
+- **Voice-time dots:** a few pixels corrupt after several voice sessions and stay
+  until restart; a software restart clears them. Cause not found (owner parked it;
+  no "reset display" button wanted). See "Memory, flicker and Wi-Fi".
+- **Camera memory:** a frame costs ~21 KB of internal heap (the 18 KB JPEG decoder
+  is created per frame); low point 35 KB. Fix not chosen: PSRAM-backed malloc for
+  large allocations vs patching `runtime_image`.
+- **Backlight** stays on in sleep: the 4B's backlight pin is undocumented here.
+- `allow_service_calls` for the panel is not codified in `setup-ha-voice.py`.
+- The wake word has not been re-measured with the display on.
+- A Security card that fires turns red but does not move to the front.
 
 The bring-up notes below were written while the screen was still dark.
 
@@ -422,7 +437,13 @@ the ESP32 keeps its time across a restart but not its time zone, which the
 `timezone: America/Vancouver` (Home Assistant's `time_zone`), compiled into the
 firmware. If Home Assistant's zone ever changes, change it here too.
 
-## Memory, flicker and Wi-Fi, measured 2026-09-15 (not yet committed)
+Verified after flashing (`0x4a495d1c`): the compiled rule is **`MST7`** —
+`std_offset_seconds = 25200`, no DST. That is right, not a conversion error:
+ESPHome's bundled tzdata 2026.3 ends `America/Vancouver` with `MST7`, British
+Columbia's move to permanent UTC−7 (Python's zoneinfo on the same data: PDT on
+2026-09-15, MST on 2026-12-15 and 2027-06-15, all UTC−7). Owner confirmed the clock.
+
+## Memory, flicker and Wi-Fi, measured 2026-09-15
 
 - **What uses internal heap** (temporary `memdiag` log, now removed): idle low 72.7 KB;
   a voice answer playing −10 KB (62.4); a camera frame downloading −21 KB (51.5; the

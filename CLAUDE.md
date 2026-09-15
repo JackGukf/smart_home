@@ -20,11 +20,14 @@
 > Its logic is `resolver.py`, testable without HA.
 > Start here: **`docs/handoff-2026-09-13-voice-satellite.md`**.
 >
-> **Panel touch screen, working (2026-09-14).** The 4" LCD runs under ESPHome with
-> the approved GUI (`docs/design/voice-panel-screens.html`) through Home, Scenes,
-> Security and a near-live front door camera. The camera frames come from
+> **Panel touch screen, finished (2026-09-15).** The 4" LCD runs an app launcher
+> under ESPHome (`docs/design/voice-panel-screens.html`, revision 2): Lights,
+> Climate, Scenes, Security, Cameras and Wall panel, with swipe-back, sleep after
+> 2 minutes and wake on touch or "Okay Nabu". Camera frames come from
 > `panel-camera.service` on the board (`src/python/panel_camera.py`): fetching
 > snapshots from go2rtc directly blocked the panel's main loop and garbled voice.
+> Open: a few display dots after several voice sessions (a restart clears them),
+> camera-frame heap use, and the backlight cannot yet be switched off in sleep.
 > Start here: **`docs/handoff-2026-09-14-panel-display.md`**.
 >
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
