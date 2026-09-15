@@ -392,7 +392,35 @@ Design approved: `docs/design/voice-panel-screens.html` (artifact version 3).
   widget has that flag by default (`lv_obj.c`). The wrapper had it, so every swipe
   went past it to the page. Each wrapper now sets `gesture_bubble: false`. Also: no
   gesture is detected while a list is scrolling.
-- Next: sleep and wake.
+- Owner-tested, committed `361ffb1`.
+
+### Sleep and wake (awaiting owner test)
+
+- **The backlight cannot be switched off yet.** No reachable documentation names
+  the 4B's backlight control: Waveshare's wiki returns 403 to automated fetches, and
+  search results describe the non-B ESP32-S3-Touch-LCD-4, whose expander **pin 2**
+  drives the backlight — on the 4B pin 2 is the ST7701's SPI clock
+  (`Arduino_XCA9554SWSPI(... sck=2 ...)`), so toggling it would corrupt the
+  controller. Do not try it without the 4B schematic.
+- So sleep is a black `sleep_cover` on the top layer plus `lvgl.pause`: after
+  `${sleep_after}` (120 s) without touch and with no voice session, `panel_sleep`
+  opens the launcher (releasing a camera), shows the cover and pauses LVGL.
+- Wake: a touch (`resume_on_input`, default on; the tap is not passed to the page)
+  or "Okay Nabu" (`lvgl.resume` in `on_wake_word_detected`); `on_resume` lifts the
+  cover and refreshes the clock.
+- Voice pill on the top layer: Listening... (`on_listening`) → Thinking...
+  (`on_stt_vad_end`) → Answering... (`on_tts_start`); hidden when the media player
+  goes idle, or at `on_end` if nothing played, or on error — each also calls
+  `lv_display_trigger_activity` so the idle timer restarts after a session.
+- Owner-tested.
+
+### Time zone at boot
+
+The clock showed UTC (7 h ahead) after every start until Home Assistant connected:
+the ESP32 keeps its time across a restart but not its time zone, which the
+`homeassistant` time platform only receives over the API. `time:` now sets
+`timezone: America/Vancouver` (Home Assistant's `time_zone`), compiled into the
+firmware. If Home Assistant's zone ever changes, change it here too.
 
 ## Memory, flicker and Wi-Fi, measured 2026-09-15 (not yet committed)
 

@@ -20,6 +20,8 @@
 substitutions:
   name: voice-panel
   friendly_name: Voice Panel
+  # No touch for this long, and no voice session running: the screen sleeps.
+  sleep_after: 120s
 
 esphome:
   name: ${name}
@@ -294,6 +296,8 @@ media_player:
           then:
             - micro_wake_word.stop:
     on_idle:
+      - lvgl.widget.hide: voice_pill
+      - lambda: lv_display_trigger_activity(lv_display_get_default());
       - script.execute: restart_wake_word
 
 micro_wake_word:
@@ -303,6 +307,12 @@ micro_wake_word:
   models:
     - model: okay_nabu
   on_wake_word_detected:
+    # A sleeping screen wakes for the voice too; on_resume lifts the cover.
+    - if:
+        condition:
+          lvgl.is_paused:
+        then:
+          - lvgl.resume:
     - logger.log:
         format: "wake word detected: %s"
         args: [wake_word.c_str()]
@@ -328,9 +338,33 @@ voice_assistant:
   # which case the media player never goes idle and would never restart the
   # wake word. Not on_idle: in this ESPHome that fires only in continuous mode,
   # so for an on-device wake word it never runs at all.
+  on_listening:
+    - lvgl.label.update:
+        id: voice_pill_text
+        text: "Listening..."
+    - lvgl.widget.show: voice_pill
+  on_stt_vad_end:
+    - lvgl.label.update:
+        id: voice_pill_text
+        text: "Thinking..."
+  on_tts_start:
+    - lvgl.label.update:
+        id: voice_pill_text
+        text: "Answering..."
+  # The pill stays up while the answer plays and goes when the media player
+  # does (media_player on_idle); a session with nothing to play clears it here.
+  # Either way the session counts as activity, so the idle timer restarts.
   on_end:
+    - if:
+        condition:
+          media_player.is_idle: media_out
+        then:
+          - lvgl.widget.hide: voice_pill
+          - lambda: lv_display_trigger_activity(lv_display_get_default());
     - script.execute: restart_wake_word
   on_error:
+    - lvgl.widget.hide: voice_pill
+    - lambda: lv_display_trigger_activity(lv_display_get_default());
     - script.execute: restart_wake_word
 
 # The one place the wake word comes back after the microphone stepped aside.
@@ -649,6 +683,18 @@ script:
             - lvgl.widget.show: lights_badge
           else:
             - lvgl.widget.hide: lights_badge
+
+  # Sleep: back to the launcher first (which also releases a camera), so a wake
+  # lands there; then the black cover, and LVGL paused once it has drawn it.
+  - id: panel_sleep
+    then:
+      - script.execute:
+          id: open_app
+          page: 0
+      - lvgl.widget.hide: voice_pill
+      - lvgl.widget.show: sleep_cover
+      - delay: 300ms
+      - lvgl.pause:
 
   # One snapshot, unless one is still downloading - a slow frame must not queue
   # a second request behind it.
@@ -1086,6 +1132,25 @@ lvgl:
   touchscreens: [touch]
   buffer_size: 25%
 
+  # Sleep and wake. The backlight cannot be switched off yet - no documentation
+  # for this board names its control pin, and expander pin 2, which the 4-inch
+  # non-B board uses for it, is the display controller's SPI clock here. So sleep
+  # is a black cover and LVGL paused: nothing redraws, the screen shows black.
+  # A touch resumes LVGL (resume_on_input, on by default; the wake tap is not
+  # passed to the page) and on_resume lifts the cover. "Okay Nabu" wakes it too.
+  on_idle:
+    - timeout: ${sleep_after}
+      then:
+        - if:
+            condition:
+              not:
+                voice_assistant.is_running:
+            then:
+              - script.execute: panel_sleep
+  on_resume:
+    - lvgl.widget.hide: sleep_cover
+    - script.execute: update_clock
+
   # The app header is on the top layer, so every app shares one. It is hidden on
   # the launcher, which has its own glance, and on the full-screen light page.
   top_layer:
@@ -1157,6 +1222,45 @@ lvgl:
                 text: "--:--"
                 text_font: montserrat_16
                 text_color: 0xCCD1D6
+      # What the voice assistant is doing, over whatever screen is up.
+      - obj:
+          id: voice_pill
+          align: BOTTOM_MID
+          y: -24
+          width: 250
+          height: 56
+          radius: 28
+          pad_all: 0
+          border_width: 0
+          bg_color: 0x1E6CE8
+          bg_opa: 94%
+          shadow_color: 0x3C8CFF
+          shadow_width: 24
+          shadow_opa: 50%
+          scrollable: false
+          clickable: false
+          hidden: true
+          widgets:
+            - label:
+                id: voice_pill_text
+                align: CENTER
+                text: "Listening..."
+                text_font: montserrat_20
+                text_color: 0xFFFFFF
+      # Sleep: black over everything (see on_idle).
+      - obj:
+          id: sleep_cover
+          x: 0
+          y: 0
+          width: 480
+          height: 480
+          radius: 0
+          pad_all: 0
+          border_width: 0
+          bg_color: 0x000000
+          bg_opa: 100%
+          scrollable: false
+          hidden: true
 
   pages:
     # The launcher: the first page, so the panel starts here, and where every app
@@ -1981,6 +2085,10 @@ font:
 time:
   - platform: homeassistant
     id: ha_time
+    # Home Assistant's own zone, compiled in. Without it the panel shows UTC -
+    # 7 hours ahead here - from boot until Home Assistant connects and sends the
+    # zone: the chip keeps its clock across a restart, but not its time zone.
+    timezone: America/Vancouver
     on_time_sync:
       - script.execute: update_clock
     on_time:
