@@ -19,7 +19,9 @@ Owner-tested, in order of the design's build list:
 | Cameras: front door and garage, near-live via `panel-camera.service`, opening on the last view | phase 5, garage camera |
 | Back button and swipe right; sleep after 2 min (black cover + LVGL paused); wake on touch or "Okay Nabu"; voice pill | swipe, sleep and wake |
 | Clock correct from boot (`timezone: America/Vancouver`) | time zone at boot |
-| Launcher apps on swipeable pages (six a page, dots); Settings app: volume, sleep after 30 s–never, Wi-Fi (scan, pick, password, join), About (firmware 0.2.0, ESPHome, build time); all kept in flash | settings and Wi-Fi |
+| Launcher apps on swipeable pages (six a page, dots); Settings as its own apps - Volume, Sleep (30 s–never), Wi-Fi (scan, pick, password, join), Schedule, About (firmware 0.2.0, ESPHome, build time, network); all kept in flash | settings and Wi-Fi; settings apps |
+| Night schedule: screen dark from a set time to a set time (default off, 01:00–07:00); a touch wakes it for 30 s at night | settings apps |
+| Camera frames no longer use internal heap: plain mallocs over 16 KB come from PSRAM | settings apps |
 | Weather at home (icon and temperature) top right of the launcher, from `weather.forecast_home` | settings and Wi-Fi |
 | Voice-time flicker fixed: `CONFIG_LCD_RGB_RESTART_IN_VSYNC` off (owner-tested) | settings, Wi-Fi and the flicker |
 | Dashboard: switch cards correct ~2 s after a light changes elsewhere | dashboard section |
@@ -28,9 +30,6 @@ Owner-tested, in order of the design's build list:
 - **A single shake** can still happen during a voice session (one lost bounce
   buffer refill); since the fix the picture recovers at the next frame. The
   owner accepts it.
-- **Camera memory:** a frame costs ~21 KB of internal heap (the 18 KB JPEG decoder
-  is created per frame); low point 35 KB. Fix not chosen: PSRAM-backed malloc for
-  large allocations vs patching `runtime_image`.
 - **Backlight** stays on in sleep, and none of the reachable controls is it
   (tested 2026-09-15): not the ST7701 (display off 0x28 + sleep in 0x10 left it
   lit), not GPIO4, not expander pin 4 (each pulled low while awake, no change).
@@ -573,6 +572,40 @@ the I2S bus lock is a FreeRTOS mutex (only the task that took it may release it)
   `esphome: project:`; bump it with each `voice-panel-vX.Y.Z` tag. The build time
   is shown in the panel's own zone (`ESPTime::from_epoch_local`), since the build
   string is stamped in the build container's zone.
+
+## Settings apps, night schedule and camera memory (2026-09-15, owner-tested)
+
+**Settings as apps.** `settings_page` is a tile grid (`panel/app-tile.yaml`, keys
+`set_*`), each tile opening a page: 8 Wi-Fi, 9 Volume, 10 Sleep, 11 Schedule, 12
+About (`open_app`). The header's back button and every page's swipe return to
+Settings (`current_app >= 8`). `settings_refresh` draws all of them. Tile icons:
+`scripts/render-panel-icons.py` (`APP_TILES`).
+
+**Night schedule** (Settings > Schedule). `schedule_enabled`, `schedule_off_min`
+and `schedule_on_min` (minutes after midnight) are `restore_value` globals, saved
+at once through `settings_save`. `schedule_check` runs from `ha_time`'s
+`on_time_sync` and each minute's `on_time`, works out whether it is night (the
+window may cross midnight) and acts only on a change: night starts ->
+`panel_sleep` (unless a voice session runs); night ends -> `lvgl.resume` and a
+fresh idle count (without it the screen slept again at once). At night `on_idle`
+uses 30 s, so a touch or the wake word wakes the screen briefly; by day the
+Sleep choice applies. The hour and minute pickers are rollers read with
+`lv_roller_get_selected(id(...)->obj)` (5-minute steps).
+
+**Camera memory - fixed.** ESPHome's `psram` sets `SPIRAM_USE_CAPS_ALLOC`, so every
+plain `malloc` was internal, including the ~18 KB `JPEGDEC` inside the JPEG
+decoder that `runtime_image` creates per image. Now `SPIRAM_USE_MALLOC` with the
+16 KB threshold: `heap_caps_malloc_default` puts larger blocks in PSRAM first and
+smaller ones in internal RAM first, each falling back to the other. Measured on
+the owner's test: 64 camera frames, internal heap low point unchanged at 39.8 KB
+(before: ~21 KB a frame, low point 35 KB). LVGL was already in PSRAM
+(`lv_malloc_core` uses `MALLOC_CAP_SPIRAM`), so the new pages cost no internal RAM.
+
+- **Keep `SPIRAM_MALLOC_RESERVE_INTERNAL` at its default (32 KB).** It was set to 0
+  on the reading that it fences memory off; its help text says the opposite -
+  plain mallocs reach it last, and it keeps task stacks and DMA buffers (Wi-Fi,
+  I2S) served. With 0 the boot low point fell to 14 KB; restored, 39.8 KB.
+- `sdkconfig_options` values must be strings: `"16384"`, not `16384`.
 
 ## Differences still left, most likely first
 

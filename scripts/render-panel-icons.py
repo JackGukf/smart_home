@@ -167,6 +167,12 @@ APP_TILES = {
     "cameras": ("#6C9CF2", "#2E5EC2"),
     "panel": ("#8E97A6", "#4B5361"),
     "settings": ("#F59A7A", "#D0583E"),
+    # Settings' own apps
+    "volume": ("#5FC7E8", "#2B84B8"),
+    "sleep": ("#8C9BF5", "#4B55C4"),
+    "wifi": ("#4FD1C0", "#1E8C80"),
+    "schedule": ("#E88BC4", "#B24A8A"),
+    "about": ("#A7B1BF", "#5E6A7B"),
 }
 
 
@@ -228,6 +234,29 @@ def app_icon(name: str, size: int = 92) -> None:
         d.ellipse([*p(5, 5), *p(19, 19)], fill=white)
         top_colour = vertical_gradient((1, px), rgba(top), rgba(bottom)).getpixel((0, px // 2))
         d.ellipse([*p(9, 9), *p(15, 15)], fill=top_colour)
+    elif name == "volume":
+        d.line([p(4, 9.5), p(8, 9.5), p(12.5, 5.5), p(12.5, 18.5), p(8, 14.5), p(4, 14.5), p(4, 9.5)],
+               fill=white, width=w, joint="curve")
+        d.arc([*p(10.5, 8), *p(18.5, 16)], -45, 45, fill=white, width=w)
+        d.arc([*p(9, 4.5), *p(22, 19.5)], -45, 45, fill=white, width=w)
+    elif name == "sleep":
+        # a crescent moon: a disc with an offset disc taken out of it
+        mask = Image.new("L", (px, px), 0)
+        md = ImageDraw.Draw(mask)
+        md.ellipse([*p(4.5, 4.5), *p(19.5, 19.5)], fill=255)
+        md.ellipse([*p(9, 2), *p(23, 16)], fill=0)
+        img.paste(Image.new("RGBA", (px, px), white), (0, 0), mask)
+    elif name == "wifi":
+        for r in (4.5, 9, 13.5):
+            d.arc([*p(12 - r, 19 - r), *p(12 + r, 19 + r)], 225, 315, fill=white, width=w)
+        d.ellipse([*p(10.6, 17.6), *p(13.4, 20.4)], fill=white)
+    elif name == "schedule":
+        d.ellipse([*p(4, 4), *p(20, 20)], outline=white, width=w)
+        d.line([p(12, 7.5), p(12, 12), p(15.5, 14)], fill=white, width=w, joint="curve")
+    elif name == "about":
+        d.ellipse([*p(4, 4), *p(20, 20)], outline=white, width=w)
+        d.ellipse([*p(10.8, 6.8), *p(13.2, 9.2)], fill=white)
+        d.line([p(12, 11), p(12, 17)], fill=white, width=w)
     finish(img, size, f"app_{name}.png")
 
 

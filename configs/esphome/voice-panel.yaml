@@ -109,6 +109,17 @@ esp32:
       CONFIG_LCD_RGB_RESTART_IN_VSYNC: n
       CONFIG_LCD_RGB_ISR_IRAM_SAFE: y
       CONFIG_SPIRAM_XIP_FROM_PSRAM: y
+      # Plain allocations over 16 KB come from PSRAM first, smaller ones from
+      # internal RAM first, each falling back to the other rather than failing
+      # (heap_caps_malloc_default). ESPHome's default (caps alloc) kept every
+      # malloc internal, so the camera's JPEG decoder - an ~18 KB JPEGDEC object
+      # per frame - took it from the internal heap the wake word and Wi-Fi live
+      # on (low point 35 KB). The IDF's 32 KB internal reserve stays: plain
+      # mallocs reach it only last, and it keeps task stacks and DMA buffers
+      # (Wi-Fi, I2S) served when internal RAM runs low.
+      CONFIG_SPIRAM_USE_CAPS_ALLOC: n
+      CONFIG_SPIRAM_USE_MALLOC: y
+      CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL: "16384"
 
 # ESP32-S3-WROOM-1-N16R8: 8MB octal PSRAM. micro_wake_word needs it, and octal
 # at 80MHz is the configuration its inference is sized against.
@@ -608,7 +619,8 @@ script:
                   brightness_pct: !lambda return to_string(pct);
 
   # The launcher and its apps: 0 launcher, 1 Lights, 2 Climate, 3 Scenes,
-  # 4 Security, 5 Cameras, 6 Wall panel, 7 Settings, 8 Wi-Fi (opened from Settings). Each app's own open and leave work is
+  # 4 Security, 5 Cameras, 6 Wall panel, 7 Settings; from Settings 8 Wi-Fi, 9 Volume, 10 Sleep, 11 Schedule,
+  # 12 About. Each app's own open and leave work is
   # here: leaving Cameras frees the snapshot, opening Wall panel re-highlights.
   - id: open_app
     parameters:
@@ -638,8 +650,9 @@ script:
           id: page_title
           text: !lambda |-
             static const char *const titles[] = {"", "lights", "climate", "scenes",
-                                                 "security", "cameras", "wall panel", "settings", "wi-fi"};
-            std::string title = page >= 0 && page <= 8 ? titles[page] : "";
+                                                 "security", "cameras", "wall panel", "settings", "wi-fi",
+                                                 "volume", "sleep", "schedule", "about"};
+            std::string title = page >= 0 && page <= 12 ? titles[page] : "";
             return title;
       - if:
           condition:
@@ -695,6 +708,30 @@ script:
             - script.execute: wifi_keyboard_close
             - script.execute: wifi_refresh
             - lvgl.page.show: wifi_page
+      - if:
+          condition:
+            lambda: return page == 9;
+          then:
+            - script.execute: settings_refresh
+            - lvgl.page.show: volume_page
+      - if:
+          condition:
+            lambda: return page == 10;
+          then:
+            - script.execute: settings_refresh
+            - lvgl.page.show: sleep_page
+      - if:
+          condition:
+            lambda: return page == 11;
+          then:
+            - script.execute: settings_refresh
+            - lvgl.page.show: schedule_page
+      - if:
+          condition:
+            lambda: return page == 12;
+          then:
+            - script.execute: settings_refresh
+            - lvgl.page.show: about_page
 
   # The Settings page drawn from what is in force: the speaker's volume (which
   # Home Assistant can also change) and the sleep choice.
@@ -737,18 +774,116 @@ script:
           text: !lambda |-
             std::string text = id(wifi_ssid).state.empty() ? "Not connected" : id(wifi_ssid).state;
             return text;
-      # Two short lines: one line with everything ran past the edge.
       - lvgl.label.update:
-          id: settings_about_version
+          id: settings_about_esphome
           text: !lambda |-
-            std::string text = std::string("${friendly_name} ${firmware_version}, ESPHome ") + ESPHOME_VERSION;
+            std::string text = ESPHOME_VERSION;
             return text;
       # In the panel's own time zone, to the minute; the build machine stamps its own.
       - lvgl.label.update:
           id: settings_about_build
           text: !lambda |-
-            std::string text = "Built " + ESPTime::from_epoch_local(App.get_build_time()).strftime("%Y-%m-%d %H:%M");
+            std::string text = ESPTime::from_epoch_local(App.get_build_time()).strftime("%Y-%m-%d %H:%M");
             return text;
+      - lvgl.widget.update:
+          id: schedule_switch
+          state:
+            checked: !lambda return id(schedule_enabled);
+      - lvgl.roller.update:
+          id: sched_off_hour
+          animated: false
+          selected_index: !lambda return id(schedule_off_min) / 60;
+      - lvgl.roller.update:
+          id: sched_off_minute
+          animated: false
+          selected_index: !lambda return (id(schedule_off_min) % 60) / 5;
+      - lvgl.roller.update:
+          id: sched_on_hour
+          animated: false
+          selected_index: !lambda return id(schedule_on_min) / 60;
+      - lvgl.roller.update:
+          id: sched_on_minute
+          animated: false
+          selected_index: !lambda return (id(schedule_on_min) % 60) / 5;
+      - script.execute: schedule_status_refresh
+
+  # Settings > Schedule's status line, and "On" on its tile.
+  - id: schedule_status_refresh
+    then:
+      - lvgl.label.update:
+          id: schedule_status
+          text: !lambda |-
+            if (!id(schedule_enabled)) {
+              std::string text = "Off - the Sleep setting applies all day";
+              return text;
+            }
+            char buf[48];
+            snprintf(buf, sizeof(buf), "Dark from %02d:%02d to %02d:%02d", id(schedule_off_min) / 60,
+                     id(schedule_off_min) % 60, id(schedule_on_min) / 60, id(schedule_on_min) % 60);
+            std::string text = buf;
+            return text;
+      - if:
+          condition:
+            lambda: return id(schedule_enabled);
+          then:
+            - lvgl.label.update:
+                id: set_schedule_badge
+                text: "On"
+            - lvgl.widget.show: set_schedule_badge
+          else:
+            - lvgl.widget.hide: set_schedule_badge
+
+  # A change on the Schedule page: read the four rollers, keep it, apply it now.
+  - id: schedule_store
+    then:
+      - lambda: |-
+          id(schedule_off_min) = lv_roller_get_selected(id(sched_off_hour)->obj) * 60 +
+                                 lv_roller_get_selected(id(sched_off_minute)->obj) * 5;
+          id(schedule_on_min) = lv_roller_get_selected(id(sched_on_hour)->obj) * 60 +
+                                lv_roller_get_selected(id(sched_on_minute)->obj) * 5;
+      - script.execute: schedule_status_refresh
+      - script.execute: settings_save
+      - script.execute: schedule_check
+
+  # Night mode: from schedule_off_min to schedule_on_min (the night may cross
+  # midnight) the screen sleeps. Acts only when night starts or ends, so a
+  # touch at night still wakes the screen (for 30 s - see on_idle).
+  - id: schedule_check
+    then:
+      - lambda: |-
+          auto now = id(ha_time).now();
+          bool night = false;
+          if (id(schedule_enabled) && now.is_valid()) {
+            int m = now.hour * 60 + now.minute;
+            int off = id(schedule_off_min), on = id(schedule_on_min);
+            if (off < on)
+              night = m >= off && m < on;
+            else if (off > on)
+              night = m >= off || m < on;
+          }
+          id(screen_night_changed) = night != id(screen_night);
+          id(screen_night) = night;
+      - if:
+          condition:
+            lambda: return id(screen_night_changed) && id(screen_night);
+          then:
+            - if:
+                condition:
+                  not:
+                    voice_assistant.is_running:
+                then:
+                  - script.execute: panel_sleep
+      - if:
+          condition:
+            lambda: return id(screen_night_changed) && !id(screen_night);
+          then:
+            - if:
+                condition:
+                  lvgl.is_paused:
+                then:
+                  - lvgl.resume:
+            # A fresh idle count, or the screen would sleep again at once.
+            - lambda: lv_display_trigger_activity(lv_display_get_default());
 
   # Settings are kept in flash (NVS): the volume by the media player, the sleep
   # choice by its restore_value global, Wi-Fi by wifi.configure (which writes at
@@ -1407,9 +1542,10 @@ lvgl:
   # A touch resumes LVGL (resume_on_input, on by default; the wake tap is not
   # passed to the page) and on_resume lifts the cover. "Okay Nabu" wakes it too.
   # How long is the Settings app's choice (sleep_secs, 0 for never), read on
-  # every check, so a change applies at once.
+  # every check, so a change applies at once. At night (Settings > Schedule) a
+  # touch wakes the screen for 30 s, whatever that choice.
   on_idle:
-    - timeout: !lambda 'return id(sleep_secs) > 0 ? id(sleep_secs) * 1000 : 0xFFFFFFFFu;'
+    - timeout: !lambda 'return id(screen_night) ? 30000u : (id(sleep_secs) > 0 ? id(sleep_secs) * 1000u : 0xFFFFFFFFu);'
       then:
         - if:
             condition:
@@ -1449,11 +1585,12 @@ lvgl:
                 bg_opa: 10%
                 shadow_width: 0
                 border_width: 0
-                # Back: Wi-Fi returns to Settings, every other app to the launcher.
+                # Back: Settings' own apps return to Settings, every other app
+                # to the launcher.
                 on_click:
                   - script.execute:
                       id: open_app
-                      page: !lambda 'return id(current_app) == 8 ? 7 : 0;'
+                      page: !lambda 'return id(current_app) >= 8 ? 7 : 0;'
                 widgets:
                   - label:
                       align: CENTER
@@ -2254,8 +2391,8 @@ lvgl:
                 text_font: montserrat_14
                 text_color: 0x9EE6C5
 
-    # Settings: the speaker's volume, and how long without a touch before the
-    # screen sleeps. Opened from the launcher's gear.
+    # Settings: its own apps, tiles like the launcher's. Each opens a page that
+    # returns here (back button and swipe).
     - id: settings_page
       bg_color: 0x3A2618
       bg_grad_color: 0x1C120B
@@ -2263,7 +2400,7 @@ lvgl:
       scrollable: false
       pad_all: 0
       widgets:
-        # Swipe right goes back, as on every app (see wall_swipe).
+        # Swipe right goes back (see wall_swipe).
         - obj:
             id: settings_swipe
             gesture_bubble: false
@@ -2281,16 +2418,48 @@ lvgl:
                   id: open_app
                   page: 0
             widgets:
+            - !include {file: panel/app-tile.yaml, vars: {key: set_volume, title: "Volume", icon: app_volume, page: 9, x: 24, y: 80}}
+            - !include {file: panel/app-tile.yaml, vars: {key: set_sleep, title: "Sleep", icon: app_sleep, page: 10, x: 176, y: 80}}
+            - !include {file: panel/app-tile.yaml, vars: {key: set_wifi, title: "Wi-Fi", icon: app_wifi, page: 8, x: 328, y: 80}}
+            - !include {file: panel/app-tile.yaml, vars: {key: set_schedule, title: "Schedule", icon: app_schedule, page: 11, x: 24, y: 216}}
+            - !include {file: panel/app-tile.yaml, vars: {key: set_about, title: "About", icon: app_about, page: 12, x: 176, y: 216}}
+
+    # Volume: the speaker, for voice replies and announcements.
+    - id: volume_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        # Swipe right goes back (see wall_swipe).
+        - obj:
+            id: volume_swipe
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 7
+            widgets:
             - label:
                 x: 28
-                y: 70
-                text: "Volume"
+                y: 84
+                text: "Speaker volume"
                 text_font: montserrat_20
                 text_color: 0xF2F5F8
             - label:
                 id: volume_value
                 x: 332
-                y: 70
+                y: 84
                 width: 120
                 text: ""
                 text_align: RIGHT
@@ -2301,9 +2470,9 @@ lvgl:
                 # Dragging the bar must never read as a swipe back.
                 gesture_bubble: false
                 x: 28
-                y: 104
+                y: 132
                 width: 424
-                height: 40
+                height: 48
                 min_value: 0
                 max_value: 100
                 value: 0
@@ -2325,8 +2494,7 @@ lvgl:
                       text: !lambda |-
                         std::string text = to_string((int) x) + "%";
                         return text;
-                # On release, not while dragging: the media player keeps its
-                # volume across restarts, and each change is a save.
+                # On release, not while dragging: each change is a save.
                 on_release:
                   - media_player.volume_set:
                       id: media_out
@@ -2334,78 +2502,385 @@ lvgl:
                   - script.execute: settings_save
             - label:
                 x: 28
-                y: 162
+                y: 204
+                width: 424
+                text: "Voice replies and announcements play at this level. It is kept after a restart."
+                text_font: montserrat_14
+                text_color: 0xC2C8CF
+
+    # Sleep: how long without a touch before the screen goes dark.
+    - id: sleep_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        # Swipe right goes back (see wall_swipe).
+        - obj:
+            id: sleep_swipe
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 7
+            widgets:
+            - label:
+                x: 28
+                y: 84
                 text: "Sleep after"
                 text_font: montserrat_20
                 text_color: 0xF2F5F8
-            - !include {file: panel/settings-sleep.yaml, vars: {key: "30", text: "30 s", secs: 30, x: 28, y: 198}}
-            - !include {file: panel/settings-sleep.yaml, vars: {key: "60", text: "1 min", secs: 60, x: 176, y: 198}}
-            - !include {file: panel/settings-sleep.yaml, vars: {key: "120", text: "2 min", secs: 120, x: 324, y: 198}}
-            - !include {file: panel/settings-sleep.yaml, vars: {key: "300", text: "5 min", secs: 300, x: 28, y: 260}}
-            - !include {file: panel/settings-sleep.yaml, vars: {key: "600", text: "10 min", secs: 600, x: 176, y: 260}}
-            - !include {file: panel/settings-sleep.yaml, vars: {key: never, text: "Never", secs: 0, x: 324, y: 260}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "30", text: "30 s", secs: 30, x: 28, y: 130}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "60", text: "1 min", secs: 60, x: 176, y: 130}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "120", text: "2 min", secs: 120, x: 324, y: 130}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "300", text: "5 min", secs: 300, x: 28, y: 198}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "600", text: "10 min", secs: 600, x: 176, y: 198}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: never, text: "Never", secs: 0, x: 324, y: 198}}
             - label:
                 x: 28
-                y: 346
-                text: "Wi-Fi"
+                y: 282
+                width: 424
+                text: "With no touch for this long the screen goes dark. Touch it, or say \"Okay Nabu\", to wake it."
+                text_font: montserrat_14
+                text_color: 0xC2C8CF
+
+    # Schedule: night mode - the screen dark from one time to another.
+    - id: schedule_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        # Swipe right goes back (see wall_swipe).
+        - obj:
+            id: schedule_swipe
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 7
+            widgets:
+            - label:
+                x: 28
+                y: 82
+                text: "Night mode"
                 text_font: montserrat_20
                 text_color: 0xF2F5F8
             - label:
-                id: settings_wifi_name
-                x: 96
-                y: 349
-                width: 224
+                id: schedule_status
+                x: 28
+                y: 112
+                width: 330
                 height: 20
                 long_mode: dot
                 text: ""
-                text_font: montserrat_16
-                text_color: 0xC2C8CF
-            - button:
-                x: 332
-                y: 334
-                width: 120
-                height: 44
-                radius: 16
-                bg_color: 0xF2F5F8
-                bg_opa: 12%
-                border_width: 0
-                shadow_width: 0
-                on_click:
-                  - script.execute:
-                      id: open_app
-                      page: 8
-                widgets:
-                  - label:
-                      align: CENTER
-                      text: "Change"
-                      text_font: montserrat_16
-                      text_color: 0xF2F5F8
+                text_font: montserrat_14
+                text_color: 0x9EE6C5
+            - switch:
+                id: schedule_switch
+                gesture_bubble: false
+                x: 380
+                y: 82
+                width: 72
+                height: 40
+                indicator:
+                  checked:
+                    bg_color: 0xF8E2B2
+                on_value:
+                  - globals.set:
+                      id: schedule_enabled
+                      value: !lambda return x;
+                  - script.execute: schedule_store
             - label:
                 x: 28
-                y: 404
-                text: "About"
+                y: 196
+                text: "Screen off at"
                 text_font: montserrat_20
                 text_color: 0xF2F5F8
+            - roller:
+                id: sched_off_hour
+                gesture_bubble: false
+                x: 220
+                y: 150
+                width: 104
+                height: 112
+                options:
+                  - "00"
+                  - "01"
+                  - "02"
+                  - "03"
+                  - "04"
+                  - "05"
+                  - "06"
+                  - "07"
+                  - "08"
+                  - "09"
+                  - "10"
+                  - "11"
+                  - "12"
+                  - "13"
+                  - "14"
+                  - "15"
+                  - "16"
+                  - "17"
+                  - "18"
+                  - "19"
+                  - "20"
+                  - "21"
+                  - "22"
+                  - "23"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+                bg_color: 0x0E1422
+                bg_opa: 60%
+                border_width: 0
+                radius: 14
+                selected:
+                  bg_color: 0xF8E2B2
+                  text_color: 0x241A12
+                on_value:
+                  - script.execute: schedule_store
+            - label:
+                x: 330
+                y: 192
+                text: ":"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+            - roller:
+                id: sched_off_minute
+                gesture_bubble: false
+                x: 348
+                y: 150
+                width: 104
+                height: 112
+                options:
+                  - "00"
+                  - "05"
+                  - "10"
+                  - "15"
+                  - "20"
+                  - "25"
+                  - "30"
+                  - "35"
+                  - "40"
+                  - "45"
+                  - "50"
+                  - "55"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+                bg_color: 0x0E1422
+                bg_opa: 60%
+                border_width: 0
+                radius: 14
+                selected:
+                  bg_color: 0xF8E2B2
+                  text_color: 0x241A12
+                on_value:
+                  - script.execute: schedule_store
+            - label:
+                x: 28
+                y: 330
+                text: "Screen on at"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+            - roller:
+                id: sched_on_hour
+                gesture_bubble: false
+                x: 220
+                y: 284
+                width: 104
+                height: 112
+                options:
+                  - "00"
+                  - "01"
+                  - "02"
+                  - "03"
+                  - "04"
+                  - "05"
+                  - "06"
+                  - "07"
+                  - "08"
+                  - "09"
+                  - "10"
+                  - "11"
+                  - "12"
+                  - "13"
+                  - "14"
+                  - "15"
+                  - "16"
+                  - "17"
+                  - "18"
+                  - "19"
+                  - "20"
+                  - "21"
+                  - "22"
+                  - "23"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+                bg_color: 0x0E1422
+                bg_opa: 60%
+                border_width: 0
+                radius: 14
+                selected:
+                  bg_color: 0xF8E2B2
+                  text_color: 0x241A12
+                on_value:
+                  - script.execute: schedule_store
+            - label:
+                x: 330
+                y: 326
+                text: ":"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+            - roller:
+                id: sched_on_minute
+                gesture_bubble: false
+                x: 348
+                y: 284
+                width: 104
+                height: 112
+                options:
+                  - "00"
+                  - "05"
+                  - "10"
+                  - "15"
+                  - "20"
+                  - "25"
+                  - "30"
+                  - "35"
+                  - "40"
+                  - "45"
+                  - "50"
+                  - "55"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+                bg_color: 0x0E1422
+                bg_opa: 60%
+                border_width: 0
+                radius: 14
+                selected:
+                  bg_color: 0xF8E2B2
+                  text_color: 0x241A12
+                on_value:
+                  - script.execute: schedule_store
+            - label:
+                x: 28
+                y: 412
+                width: 424
+                text: "At night the screen stays dark. A touch or \"Okay Nabu\" wakes it for 30 seconds."
+                text_font: montserrat_14
+                text_color: 0xC2C8CF
+
+    # About: this firmware and the network it is on.
+    - id: about_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        # Swipe right goes back (see wall_swipe).
+        - obj:
+            id: about_swipe
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 7
+            widgets:
+            - label:
+                x: 28
+                y: 84
+                text: "Firmware"
+                text_font: montserrat_16
+                text_color: 0xC2C8CF
             - label:
                 id: settings_about_version
-                x: 96
-                y: 400
-                width: 356
-                height: 20
+                x: 150
+                y: 84
+                width: 302
+                height: 22
                 long_mode: dot
                 text: "${friendly_name} ${firmware_version}"
                 text_font: montserrat_16
                 text_color: 0xF2F5F8
             - label:
-                id: settings_about_build
-                x: 96
-                y: 423
-                width: 356
-                height: 18
+                x: 28
+                y: 124
+                text: "ESPHome"
+                text_font: montserrat_16
+                text_color: 0xC2C8CF
+            - label:
+                id: settings_about_esphome
+                x: 150
+                y: 124
+                width: 302
+                height: 22
                 long_mode: dot
                 text: ""
-                text_font: montserrat_14
+                text_font: montserrat_16
+                text_color: 0xF2F5F8
+            - label:
+                x: 28
+                y: 164
+                text: "Built"
+                text_font: montserrat_16
                 text_color: 0xC2C8CF
+            - label:
+                id: settings_about_build
+                x: 150
+                y: 164
+                width: 302
+                height: 22
+                long_mode: dot
+                text: ""
+                text_font: montserrat_16
+                text_color: 0xF2F5F8
+            - label:
+                x: 28
+                y: 204
+                text: "Wi-Fi"
+                text_font: montserrat_16
+                text_color: 0xC2C8CF
+            - label:
+                id: settings_wifi_name
+                x: 150
+                y: 204
+                width: 302
+                height: 22
+                long_mode: dot
+                text: ""
+                text_font: montserrat_16
+                text_color: 0xF2F5F8
 
     # Wi-Fi: pick a network and give its password. wifi.configure saves both and,
     # if the panel cannot join within 30 s, goes back to the network it was on.
@@ -2729,12 +3204,16 @@ time:
     # 7 hours ahead here - from boot until Home Assistant connects and sends the
     # zone: the chip keeps its clock across a restart, but not its time zone.
     timezone: America/Vancouver
+    # Also night mode (Settings > Schedule): checked each minute, and once the
+    # time is known after a restart.
     on_time_sync:
       - script.execute: update_clock
+      - script.execute: schedule_check
     on_time:
       - seconds: 0
         then:
           - script.execute: update_clock
+          - script.execute: schedule_check
 
 interval:
   - interval: 2s
@@ -2824,6 +3303,27 @@ globals:
   - id: current_app
     type: int
     initial_value: "0"
+  # Settings > Schedule: night mode on or off, and when the night starts (screen
+  # off) and ends (screen on), in minutes after midnight. Kept across restarts.
+  - id: schedule_enabled
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  - id: schedule_off_min
+    type: int
+    restore_value: true
+    initial_value: "60"
+  - id: schedule_on_min
+    type: int
+    restore_value: true
+    initial_value: "420"
+  # Whether it is night now, and whether that just changed (schedule_check).
+  - id: screen_night
+    type: bool
+    initial_value: "false"
+  - id: screen_night_changed
+    type: bool
+    initial_value: "false"
   # The Wi-Fi page: whether the list holds networks from a scan (not the "tap
   # Scan" hint), and the network being joined.
   - id: wifi_scanned
@@ -2938,6 +3438,31 @@ image:
   - platform: file
     file: panel/images/app_settings.png
     id: app_settings
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_volume.png
+    id: app_volume
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_sleep.png
+    id: app_sleep
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_wifi.png
+    id: app_wifi
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_schedule.png
+    id: app_schedule
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_about.png
+    id: app_about
     type: RGB565
     transparency: alpha_channel
   - platform: file
