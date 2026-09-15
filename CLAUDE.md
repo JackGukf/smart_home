@@ -26,8 +26,11 @@
 > 2 minutes and wake on touch or "Okay Nabu". Camera frames come from
 > `panel-camera.service` on the board (`src/python/panel_camera.py`): fetching
 > snapshots from go2rtc directly blocked the panel's main loop and garbled voice.
-> Open: a few display dots after several voice sessions (a restart clears them),
-> camera-frame heap use, and the backlight cannot yet be switched off in sleep.
+> Since 2026-09-15 also Settings (volume, sleep time, Wi-Fi, About - firmware
+> 0.2.0, all kept in flash), launcher pages and the weather. The voice-time
+> flicker is fixed (`CONFIG_LCD_RGB_RESTART_IN_VSYNC` must stay off - see the
+> handoff). Open: camera-frame heap use, and the backlight, which is not the
+> ST7701, GPIO4 or expander pin 4, cannot be switched off in sleep.
 > Start here: **`docs/handoff-2026-09-14-panel-display.md`**.
 >
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd

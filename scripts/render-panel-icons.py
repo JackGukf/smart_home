@@ -8,9 +8,10 @@ antialiased the way a browser would draw them.
 
     python3 scripts/render-panel-icons.py
 
-writes configs/esphome/panel/images/{lamp,bulb,dome}_{on,off}.png movie.png, the Security icons and the launcher app tiles.
+writes configs/esphome/panel/images/{lamp,bulb,dome}_{on,off}.png movie.png, the Security icons, the launcher app tiles and its weather icons.
 """
 
+import math
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -165,6 +166,7 @@ APP_TILES = {
     "security": ("#6BD49E", "#2A8561"),
     "cameras": ("#6C9CF2", "#2E5EC2"),
     "panel": ("#8E97A6", "#4B5361"),
+    "settings": ("#F59A7A", "#D0583E"),
 }
 
 
@@ -218,7 +220,79 @@ def app_icon(name: str, size: int = 92) -> None:
         d.rounded_rectangle([*p(3, 4), *p(21, 17)], radius=round(2 * u), outline=white, width=w)
         d.line([p(8, 21), p(16, 21)], fill=white, width=w)
         d.line([p(12, 17), p(12, 21)], fill=white, width=w)
+    elif name == "settings":
+        # A gear: a solid wheel with eight square teeth and a hole in the middle.
+        for i in range(8):
+            a = math.radians(i * 45)
+            d.line([p(12, 12), p(12 + 9 * math.cos(a), 12 + 9 * math.sin(a))], fill=white, width=round(3.2 * u))
+        d.ellipse([*p(5, 5), *p(19, 19)], fill=white)
+        top_colour = vertical_gradient((1, px), rgba(top), rgba(bottom)).getpixel((0, px // 2))
+        d.ellipse([*p(9, 9), *p(15, 15)], fill=top_colour)
     finish(img, size, f"app_{name}.png")
+
+
+# The launcher's weather, one picture per group of Home Assistant conditions
+# (voice-panel.yaml, weather_refresh, maps each condition to one of these).
+WEATHER_ICONS = ("sunny", "night", "partlycloudy", "cloudy", "rainy", "snowy", "lightning", "fog", "windy")
+SUN = "#FFC94A"
+CLOUD = "#E8EDF3"
+
+
+def _sun(d, k, cx, cy, r):
+    ellipse(d, k, cx, cy, r, r, rgba(SUN))
+    for i in range(8):
+        a = math.radians(i * 45)
+        d.line([((cx + (r + 1.4) * math.cos(a)) * k, (cy + (r + 1.4) * math.sin(a)) * k),
+                ((cx + (r + 3.2) * math.cos(a)) * k, (cy + (r + 3.2) * math.sin(a)) * k)],
+               fill=rgba(SUN), width=round(1.6 * k))
+
+
+def _cloud(d, k, dx=0.0, dy=0.0):
+    c = rgba(CLOUD)
+    ellipse(d, k, 9 + dx, 13 + dy, 4.2, 4.2, c)
+    ellipse(d, k, 14.5 + dx, 11 + dy, 5.5, 5.5, c)
+    d.rounded_rectangle([(4.5 + dx) * k, (13 + dy) * k, (20.5 + dx) * k, (18.5 + dy) * k],
+                        radius=round(2.75 * k), fill=c)
+
+
+def weather_icon(name: str, size: int = 64) -> None:
+    """A filled 24-unit weather picture, bright enough for the launcher's dark ground."""
+    img, k = canvas(24, size)
+    d = ImageDraw.Draw(img)
+    if name == "sunny":
+        _sun(d, k, 12, 12, 4.5)
+    elif name == "night":
+        # a crescent: a disc with an offset disc taken out of it
+        mask = Image.new("L", img.size, 0)
+        md = ImageDraw.Draw(mask)
+        md.ellipse([5 * k, 5 * k, 19 * k, 19 * k], fill=255)
+        md.ellipse([9.5 * k, 2 * k, 23.5 * k, 16 * k], fill=0)
+        img.paste(Image.new("RGBA", img.size, rgba("#E6E9F0")), (0, 0), mask)
+    elif name == "partlycloudy":
+        _sun(d, k, 8.5, 8.5, 3.2)
+        _cloud(d, k, 1.5, 2.5)
+    elif name == "cloudy":
+        _cloud(d, k)
+    elif name in ("rainy", "snowy", "lightning"):
+        _cloud(d, k, 0, -3.5)
+        if name == "rainy":
+            for x in (8.5, 12.5, 16.5):
+                d.line([(x * k, 17 * k), ((x - 1.3) * k, 21 * k)], fill=rgba("#7FB8FF"), width=round(1.8 * k))
+        elif name == "snowy":
+            for x, y in ((8.5, 18.5), (12.5, 20.5), (16.5, 18.5)):
+                ellipse(d, k, x, y, 1.2, 1.2, rgba("#FFFFFF"))
+        else:
+            d.polygon([(13 * k, 14.5 * k), (9.5 * k, 19.5 * k), (12 * k, 19.5 * k), (10.5 * k, 23.5 * k),
+                       (15.5 * k, 17.5 * k), (13 * k, 17.5 * k), (14.5 * k, 14.5 * k)], fill=rgba(SUN))
+    elif name == "fog":
+        for i, y in enumerate((8, 12, 16)):
+            d.line([((4 + 2 * (i % 2)) * k, y * k), ((20 - 2 * (i % 2)) * k, y * k)],
+                   fill=rgba("#C9D1DB"), width=round(2 * k))
+    elif name == "windy":
+        c = rgba("#D6DEE8")
+        for (x0, x1, y) in ((3, 16, 8), (6, 21, 12), (3, 14, 16)):
+            d.line([(x0 * k, y * k), (x1 * k, y * k)], fill=c, width=round(2 * k))
+    finish(img, size, f"weather_{name}.png")
 
 
 def vertical_gradient(size, top, bottom) -> Image.Image:
@@ -287,6 +361,8 @@ def main() -> None:
     security_icons()
     for name in APP_TILES:
         app_icon(name)
+    for name in WEATHER_ICONS:
+        weather_icon(name)
     for p in sorted(OUT.glob("*.png")):
         print(p.relative_to(OUT.parents[2]), Image.open(p).size)
 

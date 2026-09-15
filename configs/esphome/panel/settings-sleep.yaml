@@ -1,0 +1,37 @@
+# One "sleep after" choice on the Settings page. Included with vars:
+#   key     names the button: sleep_${key}
+#   text    what it says
+#   secs    the sleep_secs it sets, 0 for never
+#   x, y
+# settings_refresh marks the one in force as checked.
+button:
+  id: sleep_${key}
+  x: ${x}
+  y: ${y}
+  width: 128
+  height: 56
+  radius: 16
+  bg_color: 0xF2F5F8
+  bg_opa: 12%
+  border_width: 0
+  shadow_width: 0
+  text_color: 0xF2F5F8
+  checked:
+    bg_color: 0xF8E2B2
+    bg_opa: 100%
+    text_color: 0x241A12
+  on_click:
+    - globals.set:
+        id: sleep_secs
+        # A lambda: the substituted number would not pass as the string
+        # globals.set otherwise wants.
+        value: !lambda return ${secs};
+    - script.execute: settings_refresh
+    # Into flash now, not at ESPHome's next 60 s write (settings_save).
+    - script.execute: settings_save
+  widgets:
+    # No text_color of its own, so it follows the button's checked state.
+    - label:
+        align: CENTER
+        text: "${text}"
+        text_font: montserrat_16

@@ -20,13 +20,20 @@
 substitutions:
   name: voice-panel
   friendly_name: Voice Panel
-  # No touch for this long, and no voice session running: the screen sleeps.
-  sleep_after: 120s
+  # This firmware's own version, shown in Settings > About. Bump it with each
+  # voice-panel-vX.Y.Z tag.
+  firmware_version: "0.2.0"
 
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
   min_version: 2024.7.0
+  project:
+    name: smart-home.voice-panel
+    version: "${firmware_version}"
+  # The Settings app's Wi-Fi scan (panel/wifi_scan.h).
+  includes:
+    - panel/wifi_scan.h
   on_boot:
     # Flash 6: the display power-up exactly as Waveshare's demo does it, in
     # its order and with its delays. Priority 700 runs after the expander (900)
@@ -90,7 +97,16 @@ esp32:
     #   XIP_FROM_PSRAM    run code from PSRAM so flash access cannot stall it;
     #                     costs about 1.7 MB of the PSRAM the wake word shares
     sdkconfig_options:
-      CONFIG_LCD_RGB_RESTART_IN_VSYNC: y
+      # Off, deliberately. The RGB driver feeds the panel from two bounce
+      # buffers in turn and picks which to refill from bb_eof_count % 2. With
+      # this on, every VSYNC restarts the stream from buffer 0 but never resets
+      # that count (esp_lcd_panel_rgb.c, lcd_rgb_panel_try_restart_transmission).
+      # One refill interrupt lost in a busy moment - a voice session - leaves the
+      # count odd, and every refill after it lands in the buffer being sent: the
+      # screen shakes once, then flickers until another lost interrupt flips it
+      # back. Off, the VSYNC handler zeroes the count on each restart, and
+      # mipi_rgb asks for a restart every loop.
+      CONFIG_LCD_RGB_RESTART_IN_VSYNC: n
       CONFIG_LCD_RGB_ISR_IRAM_SAFE: y
       CONFIG_SPIRAM_XIP_FROM_PSRAM: y
 
@@ -592,12 +608,15 @@ script:
                   brightness_pct: !lambda return to_string(pct);
 
   # The launcher and its apps: 0 launcher, 1 Lights, 2 Climate, 3 Scenes,
-  # 4 Security, 5 Cameras, 6 Wall panel. Each app's own open and leave work is
+  # 4 Security, 5 Cameras, 6 Wall panel, 7 Settings, 8 Wi-Fi (opened from Settings). Each app's own open and leave work is
   # here: leaving Cameras frees the snapshot, opening Wall panel re-highlights.
   - id: open_app
     parameters:
       page: int
     then:
+      - globals.set:
+          id: current_app
+          value: !lambda return page;
       # Leaving the Cameras app frees the snapshot's memory, which the wake word
       # shares.
       - if:
@@ -619,8 +638,8 @@ script:
           id: page_title
           text: !lambda |-
             static const char *const titles[] = {"", "lights", "climate", "scenes",
-                                                 "security", "cameras", "wall panel"};
-            std::string title = page >= 0 && page <= 6 ? titles[page] : "";
+                                                 "security", "cameras", "wall panel", "settings", "wi-fi"};
+            std::string title = page >= 0 && page <= 8 ? titles[page] : "";
             return title;
       - if:
           condition:
@@ -663,6 +682,247 @@ script:
           then:
             - script.execute: wall_refresh
             - lvgl.page.show: wall_page
+      - if:
+          condition:
+            lambda: return page == 7;
+          then:
+            - script.execute: settings_refresh
+            - lvgl.page.show: settings_page
+      - if:
+          condition:
+            lambda: return page == 8;
+          then:
+            - script.execute: wifi_keyboard_close
+            - script.execute: wifi_refresh
+            - lvgl.page.show: wifi_page
+
+  # The Settings page drawn from what is in force: the speaker's volume (which
+  # Home Assistant can also change) and the sleep choice.
+  - id: settings_refresh
+    then:
+      - lvgl.slider.update:
+          id: volume_slider
+          value: !lambda return (int) roundf(id(media_out).volume * 100);
+      - lvgl.label.update:
+          id: volume_value
+          text: !lambda |-
+            std::string text = to_string((int) roundf(id(media_out).volume * 100)) + "%";
+            return text;
+      - lvgl.widget.update:
+          id: sleep_30
+          state:
+            checked: !lambda return id(sleep_secs) == 30;
+      - lvgl.widget.update:
+          id: sleep_60
+          state:
+            checked: !lambda return id(sleep_secs) == 60;
+      - lvgl.widget.update:
+          id: sleep_120
+          state:
+            checked: !lambda return id(sleep_secs) == 120;
+      - lvgl.widget.update:
+          id: sleep_300
+          state:
+            checked: !lambda return id(sleep_secs) == 300;
+      - lvgl.widget.update:
+          id: sleep_600
+          state:
+            checked: !lambda return id(sleep_secs) == 600;
+      - lvgl.widget.update:
+          id: sleep_never
+          state:
+            checked: !lambda return id(sleep_secs) == 0;
+      - lvgl.label.update:
+          id: settings_wifi_name
+          text: !lambda |-
+            std::string text = id(wifi_ssid).state.empty() ? "Not connected" : id(wifi_ssid).state;
+            return text;
+      # Two short lines: one line with everything ran past the edge.
+      - lvgl.label.update:
+          id: settings_about_version
+          text: !lambda |-
+            std::string text = std::string("${friendly_name} ${firmware_version}, ESPHome ") + ESPHOME_VERSION;
+            return text;
+      # In the panel's own time zone, to the minute; the build machine stamps its own.
+      - lvgl.label.update:
+          id: settings_about_build
+          text: !lambda |-
+            std::string text = "Built " + ESPTime::from_epoch_local(App.get_build_time()).strftime("%Y-%m-%d %H:%M");
+            return text;
+
+  # Settings are kept in flash (NVS): the volume by the media player, the sleep
+  # choice by its restore_value global, Wi-Fi by wifi.configure (which writes at
+  # once). The first two only mark the value for saving, and ESPHome writes those
+  # every 60 s, so a restart soon after a change lost it; this writes now. The
+  # delay lets both record the new value first - each does so in its own loop.
+  - id: settings_save
+    mode: restart
+    then:
+      - delay: 1s
+      - lambda: global_preferences->sync();
+
+  # The Wi-Fi page's status line: where the panel is now. Worded as a state, not
+  # an action - "Connected to" on opening the page read as the panel joining.
+  - id: wifi_refresh
+    then:
+      - lvgl.label.update:
+          id: wifi_status
+          text: !lambda |-
+            std::string text = id(wifi_ssid).state.empty() ? "Not connected" : "Now on " + id(wifi_ssid).state;
+            return text;
+
+  # Look for networks: a scan while connected, read back once it has had time
+  # to finish (a few seconds across all channels).
+  - id: wifi_scan
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: return panel_wifi_scan_start();
+          then:
+            - lvgl.label.update:
+                id: wifi_status
+                text: "Scanning..."
+            - delay: 5s
+            - lambda: |-
+                std::string options = panel_wifi_scan_options(12);
+                id(wifi_scanned) = !options.empty();
+                // ->obj: the roller's LVGL object. id(wifi_list) is ESPHome's
+                // wrapper around it; cast as an lv_obj_t, the options were
+                // written over the wrapper and the memory beside it.
+                lv_roller_set_options(id(wifi_list)->obj,
+                                      id(wifi_scanned) ? options.c_str() : "No networks found",
+                                      LV_ROLLER_MODE_NORMAL);
+            - lvgl.label.update:
+                id: wifi_status
+                text: "Pick a network, then tap Password"
+          else:
+            - lvgl.label.update:
+                id: wifi_status
+                text: "Could not scan now - try again"
+
+  # Typing a password: the list steps aside and the password row moves up above
+  # the keyboard, which is only shown while typing.
+  - id: wifi_keyboard_open
+    then:
+      - lambda: |-
+          char name[64];
+          lv_roller_get_selected_str(id(wifi_list)->obj, name, sizeof(name));
+          id(wifi_target) = name;
+      - lvgl.widget.hide: wifi_list
+      - lvgl.widget.hide: wifi_scan_button
+      - lvgl.widget.hide: wifi_hint
+      - lvgl.widget.update:
+          id: wifi_password
+          y: 112
+      - lvgl.widget.update:
+          id: wifi_connect_button
+          y: 112
+      - lvgl.widget.show: wifi_keyboard
+      - if:
+          condition:
+            lambda: return id(wifi_scanned);
+          then:
+            - lvgl.label.update:
+                id: wifi_status
+                text: !lambda |-
+                  std::string text = "Password for " + id(wifi_target);
+                  return text;
+  - id: wifi_keyboard_close
+    then:
+      - lvgl.widget.hide: wifi_keyboard
+      - lvgl.widget.update:
+          id: wifi_password
+          y: 300
+      - lvgl.widget.update:
+          id: wifi_connect_button
+          y: 300
+      - lvgl.widget.show: wifi_list
+      - lvgl.widget.show: wifi_scan_button
+      - lvgl.widget.show: wifi_hint
+
+  # Join the network picked in the list with the password typed. From the
+  # Connect button or the keyboard's tick.
+  - id: wifi_connect
+    then:
+      - script.execute: wifi_keyboard_close
+      - if:
+          condition:
+            lambda: return !id(wifi_scanned);
+          then:
+            - lvgl.label.update:
+                id: wifi_status
+                text: "Tap Scan, then pick a network"
+          else:
+            - lambda: |-
+                char name[64];
+                lv_roller_get_selected_str(id(wifi_list)->obj, name, sizeof(name));
+                id(wifi_target) = name;
+            - lvgl.label.update:
+                id: wifi_status
+                text: !lambda |-
+                  std::string text = "Joining " + id(wifi_target) + "...";
+                  return text;
+            - wifi.configure:
+                ssid: !lambda return id(wifi_target);
+                password: !lambda return std::string(lv_textarea_get_text(id(wifi_password)));
+                save: true
+                timeout: 30s
+                on_connect:
+                  - lvgl.textarea.update:
+                      id: wifi_password
+                      text: ""
+                  - script.execute: wifi_refresh
+                on_error:
+                  - lvgl.label.update:
+                      id: wifi_status
+                      text: !lambda |-
+                        std::string text = "Could not join " + id(wifi_target);
+                        return text;
+
+  # The launcher's weather: Home Assistant's condition drawn as one of nine
+  # pictures, and the temperature. met.no reports sunny, clear-night,
+  # partlycloudy, cloudy, rainy, pouring, snowy, snowy-rainy, hail, lightning,
+  # lightning-rainy, fog, windy, windy-variant and exceptional.
+  - id: weather_refresh
+    then:
+      - if:
+          condition:
+            lambda: 'return id(weather_condition).state.empty() || id(weather_condition).state == "unavailable" || id(weather_condition).state == "unknown";'
+          then:
+            - lvgl.widget.hide: launcher_weather_icon
+            - lvgl.label.update:
+                id: launcher_weather_temp
+                text: ""
+          else:
+            - lvgl.image.update:
+                id: launcher_weather_icon
+                src: !lambda |-
+                  const std::string &c = id(weather_condition).state;
+                  if (c == "sunny") return id(weather_sunny);
+                  if (c == "clear-night") return id(weather_night);
+                  if (c == "partlycloudy") return id(weather_partlycloudy);
+                  if (c == "rainy" || c == "pouring") return id(weather_rainy);
+                  if (c == "snowy" || c == "snowy-rainy" || c == "hail") return id(weather_snowy);
+                  if (c == "lightning" || c == "lightning-rainy") return id(weather_lightning);
+                  if (c == "fog") return id(weather_fog);
+                  if (c == "windy" || c == "windy-variant") return id(weather_windy);
+                  return id(weather_cloudy);
+            - lvgl.widget.show: launcher_weather_icon
+            - lvgl.label.update:
+                id: launcher_weather_temp
+                text: !lambda |-
+                  std::string text = std::isnan(id(weather_temp).state) ? "" : to_string((int) lroundf(id(weather_temp).state)) + "°";
+                  return text;
+
+  # The launcher's page dots: the page of apps showing is the solid one.
+  - id: launcher_dots
+    parameters:
+      first: bool
+    then:
+      - lambda: |-
+          lv_obj_set_style_bg_opa(id(launcher_dot_1), first ? LV_OPA_COVER : LV_OPA_40, 0);
+          lv_obj_set_style_bg_opa(id(launcher_dot_2), first ? LV_OPA_40 : LV_OPA_COVER, 0);
 
   # The launcher's Lights badge: how many of the six are on, from Home Assistant.
   - id: launcher_refresh
@@ -691,6 +951,14 @@ script:
       - script.execute:
           id: open_app
           page: 0
+      # And to the first page of apps.
+      - lvgl.tileview.select:
+          id: launcher_apps
+          tile_id: apps_page_1
+          animated: false
+      - script.execute:
+          id: launcher_dots
+          first: true
       - lvgl.widget.hide: voice_pill
       - lvgl.widget.show: sleep_cover
       - delay: 300ms
@@ -1138,8 +1406,10 @@ lvgl:
   # is a black cover and LVGL paused: nothing redraws, the screen shows black.
   # A touch resumes LVGL (resume_on_input, on by default; the wake tap is not
   # passed to the page) and on_resume lifts the cover. "Okay Nabu" wakes it too.
+  # How long is the Settings app's choice (sleep_secs, 0 for never), read on
+  # every check, so a change applies at once.
   on_idle:
-    - timeout: ${sleep_after}
+    - timeout: !lambda 'return id(sleep_secs) > 0 ? id(sleep_secs) * 1000 : 0xFFFFFFFFu;'
       then:
         - if:
             condition:
@@ -1179,10 +1449,11 @@ lvgl:
                 bg_opa: 10%
                 shadow_width: 0
                 border_width: 0
+                # Back: Wi-Fi returns to Settings, every other app to the launcher.
                 on_click:
                   - script.execute:
                       id: open_app
-                      page: 0
+                      page: !lambda 'return id(current_app) == 8 ? 7 : 0;'
                 widgets:
                   - label:
                       align: CENTER
@@ -1311,12 +1582,90 @@ lvgl:
             text: ""
             text_font: montserrat_16
             text_color: 0xC2C8CF
-        - !include {file: panel/app-tile.yaml, vars: {key: lights, title: "Lights", icon: app_lights, page: 1, x: 24, y: 214}}
-        - !include {file: panel/app-tile.yaml, vars: {key: climate, title: "Climate", icon: app_climate, page: 2, x: 176, y: 214}}
-        - !include {file: panel/app-tile.yaml, vars: {key: scenes, title: "Scenes", icon: app_scenes, page: 3, x: 328, y: 214}}
-        - !include {file: panel/app-tile.yaml, vars: {key: security, title: "Security", icon: app_security, page: 4, x: 24, y: 346}}
-        - !include {file: panel/app-tile.yaml, vars: {key: cameras, title: "Cameras", icon: app_cameras, page: 5, x: 176, y: 346}}
-        - !include {file: panel/app-tile.yaml, vars: {key: wall, title: "Wall panel", icon: app_panel, page: 6, x: 328, y: 346}}
+        # The weather now, top right, beside the clock (weather_refresh). Hidden
+        # until Home Assistant has sent a condition.
+        - image:
+            id: launcher_weather_icon
+            src: weather_cloudy
+            x: 390
+            y: 18
+            hidden: true
+        - label:
+            id: launcher_weather_temp
+            x: 334
+            y: 88
+            width: 120
+            text: ""
+            text_align: RIGHT
+            text_font: montserrat_20
+            text_color: 0xF2F5F8
+        # The apps, six to a page; swipe left for the next. A new app takes the
+        # next free place (x 24/176/328, y 6/136); a full page needs another tile
+        # here, a dot below and a line in launcher_dots.
+        - tileview:
+            id: launcher_apps
+            x: 0
+            y: 190
+            width: 480
+            height: 272
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            scrollbar_mode: "OFF"
+            on_value:
+              - script.execute:
+                  id: launcher_dots
+                  first: !lambda return tile == id(apps_page_1);
+            tiles:
+              - id: apps_page_1
+                row: 0
+                column: 0
+                dir: RIGHT
+                bg_opa: 0%
+                pad_all: 0
+                widgets:
+                  - !include {file: panel/app-tile.yaml, vars: {key: lights, title: "Lights", icon: app_lights, page: 1, x: 24, y: 6}}
+                  - !include {file: panel/app-tile.yaml, vars: {key: climate, title: "Climate", icon: app_climate, page: 2, x: 176, y: 6}}
+                  - !include {file: panel/app-tile.yaml, vars: {key: scenes, title: "Scenes", icon: app_scenes, page: 3, x: 328, y: 6}}
+                  - !include {file: panel/app-tile.yaml, vars: {key: security, title: "Security", icon: app_security, page: 4, x: 24, y: 136}}
+                  - !include {file: panel/app-tile.yaml, vars: {key: cameras, title: "Cameras", icon: app_cameras, page: 5, x: 176, y: 136}}
+                  - !include {file: panel/app-tile.yaml, vars: {key: wall, title: "Wall panel", icon: app_panel, page: 6, x: 328, y: 136}}
+              - id: apps_page_2
+                row: 0
+                column: 1
+                dir: LEFT
+                bg_opa: 0%
+                pad_all: 0
+                widgets:
+                  - !include {file: panel/app-tile.yaml, vars: {key: settings, title: "Settings", icon: app_settings, page: 7, x: 24, y: 6}}
+        # Which page of apps is showing.
+        - obj:
+            id: launcher_dot_1
+            x: 223
+            y: 466
+            width: 8
+            height: 8
+            radius: 4
+            pad_all: 0
+            border_width: 0
+            bg_color: 0xF2F5F8
+            bg_opa: 100%
+            clickable: false
+            scrollable: false
+        - obj:
+            id: launcher_dot_2
+            x: 249
+            y: 466
+            width: 8
+            height: 8
+            radius: 4
+            pad_all: 0
+            border_width: 0
+            bg_color: 0xF2F5F8
+            bg_opa: 40%
+            clickable: false
+            scrollable: false
 
     # Lights: the six cards; a lamp opens the light full screen.
     - id: lights_page
@@ -1905,6 +2254,297 @@ lvgl:
                 text_font: montserrat_14
                 text_color: 0x9EE6C5
 
+    # Settings: the speaker's volume, and how long without a touch before the
+    # screen sleeps. Opened from the launcher's gear.
+    - id: settings_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        # Swipe right goes back, as on every app (see wall_swipe).
+        - obj:
+            id: settings_swipe
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 0
+            widgets:
+            - label:
+                x: 28
+                y: 70
+                text: "Volume"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+            - label:
+                id: volume_value
+                x: 332
+                y: 70
+                width: 120
+                text: ""
+                text_align: RIGHT
+                text_font: montserrat_20
+                text_color: 0xC2C8CF
+            - slider:
+                id: volume_slider
+                # Dragging the bar must never read as a swipe back.
+                gesture_bubble: false
+                x: 28
+                y: 104
+                width: 424
+                height: 40
+                min_value: 0
+                max_value: 100
+                value: 0
+                radius: 18
+                bg_color: 0x0E1422
+                bg_opa: 60%
+                indicator:
+                  radius: 18
+                  bg_color: 0xF8E2B2
+                  bg_grad_color: 0x7A6448
+                  bg_grad_dir: HOR
+                knob:
+                  bg_opa: 0%
+                  border_width: 0
+                  shadow_width: 0
+                on_value:
+                  - lvgl.label.update:
+                      id: volume_value
+                      text: !lambda |-
+                        std::string text = to_string((int) x) + "%";
+                        return text;
+                # On release, not while dragging: the media player keeps its
+                # volume across restarts, and each change is a save.
+                on_release:
+                  - media_player.volume_set:
+                      id: media_out
+                      volume: !lambda return x / 100.0f;
+                  - script.execute: settings_save
+            - label:
+                x: 28
+                y: 162
+                text: "Sleep after"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "30", text: "30 s", secs: 30, x: 28, y: 198}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "60", text: "1 min", secs: 60, x: 176, y: 198}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "120", text: "2 min", secs: 120, x: 324, y: 198}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "300", text: "5 min", secs: 300, x: 28, y: 260}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: "600", text: "10 min", secs: 600, x: 176, y: 260}}
+            - !include {file: panel/settings-sleep.yaml, vars: {key: never, text: "Never", secs: 0, x: 324, y: 260}}
+            - label:
+                x: 28
+                y: 346
+                text: "Wi-Fi"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+            - label:
+                id: settings_wifi_name
+                x: 96
+                y: 349
+                width: 224
+                height: 20
+                long_mode: dot
+                text: ""
+                text_font: montserrat_16
+                text_color: 0xC2C8CF
+            - button:
+                x: 332
+                y: 334
+                width: 120
+                height: 44
+                radius: 16
+                bg_color: 0xF2F5F8
+                bg_opa: 12%
+                border_width: 0
+                shadow_width: 0
+                on_click:
+                  - script.execute:
+                      id: open_app
+                      page: 8
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: "Change"
+                      text_font: montserrat_16
+                      text_color: 0xF2F5F8
+            - label:
+                x: 28
+                y: 404
+                text: "About"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+            - label:
+                id: settings_about_version
+                x: 96
+                y: 400
+                width: 356
+                height: 20
+                long_mode: dot
+                text: "${friendly_name} ${firmware_version}"
+                text_font: montserrat_16
+                text_color: 0xF2F5F8
+            - label:
+                id: settings_about_build
+                x: 96
+                y: 423
+                width: 356
+                height: 18
+                long_mode: dot
+                text: ""
+                text_font: montserrat_14
+                text_color: 0xC2C8CF
+
+    # Wi-Fi: pick a network and give its password. wifi.configure saves both and,
+    # if the panel cannot join within 30 s, goes back to the network it was on.
+    - id: wifi_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        # Swipe right goes back to Settings (see wall_swipe).
+        - obj:
+            id: wifi_swipe
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 7
+            widgets:
+            - label:
+                id: wifi_status
+                x: 28
+                y: 72
+                width: 310
+                height: 22
+                long_mode: dot
+                text: ""
+                text_font: montserrat_16
+                text_color: 0x9EE6C5
+            - button:
+                id: wifi_scan_button
+                x: 352
+                y: 60
+                width: 100
+                height: 42
+                radius: 14
+                bg_color: 0xF2F5F8
+                bg_opa: 12%
+                border_width: 0
+                shadow_width: 0
+                on_click:
+                  - script.execute: wifi_scan
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: "Scan"
+                      text_font: montserrat_16
+                      text_color: 0xF2F5F8
+            # A fixed height: visible_row_count is applied before the font, so
+            # it sized the list for the default font and showed a sliver.
+            - roller:
+                id: wifi_list
+                # Scrolling the list must never read as a swipe back.
+                gesture_bubble: false
+                x: 28
+                y: 112
+                width: 424
+                height: 172
+                options:
+                  - "Tap Scan to find networks"
+                text_font: montserrat_20
+                text_color: 0xF2F5F8
+                bg_color: 0x0E1422
+                bg_opa: 60%
+                border_width: 0
+                radius: 14
+                selected:
+                  bg_color: 0xF8E2B2
+                  text_color: 0x241A12
+            - textarea:
+                id: wifi_password
+                gesture_bubble: false
+                x: 28
+                y: 300
+                width: 300
+                height: 50
+                one_line: true
+                password_mode: true
+                max_length: 63
+                placeholder_text: "Password"
+                text_font: montserrat_20
+                text_color: 0x241A12
+                bg_color: 0xF2F5F8
+                bg_opa: 90%
+                border_width: 0
+                radius: 14
+                on_focus:
+                  - script.execute: wifi_keyboard_open
+            - button:
+                id: wifi_connect_button
+                x: 340
+                y: 300
+                width: 112
+                height: 50
+                radius: 14
+                bg_color: 0xF8E2B2
+                border_width: 0
+                shadow_width: 0
+                on_click:
+                  - script.execute: wifi_connect
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: "Connect"
+                      text_font: montserrat_16
+                      text_color: 0x241A12
+            - label:
+                id: wifi_hint
+                x: 28
+                y: 366
+                width: 424
+                text: "The panel saves the network. If it cannot join within 30 seconds, it goes back to the one it was on."
+                text_font: montserrat_14
+                text_color: 0xC2C8CF
+            # Shown only while typing (wifi_keyboard_open).
+            - keyboard:
+                id: wifi_keyboard
+                gesture_bubble: false
+                hidden: true
+                x: 0
+                y: 272
+                width: 480
+                height: 208
+                textarea: wifi_password
+                mode: TEXT_LOWER
+                on_ready:
+                  - script.execute: wifi_connect
+                on_cancel:
+                  - script.execute: wifi_keyboard_close
+
     # One light, full screen: name and state top left, the lamp on its cord,
     # one round power button. A dimmer also gets a brightness bar and presets,
     # and its lamp moves left to make room. open_light fills it in.
@@ -2173,6 +2813,25 @@ globals:
   - id: cam_last_ok_ms
     type: uint32_t
     initial_value: "0"
+  # Settings: seconds without a touch before the panel sleeps, 0 for never.
+  # Kept across restarts.
+  - id: sleep_secs
+    type: int
+    restore_value: true
+    initial_value: "120"
+  # The open_app page showing, so the header's back button knows that Wi-Fi
+  # goes back to Settings rather than to the launcher.
+  - id: current_app
+    type: int
+    initial_value: "0"
+  # The Wi-Fi page: whether the list holds networks from a scan (not the "tap
+  # Scan" hint), and the network being joined.
+  - id: wifi_scanned
+    type: bool
+    initial_value: "false"
+  - id: wifi_target
+    type: std::string
+    initial_value: '""'
 
 # Rendered from the design's SVGs by scripts/render-panel-icons.py.
 image:
@@ -2276,6 +2935,56 @@ image:
     id: app_panel
     type: RGB565
     transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_settings.png
+    id: app_settings
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/weather_sunny.png
+    id: weather_sunny
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/weather_night.png
+    id: weather_night
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/weather_partlycloudy.png
+    id: weather_partlycloudy
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/weather_cloudy.png
+    id: weather_cloudy
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/weather_rainy.png
+    id: weather_rainy
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/weather_snowy.png
+    id: weather_snowy
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/weather_lightning.png
+    id: weather_lightning
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/weather_fog.png
+    id: weather_fog
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/weather_windy.png
+    id: weather_windy
+    type: RGB565
+    transparency: alpha_channel
   - platform: online_image
     id: cam_image
     url: "http://192.168.0.83:1985/camera/front_door_camera.jpg"
@@ -2356,6 +3065,29 @@ http_request:
   verify_ssl: false
 
 text_sensor:
+  # The weather at home (met.no through Home Assistant), for the launcher.
+  - platform: homeassistant
+    id: weather_condition
+    entity_id: weather.forecast_home
+    internal: true
+    on_value:
+      - script.execute: weather_refresh
+  # The network the panel is on, for Settings. scan_results is not shown; it is
+  # here because it makes the Wi-Fi component keep every network a scan finds,
+  # which the Wi-Fi page lists (panel/wifi_scan.h).
+  - platform: wifi_info
+    ssid:
+      id: wifi_ssid
+      internal: true
+      on_value:
+        - lvgl.label.update:
+            id: settings_wifi_name
+            text: !lambda |-
+              std::string text = x.empty() ? "Not connected" : x;
+              return text;
+    scan_results:
+      id: wifi_scan_results
+      internal: true
   - platform: homeassistant
     id: alarm_state
     entity_id: alarm_control_panel.duo_gong_neng_bao_jing_zhu_ji
@@ -2376,6 +3108,13 @@ debug:
   update_interval: 30s
 
 sensor:
+  - platform: homeassistant
+    id: weather_temp
+    entity_id: weather.forecast_home
+    attribute: temperature
+    internal: true
+    on_value:
+      - script.execute: weather_refresh
   - platform: debug
     free:
       name: "Heap free"

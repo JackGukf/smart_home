@@ -19,16 +19,22 @@ Owner-tested, in order of the design's build list:
 | Cameras: front door and garage, near-live via `panel-camera.service`, opening on the last view | phase 5, garage camera |
 | Back button and swipe right; sleep after 2 min (black cover + LVGL paused); wake on touch or "Okay Nabu"; voice pill | swipe, sleep and wake |
 | Clock correct from boot (`timezone: America/Vancouver`) | time zone at boot |
+| Launcher apps on swipeable pages (six a page, dots); Settings app: volume, sleep after 30 s–never, Wi-Fi (scan, pick, password, join), About (firmware 0.2.0, ESPHome, build time); all kept in flash | settings and Wi-Fi |
+| Weather at home (icon and temperature) top right of the launcher, from `weather.forecast_home` | settings and Wi-Fi |
+| Voice-time flicker fixed: `CONFIG_LCD_RGB_RESTART_IN_VSYNC` off (owner-tested) | settings, Wi-Fi and the flicker |
 | Dashboard: switch cards correct ~2 s after a light changes elsewhere | dashboard section |
 
 **Still open**, most useful first:
-- **Voice-time dots:** a few pixels corrupt after several voice sessions and stay
-  until restart; a software restart clears them. Cause not found (owner parked it;
-  no "reset display" button wanted). See "Memory, flicker and Wi-Fi".
+- **A single shake** can still happen during a voice session (one lost bounce
+  buffer refill); since the fix the picture recovers at the next frame. The
+  owner accepts it.
 - **Camera memory:** a frame costs ~21 KB of internal heap (the 18 KB JPEG decoder
   is created per frame); low point 35 KB. Fix not chosen: PSRAM-backed malloc for
   large allocations vs patching `runtime_image`.
-- **Backlight** stays on in sleep: the 4B's backlight pin is undocumented here.
+- **Backlight** stays on in sleep, and none of the reachable controls is it
+  (tested 2026-09-15): not the ST7701 (display off 0x28 + sleep in 0x10 left it
+  lit), not GPIO4, not expander pin 4 (each pulled low while awake, no change).
+  It goes dark only when power is removed. Needs the 4B schematic.
 - `allow_service_calls` for the panel is not codified in `setup-ha-voice.py`.
 - The wake word has not been re-measured with the display on.
 - A Security card that fires turns red but does not move to the front.
@@ -494,6 +500,79 @@ Ruled out between flashes 5 and 6, from source rather than by flashing:
   byte-swapped by ESPHome on purpose (big-endian buffer); wrong order would give
   wrong colours, not black. An IPS panel is black when not driven, so black alone
   does not prove the ST7701 is asleep.
+
+## Settings, Wi-Fi and the voice-time flicker (2026-09-15)
+
+**Launcher pages.** The tiles sit in a `tileview` (`launcher_apps`), six to a
+page, swipe left for the next; `launcher_dots` marks the page. Page 2 holds
+Settings. Sleep returns to page 1. A new app takes the next free place (x
+24/176/328, y 6/136 inside a tile); a new page needs a tile, a dot and a line in
+`launcher_dots`.
+
+**Settings** (open_app 7) and **Wi-Fi** (open_app 8, from Settings; back and swipe
+return to Settings via `current_app`):
+- Volume slider sets `media_out` on release. Sleep choices set `sleep_secs`
+  (`on_idle` reads it on every check; 0 is never).
+- Wi-Fi: Scan calls `esp_wifi_scan_start` while connected (`panel/wifi_scan.h`);
+  the internal `wifi_info` `scan_results` sensor is what makes the Wi-Fi
+  component keep every network, not only the configured one. Connect runs
+  `wifi.configure` (`save: true`, 30 s): on failure it restores the previous
+  network, so a wrong password cannot strand the panel.
+- **Kept in flash (NVS).** Wi-Fi is written at once (`save_wifi_sta` syncs). The
+  volume (`VolumeRestoreState`) and `sleep_secs` (`restore_value`) are only marked
+  for saving, from each component's own loop, and ESPHome writes marked values
+  every 60 s - so `settings_save` waits 1 s and calls `global_preferences->sync()`.
+- YAML trap met again: an unquoted one-line lambda with `? :` is a syntax error.
+
+**The voice-time flicker - what was tested, all on the owner's eyes:**
+
+| Theory | Test | Result |
+| --- | --- | --- |
+| VSYNC restart runs late (0.9 ms of back porch) | `vsync_back_porch` 20 → 60 | still flickers; reverted |
+| Long LLM replies stress the panel | logs of "what is the weather tomorrow" | the resolver answers in 20 ms with a 4 s reply - not long; flicker anyway |
+| Microphone/speaker DMA interrupts share core 1 with the display | `esp_intr_dump` after sessions: `LCD_CAM`, `DMA_OUT_CH0` (refill) and the mic's `DMA_IN_CH0` all on CPU 1. A local `i2s_audio` copy ran `i2s_channel_init_std_mode` on core 0; the dump then showed `DMA_IN_CH0` on CPU 0 | still flickers; patch and diagnostic removed |
+
+Facts worth keeping: ESPHome's `loopTask` is pinned to core 1 and creates the
+display's interrupts at boot; the mic, speaker, mixer and wake word tasks are
+unpinned; Wi-Fi is pinned to core 0. The I2S drivers are started from `loop()`,
+and the bus lock is a FreeRTOS mutex (only the taking task may release it), so
+the whole start cannot simply move to another task.
+
+| Something writes display memory (another task) | a shadow copy of the frame buffer compared row by row, skipping rows LVGL flushes (`LV_EVENT_FLUSH_START`), and `heap_caps_check_integrity_all` every 30 s on core 0 with light heap poisoning | 0 bytes changed outside LVGL and every heap check passed, through the flicker - not memory |
+
+**The cause, found 2026-09-15 and fixed.** The owner's observation gave it away:
+a voice session with no shake never flickered; **one shake, then flicker until
+another shake**. In `esp_lcd_panel_rgb.c` (IDF 5.5.5) the DMA EOF handler picks
+the bounce buffer to refill from `bb_eof_count % 2`. With
+`CONFIG_LCD_RGB_RESTART_IN_VSYNC=y` - set in flash 10 against the boot flicker -
+every VSYNC restarts the DMA from buffer 0 but **never resets `bb_eof_count`**;
+only the `#else` branch zeroes it. A frame has 48 refills (480 lines / 10), so
+the parity holds - until two EOF interrupts merge in a busy moment. That frame
+counts 47, the parity flips, and every later refill lands in the buffer being
+sent: flicker, until another merge flips it back. With the option **off**, the
+VSYNC handler zeroes the count on each restart (mipi_rgb requests one every
+loop) and restarts short frames, so a lost refill costs one shaken frame. The
+boot flicker flash 10 fixed did not return with the other two options kept.
+
+Also learned on the way, and still true: ESPHome's `loopTask` is pinned to core
+1 and allocates the display's interrupts; the I2S drivers start from `loop()`;
+the I2S bus lock is a FreeRTOS mutex (only the task that took it may release it).
+
+### Traps from the Settings work
+
+- **ESPHome LVGL wrappers are not `lv_obj_t`.** A roller (and dropdown,
+  keyboard, buttonmatrix) id is an `LvRollerType` etc.; the LVGL object is
+  `->obj`. `(lv_obj_t *) id(wifi_list)` compiles and writes into the wrapper and
+  the memory beside it: the list never updated and another button opened the
+  wrong app. Plain `obj`, `label`, `textarea` ids are `lv_obj_t *`.
+- **`visible_row_count` is applied before the font**, so a roller sized that way
+  is a sliver with a larger font; give it a height.
+- **Backlight tests need the screen awake** and a person looking; sleep changes
+  nothing about the backlight.
+- **Firmware version:** `substitutions: firmware_version`, used by
+  `esphome: project:`; bump it with each `voice-panel-vX.Y.Z` tag. The build time
+  is shown in the panel's own zone (`ESPTime::from_epoch_local`), since the build
+  string is stamped in the build container's zone.
 
 ## Differences still left, most likely first
 
