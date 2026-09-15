@@ -319,6 +319,44 @@ the release, and `camera_open` clears it again.
 no flicker. Heap free read 80 KB (largest block 40 KB) straight after that flash,
 against 94 KB / 53 KB before — recheck before adding the garage camera.
 
+## Wall panel remote (owner-tested, pushed `3d64bab`)
+
+Voice Panel page with six cards fires the HA event `esphome.wall_panel_show_view`
+(`homeassistant.event`: over the API connection, never blocks the main loop). The
+dashboard's event stream subscribes to it only when the client is a trusted host
+(the wall panel, `dashboard_auth.trusted_hosts`) and forwards `event: show_view`;
+`app.js` accepts only `home, cameras, alarm, devices, climate, status`. No HA
+configuration needed. Tests: `test_wall_panel_remote.py`, `test_wall_panel_frontend.py`.
+
+## Panel memory, checked before the garage camera (2026-09-15)
+
+HA history of the debug sensors across every flash: **no leak** — flat for hours
+within a firmware — but internal heap **steps down with each page**: 94 KB (Home) →
+83 → 81 → 77 (Security) → 76 (Cameras) → 74 KB (Wall panel); largest block 54 → 34
+KB; dips to ~31 KB largest block during camera use. Why: ESPHome's `psram:` sets
+`CONFIG_SPIRAM_USE_CAPS_ALLOC`, not `USE_MALLOC`, so ordinary `malloc` (every
+automation, script, `std::string`, callback; Wi-Fi/lwIP buffers) is internal RAM;
+LVGL's own allocations already go to PSRAM (`lvgl_esphome.cpp`, `MALLOC_CAP_SPIRAM`).
+Not changed yet — added `debug` **`min_free`** ("Heap minimum free", the low
+watermark since boot) to see the real worst case over a day of voice and camera
+use before deciding. Levers if it gets tight: fewer static Wi-Fi RX buffers (16),
+or PSRAM-backed malloc for large allocations.
+
+## Garage camera (flash `0x8ff9f965`)
+
+- One `online_image` (`cam_image`, renamed from `front_cam`) for both cameras — no
+  second decode/download buffer. `camera_select` releases, clears `cam_busy`, sets
+  `cam_stream`, reopens with that camera's last view; every URL is built from
+  `cam_stream`. The relay serves `front_door_camera,garage_camera` by default.
+- **The garage camera sends a keyframe every 8 s** (ffprobe: keyframes at 0/8/16 s,
+  20 fps), so its first live frame takes ~9 s; the saved last view covers that.
+  Shortening its I-frame interval in the camera's own settings would fix it at the
+  source.
+- **Trap:** the relay restarted ffmpeg after 5 s without data — shorter than the
+  garage's keyframe wait, so it was killed just before every first frame, for ever
+  (journal: "no data from ffmpeg for 5 s" every 7 s). A new ffmpeg now gets
+  `STARTUP_READ_TIMEOUT_SECONDS` (15 s) for its first frame.
+
 Ruled out between flashes 5 and 6, from source rather than by flashing:
 
 - **The init table is correct.** Parsed Arduino_GFX's `st7701_type1_init_operations`

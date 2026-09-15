@@ -41,7 +41,7 @@ def test_ffmpeg_reads_go2rtc_locally_at_the_panels_exact_size() -> None:
 
 
 def test_only_named_streams_are_served() -> None:
-    assert relay.settings_from_env({}).streams == {"front_door_camera"}
+    assert relay.settings_from_env({}).streams == {"front_door_camera", "garage_camera"}
     assert relay.settings_from_env({}).save_dir == relay.DEFAULT_SAVE_DIR
     settings = relay.settings_from_env({"PANEL_CAMERA_STREAMS": "front_door_camera, garage_camera,../etc,A B"})
     assert settings.streams == {"front_door_camera", "garage_camera"}
@@ -79,6 +79,7 @@ class FakeProcess:
 @pytest.fixture(autouse=True)
 def quick(monkeypatch):
     monkeypatch.setattr(relay, "READ_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(relay, "STARTUP_READ_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(relay, "RESTART_BACKOFF_SECONDS", 0.01)
 
 
@@ -227,3 +228,29 @@ async def test_the_last_view_survives_a_restart_of_the_relay(tmp_path) -> None:
 async def test_an_unknown_camera_has_no_last_view() -> None:
     feeds, _, _ = _feeds(FakeClock(), [FakeProcess([])])
     assert relay.last_response(feeds, "garage_camera")[0] == 404
+
+
+@pytest.mark.asyncio
+async def test_a_slow_first_frame_is_waited_for_not_restarted(monkeypatch) -> None:
+    """The garage camera's first frame comes at its next keyframe, up to 8 s away.
+    A new ffmpeg must be given longer than the between-frames limit, or it is
+    killed just before that frame every time and no picture ever arrives."""
+    monkeypatch.setattr(relay, "READ_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(relay, "STARTUP_READ_TIMEOUT_SECONDS", 1.0)
+    clock = FakeClock()
+    slow = FakeProcess([])
+    feeds, feed, spawned = _feeds(clock, [slow])
+
+    relay.frame_response(feeds, "front_door_camera")
+    await asyncio.sleep(0.2)                      # four times the between-frames limit
+    slow.stdout.feed_data(_jpeg(b"keyframe"))
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if feed.frame is not None:
+            break
+
+    assert len(spawned) == 1, "ffmpeg was restarted while waiting for its first frame"
+    assert relay.frame_response(feeds, "front_door_camera")[1] == _jpeg(b"keyframe")
+
+    clock.now += relay.IDLE_STOP_SECONDS + 1
+    await asyncio.wait_for(feed.task, 2.0)

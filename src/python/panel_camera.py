@@ -16,7 +16,8 @@ none is fresh yet, so the panel is never made to wait. Nobody asking for 20 s st
 ffmpeg.
 
 It reads go2rtc's own RTSP output on 127.0.0.1, which needs no camera credentials,
-and it serves only the streams it is told to (PANEL_CAMERA_STREAMS). Like go2rtc's
+and it serves only the streams it is told to (PANEL_CAMERA_STREAMS: front door and
+garage by default). Like go2rtc's
 own API it answers the LAN without authentication, because the panel has no way to
 log in; it exposes nothing but those frames.
 
@@ -50,7 +51,9 @@ DEFAULT_PORT = 1985
 DEFAULT_WIDTH = 432
 DEFAULT_HEIGHT = 243
 DEFAULT_FPS = 4
-DEFAULT_STREAMS = "front_door_camera"
+# The Voice Panel's Cameras page. The garage camera sends a full frame only every
+# 8 s, so its first live frame takes ~9 s; its saved last view covers that wait.
+DEFAULT_STREAMS = "front_door_camera,garage_camera"
 DEFAULT_RTSP_BASE = "rtsp://127.0.0.1:8554"
 DEFAULT_SAVE_DIR = Path.home() / ".cache" / "panel-camera"
 
@@ -60,6 +63,10 @@ IDLE_STOP_SECONDS = 20.0
 STALE_AFTER_SECONDS = 3.0
 # ffmpeg sent nothing for this long: restart it.
 READ_TIMEOUT_SECONDS = 5.0
+# ...but a new ffmpeg gets longer for its first frame: it can only start at the
+# camera's next keyframe, and the garage camera sends one every 8 s. With the
+# 5 s limit its ffmpeg was killed just before each first frame, for ever.
+STARTUP_READ_TIMEOUT_SECONDS = 15.0
 RESTART_BACKOFF_SECONDS = 2.0
 # A stream that never closes a frame must not grow the buffer without bound.
 MAX_PARTIAL_BYTES = 2_000_000
@@ -203,12 +210,14 @@ class CameraFeed:
             LOG.info("%s: starting ffmpeg", self.stream)
             proc = await self.spawn(command)
             buffer = b""
+            started = False
             try:
                 while self.watched():
+                    limit = READ_TIMEOUT_SECONDS if started else STARTUP_READ_TIMEOUT_SECONDS
                     try:
-                        chunk = await asyncio.wait_for(proc.stdout.read(65536), READ_TIMEOUT_SECONDS)
+                        chunk = await asyncio.wait_for(proc.stdout.read(65536), limit)
                     except (asyncio.TimeoutError, TimeoutError):
-                        LOG.warning("%s: no data from ffmpeg for %.0f s", self.stream, READ_TIMEOUT_SECONDS)
+                        LOG.warning("%s: no data from ffmpeg for %.0f s", self.stream, limit)
                         break
                     if not chunk:
                         LOG.warning("%s: ffmpeg exited", self.stream)
@@ -217,6 +226,7 @@ class CameraFeed:
                     if len(buffer) > MAX_PARTIAL_BYTES:
                         buffer = b""
                     if frames:
+                        started = True
                         self.frame = self.last = frames[-1]
                         self.frame_at = self.clock()
                         if self.clock() - self.saved_at >= SAVE_EVERY_SECONDS:

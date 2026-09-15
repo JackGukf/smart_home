@@ -546,7 +546,7 @@ script:
             - lvgl.label.update:
                 id: cam_status
                 text: "Loading..."
-            - online_image.release: front_cam
+            - online_image.release: cam_image
             # Release cuts off a download in flight without calling
             # on_download_finished or on_error, so nothing else would clear
             # this: the next visit's camera_fetch saw "busy" and never asked.
@@ -592,7 +592,7 @@ script:
             - globals.set:
                 id: cam_busy
                 value: "true"
-            - component.update: front_cam
+            - component.update: cam_image
 
   # Highlight the view last sent to the wall panel.
   - id: wall_refresh
@@ -652,10 +652,44 @@ script:
             std::string text = id(wall_view) == "status" ? "Showing" : "Show";
             return text;
 
+  # Choosing a camera on the Cameras page. One image serves both, so nothing more
+  # is allocated: stop what is downloading (release does not call the callbacks,
+  # hence clearing cam_busy here), point it at the other camera, and open that
+  # camera's last view, then live.
+  - id: camera_select
+    parameters:
+      stream: string
+    then:
+      - lvgl.widget.hide: cam_view
+      - online_image.release: cam_image
+      - globals.set:
+          id: cam_busy
+          value: "false"
+      - globals.set:
+          id: cam_stream
+          value: !lambda return stream;
+      - script.execute: camera_open
+
   # Opening the Cameras page: show the relay's last view first - it answers at
   # once, while the live frames take 2-3 s to start - then go live.
   - id: camera_open
     then:
+      - lvgl.widget.update:
+          id: cam_pick_front
+          state:
+            checked: !lambda return id(cam_stream) == "front_door_camera";
+      - lvgl.widget.update:
+          id: cam_pick_garage
+          state:
+            checked: !lambda return id(cam_stream) == "garage_camera";
+      - lvgl.label.update:
+          id: cam_name
+          text: !lambda |-
+            std::string text = id(cam_stream) == "garage_camera" ? "Garage camera" : "Front door camera";
+            return text;
+      - lvgl.label.update:
+          id: cam_time
+          text: ""
       - globals.set:
           id: cam_busy
           value: "false"
@@ -669,8 +703,8 @@ script:
           id: cam_status
           text: "Loading..."
       - online_image.set_url:
-          id: front_cam
-          url: "http://192.168.0.83:1985/camera/front_door_camera/last.jpg"
+          id: cam_image
+          url: !lambda 'return "http://192.168.0.83:1985/camera/" + id(cam_stream) + "/last.jpg";'
           update: false
       - script.execute: camera_fetch
 
@@ -1428,6 +1462,7 @@ lvgl:
       pad_all: 0
       widgets:
         - obj:
+            id: cam_pick_front
             x: 24
             y: 70
             width: 209
@@ -1435,9 +1470,16 @@ lvgl:
             radius: 16
             pad_all: 0
             border_width: 0
-            bg_color: 0x647696
-            bg_opa: 90%
+            bg_color: 0x3E444E
+            bg_opa: 74%
             scrollable: false
+            checked:
+              bg_color: 0x647696
+              bg_opa: 90%
+            on_click:
+              - script.execute:
+                  id: camera_select
+                  stream: "front_door_camera"
             widgets:
               - image:
                   src: door
@@ -1453,6 +1495,42 @@ lvgl:
                   x: 58
                   y: 38
                   text: "near-live"
+                  text_font: montserrat_14
+                  text_color: 0xD1D6DC
+        - obj:
+            id: cam_pick_garage
+            x: 247
+            y: 70
+            width: 209
+            height: 72
+            radius: 16
+            pad_all: 0
+            border_width: 0
+            bg_color: 0x3E444E
+            bg_opa: 74%
+            scrollable: false
+            checked:
+              bg_color: 0x647696
+              bg_opa: 90%
+            on_click:
+              - script.execute:
+                  id: camera_select
+                  stream: "garage_camera"
+            widgets:
+              - image:
+                  src: garage
+                  x: 14
+                  y: 20
+              - label:
+                  x: 58
+                  y: 16
+                  text: "GARAGE"
+                  text_font: montserrat_14
+                  text_color: 0xF2F5F8
+              - label:
+                  x: 58
+                  y: 38
+                  text: "starts in ~9 s"
                   text_font: montserrat_14
                   text_color: 0xD1D6DC
         - obj:
@@ -1497,6 +1575,7 @@ lvgl:
               - label:
                   x: 12
                   y: 216
+                  id: cam_name
                   text: "Front door camera"
                   text_font: montserrat_14
                   text_color: 0xF2F5F8
@@ -1743,6 +1822,10 @@ globals:
   - id: wall_view
     type: std::string
     initial_value: '"home"'
+  # The camera the Cameras page shows: a stream name the board's relay serves.
+  - id: cam_stream
+    type: std::string
+    initial_value: '"front_door_camera"'
   # A snapshot download is in flight (camera_fetch).
   - id: cam_busy
     type: bool
@@ -1833,7 +1916,7 @@ image:
     type: RGB565
     transparency: alpha_channel
   - platform: online_image
-    id: front_cam
+    id: cam_image
     url: "http://192.168.0.83:1985/camera/front_door_camera.jpg"
     format: JPEG
     type: RGB565
@@ -1849,7 +1932,7 @@ image:
           value: !lambda return millis();
       - lvgl.image.update:
           id: cam_view
-          src: front_cam
+          src: cam_image
       - lvgl.widget.show: cam_view
       - if:
           condition:
@@ -1867,8 +1950,8 @@ image:
                 id: cam_phase
                 value: "1"
             - online_image.set_url:
-                id: front_cam
-                url: "http://192.168.0.83:1985/camera/front_door_camera.jpg"
+                id: cam_image
+                url: !lambda 'return "http://192.168.0.83:1985/camera/" + id(cam_stream) + ".jpg";'
                 update: false
           else:
             - lvgl.label.update:
@@ -1895,8 +1978,8 @@ image:
                 id: cam_phase
                 value: "1"
             - online_image.set_url:
-                id: front_cam
-                url: "http://192.168.0.83:1985/camera/front_door_camera.jpg"
+                id: cam_image
+                url: !lambda 'return "http://192.168.0.83:1985/camera/" + id(cam_stream) + ".jpg";'
                 update: false
       - if:
           condition:
@@ -1935,6 +2018,11 @@ sensor:
   - platform: debug
     free:
       name: "Heap free"
+      entity_category: diagnostic
+    # The lowest internal heap since boot. "Heap free" is a snapshot every 30 s;
+    # this catches the dips a voice session or a camera download cause.
+    min_free:
+      name: "Heap minimum free"
       entity_category: diagnostic
     block:
       name: "Heap largest block"
