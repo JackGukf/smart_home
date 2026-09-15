@@ -374,7 +374,25 @@ Design approved: `docs/design/voice-panel-screens.html` (artifact version 3).
 - Icons: `app_*` 92 px tiles from `render-panel-icons.py` (flash, not RAM).
 - Cost: flash 2.76 MB (+0.26), PSRAM free 5.08 MB (−0.27), heap free 76.5 KB,
   largest block 34.8 KB — unchanged from before.
-- Next in the build order: swipe right to go back; then sleep and wake.
+- Owner-tested, committed `732f953`.
+
+### Swipe right to go back (awaiting owner test)
+
+- Every app page's content now sits inside a transparent full-screen wrapper
+  (`<app>_swipe`, `clickable: true`) with `on_swipe_right` → `open_app` 0; the light
+  page's wrapper runs `close_light` (back to Lights). The brightness bar has
+  `gesture_bubble: false`.
+- **Traps, from ESPHome's LVGL source:** pages accept only `on_load`/`on_unload`,
+  not swipe triggers; and a swipe trigger **clears `LV_OBJ_FLAG_SCROLLABLE`** on the
+  widget it is on — so it cannot go on `lights_scroll`. The wrapper must be
+  clickable, or a swipe that starts on empty space never reaches it.
+- **Trap that made the first flash do nothing:** LVGL (`lv_indev.c`, `indev_gesture`)
+  sends `LV_EVENT_GESTURE` not to the first widget with a handler but to the first
+  one up the parent chain **without** `LV_OBJ_FLAG_GESTURE_BUBBLE` — and every child
+  widget has that flag by default (`lv_obj.c`). The wrapper had it, so every swipe
+  went past it to the page. Each wrapper now sets `gesture_bubble: false`. Also: no
+  gesture is detected while a list is scrolling.
+- Next: sleep and wake.
 
 ## Memory, flicker and Wi-Fi, measured 2026-09-15 (not yet committed)
 

@@ -1222,47 +1222,68 @@ lvgl:
       scrollable: false
       pad_all: 0
       widgets:
-        # Everything under the bar scrolls; the bar stays.
+        # Swipe right goes back to the launcher. On a wrapper, not the page (pages take no swipe triggers) and not the scrolling list (a swipe trigger turns scrolling off).
         - obj:
-            id: lights_scroll
+            id: lights_swipe
+            # LVGL delivers a gesture to the first widget up the chain WITHOUT
+            # gesture_bubble - which every child has by default - so without this
+            # the swipe went past the wrapper to the page and nothing happened.
+            gesture_bubble: false
             x: 0
-            y: 64
+            y: 0
             width: 480
-            height: 416
+            height: 480
             radius: 0
+            pad_all: 0
             border_width: 0
             bg_opa: 0%
-            pad_top: 0
-            pad_bottom: 24
-            pad_left: 24
-            pad_right: 24
-            scrollbar_mode: "OFF"
-            scroll_dir: VER
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 0
             widgets:
-              - !include
-                file: panel/card-toggle.yaml
-                vars: {key: master, entity: light.bedroom_master_bedroom_light, name: "MASTER BEDROOM LIGHT", room: Bedroom, x: 0, y: 0, dimmer: "false", level: "0"}
-              - !include
-                file: panel/card-toggle.yaml
-                vars: {key: living2, entity: light.living_room_living_room_switch_2, name: "LIVING ROOM SWITCH 2", room: Living Room, x: 222, y: 0, dimmer: "false", level: "0"}
-              - !include
-                file: panel/card-toggle.yaml
-                vars: {key: kitchen, entity: light.kitchen_light_switch, name: "KITCHEN LIGHT SWITCH", room: Kitchen, x: 0, y: 143, dimmer: "true", level: "id(kitchen_pct)"}
-              - !include
-                file: panel/card-toggle.yaml
-                vars: {key: family, entity: light.family_room_switch, name: "FAMILY ROOM SWITCH", room: Family room, x: 222, y: 143, dimmer: "true", level: "id(family_pct)"}
-              - label:
-                  x: 4
-                  y: 286
-                  text: "BEDROOM • OFFICE"
-                  text_font: montserrat_14
-                  text_color: 0xA8ADB3
-              - !include
-                file: panel/card-toggle.yaml
-                vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, name: "NORTH BEDROOM LIGHT SWITCH", room: Bedroom, x: 0, y: 312, dimmer: "false", level: "0"}
-              - !include
-                file: panel/card-toggle.yaml
-                vars: {key: stick, entity: light.stick_s3, name: "STICK S3", room: Office, x: 222, y: 312, dimmer: "false", level: "0"}
+            # Everything under the bar scrolls; the bar stays.
+            - obj:
+                id: lights_scroll
+                x: 0
+                y: 64
+                width: 480
+                height: 416
+                radius: 0
+                border_width: 0
+                bg_opa: 0%
+                pad_top: 0
+                pad_bottom: 24
+                pad_left: 24
+                pad_right: 24
+                scrollbar_mode: "OFF"
+                scroll_dir: VER
+                widgets:
+                  - !include
+                    file: panel/card-toggle.yaml
+                    vars: {key: master, entity: light.bedroom_master_bedroom_light, name: "MASTER BEDROOM LIGHT", room: Bedroom, x: 0, y: 0, dimmer: "false", level: "0"}
+                  - !include
+                    file: panel/card-toggle.yaml
+                    vars: {key: living2, entity: light.living_room_living_room_switch_2, name: "LIVING ROOM SWITCH 2", room: Living Room, x: 222, y: 0, dimmer: "false", level: "0"}
+                  - !include
+                    file: panel/card-toggle.yaml
+                    vars: {key: kitchen, entity: light.kitchen_light_switch, name: "KITCHEN LIGHT SWITCH", room: Kitchen, x: 0, y: 143, dimmer: "true", level: "id(kitchen_pct)"}
+                  - !include
+                    file: panel/card-toggle.yaml
+                    vars: {key: family, entity: light.family_room_switch, name: "FAMILY ROOM SWITCH", room: Family room, x: 222, y: 143, dimmer: "true", level: "id(family_pct)"}
+                  - label:
+                      x: 4
+                      y: 286
+                      text: "BEDROOM • OFFICE"
+                      text_font: montserrat_14
+                      text_color: 0xA8ADB3
+                  - !include
+                    file: panel/card-toggle.yaml
+                    vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, name: "NORTH BEDROOM LIGHT SWITCH", room: Bedroom, x: 0, y: 312, dimmer: "false", level: "0"}
+                  - !include
+                    file: panel/card-toggle.yaml
+                    vars: {key: stick, entity: light.stick_s3, name: "STICK S3", room: Office, x: 222, y: 312, dimmer: "false", level: "0"}
 
     # Climate: the ecobee on its own screen. The target moves at once on a tap and
     # Home Assistant's update confirms or corrects it (thermo_step).
@@ -1273,131 +1294,152 @@ lvgl:
       scrollable: false
       pad_all: 0
       widgets:
+        # Swipe right goes back to the launcher. On a wrapper, not the page (pages take no swipe triggers) and not the scrolling list (a swipe trigger turns scrolling off).
         - obj:
-            x: 24
-            y: 76
-            width: 432
-            height: 252
-            radius: 16
+            id: climate_swipe
+            # LVGL delivers a gesture to the first widget up the chain WITHOUT
+            # gesture_bubble - which every child has by default - so without this
+            # the swipe went past the wrapper to the page and nothing happened.
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
             pad_all: 0
             border_width: 0
-            bg_color: 0x3E444E
-            bg_opa: 74%
-            scrollable: false
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 0
             widgets:
-              - label:
-                  id: thermo_mode
-                  align: TOP_MID
-                  y: 20
-                  text: "--"
-                  text_font: montserrat_16
-                  text_color: 0xF3B23A
-              - button:
-                  x: 30
-                  y: 92
-                  width: 72
-                  height: 72
-                  radius: 36
-                  bg_color: 0x14161A
-                  bg_opa: 55%
-                  shadow_width: 0
-                  border_width: 0
-                  on_click:
-                    - script.execute:
-                        id: thermo_step
-                        delta: -1.0
-                  widgets:
-                    - label:
-                        align: CENTER
-                        text: "-"
-                        text_font: montserrat_40
-                        text_color: 0xF2F5F8
-              - label:
-                  id: thermo_temp
-                  align: TOP_MID
-                  y: 100
-                  width: 220
-                  text_align: CENTER
-                  text: "--"
-                  text_font: montserrat_48
-                  text_color: 0xF2F5F8
-              - button:
-                  x: 330
-                  y: 92
-                  width: 72
-                  height: 72
-                  radius: 36
-                  bg_color: 0x14161A
-                  bg_opa: 55%
-                  shadow_width: 0
-                  border_width: 0
-                  on_click:
-                    - script.execute:
-                        id: thermo_step
-                        delta: 1.0
-                  widgets:
-                    - label:
-                        align: CENTER
-                        text: "+"
-                        text_font: montserrat_40
-                        text_color: 0xF2F5F8
-              - label:
-                  id: thermo_sub
-                  align: TOP_MID
-                  y: 196
-                  text: "My ecobee • target"
-                  text_font: montserrat_14
-                  text_color: 0xD1D6DC
-        - obj:
-            x: 24
-            y: 342
-            width: 209
-            height: 112
-            radius: 16
-            pad_all: 0
-            border_width: 0
-            bg_color: 0x3E444E
-            bg_opa: 74%
-            scrollable: false
-            widgets:
-              - label:
-                  x: 16
-                  y: 18
-                  text: "ROOM"
-                  text_font: montserrat_14
-                  text_color: 0xF2F5F8
-              - label:
-                  id: thermo_room_value
-                  x: 16
-                  y: 50
-                  text: "--"
-                  text_font: montserrat_28
-                  text_color: 0xF2F5F8
-        - obj:
-            x: 247
-            y: 342
-            width: 209
-            height: 112
-            radius: 16
-            pad_all: 0
-            border_width: 0
-            bg_color: 0x3E444E
-            bg_opa: 74%
-            scrollable: false
-            widgets:
-              - label:
-                  x: 16
-                  y: 18
-                  text: "HUMIDITY"
-                  text_font: montserrat_14
-                  text_color: 0xF2F5F8
-              - label:
-                  id: thermo_hum_value
-                  x: 16
-                  y: 50
-                  text: "--"
-                  text_font: montserrat_28
-                  text_color: 0xF2F5F8
+            - obj:
+                x: 24
+                y: 76
+                width: 432
+                height: 252
+                radius: 16
+                pad_all: 0
+                border_width: 0
+                bg_color: 0x3E444E
+                bg_opa: 74%
+                scrollable: false
+                widgets:
+                  - label:
+                      id: thermo_mode
+                      align: TOP_MID
+                      y: 20
+                      text: "--"
+                      text_font: montserrat_16
+                      text_color: 0xF3B23A
+                  - button:
+                      x: 30
+                      y: 92
+                      width: 72
+                      height: 72
+                      radius: 36
+                      bg_color: 0x14161A
+                      bg_opa: 55%
+                      shadow_width: 0
+                      border_width: 0
+                      on_click:
+                        - script.execute:
+                            id: thermo_step
+                            delta: -1.0
+                      widgets:
+                        - label:
+                            align: CENTER
+                            text: "-"
+                            text_font: montserrat_40
+                            text_color: 0xF2F5F8
+                  - label:
+                      id: thermo_temp
+                      align: TOP_MID
+                      y: 100
+                      width: 220
+                      text_align: CENTER
+                      text: "--"
+                      text_font: montserrat_48
+                      text_color: 0xF2F5F8
+                  - button:
+                      x: 330
+                      y: 92
+                      width: 72
+                      height: 72
+                      radius: 36
+                      bg_color: 0x14161A
+                      bg_opa: 55%
+                      shadow_width: 0
+                      border_width: 0
+                      on_click:
+                        - script.execute:
+                            id: thermo_step
+                            delta: 1.0
+                      widgets:
+                        - label:
+                            align: CENTER
+                            text: "+"
+                            text_font: montserrat_40
+                            text_color: 0xF2F5F8
+                  - label:
+                      id: thermo_sub
+                      align: TOP_MID
+                      y: 196
+                      text: "My ecobee • target"
+                      text_font: montserrat_14
+                      text_color: 0xD1D6DC
+            - obj:
+                x: 24
+                y: 342
+                width: 209
+                height: 112
+                radius: 16
+                pad_all: 0
+                border_width: 0
+                bg_color: 0x3E444E
+                bg_opa: 74%
+                scrollable: false
+                widgets:
+                  - label:
+                      x: 16
+                      y: 18
+                      text: "ROOM"
+                      text_font: montserrat_14
+                      text_color: 0xF2F5F8
+                  - label:
+                      id: thermo_room_value
+                      x: 16
+                      y: 50
+                      text: "--"
+                      text_font: montserrat_28
+                      text_color: 0xF2F5F8
+            - obj:
+                x: 247
+                y: 342
+                width: 209
+                height: 112
+                radius: 16
+                pad_all: 0
+                border_width: 0
+                bg_color: 0x3E444E
+                bg_opa: 74%
+                scrollable: false
+                widgets:
+                  - label:
+                      x: 16
+                      y: 18
+                      text: "HUMIDITY"
+                      text_font: montserrat_14
+                      text_color: 0xF2F5F8
+                  - label:
+                      id: thermo_hum_value
+                      x: 16
+                      y: 50
+                      text: "--"
+                      text_font: montserrat_28
+                      text_color: 0xF2F5F8
 
     # Scenes are Home Assistant scripts (scripts/install-panel-scenes.py), so a
     # tap here, "Okay Nabu, movie mode" and the dashboard run the same ones.
@@ -1408,23 +1450,44 @@ lvgl:
       scrollable: false
       pad_all: 0
       widgets:
-        - !include
-          file: panel/card-scene.yaml
-          vars: {key: all_on, script: script.panel_all_lights_on, title: "ALL LIGHTS ON", sub: "6 lights", art: bulb_on, toast: "All 6 lights on", y: 76}
-        - !include
-          file: panel/card-scene.yaml
-          vars: {key: all_off, script: script.panel_all_lights_off, title: "ALL LIGHTS OFF", sub: "6 lights", art: bulb_off, toast: "All 6 lights off", y: 189}
-        - !include
-          file: panel/card-scene.yaml
-          vars: {key: movie, script: script.movie_mode, title: "MOVIE MODE", sub: "Living room switch 2 and cabinet LED off, ambient light on", art: movie, toast: "Movie mode: living room dark, ambient light on", y: 302}
-        - label:
-            id: scene_toast
-            x: 28
-            y: 418
-            width: 424
-            text: ""
-            text_font: montserrat_14
-            text_color: 0x9EE6C5
+        # Swipe right goes back to the launcher. On a wrapper, not the page (pages take no swipe triggers) and not the scrolling list (a swipe trigger turns scrolling off).
+        - obj:
+            id: scenes_swipe
+            # LVGL delivers a gesture to the first widget up the chain WITHOUT
+            # gesture_bubble - which every child has by default - so without this
+            # the swipe went past the wrapper to the page and nothing happened.
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 0
+            widgets:
+            - !include
+              file: panel/card-scene.yaml
+              vars: {key: all_on, script: script.panel_all_lights_on, title: "ALL LIGHTS ON", sub: "6 lights", art: bulb_on, toast: "All 6 lights on", y: 76}
+            - !include
+              file: panel/card-scene.yaml
+              vars: {key: all_off, script: script.panel_all_lights_off, title: "ALL LIGHTS OFF", sub: "6 lights", art: bulb_off, toast: "All 6 lights off", y: 189}
+            - !include
+              file: panel/card-scene.yaml
+              vars: {key: movie, script: script.movie_mode, title: "MOVIE MODE", sub: "Living room switch 2 and cabinet LED off, ambient light on", art: movie, toast: "Movie mode: living room dark, ambient light on", y: 302}
+            - label:
+                id: scene_toast
+                x: 28
+                y: 418
+                width: 424
+                text: ""
+                text_font: montserrat_14
+                text_color: 0x9EE6C5
 
     # Security, read-only: the alarm and the six sensors the dashboard's alarm
     # card watches (dashboard_home_alarm.json on the board). A sensor needing
@@ -1436,78 +1499,99 @@ lvgl:
       scrollable: false
       pad_all: 0
       widgets:
+        # Swipe right goes back to the launcher. On a wrapper, not the page (pages take no swipe triggers) and not the scrolling list (a swipe trigger turns scrolling off).
         - obj:
-            id: sec_summary
-            x: 24
-            y: 70
-            width: 432
-            height: 86
-            radius: 16
+            id: security_swipe
+            # LVGL delivers a gesture to the first widget up the chain WITHOUT
+            # gesture_bubble - which every child has by default - so without this
+            # the swipe went past the wrapper to the page and nothing happened.
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
             pad_all: 0
             border_width: 0
-            bg_color: 0x3E444E
-            bg_opa: 74%
-            scrollable: false
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 0
             widgets:
-              - image:
-                  id: sec_shield
-                  src: shield_ok
-                  x: 12
-                  y: 17
-              - label:
-                  id: sec_title
-                  x: 78
-                  y: 20
-                  text: "ALL CLEAR"
-                  text_font: montserrat_16
-                  text_color: 0xF2F5F8
-              - label:
-                  id: sec_sub
-                  x: 78
-                  y: 46
-                  width: 250
-                  height: 18
-                  long_mode: dot
-                  text: "Alarm -- • 6 sensors"
-                  text_font: montserrat_14
-                  text_color: 0xD1D6DC
-              - obj:
-                  id: sec_pill
-                  x: 334
-                  y: 27
-                  width: 84
-                  height: 32
-                  radius: 16
-                  pad_all: 0
-                  border_width: 0
-                  bg_color: 0x6FD3A7
-                  bg_opa: 22%
-                  scrollable: false
-                  widgets:
-                    - label:
-                        id: sec_pill_text
-                        align: CENTER
-                        text: "CLEAR"
-                        text_font: montserrat_14
-                        text_color: 0x9EE6C5
-        - !include
-          file: panel/card-security.yaml
-          vars: {key: frontyard, name: "FRONT YARD", icon: person, off_text: "No one", x: 24, y: 168}
-        - !include
-          file: panel/card-security.yaml
-          vars: {key: door, name: "FRONT DOOR", icon: door, off_text: "Closed", x: 247, y: 168}
-        - !include
-          file: panel/card-security.yaml
-          vars: {key: window, name: "OFFICE WINDOW", icon: window, off_text: "Closed", x: 24, y: 270}
-        - !include
-          file: panel/card-security.yaml
-          vars: {key: smoke, name: "KITCHEN SMOKE", icon: smoke, off_text: "No smoke", x: 247, y: 270}
-        - !include
-          file: panel/card-security.yaml
-          vars: {key: doorcam, name: "FRONT DOOR CAMERA", icon: person, off_text: "No one", x: 24, y: 372}
-        - !include
-          file: panel/card-security.yaml
-          vars: {key: garage, name: "GARAGE", icon: garage, off_text: "No one", x: 247, y: 372}
+            - obj:
+                id: sec_summary
+                x: 24
+                y: 70
+                width: 432
+                height: 86
+                radius: 16
+                pad_all: 0
+                border_width: 0
+                bg_color: 0x3E444E
+                bg_opa: 74%
+                scrollable: false
+                widgets:
+                  - image:
+                      id: sec_shield
+                      src: shield_ok
+                      x: 12
+                      y: 17
+                  - label:
+                      id: sec_title
+                      x: 78
+                      y: 20
+                      text: "ALL CLEAR"
+                      text_font: montserrat_16
+                      text_color: 0xF2F5F8
+                  - label:
+                      id: sec_sub
+                      x: 78
+                      y: 46
+                      width: 250
+                      height: 18
+                      long_mode: dot
+                      text: "Alarm -- • 6 sensors"
+                      text_font: montserrat_14
+                      text_color: 0xD1D6DC
+                  - obj:
+                      id: sec_pill
+                      x: 334
+                      y: 27
+                      width: 84
+                      height: 32
+                      radius: 16
+                      pad_all: 0
+                      border_width: 0
+                      bg_color: 0x6FD3A7
+                      bg_opa: 22%
+                      scrollable: false
+                      widgets:
+                        - label:
+                            id: sec_pill_text
+                            align: CENTER
+                            text: "CLEAR"
+                            text_font: montserrat_14
+                            text_color: 0x9EE6C5
+            - !include
+              file: panel/card-security.yaml
+              vars: {key: frontyard, name: "FRONT YARD", icon: person, off_text: "No one", x: 24, y: 168}
+            - !include
+              file: panel/card-security.yaml
+              vars: {key: door, name: "FRONT DOOR", icon: door, off_text: "Closed", x: 247, y: 168}
+            - !include
+              file: panel/card-security.yaml
+              vars: {key: window, name: "OFFICE WINDOW", icon: window, off_text: "Closed", x: 24, y: 270}
+            - !include
+              file: panel/card-security.yaml
+              vars: {key: smoke, name: "KITCHEN SMOKE", icon: smoke, off_text: "No smoke", x: 247, y: 270}
+            - !include
+              file: panel/card-security.yaml
+              vars: {key: doorcam, name: "FRONT DOOR CAMERA", icon: person, off_text: "No one", x: 24, y: 372}
+            - !include
+              file: panel/card-security.yaml
+              vars: {key: garage, name: "GARAGE", icon: garage, off_text: "No one", x: 247, y: 372}
 
     # Cameras: near-live JPEG frames, not video - the S3 cannot decode video.
     # Frames come from the board's camera relay (src/python/panel_camera.py),
@@ -1523,132 +1607,153 @@ lvgl:
       scrollable: false
       pad_all: 0
       widgets:
+        # Swipe right goes back to the launcher. On a wrapper, not the page (pages take no swipe triggers) and not the scrolling list (a swipe trigger turns scrolling off).
         - obj:
-            id: cam_pick_front
-            x: 24
-            y: 70
-            width: 209
-            height: 72
-            radius: 16
+            id: cameras_swipe
+            # LVGL delivers a gesture to the first widget up the chain WITHOUT
+            # gesture_bubble - which every child has by default - so without this
+            # the swipe went past the wrapper to the page and nothing happened.
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
             pad_all: 0
             border_width: 0
-            bg_color: 0x3E444E
-            bg_opa: 74%
-            scrollable: false
-            checked:
-              bg_color: 0x647696
-              bg_opa: 90%
-            on_click:
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
               - script.execute:
-                  id: camera_select
-                  stream: "front_door_camera"
+                  id: open_app
+                  page: 0
             widgets:
-              - image:
-                  src: door
-                  x: 14
-                  y: 20
-              - label:
-                  x: 58
-                  y: 16
-                  text: "FRONT DOOR"
-                  text_font: montserrat_14
-                  text_color: 0xF2F5F8
-              - label:
-                  x: 58
-                  y: 38
-                  text: "near-live"
-                  text_font: montserrat_14
-                  text_color: 0xD1D6DC
-        - obj:
-            id: cam_pick_garage
-            x: 247
-            y: 70
-            width: 209
-            height: 72
-            radius: 16
-            pad_all: 0
-            border_width: 0
-            bg_color: 0x3E444E
-            bg_opa: 74%
-            scrollable: false
-            checked:
-              bg_color: 0x647696
-              bg_opa: 90%
-            on_click:
-              - script.execute:
-                  id: camera_select
-                  stream: "garage_camera"
-            widgets:
-              - image:
-                  src: garage
-                  x: 14
-                  y: 20
-              - label:
-                  x: 58
-                  y: 16
-                  text: "GARAGE"
-                  text_font: montserrat_14
-                  text_color: 0xF2F5F8
-              - label:
-                  x: 58
-                  y: 38
-                  text: "starts in ~9 s"
-                  text_font: montserrat_14
-                  text_color: 0xD1D6DC
-        - obj:
-            x: 24
-            y: 156
-            width: 432
-            height: 243
-            radius: 16
-            pad_all: 0
-            border_width: 0
-            bg_color: 0x14161A
-            bg_opa: 80%
-            clip_corner: true
-            scrollable: false
-            widgets:
-              - label:
-                  id: cam_status
-                  align: CENTER
-                  text: "Loading..."
-                  text_font: montserrat_16
-                  text_color: 0xA8ADB3
-              - image:
-                  id: cam_view
-                  src: movie
-                  x: 0
-                  y: 0
-                  hidden: true
-              - label:
-                  id: cam_tag
-                  x: 12
-                  y: 10
-                  text: "LAST VIEW"
-                  text_font: montserrat_14
-                  text_color: 0xF2F5F8
-                  bg_color: 0x0C0E12
-                  bg_opa: 60%
-                  radius: 8
-                  pad_left: 8
-                  pad_right: 8
-                  pad_top: 3
-                  pad_bottom: 3
-              - label:
-                  x: 12
-                  y: 216
-                  id: cam_name
-                  text: "Front door camera"
-                  text_font: montserrat_14
-                  text_color: 0xF2F5F8
-              - label:
-                  id: cam_time
-                  align: TOP_RIGHT
-                  x: -12
-                  y: 216
-                  text: ""
-                  text_font: montserrat_14
-                  text_color: 0xF2F5F8
+            - obj:
+                id: cam_pick_front
+                x: 24
+                y: 70
+                width: 209
+                height: 72
+                radius: 16
+                pad_all: 0
+                border_width: 0
+                bg_color: 0x3E444E
+                bg_opa: 74%
+                scrollable: false
+                checked:
+                  bg_color: 0x647696
+                  bg_opa: 90%
+                on_click:
+                  - script.execute:
+                      id: camera_select
+                      stream: "front_door_camera"
+                widgets:
+                  - image:
+                      src: door
+                      x: 14
+                      y: 20
+                  - label:
+                      x: 58
+                      y: 16
+                      text: "FRONT DOOR"
+                      text_font: montserrat_14
+                      text_color: 0xF2F5F8
+                  - label:
+                      x: 58
+                      y: 38
+                      text: "near-live"
+                      text_font: montserrat_14
+                      text_color: 0xD1D6DC
+            - obj:
+                id: cam_pick_garage
+                x: 247
+                y: 70
+                width: 209
+                height: 72
+                radius: 16
+                pad_all: 0
+                border_width: 0
+                bg_color: 0x3E444E
+                bg_opa: 74%
+                scrollable: false
+                checked:
+                  bg_color: 0x647696
+                  bg_opa: 90%
+                on_click:
+                  - script.execute:
+                      id: camera_select
+                      stream: "garage_camera"
+                widgets:
+                  - image:
+                      src: garage
+                      x: 14
+                      y: 20
+                  - label:
+                      x: 58
+                      y: 16
+                      text: "GARAGE"
+                      text_font: montserrat_14
+                      text_color: 0xF2F5F8
+                  - label:
+                      x: 58
+                      y: 38
+                      text: "starts in ~9 s"
+                      text_font: montserrat_14
+                      text_color: 0xD1D6DC
+            - obj:
+                x: 24
+                y: 156
+                width: 432
+                height: 243
+                radius: 16
+                pad_all: 0
+                border_width: 0
+                bg_color: 0x14161A
+                bg_opa: 80%
+                clip_corner: true
+                scrollable: false
+                widgets:
+                  - label:
+                      id: cam_status
+                      align: CENTER
+                      text: "Loading..."
+                      text_font: montserrat_16
+                      text_color: 0xA8ADB3
+                  - image:
+                      id: cam_view
+                      src: movie
+                      x: 0
+                      y: 0
+                      hidden: true
+                  - label:
+                      id: cam_tag
+                      x: 12
+                      y: 10
+                      text: "LAST VIEW"
+                      text_font: montserrat_14
+                      text_color: 0xF2F5F8
+                      bg_color: 0x0C0E12
+                      bg_opa: 60%
+                      radius: 8
+                      pad_left: 8
+                      pad_right: 8
+                      pad_top: 3
+                      pad_bottom: 3
+                  - label:
+                      x: 12
+                      y: 216
+                      id: cam_name
+                      text: "Front door camera"
+                      text_font: montserrat_14
+                      text_color: 0xF2F5F8
+                  - label:
+                      id: cam_time
+                      align: TOP_RIGHT
+                      x: -12
+                      y: 216
+                      text: ""
+                      text_font: montserrat_14
+                      text_color: 0xF2F5F8
 
     # Wall panel: a remote for the hallway screen (the Raspberry Pi showing the
     # dashboard). The six views are the owner's decision; Security is the
@@ -1660,20 +1765,41 @@ lvgl:
       scrollable: false
       pad_all: 0
       widgets:
-        - !include {file: panel/card-view.yaml, vars: {key: home, title: "Home", icon: "", x: 24, y: 70}}
-        - !include {file: panel/card-view.yaml, vars: {key: cameras, title: "Cameras", icon: "", x: 247, y: 70}}
-        - !include {file: panel/card-view.yaml, vars: {key: alarm, title: "Security", icon: "", x: 24, y: 179}}
-        - !include {file: panel/card-view.yaml, vars: {key: devices, title: "Devices", icon: "", x: 247, y: 179}}
-        - !include {file: panel/card-view.yaml, vars: {key: climate, title: "Climate", icon: "", x: 24, y: 288}}
-        - !include {file: panel/card-view.yaml, vars: {key: status, title: "Status", icon: "", x: 247, y: 288}}
-        - label:
-            id: wall_toast
-            x: 28
-            y: 402
-            width: 424
-            text: "Tap a view to show it on the hallway wall panel"
-            text_font: montserrat_14
-            text_color: 0x9EE6C5
+        # Swipe right goes back to the launcher. On a wrapper, not the page (pages take no swipe triggers) and not the scrolling list (a swipe trigger turns scrolling off).
+        - obj:
+            id: wall_swipe
+            # LVGL delivers a gesture to the first widget up the chain WITHOUT
+            # gesture_bubble - which every child has by default - so without this
+            # the swipe went past the wrapper to the page and nothing happened.
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
+            radius: 0
+            pad_all: 0
+            border_width: 0
+            bg_opa: 0%
+            clickable: true
+            on_swipe_right:
+              - script.execute:
+                  id: open_app
+                  page: 0
+            widgets:
+            - !include {file: panel/card-view.yaml, vars: {key: home, title: "Home", icon: "", x: 24, y: 70}}
+            - !include {file: panel/card-view.yaml, vars: {key: cameras, title: "Cameras", icon: "", x: 247, y: 70}}
+            - !include {file: panel/card-view.yaml, vars: {key: alarm, title: "Security", icon: "", x: 24, y: 179}}
+            - !include {file: panel/card-view.yaml, vars: {key: devices, title: "Devices", icon: "", x: 247, y: 179}}
+            - !include {file: panel/card-view.yaml, vars: {key: climate, title: "Climate", icon: "", x: 24, y: 288}}
+            - !include {file: panel/card-view.yaml, vars: {key: status, title: "Status", icon: "", x: 247, y: 288}}
+            - label:
+                id: wall_toast
+                x: 28
+                y: 402
+                width: 424
+                text: "Tap a view to show it on the hallway wall panel"
+                text_font: montserrat_14
+                text_color: 0x9EE6C5
 
     # One light, full screen: name and state top left, the lamp on its cord,
     # one round power button. A dimmer also gets a brightness bar and presets,
@@ -1685,142 +1811,163 @@ lvgl:
       scrollable: false
       pad_all: 0
       widgets:
-        - image:
-            id: detail_lamp
-            src: dome_off
-            align: TOP_MID
-            y: 0
-        - button:
-            x: 24
-            y: 24
-            width: 53
-            height: 53
-            radius: 27
-            bg_color: 0xFFFFFF
-            bg_opa: 8%
-            shadow_width: 0
-            border_width: 0
-            on_click:
-              - script.execute: close_light
-            widgets:
-              - label:
-                  align: CENTER
-                  text: ""
-                  text_font: montserrat_22
-                  text_color: 0xF2F5F8
-        - label:
-            id: detail_name
-            x: 91
-            y: 28
-            width: 200
-            height: 20
-            long_mode: dot
-            text: ""
-            text_font: montserrat_16
-            text_color: 0xF2F5F8
-        - label:
-            id: detail_state
-            x: 91
-            y: 50
-            text: "OFF"
-            text_font: montserrat_16
-            text_color: 0xF2F5F8
-        - label:
-            id: detail_level
-            align: TOP_MID
-            y: 266
-            text: ""
-            text_font: montserrat_16
-            text_color: 0xBFC5CC
-        # Dimmers only. The bar sends one command when released; a preset
-        # sends one at once.
+        # Swipe right goes back to Lights, as the back button does.
         - obj:
-            id: detail_dim_box
-            x: 318
-            y: 88
-            width: 150
-            height: 222
+            id: light_swipe
+            # LVGL delivers a gesture to the first widget up the chain WITHOUT
+            # gesture_bubble - which every child has by default - so without this
+            # the swipe went past the wrapper to the page and nothing happened.
+            gesture_bubble: false
+            x: 0
+            y: 0
+            width: 480
+            height: 480
             radius: 0
             pad_all: 0
             border_width: 0
             bg_opa: 0%
-            scrollable: false
-            hidden: true
+            clickable: true
+            on_swipe_right:
+              - script.execute: close_light
             widgets:
-              - slider:
-                  id: detail_slider
-                  x: 0
-                  y: 0
-                  width: 60
-                  height: 220
-                  min_value: 0
-                  max_value: 100
-                  value: 0
-                  radius: 18
-                  bg_color: 0x0E1422
-                  bg_opa: 60%
-                  indicator:
-                    radius: 18
-                    bg_color: 0xF8E2B2
-                    bg_grad_color: 0x7A6448
-                    bg_grad_dir: VER
-                  knob:
-                    bg_opa: 0%
-                    border_width: 0
-                    shadow_width: 0
-                  on_value:
-                    - lvgl.label.update:
-                        id: detail_level
-                        # Two statements on purpose: a one-line return here is
-                        # pasted straight into lv_label_set_text(), which takes
-                        # a const char*, and a std::string does not compile.
-                        text: !lambda |-
-                          std::string text = "Brightness " + to_string((int) x) + "%";
-                          return text;
-                  on_release:
-                    - script.execute:
-                        id: set_brightness
-                        pct: !lambda return (int) x;
-              - !include {file: panel/detail-preset.yaml, vars: {pct: 100, y: 0}}
-              - !include {file: panel/detail-preset.yaml, vars: {pct: 75, y: 59}}
-              - !include {file: panel/detail-preset.yaml, vars: {pct: 50, y: 118}}
-              - !include {file: panel/detail-preset.yaml, vars: {pct: 25, y: 177}}
-        - obj:
-            x: 24
-            y: 346
-            width: 432
-            height: 115
-            radius: 24
-            border_width: 0
-            pad_all: 0
-            bg_color: 0xFFFFFF
-            bg_opa: 5%
-            scrollable: false
-        - button:
-            id: detail_power
-            # Centred in the dock. The design lifts it 58 px above centre, which
-            # put its top and glow over the level text.
-            x: 199
-            y: 362
-            width: 82
-            height: 82
-            radius: 41
-            bg_color: 0x1E6CE8
-            shadow_color: 0x3C8CFF
-            shadow_width: 28
-            shadow_opa: 55%
-            border_width: 0
-            on_click:
-              - homeassistant.action:
-                  action: light.toggle
-                  data:
-                    entity_id: !lambda return id(detail_entity);
-            widgets:
-              - label:
-                  align: CENTER
-                  text: ""
-                  text_font: montserrat_32
-                  text_color: 0xFFFFFF
+            - image:
+                id: detail_lamp
+                src: dome_off
+                align: TOP_MID
+                y: 0
+            - button:
+                x: 24
+                y: 24
+                width: 53
+                height: 53
+                radius: 27
+                bg_color: 0xFFFFFF
+                bg_opa: 8%
+                shadow_width: 0
+                border_width: 0
+                on_click:
+                  - script.execute: close_light
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: ""
+                      text_font: montserrat_22
+                      text_color: 0xF2F5F8
+            - label:
+                id: detail_name
+                x: 91
+                y: 28
+                width: 200
+                height: 20
+                long_mode: dot
+                text: ""
+                text_font: montserrat_16
+                text_color: 0xF2F5F8
+            - label:
+                id: detail_state
+                x: 91
+                y: 50
+                text: "OFF"
+                text_font: montserrat_16
+                text_color: 0xF2F5F8
+            - label:
+                id: detail_level
+                align: TOP_MID
+                y: 266
+                text: ""
+                text_font: montserrat_16
+                text_color: 0xBFC5CC
+            # Dimmers only. The bar sends one command when released; a preset
+            # sends one at once.
+            - obj:
+                id: detail_dim_box
+                x: 318
+                y: 88
+                width: 150
+                height: 222
+                radius: 0
+                pad_all: 0
+                border_width: 0
+                bg_opa: 0%
+                scrollable: false
+                hidden: true
+                widgets:
+                  - slider:
+                      id: detail_slider
+                      # Dragging the bar must never read as a swipe back.
+                      gesture_bubble: false
+                      x: 0
+                      y: 0
+                      width: 60
+                      height: 220
+                      min_value: 0
+                      max_value: 100
+                      value: 0
+                      radius: 18
+                      bg_color: 0x0E1422
+                      bg_opa: 60%
+                      indicator:
+                        radius: 18
+                        bg_color: 0xF8E2B2
+                        bg_grad_color: 0x7A6448
+                        bg_grad_dir: VER
+                      knob:
+                        bg_opa: 0%
+                        border_width: 0
+                        shadow_width: 0
+                      on_value:
+                        - lvgl.label.update:
+                            id: detail_level
+                            # Two statements on purpose: a one-line return here is
+                            # pasted straight into lv_label_set_text(), which takes
+                            # a const char*, and a std::string does not compile.
+                            text: !lambda |-
+                              std::string text = "Brightness " + to_string((int) x) + "%";
+                              return text;
+                      on_release:
+                        - script.execute:
+                            id: set_brightness
+                            pct: !lambda return (int) x;
+                  - !include {file: panel/detail-preset.yaml, vars: {pct: 100, y: 0}}
+                  - !include {file: panel/detail-preset.yaml, vars: {pct: 75, y: 59}}
+                  - !include {file: panel/detail-preset.yaml, vars: {pct: 50, y: 118}}
+                  - !include {file: panel/detail-preset.yaml, vars: {pct: 25, y: 177}}
+            - obj:
+                x: 24
+                y: 346
+                width: 432
+                height: 115
+                radius: 24
+                border_width: 0
+                pad_all: 0
+                bg_color: 0xFFFFFF
+                bg_opa: 5%
+                scrollable: false
+            - button:
+                id: detail_power
+                # Centred in the dock. The design lifts it 58 px above centre, which
+                # put its top and glow over the level text.
+                x: 199
+                y: 362
+                width: 82
+                height: 82
+                radius: 41
+                bg_color: 0x1E6CE8
+                shadow_color: 0x3C8CFF
+                shadow_width: 28
+                shadow_opa: 55%
+                border_width: 0
+                on_click:
+                  - homeassistant.action:
+                      action: light.toggle
+                      data:
+                        entity_id: !lambda return id(detail_entity);
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: ""
+                      text_font: montserrat_32
+                      text_color: 0xFFFFFF
 
 # The launcher clock: Montserrat ExtraBold at 96 px, digits and colon only, so
 # it costs little flash. Everything else uses LVGL's built-in Montserrat.
