@@ -357,6 +357,61 @@ or PSRAM-backed malloc for large allocations.
   (journal: "no data from ffmpeg for 5 s" every 7 s). A new ffmpeg now gets
   `STARTUP_READ_TIMEOUT_SECONDS` (15 s) for its first frame.
 
+## GUI revision 2: app launcher (flashed 2026-09-15, `0xab2a0c6d`, awaiting owner test)
+
+Design approved: `docs/design/voice-panel-screens.html` (artifact version 3).
+- `launcher_page` is the first page: 96 px clock (`font: clock_font`, Montserrat 800,
+  digits only), date, listening dot, "Inside 22.1°C", six tiles from
+  `panel/app-tile.yaml` with badges (`lights_badge` "N on" via `launcher_refresh`
+  from `ha-toggle.yaml`; `climate_badge` target °; `security_badge` red count from
+  `security_refresh`).
+- Navigation: `open_app(page)` — 0 launcher, 1 Lights, 2 Climate, 3 Scenes,
+  4 Security, 5 Cameras, 6 Wall panel — replaces `go_page` and the drawer; the
+  top-layer header now has a back button and is hidden on the launcher and the light
+  page; `close_light` returns to Lights. Camera release on leaving Cameras is kept.
+- `lights_page` (was `home_page`) without the thermostat; new `climate_page` with the
+  target (±1 °C), mode, room temperature and humidity (`thermo_humidity`, new).
+- Icons: `app_*` 92 px tiles from `render-panel-icons.py` (flash, not RAM).
+- Cost: flash 2.76 MB (+0.26), PSRAM free 5.08 MB (−0.27), heap free 76.5 KB,
+  largest block 34.8 KB — unchanged from before.
+- Next in the build order: swipe right to go back; then sleep and wake.
+
+## Memory, flicker and Wi-Fi, measured 2026-09-15 (not yet committed)
+
+- **What uses internal heap** (temporary `memdiag` log, now removed): idle low 72.7 KB;
+  a voice answer playing −10 KB (62.4); a camera frame downloading −21 KB (51.5; the
+  JPEG decoder alone is 17,944 B, `make_unique` per frame); both 50.4 KB; largest
+  free block 31.7 KB throughout. Fix still to choose: PSRAM-backed malloc for large
+  allocations (`CONFIG_SPIRAM_USE_MALLOC` + `MALLOC_ALWAYSINTERNAL` ≈16 KB) vs
+  patching `runtime_image` to put the decoder in PSRAM.
+- **Wi-Fi power save was the voice-on-camera-page failure.** ESPHome's ESP32 default
+  is `power_save_mode: light`. Ping board→panel, camera page closed: before
+  111–223 ms average, up to 1,428 ms; after `power_save_mode: none` 22–51 ms,
+  max ~300 ms. Every camera frame request holds the main loop for its round trip,
+  so the spikes garbled voice ("Time is it.", "Edit.") and stalled the screen.
+- **Flicker during voice answers is not the camera code.** It happens on the Home
+  page, and the exact pre-garage build (`3d64bab`, hash `0xdd5053a9`, flashed from a
+  `git archive` copy) flickered the same way. The earlier voice session logged no
+  "took a long time" warnings, so it is not a main-loop stall: the audio tasks
+  (mic priority 23, speaker 19, mixer 10) compete with the RGB driver copying frames
+  out of PSRAM. `pclk_frequency` 12 → 10 MHz (flash `0x69caa079`) made **no
+  difference** and was reverted.
+- **What the "flicker" is (owner, with a photo):** a few random dots that appear
+  after several voice sessions (6–7 in one test) and **stay** — through page changes
+  and full redraws — until power-off. Not seen after a fresh boot while tapping
+  around or using the cameras; only once voice has run. So very likely state inside
+  the ST7701, not the ESP32's frame buffer.
+- **Expander ruled out as a persistent cause:** a temporary sensor read the TCA9554
+  every 2 s (`in=AF out=AF pol=00 cfg=10` = healthy) through seven voice sessions and
+  the dots: it never changed. A glitch shorter than 2 s is not excluded.
+- **A software restart clears the dots** (`button.voice_panel_restart`: reset pulse +
+  full ST7701 init). Not confirmed whether the controller or the ESP32 side holds
+  the fault — both restart together.
+- **Open, parked by the owner** (who did not want a "reset display" button): the
+  cause. Candidates: supply or signal disturbance when the audio chips and 2 W amp
+  switch on and off, flipping ST7701 register bits; a sub-2 s expander glitch.
+  Cheapest next test: repeat the voice sessions at lower speaker volume.
+
 Ruled out between flashes 5 and 6, from source rather than by flashing:
 
 - **The init table is correct.** Parsed Arduino_GFX's `st7701_type1_init_operations`

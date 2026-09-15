@@ -8,7 +8,7 @@ antialiased the way a browser would draw them.
 
     python3 scripts/render-panel-icons.py
 
-writes configs/esphome/panel/images/{lamp,bulb,dome}_{on,off}.png movie.png and the Security icons.
+writes configs/esphome/panel/images/{lamp,bulb,dome}_{on,off}.png movie.png, the Security icons and the launcher app tiles.
 """
 
 from pathlib import Path
@@ -157,6 +157,70 @@ def security_icons() -> None:
     stroke_icon("shield_alert", _shield(False), colour="#FFB3A2", alpha=1.0, size=52)
 
 
+APP_TILES = {
+    # name: (top colour, bottom colour) - the launcher's tints, from the design
+    "lights": ("#F7C55A", "#D98A1C"),
+    "climate": ("#54D1BF", "#1F8A87"),
+    "scenes": ("#A993F5", "#6247CF"),
+    "security": ("#6BD49E", "#2A8561"),
+    "cameras": ("#6C9CF2", "#2E5EC2"),
+    "panel": ("#8E97A6", "#4B5361"),
+}
+
+
+def app_icon(name: str, size: int = 92) -> None:
+    """One launcher tile: a tinted rounded square with the app's glyph in white.
+
+    The glyphs are the design's 24-unit icons, drawn 2x in the middle 48 px.
+    """
+    px = size * SS
+    k = px / size                        # supersampled pixels per final pixel
+    top, bottom = APP_TILES[name]
+    tile = vertical_gradient((px, px), rgba(top), rgba(bottom))
+    mask = Image.new("L", (px, px), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, px - 1, px - 1], radius=round(26 * k), fill=255)
+    img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    img.paste(tile, (0, 0), mask)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([k, k, px - 1 - k, px - 1 - k], radius=round(25 * k),
+                        outline=rgba("#FFFFFF", 0.16), width=round(1.5 * k))
+
+    u = 2 * k                            # one glyph unit
+    off = 22 * k                         # glyph box starts 22 px in
+
+    def p(x, y):
+        return (off + x * u, off + y * u)
+
+    white = rgba("#FFFFFF")
+    w = round(2 * u)
+    if name == "lights":
+        d.arc([*p(6, 3), *p(18, 15)], 130, 50, fill=white, width=w)
+        d.line([p(8.2, 13.6), p(9, 16), p(15, 16), p(15.8, 13.6)], fill=white, width=w, joint="curve")
+        d.line([p(9, 18.5), p(15, 18.5)], fill=white, width=w)
+        d.line([p(10, 21), p(14, 21)], fill=white, width=w)
+    elif name == "climate":
+        d.rounded_rectangle([*p(10, 3), *p(14, 15)], radius=round(2 * u), outline=white, width=w)
+        d.ellipse([*p(8, 13.5), *p(16, 21.5)], outline=white, width=w)
+        d.line([p(12, 8), p(12, 16)], fill=white, width=w)
+    elif name == "scenes":
+        star = [(12, 3), (14.4, 8), (20, 8.8), (16, 12.7), (16.9, 18.2), (12, 15.6),
+                (7.1, 18.2), (8, 12.7), (4, 8.8), (9.6, 8), (12, 3)]
+        d.line([p(x, y) for x, y in star], fill=white, width=w, joint="curve")
+    elif name == "security":
+        shield = [(12, 3), (19, 6), (19, 11), (18.2, 15), (15.5, 18.6), (12, 21),
+                  (8.5, 18.6), (5.8, 15), (5, 11), (5, 6), (12, 3)]
+        d.line([p(x, y) for x, y in shield], fill=white, width=w, joint="curve")
+        d.line([p(9, 12), p(11, 14), p(15, 10)], fill=white, width=w, joint="curve")
+    elif name == "cameras":
+        d.rounded_rectangle([*p(3, 7), *p(16, 17)], radius=round(2 * u), outline=white, width=w)
+        d.line([p(16, 11), p(21, 8), p(21, 16), p(16, 13), p(16, 11)], fill=white, width=w, joint="curve")
+    elif name == "panel":
+        d.rounded_rectangle([*p(3, 4), *p(21, 17)], radius=round(2 * u), outline=white, width=w)
+        d.line([p(8, 21), p(16, 21)], fill=white, width=w)
+        d.line([p(12, 17), p(12, 21)], fill=white, width=w)
+    finish(img, size, f"app_{name}.png")
+
+
 def vertical_gradient(size, top, bottom) -> Image.Image:
     grad = Image.new("RGBA", (1, 256))
     for y in range(256):
@@ -221,6 +285,8 @@ def main() -> None:
         dome_lamp(on)
     movie_icon()
     security_icons()
+    for name in APP_TILES:
+        app_icon(name)
     for p in sorted(OUT.glob("*.png")):
         print(p.relative_to(OUT.parents[2]), Image.open(p).size)
 

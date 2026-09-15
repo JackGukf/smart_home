@@ -117,6 +117,13 @@ ota:
 # so the password goes straight from you to the device. If it ever cannot join,
 # it raises its own access point and captive_portal asks again.
 wifi:
+  # ESPHome's default on an ESP32 is "light": the radio sleeps between beacons.
+  # Measured 2026-09-15 from the board: 108-287 ms average and up to 1.2 s to the
+  # panel, while the router answered in 0.7 ms. Every camera frame request holds
+  # the main loop until its reply, so those spikes froze the panel - flicker, and
+  # voice commands reaching Home Assistant as "Time is it." The panel is mains
+  # powered; the radio stays awake.
+  power_save_mode: none
   ap:
     ssid: "${friendly_name} Setup"
 
@@ -353,6 +360,19 @@ script:
             auto t = id(ha_time).now();
             if (!t.is_valid()) return std::string("--:--");
             return t.strftime("%H:%M");
+      - lvgl.label.update:
+          id: launcher_time
+          text: !lambda |-
+            auto t = id(ha_time).now();
+            if (!t.is_valid()) return std::string("--:--");
+            return t.strftime("%H:%M");
+      - lvgl.label.update:
+          id: launcher_date
+          text: !lambda |-
+            auto t = id(ha_time).now();
+            if (!t.is_valid()) return std::string("");
+            std::string text = t.strftime("%A ") + to_string(t.day_of_month) + t.strftime(" %B");
+            return text;
 
   - id: thermo_refresh
     then:
@@ -365,16 +385,49 @@ script:
             snprintf(buf, sizeof(buf), fmod(t, 1.0f) == 0 ? "%.0f°C" : "%.1f°C", t);
             return std::string(buf);
       - lvgl.label.update:
-          id: thermo_sub
+          id: thermo_mode
           text: !lambda |-
             const std::string &a = id(thermo_action).state;
-            std::string mode = a == "heating" ? "Heating" : a == "cooling" ? "Cooling"
-                             : a == "idle" ? "Idle" : a == "off" ? "Off" : a.empty() ? "--" : a;
+            std::string mode = a == "heating" ? "HEATING" : a == "cooling" ? "COOLING"
+                             : a == "idle" ? "IDLE" : a == "off" ? "OFF" : a.empty() ? "--" : a;
+            return mode;
+      - lvgl.label.update:
+          id: thermo_room_value
+          text: !lambda |-
             float r = id(thermo_room).state;
-            if (std::isnan(r)) return mode;
-            char buf[48];
-            snprintf(buf, sizeof(buf), "%s • room %.1f°C", mode.c_str(), r);
+            if (std::isnan(r)) return std::string("--");
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.1f°C", r);
             return std::string(buf);
+      - lvgl.label.update:
+          id: thermo_hum_value
+          text: !lambda |-
+            float h = id(thermo_humidity).state;
+            if (std::isnan(h)) return std::string("--");
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.0f%%", h);
+            return std::string(buf);
+      - lvgl.label.update:
+          id: launcher_inside
+          text: !lambda |-
+            float r = id(thermo_room).state;
+            if (std::isnan(r)) return std::string("");
+            char buf[24];
+            snprintf(buf, sizeof(buf), "Inside %.1f°C", r);
+            return std::string(buf);
+      - if:
+          condition:
+            lambda: return !std::isnan(id(thermo_target).state);
+          then:
+            - lvgl.label.update:
+                id: climate_badge
+                text: !lambda |-
+                  char buf[12];
+                  snprintf(buf, sizeof(buf), "%.0f°", id(thermo_target).state);
+                  return std::string(buf);
+            - lvgl.widget.show: climate_badge
+          else:
+            - lvgl.widget.hide: climate_badge
 
   # One tap is one degree, clamped to the design's 10-26 °C. The card moves at
   # once; Home Assistant's own update confirms or corrects it.
@@ -447,8 +500,9 @@ script:
       - globals.set:
           id: detail_entity
           value: '""'
-      - lvgl.widget.show: header_bar
-      - lvgl.page.show: home_page
+      - script.execute:
+          id: open_app
+          page: 1
 
   - id: detail_refresh
     parameters:
@@ -503,44 +557,18 @@ script:
                   entity_id: !lambda return id(detail_entity);
                   brightness_pct: !lambda return to_string(pct);
 
-  # The menu: 0 Home, 1 Scenes, 2 Security, 3 Cameras, 4 Wall panel.
-  - id: go_page
+  # The launcher and its apps: 0 launcher, 1 Lights, 2 Climate, 3 Scenes,
+  # 4 Security, 5 Cameras, 6 Wall panel. Each app's own open and leave work is
+  # here: leaving Cameras frees the snapshot, opening Wall panel re-highlights.
+  - id: open_app
     parameters:
       page: int
     then:
-      - lvgl.widget.hide: menu_drawer
-      - lvgl.widget.hide: menu_scrim
-      - lvgl.widget.update:
-          id: nav_home
-          state:
-            checked: !lambda return page == 0;
-      - lvgl.widget.update:
-          id: nav_scenes
-          state:
-            checked: !lambda return page == 1;
-      - lvgl.widget.update:
-          id: nav_security
-          state:
-            checked: !lambda return page == 2;
-      - lvgl.widget.update:
-          id: nav_cameras
-          state:
-            checked: !lambda return page == 3;
-      - lvgl.widget.update:
-          id: nav_wall
-          state:
-            checked: !lambda return page == 4;
-      - lvgl.label.update:
-          id: page_title
-          text: !lambda |-
-            std::string title = page == 1 ? "scenes" : page == 2 ? "security"
-                              : page == 3 ? "cameras" : page == 4 ? "wall panel" : "home";
-            return title;
-      # Leaving the Cameras page frees the snapshot's memory, which the wake
-      # word shares.
+      # Leaving the Cameras app frees the snapshot's memory, which the wake word
+      # shares.
       - if:
           condition:
-            lambda: return page != 3;
+            lambda: return page != 5;
           then:
             - lvgl.widget.hide: cam_view
             - lvgl.label.update:
@@ -553,33 +581,74 @@ script:
             - globals.set:
                 id: cam_busy
                 value: "false"
+      - lvgl.label.update:
+          id: page_title
+          text: !lambda |-
+            static const char *const titles[] = {"", "lights", "climate", "scenes",
+                                                 "security", "cameras", "wall panel"};
+            std::string title = page >= 0 && page <= 6 ? titles[page] : "";
+            return title;
+      - if:
+          condition:
+            lambda: return page == 0;
+          then:
+            - lvgl.widget.hide: header_bar
+            - script.execute: launcher_refresh
+            - lvgl.page.show: launcher_page
+          else:
+            - lvgl.widget.show: header_bar
       - if:
           condition:
             lambda: return page == 1;
           then:
-            - lvgl.page.show: scenes_page
+            - lvgl.page.show: lights_page
       - if:
           condition:
             lambda: return page == 2;
           then:
-            - lvgl.page.show: security_page
+            - lvgl.page.show: climate_page
       - if:
           condition:
             lambda: return page == 3;
+          then:
+            - lvgl.page.show: scenes_page
+      - if:
+          condition:
+            lambda: return page == 4;
+          then:
+            - lvgl.page.show: security_page
+      - if:
+          condition:
+            lambda: return page == 5;
           then:
             - lvgl.page.show: cameras_page
             - script.execute: camera_open
       - if:
           condition:
-            lambda: return page == 4;
+            lambda: return page == 6;
           then:
             - script.execute: wall_refresh
             - lvgl.page.show: wall_page
+
+  # The launcher's Lights badge: how many of the six are on, from Home Assistant.
+  - id: launcher_refresh
+    then:
       - if:
           condition:
-            lambda: return page == 0;
+            lambda: |-
+              return id(master_on).state || id(living2_on).state || id(kitchen_on).state ||
+                     id(family_on).state || id(north_on).state || id(stick_on).state;
           then:
-            - lvgl.page.show: home_page
+            - lvgl.label.update:
+                id: lights_badge
+                text: !lambda |-
+                  int n = id(master_on).state + id(living2_on).state + id(kitchen_on).state +
+                          id(family_on).state + id(north_on).state + id(stick_on).state;
+                  std::string text = to_string(n) + " on";
+                  return text;
+            - lvgl.widget.show: lights_badge
+          else:
+            - lvgl.widget.hide: lights_badge
 
   # One snapshot, unless one is still downloading - a slow frame must not queue
   # a second request behind it.
@@ -758,6 +827,28 @@ script:
                               : a == "pending" ? "pending" : a.empty() ? "--" : a;
             std::string text = "Alarm " + words + " • 6 sensors";
             return text;
+      # The launcher's Security badge: the number needing attention, in red.
+      - if:
+          condition:
+            lambda: |-
+              return id(frontyard_sec).state || id(door_sec).state || id(window_sec).state ||
+                     id(smoke_sec).state || id(doorcam_sec).state || id(garage_sec).state ||
+                     id(alarm_state).state == "triggered";
+          then:
+            - lvgl.label.update:
+                id: security_badge
+                text: !lambda |-
+                  int n = id(frontyard_sec).state + id(door_sec).state + id(window_sec).state +
+                          id(smoke_sec).state + id(doorcam_sec).state + id(garage_sec).state;
+                  std::string text = to_string(n > 0 ? n : 1);
+                  return text;
+            - lvgl.widget.update:
+                id: security_badge
+                bg_color: 0xE5533C
+                text_color: 0xFFFFFF
+            - lvgl.widget.show: security_badge
+          else:
+            - lvgl.widget.hide: security_badge
 
   # Per light: draw its card, and hold a tap for a few seconds before showing
   # Home Assistant's state again (panel/light-show.yaml, panel/light-settle.yaml).
@@ -906,6 +997,10 @@ display:
     # The demo leaves the clock at Arduino_GFX's default; 12 MHz is what ESPHome
     # uses for Waveshare's other 480x480 ST7701 panel, ~42 Hz here, and less
     # PSRAM traffic than 16 MHz while the wake word shares that memory.
+    # The demo leaves the clock at Arduino_GFX's default; 12 MHz is what ESPHome
+    # uses for Waveshare's other 480x480 ST7701 panel, ~42 Hz here, and less
+    # PSRAM traffic than 16 MHz while the wake word shares that memory. (10 MHz
+    # was tried against the voice-time dots on 2026-09-15 and made no difference.)
     pclk_frequency: 12MHz
     pclk_inverted: false
     hsync_front_porch: 10
@@ -991,8 +1086,8 @@ lvgl:
   touchscreens: [touch]
   buffer_size: 25%
 
-  # The bar and the menu are on the top layer, so every page shares one of each.
-  # The full-screen light page hides the bar.
+  # The app header is on the top layer, so every app shares one. It is hidden on
+  # the launcher, which has its own glance, and on the full-screen light page.
   top_layer:
     widgets:
       - obj:
@@ -1007,29 +1102,33 @@ lvgl:
           bg_opa: 0%
           scrollable: false
           clickable: false
+          hidden: true
           widgets:
             - button:
-                x: 12
-                y: 8
-                width: 48
-                height: 48
-                bg_opa: 0%
+                x: 16
+                y: 10
+                width: 46
+                height: 46
+                radius: 23
+                bg_color: 0xFFFFFF
+                bg_opa: 10%
                 shadow_width: 0
                 border_width: 0
                 on_click:
-                  - lvgl.widget.show: menu_scrim
-                  - lvgl.widget.show: menu_drawer
+                  - script.execute:
+                      id: open_app
+                      page: 0
                 widgets:
                   - label:
                       align: CENTER
-                      text: ""
-                      text_font: montserrat_22
+                      text: "\uF053"
+                      text_font: montserrat_20
                       text_color: 0xF2F5F8
             - label:
                 id: page_title
-                x: 64
+                x: 74
                 y: 19
-                text: "home"
+                text: "lights"
                 text_font: montserrat_22
                 text_color: 0xF2F5F8
             # Green while the wake word is listening, grey while it is not.
@@ -1058,163 +1157,65 @@ lvgl:
                 text: "--:--"
                 text_font: montserrat_16
                 text_color: 0xCCD1D6
-      - obj:
-          id: menu_scrim
-          x: 0
-          y: 0
-          width: 480
-          height: 480
-          radius: 0
-          border_width: 0
-          bg_color: 0x000000
-          bg_opa: 45%
-          hidden: true
-          on_click:
-            - lvgl.widget.hide: menu_drawer
-            - lvgl.widget.hide: menu_scrim
-      - obj:
-          id: menu_drawer
-          x: 0
-          y: 0
-          width: 278
-          height: 480
-          radius: 0
-          pad_all: 0
-          border_width: 0
-          bg_color: 0x1C1F26
-          bg_opa: 95%
-          scrollable: false
-          hidden: true
-          widgets:
-            - label:
-                x: 28
-                y: 26
-                text: "VOICE PANEL"
-                text_font: montserrat_14
-                text_color: 0x8C9097
-            - button:
-                id: nav_home
-                x: 16
-                y: 60
-                width: 246
-                height: 54
-                radius: 12
-                bg_color: 0x647696
-                bg_opa: 0%
-                shadow_width: 0
-                border_width: 0
-                checked:
-                  bg_opa: 55%
-                on_click:
-                  - script.execute:
-                      id: go_page
-                      page: 0
-                widgets:
-                  - label:
-                      x: 14
-                      align: LEFT_MID
-                      text: "   Home"
-                      text_font: montserrat_20
-                      text_color: 0xF2F5F8
-            - button:
-                id: nav_scenes
-                x: 16
-                y: 120
-                width: 246
-                height: 54
-                radius: 12
-                bg_color: 0x647696
-                bg_opa: 0%
-                shadow_width: 0
-                border_width: 0
-                checked:
-                  bg_opa: 55%
-                on_click:
-                  - script.execute:
-                      id: go_page
-                      page: 1
-                widgets:
-                  - label:
-                      x: 14
-                      align: LEFT_MID
-                      text: "   Scenes"
-                      text_font: montserrat_20
-                      text_color: 0xF2F5F8
-            - button:
-                id: nav_security
-                x: 16
-                y: 180
-                width: 246
-                height: 54
-                radius: 12
-                bg_color: 0x647696
-                bg_opa: 0%
-                shadow_width: 0
-                border_width: 0
-                checked:
-                  bg_opa: 55%
-                on_click:
-                  - script.execute:
-                      id: go_page
-                      page: 2
-                widgets:
-                  - label:
-                      x: 14
-                      align: LEFT_MID
-                      text: "   Security"
-                      text_font: montserrat_20
-                      text_color: 0xF2F5F8
-            - button:
-                id: nav_cameras
-                x: 16
-                y: 240
-                width: 246
-                height: 54
-                radius: 12
-                bg_color: 0x647696
-                bg_opa: 0%
-                shadow_width: 0
-                border_width: 0
-                checked:
-                  bg_opa: 55%
-                on_click:
-                  - script.execute:
-                      id: go_page
-                      page: 3
-                widgets:
-                  - label:
-                      x: 14
-                      align: LEFT_MID
-                      text: "   Cameras"
-                      text_font: montserrat_20
-                      text_color: 0xF2F5F8
-            - button:
-                id: nav_wall
-                x: 16
-                y: 300
-                width: 246
-                height: 54
-                radius: 12
-                bg_color: 0x647696
-                bg_opa: 0%
-                shadow_width: 0
-                border_width: 0
-                checked:
-                  bg_opa: 55%
-                on_click:
-                  - script.execute:
-                      id: go_page
-                      page: 4
-                widgets:
-                  - label:
-                      x: 14
-                      align: LEFT_MID
-                      text: "   Wall panel"
-                      text_font: montserrat_20
-                      text_color: 0xF2F5F8
 
   pages:
-    - id: home_page
+    # The launcher: the first page, so the panel starts here, and where every app
+    # returns. A glance - time, day, listening, inside temperature - over six
+    # app tiles whose badges say what needs saying without opening the app.
+    - id: launcher_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        - label:
+            id: launcher_time
+            x: 26
+            y: 18
+            text: "--:--"
+            text_font: clock_font
+            text_color: 0xF2F5F8
+        - label:
+            id: launcher_date
+            x: 32
+            y: 124
+            text: ""
+            text_font: montserrat_20
+            text_color: 0xD9DEE3
+        - obj:
+            id: launcher_listen_dot
+            x: 34
+            y: 168
+            width: 9
+            height: 9
+            radius: 5
+            border_width: 0
+            pad_all: 0
+            bg_color: 0x6B7280
+            scrollable: false
+        - label:
+            x: 50
+            y: 161
+            text: "Okay Nabu"
+            text_font: montserrat_16
+            text_color: 0xC2C8CF
+        - label:
+            id: launcher_inside
+            x: 176
+            y: 161
+            text: ""
+            text_font: montserrat_16
+            text_color: 0xC2C8CF
+        - !include {file: panel/app-tile.yaml, vars: {key: lights, title: "Lights", icon: app_lights, page: 1, x: 24, y: 214}}
+        - !include {file: panel/app-tile.yaml, vars: {key: climate, title: "Climate", icon: app_climate, page: 2, x: 176, y: 214}}
+        - !include {file: panel/app-tile.yaml, vars: {key: scenes, title: "Scenes", icon: app_scenes, page: 3, x: 328, y: 214}}
+        - !include {file: panel/app-tile.yaml, vars: {key: security, title: "Security", icon: app_security, page: 4, x: 24, y: 346}}
+        - !include {file: panel/app-tile.yaml, vars: {key: cameras, title: "Cameras", icon: app_cameras, page: 5, x: 176, y: 346}}
+        - !include {file: panel/app-tile.yaml, vars: {key: wall, title: "Wall panel", icon: app_panel, page: 6, x: 328, y: 346}}
+
+    # Lights: the six cards; a lamp opens the light full screen.
+    - id: lights_page
       bg_color: 0x3A2618
       bg_grad_color: 0x1C120B
       bg_grad_dir: VER
@@ -1223,7 +1224,7 @@ lvgl:
       widgets:
         # Everything under the bar scrolls; the bar stays.
         - obj:
-            id: home_scroll
+            id: lights_scroll
             x: 0
             y: 64
             width: 480
@@ -1250,92 +1251,153 @@ lvgl:
               - !include
                 file: panel/card-toggle.yaml
                 vars: {key: family, entity: light.family_room_switch, name: "FAMILY ROOM SWITCH", room: Family room, x: 222, y: 143, dimmer: "true", level: "id(family_pct)"}
-              - obj:
-                  id: thermo_card
-                  x: 0
-                  y: 286
-                  width: 431
-                  height: 106
-                  radius: 16
-                  pad_all: 0
-                  border_width: 0
-                  bg_color: 0x3E444E
-                  bg_opa: 74%
-                  scrollable: false
-                  widgets:
-                    - label:
-                        x: 14
-                        y: 30
-                        text: "THERMOSTAT"
-                        text_font: montserrat_14
-                        text_color: 0xF2F5F8
-                    - label:
-                        id: thermo_sub
-                        x: 14
-                        y: 54
-                        text: "--"
-                        text_font: montserrat_14
-                        text_color: 0xD1D6DC
-                    - button:
-                        x: 207
-                        y: 32
-                        width: 42
-                        height: 42
-                        radius: 21
-                        bg_opa: 0%
-                        shadow_width: 0
-                        border_width: 0
-                        on_click:
-                          - script.execute:
-                              id: thermo_step
-                              delta: 1.0
-                        widgets:
-                          - label:
-                              align: CENTER
-                              text: "+"
-                              text_font: montserrat_28
-                              text_color: 0xF2F5F8
-                    - label:
-                        id: thermo_temp
-                        x: 251
-                        y: 32
-                        width: 116
-                        text_align: CENTER
-                        text: "--"
-                        text_font: montserrat_40
-                        text_color: 0xF2F5F8
-                    - button:
-                        x: 373
-                        y: 32
-                        width: 42
-                        height: 42
-                        radius: 21
-                        bg_color: 0x14161A
-                        bg_opa: 55%
-                        shadow_width: 0
-                        border_width: 0
-                        on_click:
-                          - script.execute:
-                              id: thermo_step
-                              delta: -1.0
-                        widgets:
-                          - label:
-                              align: CENTER
-                              text: "-"
-                              text_font: montserrat_28
-                              text_color: 0xF2F5F8
               - label:
                   x: 4
-                  y: 405
+                  y: 286
                   text: "BEDROOM • OFFICE"
                   text_font: montserrat_14
                   text_color: 0xA8ADB3
               - !include
                 file: panel/card-toggle.yaml
-                vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, name: "NORTH BEDROOM LIGHT SWITCH", room: Bedroom, x: 0, y: 431, dimmer: "false", level: "0"}
+                vars: {key: north, entity: light.bedroom_north_bedroom_light_switch, name: "NORTH BEDROOM LIGHT SWITCH", room: Bedroom, x: 0, y: 312, dimmer: "false", level: "0"}
               - !include
                 file: panel/card-toggle.yaml
-                vars: {key: stick, entity: light.stick_s3, name: "STICK S3", room: Office, x: 222, y: 431, dimmer: "false", level: "0"}
+                vars: {key: stick, entity: light.stick_s3, name: "STICK S3", room: Office, x: 222, y: 312, dimmer: "false", level: "0"}
+
+    # Climate: the ecobee on its own screen. The target moves at once on a tap and
+    # Home Assistant's update confirms or corrects it (thermo_step).
+    - id: climate_page
+      bg_color: 0x3A2618
+      bg_grad_color: 0x1C120B
+      bg_grad_dir: VER
+      scrollable: false
+      pad_all: 0
+      widgets:
+        - obj:
+            x: 24
+            y: 76
+            width: 432
+            height: 252
+            radius: 16
+            pad_all: 0
+            border_width: 0
+            bg_color: 0x3E444E
+            bg_opa: 74%
+            scrollable: false
+            widgets:
+              - label:
+                  id: thermo_mode
+                  align: TOP_MID
+                  y: 20
+                  text: "--"
+                  text_font: montserrat_16
+                  text_color: 0xF3B23A
+              - button:
+                  x: 30
+                  y: 92
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0x14161A
+                  bg_opa: 55%
+                  shadow_width: 0
+                  border_width: 0
+                  on_click:
+                    - script.execute:
+                        id: thermo_step
+                        delta: -1.0
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "-"
+                        text_font: montserrat_40
+                        text_color: 0xF2F5F8
+              - label:
+                  id: thermo_temp
+                  align: TOP_MID
+                  y: 100
+                  width: 220
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_48
+                  text_color: 0xF2F5F8
+              - button:
+                  x: 330
+                  y: 92
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0x14161A
+                  bg_opa: 55%
+                  shadow_width: 0
+                  border_width: 0
+                  on_click:
+                    - script.execute:
+                        id: thermo_step
+                        delta: 1.0
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "+"
+                        text_font: montserrat_40
+                        text_color: 0xF2F5F8
+              - label:
+                  id: thermo_sub
+                  align: TOP_MID
+                  y: 196
+                  text: "My ecobee • target"
+                  text_font: montserrat_14
+                  text_color: 0xD1D6DC
+        - obj:
+            x: 24
+            y: 342
+            width: 209
+            height: 112
+            radius: 16
+            pad_all: 0
+            border_width: 0
+            bg_color: 0x3E444E
+            bg_opa: 74%
+            scrollable: false
+            widgets:
+              - label:
+                  x: 16
+                  y: 18
+                  text: "ROOM"
+                  text_font: montserrat_14
+                  text_color: 0xF2F5F8
+              - label:
+                  id: thermo_room_value
+                  x: 16
+                  y: 50
+                  text: "--"
+                  text_font: montserrat_28
+                  text_color: 0xF2F5F8
+        - obj:
+            x: 247
+            y: 342
+            width: 209
+            height: 112
+            radius: 16
+            pad_all: 0
+            border_width: 0
+            bg_color: 0x3E444E
+            bg_opa: 74%
+            scrollable: false
+            widgets:
+              - label:
+                  x: 16
+                  y: 18
+                  text: "HUMIDITY"
+                  text_font: montserrat_14
+                  text_color: 0xF2F5F8
+              - label:
+                  id: thermo_hum_value
+                  x: 16
+                  y: 50
+                  text: "--"
+                  text_font: montserrat_28
+                  text_color: 0xF2F5F8
 
     # Scenes are Home Assistant scripts (scripts/install-panel-scenes.py), so a
     # tap here, "Okay Nabu, movie mode" and the dashboard run the same ones.
@@ -1760,6 +1822,14 @@ lvgl:
                   text_font: montserrat_32
                   text_color: 0xFFFFFF
 
+# The launcher clock: Montserrat ExtraBold at 96 px, digits and colon only, so
+# it costs little flash. Everything else uses LVGL's built-in Montserrat.
+font:
+  - file: "gfonts://Montserrat@800"
+    id: clock_font
+    size: 96
+    glyphs: "0123456789:-"
+
 # The header clock, from Home Assistant's time.
 time:
   - platform: homeassistant
@@ -1781,9 +1851,15 @@ interval:
             - lvgl.widget.update:
                 id: listen_dot
                 bg_color: 0x6FD3A7
+            - lvgl.widget.update:
+                id: launcher_listen_dot
+                bg_color: 0x6FD3A7
           else:
             - lvgl.widget.update:
                 id: listen_dot
+                bg_color: 0x6B7280
+            - lvgl.widget.update:
+                id: launcher_listen_dot
                 bg_color: 0x6B7280
   # The next frame as soon as the last one is in (camera_fetch skips while one
   # is downloading), but never during a voice session: the audio goes out
@@ -1913,6 +1989,36 @@ image:
   - platform: file
     file: panel/images/shield_alert.png
     id: shield_alert
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_lights.png
+    id: app_lights
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_climate.png
+    id: app_climate
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_scenes.png
+    id: app_scenes
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_security.png
+    id: app_security
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_cameras.png
+    id: app_cameras
+    type: RGB565
+    transparency: alpha_channel
+  - platform: file
+    file: panel/images/app_panel.png
+    id: app_panel
     type: RGB565
     transparency: alpha_channel
   - platform: online_image
@@ -2050,6 +2156,13 @@ sensor:
     id: thermo_room
     entity_id: climate.my_ecobee
     attribute: current_temperature
+    internal: true
+    on_value:
+      - script.execute: thermo_refresh
+  - platform: homeassistant
+    id: thermo_humidity
+    entity_id: climate.my_ecobee
+    attribute: current_humidity
     internal: true
     on_value:
       - script.execute: thermo_refresh
