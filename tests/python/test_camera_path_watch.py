@@ -454,3 +454,23 @@ def test_the_strip_shows_outdoor_cameras_only(tmp_path: Path) -> None:
     assert "homeCameraList().filter(isOutdoorCamera)" in render
     assert ".filter(isOutdoorCamera)" in sightings, "the last-person line is outdoor too"
     assert "camera?.outdoor === true" in js, "the server decides; the browser reads the flag"
+
+
+def test_the_strip_follows_the_approach_route_and_ends_off_it(tmp_path: Path) -> None:
+    """Garage, frontyard, front door is the order somebody walking up passes
+    them; the back yard is not on the route, so it sits at the end."""
+    result = _run("""
+globalThis.homeCameraList = () => [
+  { id: 'cam-back', name: 'Backyard camera', outdoor: true },
+  { id: 'cam-door', name: 'Front door camera', outdoor: true },
+  { id: 'cam-garage', name: 'Garage camera', outdoor: true },
+  { id: 'cam-yard', name: 'Frontyard camera', outdoor: true },
+];
+latestCameraPaths[0].steps = [
+  { camera_id: 'cam-garage' }, { camera_id: 'cam-yard' }, { camera_id: 'cam-door' },
+];
+eval(pick('outdoorCameraOrder') + pick('isOutdoorCamera'));
+report({ order: outdoorCameraOrder(homeCameraList().filter(isOutdoorCamera)).map((c) => c.id) });
+""", tmp_path)
+
+    assert result["order"] == ["cam-garage", "cam-yard", "cam-door", "cam-back"]

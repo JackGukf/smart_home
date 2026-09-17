@@ -5546,6 +5546,23 @@ function isOutdoorCamera(camera) {
   return camera?.outdoor === true;
 }
 
+/* Strip order: the approach route first, in the order somebody walking it
+   passes the cameras (camera_paths in devices.local.yaml - garage, frontyard,
+   front door), then every other outdoor camera. The back yard is not on the
+   route, so it sits at the end, which is where it belongs: it is the one you
+   look at on purpose rather than the one that catches an arrival. */
+function outdoorCameraOrder(cameras) {
+  const route = [];
+  for (const path of cameraPathList()) {
+    for (const step of path.steps) if (!route.includes(step.camera_id)) route.push(step.camera_id);
+  }
+  const rank = (camera) => {
+    const at = route.indexOf(cameraIdFor(camera));
+    return at === -1 ? route.length : at;
+  };
+  return [...cameras].sort((a, b) => rank(a) - rank(b));
+}
+
 function cameraDetectorKey(camera) {
   return String(camera.name || "").trim().toLowerCase().replace(/\s+/g, "_");
 }
@@ -5579,7 +5596,7 @@ function agoLabel(minutes) {
 function renderHomeCameraExtra() {
   const host = document.querySelector("#homeCameraExtra");
   if (!host) return;
-  const cameras = homeCameraList().filter(isOutdoorCamera);
+  const cameras = outdoorCameraOrder(homeCameraList().filter(isOutdoorCamera));
   if (!cameras.length) { renderHtml(host, ""); return; }
 
   const shown = shownHomeCameraId;
