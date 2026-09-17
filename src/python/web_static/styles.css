@@ -4146,6 +4146,81 @@ aside {
   overflow-y: auto;
 }
 
+/* ── Under the camera: the other cameras, and who was seen last ── */
+.home-camera-extra { flex-shrink: 0; margin-top: 10px; }
+.home-camera-extra:empty { display: none; }
+
+.cam-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-gap: 8px;
+}
+
+.cam-thumb {
+  position: relative;
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--t-card-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+}
+html.no-aspect-ratio .cam-thumb { height: 64px; }
+.cam-thumb:hover { border-color: var(--border-hover); }
+.cam-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.cam-thumb-name {
+  position: absolute;
+  left: 5px;
+  bottom: 4px;
+  right: 5px;
+  font-size: 10px;
+  color: #fff;
+  text-align: left;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cam-thumb-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.25);
+}
+
+.cam-last {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--t-text-dim);
+}
+.cam-last-label { margin-right: 8px; text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; color: var(--muted); }
+.cam-last-pill {
+  padding: 1px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--t-card-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--t-text);
+  white-space: nowrap;
+}
+.cam-last-pill.recent { border-color: rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.1); color: var(--green); }
+.cam-last-rest { margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 480px) {
+  .cam-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cam-last-rest { display: none; }
+}
+
 /* ── Quick actions card ──
    Four buttons beside Climate, each half the column's width. Square-ish tiles
    so the labels fit on one line at 261px wide. */

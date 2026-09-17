@@ -5506,6 +5506,7 @@ function renderHomeCamera() {
   if (route.length) {
     syncPathSlots(route);
     shownHomeCameraId = activePathCameraId();
+    renderHomeCameraExtra();
     return;
   }
   /* No episode wants the card, so it must not still be holding path slots.
@@ -5517,10 +5518,117 @@ function renderHomeCamera() {
   shownHomeCameraId = camera ? cameraIdFor(camera) : null;
   if (!camera) {
     renderHtml(body, `<div class="home-empty">No cameras found</div>`);
+    renderHtml(document.querySelector("#homeCameraExtra"), "");
     return;
   }
   renderHtml(body, homeCameraMarkup(camera));
+  renderHomeCameraExtra();
 }
+
+/* ── Under the picture: the other cameras, and who was seen last ──────────
+   The picture keeps its 16:9 shape, so a card taller than that has room to
+   spare. It holds a row of the other cameras (tap to switch) and one line
+   naming the camera that saw somebody most recently.
+
+   "Saw somebody" is the NPU detector's own sensor, which the Security zones
+   already carry: binary_sensor.<camera>_npu_person, where <camera> is the
+   camera's name in lower case with underscores. Those zones bring their age
+   with them, so nothing new is fetched for this. */
+const CAMERA_STRIP_SIZE = 4;
+const CAMERA_STRIP_REFRESH_MS = 30_000;
+const CAMERA_RECENT_MINUTES = 10;   /* a green dot means "just now-ish" */
+
+function cameraDetectorKey(camera) {
+  return String(camera.name || "").trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+/* cameraId -> minutes since that camera last saw a person, newest first. */
+function cameraSightings() {
+  const zones = latestAlarmData?.zones || [];
+  const byKey = new Map();
+  for (const zone of zones) {
+    const match = /^binary_sensor\.(.+)_npu_person$/i.exec(String(zone.id || ""));
+    if (!match) continue;
+    const minutes = zone.state === "motion" ? 0
+      : Number.isFinite(zone.age_seconds) ? zone.age_seconds / 60 : null;
+    if (minutes === null) continue;
+    byKey.set(match[1].toLowerCase(), minutes);
+  }
+  return homeCameraList()
+    .map((camera) => ({ camera, minutes: byKey.get(cameraDetectorKey(camera)) }))
+    .filter((entry) => entry.minutes != null)
+    .sort((a, b) => a.minutes - b.minutes);
+}
+
+function agoLabel(minutes) {
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const hours = minutes / 60;
+  return hours < 24 ? `${hours.toFixed(1)} h` : `${Math.round(hours / 24)} d`;
+}
+
+function renderHomeCameraExtra() {
+  const host = document.querySelector("#homeCameraExtra");
+  if (!host) return;
+  const cameras = homeCameraList();
+  if (cameras.length < 2) { renderHtml(host, ""); return; }
+
+  const shown = shownHomeCameraId;
+  const sightings = cameraSightings();
+  const minutesById = new Map(sightings.map((s) => [cameraIdFor(s.camera), s.minutes]));
+  const others = cameras.filter((camera) => cameraIdFor(camera) !== shown).slice(0, CAMERA_STRIP_SIZE);
+
+  const strip = others.map((camera) => {
+    const id = cameraIdFor(camera);
+    const minutes = minutesById.get(id);
+    const recent = minutes != null && minutes <= CAMERA_RECENT_MINUTES;
+    const cached = loadCachedSnapshot(id);   /* a battery camera has no live URL */
+    const src = cached || camera.snapshot_url || snapshotUrlFor(camera);
+    return `
+      <button class="cam-thumb" type="button" data-home-camera-pick="${escapeHtml(id)}"
+              title="Show ${escapeHtml(camera.name || id)}">
+        <img src="${escapeHtml(src)}" alt="" loading="lazy" data-camera-thumb="${escapeHtml(id)}">
+        <span class="cam-thumb-name">${escapeHtml(camera.name || id)}</span>
+        ${recent ? '<span class="cam-thumb-dot" title="Someone seen recently"></span>' : ""}
+      </button>`;
+  }).join("");
+
+  const [first, ...rest] = sightings;
+  const line = first
+    ? `<span class="cam-last-label">Last person</span>
+       <span class="cam-last-pill${first.minutes <= CAMERA_RECENT_MINUTES ? " recent" : ""}">
+         ${escapeHtml(first.camera.name || "")} · ${agoLabel(first.minutes)}</span>
+       ${rest.length ? `<span class="cam-last-rest">then ${rest.slice(0, 2).map((s) =>
+         `${escapeHtml(s.camera.name || "")} ${agoLabel(s.minutes)}`).join(", ")}</span>` : ""}`
+    : `<span class="cam-last-label">No camera has reported a person yet</span>`;
+
+  renderHtml(host, `<div class="cam-strip">${strip}</div><div class="cam-last">${line}</div>`);
+}
+
+/* Fresh thumbnails without rebuilding the strip: only the src changes, so the
+   picture never blinks back to a placeholder. */
+function refreshCameraThumbs() {
+  const host = document.querySelector("#homeCameraExtra");
+  if (!host || !document.querySelector('.view-panel.active[data-view-panel="home"]') || document.hidden) return;
+  for (const img of host.querySelectorAll("[data-camera-thumb]")) {
+    const camera = latestCameraById.get(img.dataset.cameraThumb);
+    if (camera) img.src = camera.snapshot_url || snapshotUrlFor(camera);
+  }
+}
+setInterval(refreshCameraThumbs, CAMERA_STRIP_REFRESH_MS);
+
+document.addEventListener("click", (event) => {
+  const pick = event.target.closest("[data-home-camera-pick]");
+  if (!pick) return;
+  const id = pick.dataset.homeCameraPick;
+  const previous = shownHomeCameraId;
+  const wasLive = Boolean(previous) && activeCameraIds.has(previous);
+  releaseMotionEpisodes();
+  if (previous && previous !== id) activeCameraIds.delete(previous);
+  if (wasLive) activeCameraIds.add(id);
+  try { localStorage.setItem(HOME_CAMERA_KEY, id); } catch {}
+  renderHomeCamera();
+});
 
 /* The picture and its controls. Shared so a path slot and the ordinary card
    cannot drift into looking like two different things. */

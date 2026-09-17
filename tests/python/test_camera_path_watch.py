@@ -396,3 +396,49 @@ report({ route: pathEpisodeCameras().map((c) => c.id) });
     assert result["route"] == []
     assert result["playing"] == []
     assert result["episodes"] == 1, "tracked, so the same motion cannot reopen it"
+
+
+# ── Under the picture: the other cameras, and who was seen last ──────────────
+
+def test_the_strip_and_the_last_person_line_read_the_detector_zones(tmp_path: Path) -> None:
+    """The Security zones already carry the NPU person sensors and their age, so
+    the strip costs no extra fetch. The mapping is the camera's name in lower
+    case with underscores - binary_sensor.front_door_camera_npu_person."""
+    js = APP_JS.read_text(encoding="utf-8")
+    body = js[js.index("function cameraSightings()"):js.index("function agoLabel(")]
+
+    assert "latestAlarmData?.zones" in body
+    assert "_npu_person$" in body
+    assert 'zone.state === "motion" ? 0' in body, "a camera seeing someone now is 0 minutes ago"
+    assert "sort((a, b) => a.minutes - b.minutes)" in body
+
+    key = js[js.index("function cameraDetectorKey(camera)"):js.index("/* cameraId -> minutes")]
+    assert 'replace(/\\s+/g, "_")' in key
+
+
+def test_picking_a_camera_from_the_strip_behaves_like_the_dropdown(tmp_path: Path) -> None:
+    """Same three rules: the person beats the automation, the card holds one
+    stream, and a live view stays live across the switch."""
+    js = APP_JS.read_text(encoding="utf-8")
+    handler = js[js.index('const pick = event.target.closest("[data-home-camera-pick]");'):]
+    handler = handler[:handler.index("/* The picture and its controls.")]
+
+    assert "releaseMotionEpisodes();" in handler
+    assert "activeCameraIds.delete(previous)" in handler
+    assert "if (wasLive) activeCameraIds.add(id);" in handler
+    assert "localStorage.setItem(HOME_CAMERA_KEY, id)" in handler
+
+
+def test_the_strip_lives_outside_the_body_an_episode_rebuilds(tmp_path: Path) -> None:
+    """syncPathSlots owns #homeCameraBody node by node; a strip inside it would
+    be torn down and rebuilt - and its thumbnails would blink - on every step."""
+    html = (PROJECT_ROOT / "src" / "python" / "web_static" / "index.html").read_text(encoding="utf-8")
+    js = APP_JS.read_text(encoding="utf-8")
+
+    card = html[html.index('id="homeCameraCard"') if 'id="homeCameraCard"' in html else html.index('id="homeCameraPanel"'):]
+    card = card[:card.index("</div>\n          <div class=\"panel")] if "</div>\n          <div class=\"panel" in card else card[:2000]
+    assert 'id="homeCameraExtra"' in card
+    assert card.index('id="homeCameraBody"') < card.index('id="homeCameraExtra"')
+    # Refreshed in place, so a thumbnail never blinks back to a placeholder.
+    assert "function refreshCameraThumbs()" in js
+    assert "img.src = camera.snapshot_url" in js
