@@ -108,9 +108,10 @@ def test_the_security_card_groups_by_kind_and_can_add_sensors() -> None:
 
 @pytest.mark.parametrize("raw, expected", [
     ("Door sensor front door", "Front door"),
-    ("Front Door Camera (NPU) Person", "Front Door Camera"),
+    ("Front Door Camera (NPU) Person", "Front Door"),
+    ("Motion sensor and TH Backyard Occupancy", "Backyard"),
+    ("Vibration sensor backdoor", "Backdoor"),
     ("Fire alarm detector Smoke", "Smoke detector"),
-    ("Vibration sensor backdoor", "Vibration sensor backdoor"),
 ])
 def test_zone_names_shorten_to_the_place(raw: str, expected: str) -> None:
     """Mirrors shortZoneName in app.js; the card has no room for device models."""
@@ -120,4 +121,7 @@ def test_zone_names_shorten_to_the_place(raw: str, expected: str) -> None:
     name = re.sub(r"\s*\(NPU\)\s*Person$", "", name, flags=re.I)
     name = re.sub(r"^fire alarm detector\s+smoke$", "Smoke detector", name, flags=re.I)
     name = re.sub(r"\s+(Smoke|Moisture|Contact|Occupancy|Motion)$", "", name, flags=re.I)
+    name = re.sub(r"\s+camera$", "", name, flags=re.I)
+    name = re.sub(r"^motion sensor and th\s+", "", name, flags=re.I)
+    name = re.sub(r"^vibration sensor\s+", "", name, flags=re.I)
     assert name[:1].upper() + name[1:] == expected

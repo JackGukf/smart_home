@@ -3533,13 +3533,20 @@ const ALARM_KIND_COLUMNS = [
 
 /* "Door sensor front door" is the device's name, not the place. */
 function shortZoneName(name) {
-  return String(name || "")
+  /* Each column already says what kind these are, so "Camera" and "Motion
+     sensor and TH" are repetition the chip has no room for: what is left is
+     the place, which is the part that differs. */
+  const short = String(name || "")
     .replace(/^door sensor\s+/i, "")
     .replace(/\s*\(NPU\)\s*Person$/i, "")
     .replace(/^fire alarm detector\s+smoke$/i, "Smoke detector")
     .replace(/\s+(Smoke|Moisture|Contact|Occupancy|Motion)$/i, "")
-    .replace(/^(.)/, (c) => c.toUpperCase())
-    .trim() || String(name || "");
+    .replace(/\s+camera$/i, "")
+    .replace(/^motion sensor and th\s+/i, "")
+    .replace(/^motion and th\s+/i, "")
+    .replace(/^vibration sensor\s+/i, "")
+    .trim();
+  return (short.charAt(0).toUpperCase() + short.slice(1)) || String(name || "");
 }
 
 function zoneStateText(zone, breached) {
