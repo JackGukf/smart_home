@@ -839,7 +839,6 @@ aside {
   transition: border-color 0.25s, background 0.25s, box-shadow 0.25s;
 }
 
-
 .device-card[draggable="true"] { cursor: grab; }
 .device-card[data-drag-locked="true"] { cursor: pointer; }
 .device-card.dragging { opacity: 0.58; transform: scale(0.985); border-color: var(--card-color-border); }
@@ -2075,7 +2074,6 @@ aside {
   border-color: rgba(251, 191, 36, 0.38);
 }
 
-
 /* ── SENSOR DEVICE TILE ──
    A compact tile tinted by device type. The type icon repeats twice: once
    small in the badge, once oversized as a watermark, which is what makes the
@@ -2875,13 +2873,8 @@ aside {
 
 .zone-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 
-/* Alarm zone tiles.
-
-   Deliberately square, like the other sensor tiles:
-   a square grid of small facts reads better than full-width rows, which wasted
-   the card's width and left each entry too small to scan. The two cards sit
-   side by side on the Home view, so matching them is what makes the view look
-   like one design rather than two. */
+/* Sits beside the ZONES label: answers "is anything open?" without reading
+   every tile. */
 .alarm-zone-count {
   margin-left: 6px;
   padding: 1px 6px;
@@ -2899,6 +2892,9 @@ aside {
 /* Scale with the card on desktop, exactly as the temperature tiles do. */
 @media (min-width: 1101px) {
   #alarmPanel { container-type: inline-size; }
+
+}
+
 .siren-row {
   display: flex;
   align-items: center;
@@ -5244,7 +5240,6 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
   .area-icon-picker { grid-template-columns: repeat(6, 1fr); }
 }
 
-
 /* ── Connected devices modal ── */
 
 .net-modal-list {
@@ -5355,7 +5350,6 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
   align-self: center;
 }
 
-
 /* ══════════════════════════════════════════════════════════════════════
    Fallbacks for browsers without aspect-ratio (Safari < 15).
 
@@ -5408,7 +5402,6 @@ html.no-aspect-ratio .area-icon-choice::before {
    stretches - and, crucially, there is a height to centre content within. */
 html.no-aspect-ratio .custom-light-tile { min-height: 72px; }
 html.no-aspect-ratio .custom-sensor-tile { min-height: 72px; }
-
 
 /* ── Touch-friendly drag handles ──
 
@@ -5570,7 +5563,6 @@ html.no-aspect-ratio .custom-sensor-tile { min-height: 72px; }
   flex-shrink: 0;
 }
 
-
 /* ── Home header controls on a narrow screen ──
 
    New Card, New Area, Cards and Reset Layout do not fit one line on a phone.
@@ -5639,7 +5631,6 @@ html.no-aspect-ratio .custom-sensor-tile { min-height: 72px; }
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-
 
 /* ── Motion log ──
    A log is scanned, not read: the eye goes down the time column looking for a
@@ -5730,12 +5721,18 @@ html.no-aspect-ratio .custom-sensor-tile { min-height: 72px; }
 .motion-log .empty, .motion-log .loading-msg { padding: 18px 14px; }
 @media (max-width: 560px) {
   .motion-row { grid-template-columns: 64px 8px minmax(0, 1fr); row-gap: 2px; }
+  .motion-event { grid-column: 3; justify-self: start; }
+}
+
+/* The Security card's body: the state line, then a column per kind of sensor
+   (see .alarm-kinds). */
 .home-alarm-body {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-height: 0;
 }
+
 .home-alarm-state {
   display: flex;
   align-items: baseline;
@@ -5773,6 +5770,8 @@ html.no-aspect-ratio .custom-sensor-tile { min-height: 72px; }
 /* The card is narrower than the Alarm view, so the tiles need their own
    container query rather than inheriting that panel's sizing. */
 #homeAlarmBody { container-type: inline-size; }
+
+/* ── Media: Music page ── */
 .music-panel { max-width: 760px; margin-bottom: 16px; }
 
 /* ── YouTube ──
@@ -6240,7 +6239,6 @@ header > .header-right { flex-shrink: 0; }
 
 .settings-status { min-height: 18px; margin-top: 10px; font-size: 12px; color: var(--t-text-dim); }
 
-
 /* ── Alarm card sensor picker ──
    Grouped by kind: you arrive knowing you want "the leak sensors", not a
    particular entity id, so the headings are the thing being scanned. */
@@ -6378,8 +6376,6 @@ header > .header-right { flex-shrink: 0; }
   line-height: 1.6;
 }
 .digest-notes li { margin: 3px 0; }
-
-
 
 /* Visible only to screen readers: the menu button is an icon alone. */
 .sr-only {
