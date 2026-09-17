@@ -5058,6 +5058,10 @@ function renderHomeSensorPicker() {
     : `<div class="home-empty">No temperature sensors available</div>`;
 }
 
+/* The camera the Home card is showing right now, so a pick from the dropdown
+   knows what it is replacing. */
+let shownHomeCameraId = null;
+
 function homeCameraList() {
   const tuyaCams = latestTuyaDevices.filter(isTuyaCamera).map(tuyaCameraCard);
   return [...latestCameras, ...tuyaCams];
@@ -5090,9 +5094,16 @@ function renderHomeCamera() {
   const route = pathEpisodeCameras();
   if (route.length) {
     syncPathSlots(route);
+    shownHomeCameraId = activePathCameraId();
     return;
   }
+  /* No episode wants the card, so it must not still be holding path slots.
+     An episode that was released or ended by itself used to leave them in
+     place, and with renderHtml's cache describing the older markup the card
+     could go on showing two cameras' slots instead of the one chosen. */
+  if (body.dataset.pathMode === "1") exitPathMode();
 
+  shownHomeCameraId = camera ? cameraIdFor(camera) : null;
   if (!camera) {
     renderHtml(body, `<div class="home-empty">No cameras found</div>`);
     return;
@@ -5197,9 +5208,12 @@ document.addEventListener("click", (event) => {
   event.stopPropagation();
 
   const cameraId = trigger.dataset.homeCameraToggle;
+  /* Read before releasing: releasing stops the route's streams, which would
+     turn a tap on "stop" into a tap on "play". */
+  const wasLive = activeCameraIds.has(cameraId);
   /* Whatever the motion watch was doing, the person watching wins. */
   releaseMotionEpisodes();
-  if (activeCameraIds.has(cameraId)) {
+  if (wasLive) {
     activeCameraIds.delete(cameraId);
   } else {
     activeCameraIds.add(cameraId);
@@ -5403,7 +5417,9 @@ function pathEpisodeCameras() {
   const cameras = [];
   for (const path of cameraPathList()) {
     const episode = pathEpisodes.get(path.name);
-    if (!episode) continue;
+    /* A released episode is still tracked, so the same motion cannot start it
+       again, but it no longer owns the card. */
+    if (!episode || episode.released) continue;
     for (const offset of [0, 1]) {
       const step = path.steps[episode.index + offset];
       if (!step) continue;
@@ -5418,7 +5434,7 @@ function pathEpisodeCameras() {
 function activePathCameraId() {
   for (const path of cameraPathList()) {
     const episode = pathEpisodes.get(path.name);
-    if (episode) return path.steps[episode.index]?.camera_id ?? null;
+    if (episode && !episode.released) return path.steps[episode.index]?.camera_id ?? null;
   }
   return null;
 }
@@ -5527,11 +5543,22 @@ function stopAllMotionEpisodes() {
    current motion lasts. Called from the stream button and the dropdown. */
 function releaseMotionEpisodes() {
   let released = false;
+  let heldPath = false;
   for (const episode of pathEpisodes.values()) {
     if (episode.stopTimer) clearTimeout(episode.stopTimer);
     episode.stopTimer = null;
+    if (!episode.released) heldPath = true;
     episode.released = true;
     released = true;
+  }
+  /* The route's streams go with it, now rather than when the motion clears.
+     Keeping them meant the card went on showing the route, and even set the
+     dropdown back to it, until the sensor settled - with a detector that kept
+     re-triggering, a pick from the dropdown could take minutes to show - and
+     the Pi 4 kept decoding two streams the whole time. */
+  if (heldPath) {
+    for (const id of pathCameraIds()) activeCameraIds.delete(id);
+    exitPathMode();
   }
   for (const episode of motionEpisodes.values()) {
     if (episode.stopTimer) clearTimeout(episode.stopTimer);
@@ -6905,8 +6932,15 @@ document.addEventListener("change", async (event) => {
   document.querySelector("#homeCameraSelect")?.addEventListener("change", (event) => {
     /* Picking a camera by hand is the clearest possible "I have this" - the
        override has to go, or the card would ignore the choice just made. */
+    const next = event.target.value;
+    const previous = shownHomeCameraId;
+    const wasLive = Boolean(previous) && activeCameraIds.has(previous);
     releaseMotionEpisodes();
-    try { localStorage.setItem(HOME_CAMERA_KEY, event.target.value); } catch {}
+    /* One stream on the card: the camera being replaced stops, and if it was
+       live the new one starts live rather than as a still waiting for a tap. */
+    if (previous && previous !== next) activeCameraIds.delete(previous);
+    if (wasLive) activeCameraIds.add(next);
+    try { localStorage.setItem(HOME_CAMERA_KEY, next); } catch {}
     renderHomeCamera();
   });
   document.querySelector("#homeCameraAuto")?.addEventListener("change", (event) => {

@@ -94,7 +94,7 @@ eval(pick('cameraIdFor') + pick('motionSensorIsTripped') + pick('motionWatchEnab
    + pick('cameraPathList') + pick('pathCameraIds') + pick('pathEpisodeCameras')
    + pick('activePathCameraId') + pick('openPathEpisode') + pick('advancePathEpisode')
    + pick('closePathEpisode') + pick('stopAllPathEpisodes') + pick('updatePathWatch')
-   + pick('applyPathCameras'));
+   + pick('applyPathCameras') + pick('releaseMotionEpisodes'));
 
 // `at` is how far along the route the person is; -1 is nobody. The sensors
 // behind them stay true, which is what the presence hold really does.
@@ -358,3 +358,41 @@ def test_a_camera_with_no_sensor_cannot_be_a_step(tmp_path: Path) -> None:
         .get("/api/cameras").json()["paths"]
     # One usable step left, which is not a route.
     assert paths == []
+
+
+# ── A person picks another camera mid-route ─────────────────────────────────
+
+def test_picking_a_camera_hands_the_card_back_at_once(tmp_path: Path) -> None:
+    """A garage detector that kept re-triggering held the route open for
+    minutes, and a pick from the dropdown waited all that time: the released
+    episode still owned the card, still set the dropdown back to the route, and
+    the panel kept decoding both of the route's streams."""
+    result = _run("""
+walkTo(0);
+updatePathWatch();
+const before = [...activeCameraIds].sort();
+releaseMotionEpisodes();
+report({ before, route: pathEpisodeCameras().map((c) => c.id) });
+""", tmp_path)
+
+    assert result["before"] == ["cam-garage", "cam-yard"]
+    assert result["route"] == [], "a released episode must not own the card"
+    assert result["showing"] is None
+    assert result["playing"] == [], "the route's streams stop with it"
+    assert result["exits"] == 1, "the card leaves path mode"
+    assert result["override"] is None
+
+
+def test_a_released_route_does_not_come_back_while_the_same_motion_lasts(tmp_path: Path) -> None:
+    result = _run("""
+walkTo(0);
+updatePathWatch();
+releaseMotionEpisodes();
+walkTo(1);          // still the same visit
+updatePathWatch();
+report({ route: pathEpisodeCameras().map((c) => c.id) });
+""", tmp_path)
+
+    assert result["route"] == []
+    assert result["playing"] == []
+    assert result["episodes"] == 1, "tracked, so the same motion cannot reopen it"
