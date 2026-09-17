@@ -3229,7 +3229,10 @@ function cameraMedia(camera) {
         const proxyId = encodeURIComponent(cameraIdFor(camera));
         return `<img class="camera-media" src="/api/cameras/${proxyId}/mjpeg" alt="${escapeHtml(camera.name)} live view" />`;
       }
-      return `<iframe class="camera-media camera-player" src="${liveUrl}" title="${camera.name} live WebRTC view" allow="autoplay; fullscreen; microphone"></iframe>`;
+      /* scrolling="no": go2rtc's player sets its <video> to 100% height but
+         leaves it inline, so the baseline gap under it overflows the page by a
+         few pixels and a scrollbar appeared beside every live picture. */
+      return `<iframe class="camera-media camera-player" src="${liveUrl}" title="${camera.name} live WebRTC view" allow="autoplay; fullscreen; microphone" scrolling="no"></iframe>`;
     }
     if (liveType === "snapshot" || liveType === "mjpeg" || liveType === "doorbell") {
       const separator = liveUrl.includes("?") ? "&" : "?";
@@ -8030,12 +8033,26 @@ function renderNews(data) {
   renderNewsMarkets(markets);
 }
 
+/* A failed read retries soon, backing off to the normal poll, rather than
+   waiting the full five minutes. A page that reloads for a new build does so
+   while deploy-dashboard.sh is restarting the service, so its first read can
+   land in the gap: that left the wall panel without news for five minutes
+   after the build that introduced it. Whatever is on screen stays meanwhile.
+   Only a failure schedules a timer; the regular poll is a plain interval. A
+   success that re-armed a timeout made a loop wherever timers run at once. */
+const NEWS_RETRY_FIRST_MS = 10_000;
+let newsRetryMs = NEWS_RETRY_FIRST_MS;
+let newsRetryTimer = null;
+
 async function loadNews() {
   try {
     renderNews(await requestJson("/api/news"));
+    newsRetryMs = NEWS_RETRY_FIRST_MS;
   } catch (error) {
-    // Leave whatever is on screen: a feed hiccup should not blank the header.
     console.error(error);
+    clearTimeout(newsRetryTimer);
+    newsRetryTimer = setTimeout(loadNews, newsRetryMs);
+    newsRetryMs = Math.min(newsRetryMs * 2, NEWS_POLL_MS);
   }
 }
 

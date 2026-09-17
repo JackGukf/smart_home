@@ -316,6 +316,30 @@ def test_the_camera_player_grows_into_slack_but_never_shrinks() -> None:
     assert "@media (min-width: 740px)" in block.split("@media")[0] + "@media (min-width: 740px)"
 
 
+def test_the_camera_grows_on_a_motion_route_too() -> None:
+    """With Auto on motion on, the frame sits inside the slot on screen.
+
+    That slot was a plain block, so the frame had no flex parent and fell back
+    to 16:9, leaving the dead space under the controls this fix exists to
+    remove - on the wall panel, which is where Auto on motion is used.
+    """
+    css = STYLES.read_text(encoding="utf-8")
+    block = css[css.index("#homeCameraPanel .home-camera-slot.showing {"):]
+    block = block[:block.index("}")]
+
+    assert "display: flex;" in block
+    assert "flex-direction: column;" in block
+    assert "flex: 1 0 auto;" in block
+
+
+def test_the_live_player_frame_does_not_scroll() -> None:
+    js = (PROJECT_ROOT / "src" / "python" / "web_static" / "app.js").read_text(encoding="utf-8")
+    iframe = js[js.index('<iframe class="camera-media camera-player"'):]
+    iframe = iframe[:iframe.index("</iframe>")]
+
+    assert 'scrolling="no"' in iframe
+
+
 def test_hiding_the_overview_actually_hides_it() -> None:
     """Opening an area broke the whole view until this was here.
 

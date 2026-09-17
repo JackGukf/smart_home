@@ -4480,6 +4480,16 @@ aside {
 
   #homeCameraPanel .home-camera-frame { flex: 1 0 auto; }
 
+  /* With Auto on motion on, the frame is not a child of the body but of the
+     slot on screen (see "Camera path slots"), which was an ordinary block - so
+     the frame had no flex parent, fell back to its 16:9 height and left the
+     same dead space under the controls. The showing slot passes the flex on. */
+  #homeCameraPanel .home-camera-slot.showing {
+    display: flex;
+    flex-direction: column;
+    flex: 1 0 auto;
+  }
+
   /* The pre-aspect-ratio fallback adds height with a padding box, which a
      flexed height cannot override - it would stack on top. */
   html.no-aspect-ratio #homeCameraPanel .home-camera-frame::before { content: none; }
@@ -5761,10 +5771,19 @@ body.youtube-covering .youtube-stage.is-fullscreen .youtube-frame { height: 100%
    truncates, and prices drop away one by one as the screen narrows. On a phone,
    where `main` is not fitted to the screen, it takes its own row instead.
    Spacing is margins, not flex gap, for iOS 12. */
+/* Basis 0, not auto, and the logo and clock never shrink. With an auto basis
+   the headline's own length set its share of the row, so each new headline
+   squeezed the logo by a different amount: "Orange Pi 6 Plus · Local Network"
+   wrapped, the header grew past 72px, and the whole page jumped every eight
+   seconds. Now the news gets exactly the space left over, whatever it says. */
+header > .logo,
+header > .header-right { flex-shrink: 0; }
+.logo-sub { white-space: nowrap; }
+
 .header-news {
   display: flex;
   align-items: center;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   margin: 0 28px;
 }
@@ -5776,7 +5795,7 @@ body.youtube-covering .youtube-stage.is-fullscreen .youtube-frame { height: 100%
 .header-news-story {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   /* 1px, not more: two lines plus this must stay inside the header's 44px of
      content height, or the header grows and the fitted Home view overflows. */

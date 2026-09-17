@@ -105,3 +105,20 @@ def test_deploy_records_the_release_version() -> None:
     assert '"version": "%s"' in deploy
     assert "/VERSION" in deploy
     assert re_fullmatch(r"\d+\.\d+\.\d+", version)
+
+
+def test_rotating_headlines_cannot_resize_the_header() -> None:
+    """Each headline's length must not change how much room the logo gets.
+
+    With an auto basis it did: the logo line wrapped on long headlines, the
+    header grew past its fixed 72px and the page jumped every rotation.
+    """
+    css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+
+    assert "header > .logo,\nheader > .header-right { flex-shrink: 0; }" in css
+    assert ".logo-sub { white-space: nowrap; }" in css
+    for rule in ("\n.header-news {", "\n.header-news-story {"):
+        block = css[css.index(rule):css.index("}", css.index(rule))]
+        assert "flex: 1 1 0;" in block, f"{rule} must not size itself from its text"
+    title = css[css.index(".header-news-title {"):css.index("}", css.index(".header-news-title {"))]
+    assert "white-space: nowrap;" in title and "text-overflow: ellipsis;" in title
