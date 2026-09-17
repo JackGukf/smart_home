@@ -127,10 +127,12 @@ header {
 .time-block { text-align: right; }
 
 .time {
-  font-family: var(--mono);
-  font-size: 20px;
-  font-weight: 500;
+  font-family: var(--font);
+  font-size: 22px;
+  font-weight: 600;
   line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
   color: var(--text);
 }
 
@@ -3743,14 +3745,13 @@ aside {
 
   /* Left column: the things you read rather than operate.
 
-     Weather gets four rows, not two. It is the one card here that cannot
-     compress: ~54px of padding and header plus a fixed 58px icon means it needs
-     about 120px before anything renders, and two rows is 71px - so it clipped
-     to a sliver and scrolled inside itself. The two rows come from Climate and
-     Temperatures because both degrade gracefully - the ecobee dial scales
-     itself to its card, and the sensor grid scrolls. */
-  #homeOverview > .home-layout > [data-home-card="weather"]     { grid-column: 1 / span 6  !important; grid-row: 1 / span 4  !important; }
-  #homeOverview > .home-layout > [data-home-card="climate"]     { grid-column: 1 / span 6  !important; grid-row: 5 / span 5  !important; }
+     Weather gets five rows. It carries the clock, today and the week, and
+     below about 150px it drops the week and then the date (see
+     "#homeWeatherPanel"), so it cannot usefully go shorter. The rows come from
+     Climate and Temperatures because both degrade gracefully - the ecobee dial
+     scales itself to its card, and the sensor grid scrolls. */
+  #homeOverview > .home-layout > [data-home-card="weather"]     { grid-column: 1 / span 6  !important; grid-row: 1 / span 5  !important; }
+  #homeOverview > .home-layout > [data-home-card="climate"]     { grid-column: 1 / span 6  !important; grid-row: 6 / span 4  !important; }
   #homeOverview > .home-layout > [data-home-card="tempsensors"] { grid-column: 1 / span 6  !important; grid-row: 10 / span 5 !important; }
 
   /* Right column: the things you look at and act on. */
@@ -3804,27 +3805,73 @@ aside {
   cursor: grabbing;
 }
 
-/* ── Weather card ── */
+/* ── Weather card ──
+   The clock, today's weather and the week, over a sky that follows the time of
+   day. The sky is the card's own and ignores the theme palette on purpose: a
+   night sky is navy whichever accent colour the dashboard wears. Text on it is
+   always near-white, so every sky keeps it readable, including the pale bottom
+   of the day gradient, where the week sits on a darkened glass strip.
+
+   iOS 12 is a supported browser and has no flex gap, no inset and an unprefixed
+   backdrop-filter, so spacing here is margins and the glass is prefixed. */
+#homeWeatherPanel.home-weather-card {
+  color: #f4f7ff;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(170deg, #1b5389 0%, #3c86c2 60%, #8cc3e6 100%);
+  z-index: 0;
+}
+
+/* Stars, shown only at night. */
+#homeWeatherPanel.home-weather-card::before {
+  content: "";
+  position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 0.8s;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1px 1px at 12% 22%, #fff 99%, transparent),
+    radial-gradient(1px 1px at 34% 12%, #fff 99%, transparent),
+    radial-gradient(1.4px 1.4px at 58% 30%, #fff 99%, transparent),
+    radial-gradient(1px 1px at 76% 16%, #fff 99%, transparent),
+    radial-gradient(1px 1px at 88% 40%, #fff 99%, transparent),
+    radial-gradient(1.2px 1.2px at 22% 48%, #fff 99%, transparent),
+    radial-gradient(1px 1px at 66% 8%, #fff 99%, transparent),
+    radial-gradient(1px 1px at 45% 44%, #fff 99%, transparent),
+    radial-gradient(1px 1px at 93% 12%, #fff 99%, transparent);
+}
+
+#homeWeatherPanel.sky-dawn  { background: linear-gradient(170deg, #25264d 0%, #7b5a8a 55%, #e0936f 100%); }
+#homeWeatherPanel.sky-day   { background: linear-gradient(170deg, #1b5389 0%, #3c86c2 60%, #8cc3e6 100%); }
+#homeWeatherPanel.sky-dusk  { background: linear-gradient(170deg, #2b2450 0%, #8a4f6f 55%, #f09a5b 100%); }
+#homeWeatherPanel.sky-night { background: linear-gradient(170deg, #0b1026 0%, #18204a 70%, #2a2a5e 100%); }
+#homeWeatherPanel.sky-night::before { opacity: 0.7; }
+
+#homeWeatherPanel .panel-title,
+#homeWeatherPanel .home-card-grip,
+#homeWeatherPanel .home-card-resize { color: rgba(244, 247, 255, 0.72); }
+
 .home-weather-loc {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   font-size: 11.5px;
-  color: var(--t-text-dim);
+  color: rgba(244, 247, 255, 0.85);
   white-space: nowrap;
 }
 
-.home-weather-loc i { font-size: 13px; color: var(--t-text); }
+.home-weather-loc i { font-size: 13px; margin-right: 4px; }
 
 .home-weather-body {
   display: flex;
-  align-items: center;
-  gap: 20px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
   flex: 1 1 auto;
   min-height: 0;
-  margin-top: 10px;
-  padding: 10px 8px;
+  margin-top: 8px;
+  padding: 4px 6px;
   background: none;
   border: none;
   color: inherit;
@@ -3835,34 +3882,97 @@ aside {
   transition: background 0.15s;
 }
 
-.home-weather-body:hover { background: rgba(255, 255, 255, 0.03); }
+.home-weather-body:hover { background: rgba(255, 255, 255, 0.07); }
 
-.home-weather-body > i {
-  font-size: 58px;
+.home-weather-clock {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-right: 16px;
+}
+
+.home-weather-time {
+  font-size: 64px;
+  font-weight: 200;
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-weather-date {
+  font-size: 13px;
+  margin-top: 6px;
+  color: rgba(244, 247, 255, 0.85);
+  white-space: nowrap;
+}
+
+.home-weather-now {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.home-weather-icon {
+  font-size: 42px;
   line-height: 1;
-  color: var(--amber);
+  margin-right: 10px;
   flex-shrink: 0;
 }
 
-.home-weather-main { min-width: 0; }
+.home-weather-icon.ti-sun { color: #ffd166; }
 
-.home-weather-temp {
-  font-size: 34px;
-  font-weight: 600;
-  line-height: 1.1;
+.home-weather-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
-.home-weather-label {
-  font-size: 12px;
-  color: var(--t-text);
-  margin-top: 2px;
+.home-weather-temp {
+  font-size: 42px;
+  font-weight: 300;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .home-weather-cond {
-  font-size: 11.5px;
-  color: var(--muted);
-  margin-top: 1px;
+  font-size: 12px;
+  margin-top: 3px;
+  color: rgba(244, 247, 255, 0.85);
+  white-space: nowrap;
 }
+
+.home-weather-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-gap: 2px;
+  flex-shrink: 0;
+  margin-top: 8px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(10, 12, 30, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.home-weather-week:empty { display: none; }
+
+.wk-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 0;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.wk-day.today { background: rgba(255, 255, 255, 0.13); }
+.wk-name { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(244, 247, 255, 0.75); }
+.wk-day i { font-size: 16px; line-height: 1.1; margin: 1px 0; }
+.wk-temps { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.wk-temps strong { font-weight: 500; }
+.wk-temps span { margin-left: 3px; color: rgba(244, 247, 255, 0.6); }
 
 /* ── Custom device cards ── */
 .home-custom-body {
@@ -4376,39 +4486,30 @@ aside {
 }
 
 /* ── Weather scales with its own height ────────────────────────────────────
-   Weather is two of the twenty rows in the three-column layout, which is 74px
-   on the panel, and the card wants about 150: ~30px of padding, ~22px of header
-   and a body whose icon alone is a fixed 58px. At two rows it clipped to a
-   sliver.
+   On the fitted Home grid the card is a fixed box, so everything in it is a
+   clamp on the card's height (cqh) rather than a breakpoint, and it shrinks
+   continuously instead of clipping. The clamps top out at the base sizes, so a
+   card dragged larger looks as designed.
 
-   Same answer as the sensor tiles above - the card is its own size container
-   and everything in it is a clamp on cqh, so it shrinks continuously with the
-   card instead of at a breakpoint. The clamps top out at the original values,
-   so a card dragged larger looks exactly as it always did.
-
-   Two rows works out at roughly a 25px icon over 19px of temperature, with the
-   label dropped, inside 36px of body - readable rather than merely present. */
+   When it gets short, the week goes first - it is the one thing the forecast
+   dropdown also has - and the date second; the time and today's weather stay. */
 @media (min-width: 1101px) {
   #homeWeatherPanel { container-type: size; }
 
-  #homeWeatherPanel.home-panel { padding: clamp(6px, 9cqh, 14px) 16px clamp(6px, 10cqh, 16px); }
-  #homeWeatherPanel .home-panel-head { margin-bottom: clamp(0px, 2cqh, 10px); }
-  #homeWeatherPanel .panel-title { font-size: clamp(9px, 13cqh, 12px); }
+  #homeWeatherPanel.home-panel { padding: clamp(6px, 5cqh, 14px) 16px clamp(6px, 5cqh, 14px); }
+  #homeWeatherPanel .panel-title { font-size: clamp(9px, 6cqh, 12px); }
+  #homeWeatherPanel .home-weather-body { margin-top: clamp(0px, 3cqh, 8px); }
+  #homeWeatherPanel .home-weather-time { font-size: clamp(26px, 26cqh, 64px); }
+  #homeWeatherPanel .home-weather-temp { font-size: clamp(18px, 19cqh, 42px); }
+  #homeWeatherPanel .home-weather-icon { font-size: clamp(18px, 19cqh, 42px); }
 
-  #homeWeatherPanel .home-weather-body {
-    margin-top: clamp(0px, 4cqh, 10px);
-    padding: clamp(0px, 4cqh, 10px) clamp(2px, 3cqh, 8px);
-    gap: clamp(8px, 9cqh, 20px);
+  @container (max-height: 200px) {
+    #homeWeatherPanel .home-weather-week { display: none; }
+    #homeWeatherPanel .home-weather-time { font-size: clamp(26px, 36cqh, 64px); }
   }
-  #homeWeatherPanel .home-weather-body > i { font-size: clamp(20px, 34cqh, 58px); }
-  #homeWeatherPanel .home-weather-temp { font-size: clamp(16px, 26cqh, 34px); }
-  #homeWeatherPanel .home-weather-label { font-size: clamp(9px, 9cqh, 12px); }
-  #homeWeatherPanel .home-weather-cond { font-size: clamp(8.5px, 8cqh, 11.5px); }
 
-  /* The first thing to go when it gets tight. The card header already says
-     WEATHER, so "Outdoor Temperature" is the line carrying the least. */
-  @container (max-height: 110px) {
-    #homeWeatherPanel .home-weather-label { display: none; }
+  @container (max-height: 120px) {
+    #homeWeatherPanel .home-weather-date { display: none; }
   }
 }
 
@@ -5559,6 +5660,312 @@ html.no-aspect-ratio .temp-sensor-tile { min-height: 84px; }
   align-items: start;
 }
 .media-grid .home-panel-head { margin-bottom: 10px; }
+
+/* ── YouTube ──
+   Full row, because a video is the one thing in Media that wants the width.
+   Full screen restyles the stage in place to cover the page (see app.js). */
+.media-grid .youtube-panel { grid-column: 1 / -1; width: 100%; max-width: 1040px; }
+
+.youtube-open {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--t-text-dim);
+  white-space: nowrap;
+}
+.youtube-open i { margin-right: 4px; font-size: 14px; }
+.youtube-open:hover { color: var(--t-text); }
+
+.youtube-form { display: flex; }
+.youtube-form input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: 8px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 13px;
+}
+.youtube-form input:focus { outline: none; border-color: var(--t-accent); }
+
+.youtube-error { margin-top: 8px; font-size: 12px; color: var(--red); }
+
+.youtube-stage {
+  position: relative;
+  margin-top: 12px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+}
+
+.youtube-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; }
+html.no-aspect-ratio .youtube-frame { height: 0; padding-top: 56.25%; }
+
+.youtube-frame iframe,
+.youtube-empty {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.youtube-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--t-text-dim);
+  font-size: 13px;
+  background: radial-gradient(80% 90% at 30% 20%, #232a42, #0b0d16 70%);
+}
+.youtube-empty i { font-size: 44px; margin-bottom: 8px; color: #e53935; }
+
+.youtube-exit {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 13px;
+}
+.youtube-exit i { margin-right: 6px; }
+.youtube-exit[hidden] { display: none; }
+
+body.youtube-covering { overflow: hidden; }
+body.youtube-covering .youtube-stage.is-fullscreen {
+  position: fixed;
+  top: 0; right: 0; bottom: 0; left: 0;
+  z-index: 1000;
+  margin: 0;
+  border-radius: 0;
+}
+body.youtube-covering .youtube-stage.is-fullscreen .youtube-frame { height: 100%; padding-top: 0; aspect-ratio: auto; }
+
+.youtube-actions { display: flex; align-items: center; margin-top: 12px; }
+.youtube-hint { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+/* ── News card (Home) ──
+   One headline in serif type beside a market list, spanning the view above the
+   card grid. It must not shrink in the fitted Home layout - the grid gives up
+   the height instead, and the cards scale down with it. */
+.home-news {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  padding: 0;
+  overflow: hidden;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+.home-news[hidden] { display: none; }
+.home-news.no-markets { grid-template-columns: minmax(0, 1fr); }
+.home-news.no-markets .home-news-markets { display: none; }
+.home-news.no-story { grid-template-columns: minmax(0, 1fr); }
+.home-news.no-story .home-news-story { display: none; }
+.home-news.no-story .home-news-markets {
+  border-left: 0;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-column-gap: 24px;
+}
+
+.home-news-story {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 14px 18px 12px;
+}
+
+.home-news-kicker {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.home-news-kind {
+  flex-shrink: 0;
+  margin-right: 10px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: var(--card-2);
+  color: var(--t-text-dim);
+}
+.home-news-kind.kind-breaking { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+.home-news-kind.kind-finance { background: rgba(var(--t-accent-rgb), 0.14); color: var(--t-accent); }
+
+.home-news-meta {
+  color: var(--t-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-news-title {
+  margin: 8px 0 10px;
+  min-height: 2.6em;
+  font-family: 'Fraunces', Georgia, 'Times New Roman', serif;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--t-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  transition: opacity 0.3s;
+}
+.home-news-title.fading { opacity: 0; }
+
+.home-news-pager { display: flex; margin-top: auto; }
+.home-news-pager button {
+  width: 18px;
+  height: 13px;
+  margin-right: 5px;
+  padding: 5px 0;
+  border: 0;
+  border-radius: 2px;
+  background: var(--border-hover);
+  background-clip: content-box;
+  cursor: pointer;
+}
+.home-news-pager button[aria-selected="true"] { background-color: var(--t-accent); }
+
+.home-news-markets {
+  display: grid;
+  align-content: center;
+  padding: 6px 16px;
+  border-left: 1px solid var(--border);
+}
+
+.home-news-market {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 78px;
+  grid-column-gap: 10px;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.home-news-market:last-child { border-bottom: 0; }
+
+.home-news-market-name {
+  font-size: 12px;
+  color: var(--t-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-news-market-name span { margin-left: 8px; font-family: var(--mono); font-size: 11px; color: var(--t-text-dim); }
+
+.home-news-spark { display: block; width: 64px; height: 22px; }
+.home-news-spark path { fill: none; stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.home-news-spark.up path { stroke: var(--green); }
+.home-news-spark.down path { stroke: var(--red); }
+
+.home-news-change { font-family: var(--mono); font-size: 12px; text-align: right; white-space: nowrap; }
+.home-news-change.up { color: var(--green); }
+.home-news-change.down { color: var(--red); }
+
+@media (max-width: 739px) {
+  .home-news { grid-template-columns: minmax(0, 1fr); }
+  .home-news-markets { border-left: 0; border-top: 1px solid var(--border); }
+  .home-news-title { font-size: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-news-title { transition: none; }
+  #homeWeatherPanel.home-weather-card::before { transition: none; }
+}
+
+/* ── Settings views: News and About ── */
+.settings-group {
+  max-width: 760px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-row:last-child { border-bottom: 0; }
+.settings-row.settings-child { padding-left: 34px; }
+.settings-row.is-off .settings-label strong { color: var(--t-text-dim); }
+
+.settings-label { display: flex; flex-direction: column; min-width: 0; margin-right: 16px; }
+.settings-label strong { font-weight: 500; color: var(--t-text); }
+.settings-label small { font-size: 12px; color: var(--t-text-dim); }
+
+.settings-value { font-family: var(--mono); font-size: 13px; color: var(--t-text); text-align: right; }
+
+.settings-chips { display: flex; flex-wrap: wrap; margin-top: 8px; }
+.settings-chip {
+  margin: 0 6px 6px 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card-2);
+  color: var(--t-text-dim);
+  font-size: 11.5px;
+}
+.settings-chip.on {
+  color: var(--t-text);
+  border-color: rgba(var(--t-accent-rgb), 0.55);
+  background: rgba(var(--t-accent-rgb), 0.13);
+}
+.settings-chip:disabled { opacity: 0.45; cursor: default; }
+
+.settings-switch { position: relative; display: inline-block; flex-shrink: 0; width: 42px; height: 24px; }
+.settings-switch input {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  z-index: 1;
+  cursor: pointer;
+}
+.settings-switch input + span {
+  position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
+  border-radius: 999px;
+  background: var(--border-hover);
+  transition: background 0.2s;
+}
+.settings-switch input + span::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #cfd6e6;
+  transition: transform 0.2s;
+}
+.settings-switch input:checked + span { background: var(--t-accent); }
+.settings-switch input:checked + span::after { transform: translateX(18px); background: #fff; }
+.settings-switch input:disabled + span { opacity: 0.4; }
+.settings-switch input:focus-visible + span { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--t-accent); }
+
+.settings-status { min-height: 18px; margin-top: 10px; font-size: 12px; color: var(--t-text-dim); }
 
 
 /* ── Alarm card sensor picker ──

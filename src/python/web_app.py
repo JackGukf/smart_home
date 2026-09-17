@@ -49,6 +49,7 @@ from src.python.matter_device import (
 )
 from src.python import bridge_sync
 from src.python.house_digest import read_digest
+from src.python import news_feed
 from src.python.automation_author import (
     AuthorError,
     Draft,
@@ -114,6 +115,9 @@ DEFAULT_PROPOSALS_PATH = PROJECT_ROOT / "automation-proposals"
 # file rather than generated on request: it takes a minute to produce and says
 # the same thing all day, so a page load must never wait for it.
 DEFAULT_DIGEST_PATH = PROJECT_ROOT / "house_digest.json"
+# What the News card on Home shows. On the board rather than in each browser, so
+# switching news off on a phone switches it off on the wall panel too.
+DEFAULT_NEWS_SETTINGS_PATH = PROJECT_ROOT / "dashboard_news.json"
 # A proposal file name, as this code writes them. Anything else is refused
 # rather than joined onto a path.
 PROPOSAL_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,79}\.yaml")
@@ -472,6 +476,18 @@ class HomeAlarmCardRequest(BaseModel):
     sensors: list[str]
 
 
+class NewsSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    breaking: bool
+    finance: bool
+    markets: bool
+    breaking_sources: list[str]
+    finance_sources: list[str]
+    market_ids: list[str]
+
+
 class CameraUpdateRequest(BaseModel):
     name: str
 
@@ -542,6 +558,8 @@ def create_app(
     zigbee_secret_path: Path = DEFAULT_ZIGBEE_SECRET_PATH,
     proposals_path: Path | None = None,
     digest_path: Path | None = None,
+    news_settings_path: Path | None = None,
+    news_service: news_feed.NewsService | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
     app.state.discovery_path = discovery_path
@@ -555,6 +573,8 @@ def create_app(
     app.state.zigbee_secret_path = zigbee_secret_path
     app.state.proposals_path = proposals_path or DEFAULT_PROPOSALS_PATH
     app.state.digest_path = digest_path or DEFAULT_DIGEST_PATH
+    app.state.news_settings_path = news_settings_path or DEFAULT_NEWS_SETTINGS_PATH
+    app.state.news_service = news_service or news_feed.NewsService()
     # One draft at a time. Ollama serialises requests anyway, so a second
     # concurrent draft would not run sooner - it would just hold a worker
     # thread and a connection for a minute to find that out.
@@ -1017,6 +1037,28 @@ def create_app(
         sensors = [str(s) for s in request.sensors]
         await asyncio.to_thread(save_home_alarm_selection, app.state.home_alarm_path, sensors)
         return {"sensors": sensors, "using_default": False}
+
+    @app.get("/api/news")
+    async def news() -> dict[str, Any]:
+        """Headlines and prices for the News card, as chosen in Settings.
+
+        Cached per feed on the board, so every open screen polling this costs
+        one fetch per site every few minutes, not one per screen.
+        """
+        settings = await asyncio.to_thread(news_feed.load_settings, app.state.news_settings_path)
+        return await asyncio.to_thread(app.state.news_service.payload, settings)
+
+    @app.get("/api/news/settings")
+    async def news_settings() -> dict[str, Any]:
+        settings = await asyncio.to_thread(news_feed.load_settings, app.state.news_settings_path)
+        return {"settings": settings, "available": news_feed.available_options()}
+
+    @app.put("/api/news/settings")
+    async def set_news_settings(request: NewsSettingsRequest) -> dict[str, Any]:
+        settings = await asyncio.to_thread(
+            news_feed.save_settings, app.state.news_settings_path, request.model_dump()
+        )
+        return {"settings": settings, "available": news_feed.available_options()}
 
     @app.get("/api/motion/log")
     async def motion_log(limit: int = MOTION_LOG_DEFAULT_LIMIT) -> dict[str, Any]:

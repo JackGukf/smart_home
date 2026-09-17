@@ -286,15 +286,30 @@ let manualLightCommandRevision = 0;
 let activeLightSceneCount = 0;
 const manualLightOverrides = new Map();
 
-/* ── Live clock ── */
+/* Declared here, above the clock, because tick() runs at load and reads them -
+   see applyWeatherSky(). */
+let latestWeather = null;
+const SKY_TWILIGHT_MIN = 75;
+
+/* ── Live clock ──
+   Hour and minute in the header; the Weather card carries the same time large,
+   with the date. Checked every second so the minute turns over on time, but the
+   DOM is only touched when the minute actually changes. */
+let lastClockMinute = "";
 function tick() {
   const now = new Date();
+  const hm = now.toTimeString().slice(0, 5);
+  if (hm === lastClockMinute) return;
+  lastClockMinute = hm;
   const clockEl = document.querySelector("#clock");
-  const dateEl  = document.querySelector("#dateDisplay");
-  if (clockEl) clockEl.textContent = now.toTimeString().slice(0, 8);
-  if (dateEl)  dateEl.textContent  = now.toLocaleDateString("en-GB", {
-    weekday: "short", day: "numeric", month: "long", year: "numeric"
+  if (clockEl) clockEl.textContent = hm;
+  const cardClock = document.querySelector("#weatherClock");
+  if (cardClock) cardClock.textContent = hm;
+  const cardDate = document.querySelector("#weatherDate");
+  if (cardDate) cardDate.textContent = now.toLocaleDateString("en-GB", {
+    weekday: "long", day: "numeric", month: "long"
   });
+  applyWeatherSky(now);
 }
 tick();
 setInterval(tick, 1000);
@@ -2594,19 +2609,81 @@ function homeAssistantUrl() {
 }
 
 /* ── Weather ── */
-function weatherHeaderIcon(code) {
+function weatherHeaderIcon(code, night = false) {
   const num = Number(code);
-  if ([0, 1].includes(num)) return "ti-sun";
-  if ([2, 3, 45, 48].includes(num)) return "ti-cloud";
-  if (num >= 51 && num < 80) return "ti-cloud-rain";
+  if ([0, 1].includes(num)) return night ? "ti-moon" : "ti-sun";
+  if (num === 2) return night ? "ti-moon" : "ti-cloud";
+  if ([3, 45, 48].includes(num)) return num === 3 ? "ti-cloud" : "ti-mist";
+  if (num >= 71 && num < 80) return "ti-snowflake";
+  if (num >= 95) return "ti-cloud-storm";
+  if (num >= 51) return "ti-cloud-rain";
   return "ti-cloud";
+}
+
+/* The Weather card's sky follows the time of day: dawn, day, dusk, night.
+
+   Sunrise and sunset come from the forecast, so the card turns dark when the
+   sun actually sets in Coquitlam, not at a fixed hour. Open-Meteo gives them as
+   local wall-clock times with no offset ("2026-09-16T06:50"), which Date parses
+   as local time - right, because the browser and the board share a time zone.
+   Until the first forecast arrives, a fixed 07:00-19:00 day stands in. */
+
+function minutesOfDay(date) {
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+function skyPhase(now, weather) {
+  const parse = (value) => {
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? minutesOfDay(date) : null;
+  };
+  const sunrise = parse(weather?.sunrise) ?? 7 * 60;
+  const sunset = parse(weather?.sunset) ?? 19 * 60;
+  const t = minutesOfDay(now);
+  if (t >= sunrise - SKY_TWILIGHT_MIN / 2 && t < sunrise + SKY_TWILIGHT_MIN) return "dawn";
+  if (t >= sunrise + SKY_TWILIGHT_MIN && t < sunset - SKY_TWILIGHT_MIN) return "day";
+  if (t >= sunset - SKY_TWILIGHT_MIN && t < sunset + SKY_TWILIGHT_MIN / 2) return "dusk";
+  return "night";
+}
+
+function applyWeatherSky(now = new Date()) {
+  const card = document.querySelector("#homeWeatherPanel");
+  if (!card) return;
+  const phase = skyPhase(now, latestWeather);
+  ["dawn", "day", "dusk", "night"].forEach((name) => {
+    card.classList.toggle(`sky-${name}`, name === phase);
+  });
+  if (latestWeather?.status === "ok" && weatherIcon) {
+    weatherIcon.className = "ti home-weather-icon " + weatherHeaderIcon(latestWeather.weather_code, phase === "night");
+  }
+}
+
+function renderWeatherWeek(forecast, tempUnit) {
+  const week = document.querySelector("#weatherWeek");
+  if (!week) return;
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  week.innerHTML = forecast.slice(0, 7).map((day, i) => {
+    const date = new Date(day.date + "T12:00:00");
+    const label = i === 0 ? "Today" : DAY_NAMES[date.getDay()];
+    return `
+      <span class="wk-day${i === 0 ? " today" : ""}" title="${escapeHtml(day.condition || "")}">
+        <span class="wk-name">${escapeHtml(label)}</span>
+        <i class="ti ${escapeHtml(weatherHeaderIcon(day.weather_code))}" aria-hidden="true"></i>
+        <span class="wk-temps"><strong>${escapeHtml(String(roundMetric(day.high)))}°</strong><span>${escapeHtml(String(roundMetric(day.low)))}°</span></span>
+      </span>`;
+  }).join("");
 }
 
 function setHeaderWeatherUnavailable(message) {
   if (headerWeather) headerWeather.title = message || "Weather is not configured yet.";
-  if (weatherIcon) weatherIcon.className = "ti ti-cloud";
-  if (weatherTemp) weatherTemp.textContent = "--°C";
+  latestWeather = null;
+  if (weatherIcon) weatherIcon.className = "ti home-weather-icon ti-cloud";
+  if (weatherTemp) weatherTemp.textContent = "--°";
   if (weatherCondition) weatherCondition.textContent = "Weather unavailable";
+  const cardHiLo = document.querySelector("#weatherCardHiLo");
+  if (cardHiLo) cardHiLo.textContent = "";
+  const week = document.querySelector("#weatherWeek");
+  if (week) week.innerHTML = "";
   const weatherLocation = document.querySelector("#weatherLocation");
   if (weatherLocation) weatherLocation.textContent = "—";
   if (weatherFeels) weatherFeels.textContent = "--°C";
@@ -2639,8 +2716,16 @@ function renderWeather(weather) {
     ? String(roundMetric(weather.precipitation_probability)) + "%"
     : "--%";
 
-  if (weatherIcon) weatherIcon.className = "ti " + icon;
-  if (weatherTemp) weatherTemp.textContent = tempDisplay;
+  latestWeather = weather;
+  if (weatherIcon) weatherIcon.className = "ti home-weather-icon " + icon;
+  /* The card shows the degree sign alone: C or F is a setting, not news. */
+  if (weatherTemp) weatherTemp.textContent = String(roundMetric(weather.temperature)) + "°";
+  const cardHiLo = document.querySelector("#weatherCardHiLo");
+  if (cardHiLo) {
+    cardHiLo.textContent = weather.high != null && weather.low != null
+      ? ` · H ${roundMetric(weather.high)}° L ${roundMetric(weather.low)}°`
+      : "";
+  }
   if (weatherCondition) weatherCondition.textContent = weather.condition || "Outdoor";
   const weatherLocation = document.querySelector("#weatherLocation");
   if (weatherLocation) weatherLocation.textContent = weather.location || "Local";
@@ -2657,6 +2742,8 @@ function renderWeather(weather) {
   if (conditionEl) conditionEl.textContent = weather.condition || "Outdoor";
 
   renderWeatherForecast(weather.forecast || []);
+  renderWeatherWeek(weather.forecast || [], tempUnit);
+  applyWeatherSky();
 }
 
 function renderWeatherForecast(forecast) {
@@ -5929,7 +6016,7 @@ const HOME_CARD_LAYOUT_KEY = "home_card_layout";
    Climate frozen at y4/h8 from an older table, so when Weather shrank to two
    rows the freed row just sat there as a gap. */
 const HOME_CARD_LAYOUT_VERSION_KEY = "home_card_layout_version";
-const HOME_CARD_LAYOUT_VERSION = "2026-09-13-two-row-weather";
+const HOME_CARD_LAYOUT_VERSION = "2026-09-17-clock-weather";
 const HOME_GRID_COLS = 12;
 /* Fallback row height, used only where the grid has no measurable height yet
    (first paint) or is stacked into a flex column on a phone. Above 1101px the
@@ -5955,21 +6042,23 @@ const HOME_GRID_GAP = 16;
    and change another in the same column to match, or that column stops lining
    up - the totals are the invariant, not the individual numbers.
 
-     left    3 + 8 + 9  = 20     Weather, Climate, Temperatures
-     middle 11 + 9      = 20     Camera, Alarm
+     left    6 + 6 + 8  = 20     Weather, Climate, Temperatures
+     middle 12 + 8      = 20     Camera, Alarm
      right  20          = 20     Areas
 
    Two rows of that are load-bearing across columns, not just within one.
-   Weather plus Climate spans rows 1-11, which is exactly Camera, so the left
+   Weather plus Climate spans rows 1-12, which is exactly Camera, so the left
    and middle columns break at the same place; Temperatures and Alarm then both
-   run 12-20 and line up across the view. Move one and its opposite number has
+   run 13-20 and line up across the view. Move one and its opposite number has
    to move with it.
 
-   Weather is three rows: two was 74px on the panel, under the ~150px the card
-   wants, and read as too small. Three is 120px, about its natural size. It
-   still scales with its own height through a container query - see
-   "#homeWeatherPanel" in styles.css - which is what keeps it legible on a
-   short browser window, where three rows is nearer 90px.
+   Weather is six rows since 2026-09-17, when it took over the clock and the
+   date and grew a 7-day strip: about 210px on the wall panel with the News
+   card showing above the grid, which is what the clock, today and the week
+   need. The rows came from Climate (the ecobee dial scales itself) and
+   Temperatures (the sensor grid scrolls). It still scales with its own height
+   through a container query - see "#homeWeatherPanel" in styles.css - dropping
+   the week first and the date second on a short window.
 
    The previous table totalled 20 / 15 / 12, which on the 1920x1080 wall panel
    meant the left column ran 220px past the bottom of the screen while Areas
@@ -5982,11 +6071,11 @@ const HOME_GRID_GAP = 16;
    back to this table for any card the saved layout has no entry for; what it
    will not do is move a card the user has already placed. */
 const DEFAULT_HOME_LAYOUT = {
-  weather:     { x: 1, y: 1,  w: 4, h: 3 },
-  climate:     { x: 1, y: 4,  w: 4, h: 8 },
-  tempsensors: { x: 1, y: 12, w: 4, h: 9 },
-  camera:      { x: 5, y: 1,  w: 4, h: 11 },
-  alarm:       { x: 5, y: 12, w: 4, h: 9 },
+  weather:     { x: 1, y: 1,  w: 4, h: 6 },
+  climate:     { x: 1, y: 7,  w: 4, h: 6 },
+  tempsensors: { x: 1, y: 13, w: 4, h: 8 },
+  camera:      { x: 5, y: 1,  w: 4, h: 12 },
+  alarm:       { x: 5, y: 13, w: 4, h: 8 },
   areas:       { x: 9, y: 1,  w: 4, h: 20 },
 };
 
@@ -7116,6 +7205,13 @@ function activateView(viewName) {
   if (viewName === "media") {
     refreshBluetooth().catch((error) => console.error(error));
   }
+  if (viewName !== "media") stopYoutube();
+  if (viewName === "news") {
+    loadNewsSettings().catch((error) => console.error(error));
+  }
+  if (viewName === "about") {
+    loadAboutInfo();
+  }
   if (viewName === "automations") {
     loadAutomationProposals().catch((error) => console.error(error));
   }
@@ -7826,6 +7922,324 @@ document.addEventListener("change", (event) => {
   const checkbox = event.target.closest(".manage-device-check");
   if (checkbox) toggleManageDevice(checkbox).catch((error) => console.error(error));
 });
+
+/* ── News card (Home) ──
+   One headline at a time beside a short market list. The board fetches and
+   caches the feeds (see news_feed.py), so polling here is cheap; what to show is
+   chosen in Settings > News and saved on the board.
+
+   Headlines are not links. The wall panel is a kiosk: a tap that opened a news
+   site would leave it on that page with nobody there to come back. */
+const NEWS_POLL_MS = 5 * 60_000;
+const NEWS_ROTATE_MS = 8_000;
+const NEWS_FADE_MS = 300;
+const NEWS_KIND_LABELS = { breaking: "Breaking", world: "Top story", finance: "Markets" };
+let newsHeadlines = [];
+let newsIndex = 0;
+/* A pointer over the card holds the current headline, but only for a while:
+   a tap on the wall panel fires mouseenter and never the matching mouseleave,
+   which would otherwise stop the card rotating until the next reload. */
+const NEWS_HOLD_MS = 30_000;
+let newsHeldUntil = 0;
+
+function newsAge(published) {
+  if (!published) return "";
+  const minutes = Math.max(0, Math.round((Date.now() / 1000 - published) / 60));
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
+}
+
+function newsMarketSpark(values, rising) {
+  if (!Array.isArray(values) || values.length < 2) return `<span class="home-news-spark"></span>`;
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const path = values.map((v, i) => {
+    const x = (i * 64) / (values.length - 1);
+    const y = 20 - ((v - lo) / (hi - lo || 1)) * 18;
+    return `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg class="home-news-spark ${rising ? "up" : "down"}" viewBox="0 0 64 22" preserveAspectRatio="none" aria-hidden="true"><path d="${path}"/></svg>`;
+}
+
+function renderNewsMarkets(markets) {
+  const box = document.querySelector("#homeNewsMarkets");
+  if (!box) return;
+  box.innerHTML = markets.map((m) => {
+    const change = Number(m.change_percent);
+    const known = Number.isFinite(change);
+    const rising = !known || change >= 0;
+    const price = Number(m.price).toLocaleString("en-US", {
+      minimumFractionDigits: m.decimals, maximumFractionDigits: m.decimals,
+    });
+    return `
+      <div class="home-news-market">
+        <span class="home-news-market-name">${escapeHtml(m.name)}<span>${escapeHtml(price)}</span></span>
+        ${newsMarketSpark(m.spark, rising)}
+        <span class="home-news-change ${rising ? "up" : "down"}">${known ? `${rising ? "▲" : "▼"} ${Math.abs(change).toFixed(2)}%` : "—"}</span>
+      </div>`;
+  }).join("");
+}
+
+function showHeadline(animate) {
+  const title = document.querySelector("#homeNewsTitle");
+  const kind = document.querySelector("#homeNewsKind");
+  const meta = document.querySelector("#homeNewsMeta");
+  const pager = document.querySelector("#homeNewsPager");
+  if (!title || !newsHeadlines.length) return;
+  newsIndex = ((newsIndex % newsHeadlines.length) + newsHeadlines.length) % newsHeadlines.length;
+  const item = newsHeadlines[newsIndex];
+  const paint = () => {
+    if (kind) {
+      kind.className = `home-news-kind kind-${item.kind}`;
+      kind.textContent = NEWS_KIND_LABELS[item.kind] || "News";
+    }
+    if (meta) meta.textContent = [item.source, newsAge(item.published)].filter(Boolean).join(" · ");
+    title.textContent = item.title;
+    if (pager) {
+      pager.innerHTML = newsHeadlines.length > 1 ? newsHeadlines.map((h, i) => `
+        <button type="button" role="tab" data-news-index="${i}" aria-selected="${i === newsIndex}"
+                aria-label="Headline ${i + 1} of ${newsHeadlines.length}"></button>`).join("") : "";
+    }
+    title.classList.remove("fading");
+  };
+  if (!animate) { paint(); return; }
+  title.classList.add("fading");
+  setTimeout(paint, NEWS_FADE_MS);
+}
+
+function renderNews(data) {
+  const card = document.querySelector("#homeNewsCard");
+  if (!card) return;
+  const headlines = data?.headlines || [];
+  const markets = data?.markets || [];
+  if (!data?.settings?.enabled || (!headlines.length && !markets.length)) {
+    card.hidden = true;
+    newsHeadlines = [];
+    return;
+  }
+  const current = newsHeadlines[newsIndex]?.title;
+  newsHeadlines = headlines;
+  const kept = headlines.findIndex((h) => h.title === current);
+  newsIndex = kept >= 0 ? kept : 0;
+  card.classList.toggle("no-story", !headlines.length);
+  card.classList.toggle("no-markets", !markets.length);
+  card.hidden = false;
+  showHeadline(false);
+  renderNewsMarkets(markets);
+}
+
+async function loadNews() {
+  try {
+    renderNews(await requestJson("/api/news"));
+  } catch (error) {
+    // Leave whatever is on screen: a feed hiccup should not blank the card.
+    console.error(error);
+  }
+}
+
+(function initNewsCard() {
+  const card = document.querySelector("#homeNewsCard");
+  if (!card) return;
+  const hold = () => { newsHeldUntil = Date.now() + NEWS_HOLD_MS; };
+  card.addEventListener("mouseenter", hold);
+  card.addEventListener("mousemove", hold);
+  card.addEventListener("mouseleave", () => { newsHeldUntil = 0; });
+  document.querySelector("#homeNewsPager")?.addEventListener("click", (event) => {
+    const dot = event.target.closest("[data-news-index]");
+    if (!dot) return;
+    newsIndex = Number(dot.dataset.newsIndex);
+    showHeadline(true);
+  });
+  setInterval(() => {
+    if (Date.now() < newsHeldUntil || newsHeadlines.length < 2 || document.hidden) return;
+    newsIndex += 1;
+    showHeadline(true);
+  }, NEWS_ROTATE_MS);
+  loadNews();
+  setInterval(loadNews, NEWS_POLL_MS);
+})();
+
+/* ── Settings > News ── */
+const NEWS_LIST_FLAG = { breaking_sources: "breaking", finance_sources: "finance", market_ids: "markets" };
+let newsSettingsDoc = null;
+
+function renderNewsSettings() {
+  if (!newsSettingsDoc) return;
+  const { settings, available } = newsSettingsDoc;
+  document.querySelectorAll("[data-news-flag]").forEach((input) => {
+    const flag = input.dataset.newsFlag;
+    input.checked = Boolean(settings[flag]);
+    input.disabled = flag !== "enabled" && !settings.enabled;
+  });
+  const options = {
+    breaking_sources: available.breaking_sources,
+    finance_sources: available.finance_sources,
+    market_ids: available.markets,
+  };
+  document.querySelectorAll("[data-news-list]").forEach((box) => {
+    const key = box.dataset.newsList;
+    const chosen = new Set(settings[key] || []);
+    const active = settings.enabled && settings[NEWS_LIST_FLAG[key]];
+    box.closest(".settings-row")?.classList.toggle("is-off", !active);
+    box.innerHTML = (options[key] || []).map((option) => `
+      <button type="button" class="settings-chip${chosen.has(option.id) ? " on" : ""}"
+              data-news-option="${escapeHtml(option.id)}" aria-pressed="${chosen.has(option.id)}"
+              ${active ? "" : "disabled"}>${escapeHtml(option.name)}</button>`).join("");
+  });
+}
+
+async function loadNewsSettings() {
+  newsSettingsDoc = await requestJson("/api/news/settings");
+  renderNewsSettings();
+}
+
+async function saveNewsSettings(next) {
+  const status = document.querySelector("#newsSettingsStatus");
+  const previous = newsSettingsDoc;
+  newsSettingsDoc = { ...newsSettingsDoc, settings: next };
+  renderNewsSettings();
+  if (status) status.textContent = "Saving…";
+  try {
+    newsSettingsDoc = await requestJson("/api/news/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next),
+    });
+    renderNewsSettings();
+    if (status) status.textContent = "Saved. Every screen shows this within five minutes.";
+    loadNews();
+  } catch (error) {
+    newsSettingsDoc = previous;
+    renderNewsSettings();
+    if (status) status.textContent = `Not saved: ${apiErrorDetail(error)}`;
+  }
+}
+
+(function initNewsSettings() {
+  const root = document.querySelector("#newsSettings");
+  if (!root) return;
+  root.addEventListener("change", (event) => {
+    const input = event.target.closest("[data-news-flag]");
+    if (!input || !newsSettingsDoc) return;
+    saveNewsSettings({ ...newsSettingsDoc.settings, [input.dataset.newsFlag]: input.checked });
+  });
+  root.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-news-option]");
+    if (!chip || !newsSettingsDoc) return;
+    const key = chip.closest("[data-news-list]").dataset.newsList;
+    const id = chip.dataset.newsOption;
+    const chosen = newsSettingsDoc.settings[key] || [];
+    const nextList = chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id];
+    saveNewsSettings({ ...newsSettingsDoc.settings, [key]: nextList });
+  });
+})();
+
+/* ── Media > YouTube ──
+   Paste a link, it plays here. Only the video id is taken from the link, and
+   the player is YouTube's privacy-enhanced embed, so nothing else from the
+   pasted text reaches the page.
+
+   Full screen covers the page with the player rather than calling the
+   Fullscreen API, for the reason the camera overlay does not (see
+   test_touch_interactions.py): the API does nothing on an iPhone and behaves
+   differently everywhere else. On the wall panel, whose browser is already
+   full screen, covering the page is the whole display. The stage is restyled in
+   place, not moved, because moving an iframe reloads it and restarts the video.
+   For a desktop monitor, the player's own full-screen control still works. */
+const YOUTUBE_LAST_KEY = "youtube_last_url";
+const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_EMBED_ORIGIN = "https://www.youtube-nocookie.com";
+
+function youtubeStartSeconds(value) {
+  if (!value) return 0;
+  if (/^\d+$/.test(value)) return Number(value);
+  const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(value);
+  if (!match) return 0;
+  return Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0);
+}
+
+function parseYoutubeLink(text) {
+  const raw = String(text || "").trim();
+  if (YOUTUBE_ID.test(raw)) return { id: raw, start: 0 };
+  let url;
+  try {
+    url = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^(www|m|music)\./, "");
+  const parts = url.pathname.split("/").filter(Boolean);
+  let id = null;
+  if (host === "youtu.be") {
+    id = parts[0];
+  } else if (host === "youtube.com" || host === "youtube-nocookie.com") {
+    if (parts[0] === "watch") id = url.searchParams.get("v");
+    else if (["shorts", "embed", "live", "v"].includes(parts[0])) id = parts[1];
+  }
+  if (!id || !YOUTUBE_ID.test(id)) return null;
+  return { id, start: youtubeStartSeconds(url.searchParams.get("t") || url.searchParams.get("start")) };
+}
+
+function playYoutube(text) {
+  const error = document.querySelector("#youtubeError");
+  const frame = document.querySelector("#youtubeFrame");
+  const video = parseYoutubeLink(text);
+  if (!video) {
+    if (error) {
+      error.textContent = "That isn't a YouTube video link. Copy the address of a video (youtube.com/watch?v=… or youtu.be/…) and paste it here.";
+      error.hidden = false;
+    }
+    return;
+  }
+  if (error) error.hidden = true;
+  const params = new URLSearchParams({
+    autoplay: "1", playsinline: "1", rel: "0", enablejsapi: "1", origin: window.location.origin,
+  });
+  if (video.start) params.set("start", String(video.start));
+  frame.innerHTML = `<iframe id="youtubeIframe" src="${YOUTUBE_EMBED_ORIGIN}/embed/${video.id}?${params}"
+    title="YouTube video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+    allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+  const open = document.querySelector("#youtubeOpen");
+  if (open) open.href = `https://www.youtube.com/watch?v=${video.id}${video.start ? `&t=${video.start}s` : ""}`;
+  const fullscreen = document.querySelector("#youtubeFullscreen");
+  if (fullscreen) fullscreen.disabled = false;
+  try { localStorage.setItem(YOUTUBE_LAST_KEY, String(text).trim()); } catch {}
+}
+
+/* Pause rather than tear down, so coming back to Media resumes where it was. */
+function stopYoutube() {
+  const iframe = document.querySelector("#youtubeIframe");
+  if (!iframe?.contentWindow) return;
+  try {
+    iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func: "pauseVideo", args: [] }), YOUTUBE_EMBED_ORIGIN);
+  } catch {}
+}
+
+function setYoutubeCovering(on) {
+  const stage = document.querySelector("#youtubeStage");
+  const exit = document.querySelector("#youtubeExit");
+  stage?.classList.toggle("is-fullscreen", on);
+  document.body.classList.toggle("youtube-covering", on);
+  if (exit) exit.hidden = !on;
+  if (on) exit?.focus();
+}
+
+(function initYoutube() {
+  const form = document.querySelector("#youtubeForm");
+  const input = document.querySelector("#youtubeUrl");
+  if (!form || !input) return;
+  try { input.value = localStorage.getItem(YOUTUBE_LAST_KEY) || ""; } catch {}
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    playYoutube(input.value);
+  });
+  document.querySelector("#youtubeFullscreen")?.addEventListener("click", () => setYoutubeCovering(true));
+  document.querySelector("#youtubeExit")?.addEventListener("click", () => setYoutubeCovering(false));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.body.classList.contains("youtube-covering")) setYoutubeCovering(false);
+  });
+})();
 
 /* ── Startup (default) view ── */
 const DEFAULT_VIEW_KEY = "default_view";
@@ -8784,7 +9198,29 @@ async function loadBuildInfo() {
     const build = await fetchBuild();
     if (build === null) return;
     loadedBuild = build;
-    if (buildBadge) buildBadge.textContent = `Build #${build}`;
+    if (buildBadge) buildBadge.textContent = `#${build}`;
+  } catch {}
+}
+
+/* Settings > About. Read when the view opens, so the page always describes
+   the build the board is serving, not only the one this tab loaded. */
+async function loadAboutInfo() {
+  const version = document.querySelector("#aboutVersion");
+  const deployed = document.querySelector("#aboutDeployed");
+  const board = document.querySelector("#aboutBoard");
+  if (board) board.textContent = `Orange Pi 6 Plus · ${window.location.hostname}`;
+  try {
+    const response = await fetch(`/static/build_info.json?ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) return;
+    const info = await response.json();
+    if (version) version.textContent = info.version ? `v${info.version}` : "—";
+    if (buildBadge && info.build != null) buildBadge.textContent = `#${info.build}`;
+    if (deployed && info.deployed_at) {
+      const when = new Date(info.deployed_at);
+      deployed.textContent = Number.isNaN(when.getTime())
+        ? info.deployed_at
+        : when.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    }
   } catch {}
 }
 
@@ -8811,7 +9247,7 @@ function watchForNewBuild() {
          The first number we actually see is the baseline, never a change. */
       if (loadedBuild === null) {
         loadedBuild = build;
-        if (buildBadge) buildBadge.textContent = `Build #${build}`;
+        if (buildBadge) buildBadge.textContent = `#${build}`;
         return;
       }
       if (build !== loadedBuild) reloadWhenServerAnswers();

@@ -247,29 +247,34 @@ def test_temperatures_and_security_occupy_the_same_rows() -> None:
 
 
 def test_weather_scales_with_its_own_height_rather_than_clipping() -> None:
-    """Two rows is 74px against the ~150px the card wants.
+    """The card is a fixed box on the fitted grid, and it carries a clock.
 
-    Same mechanism the sensor tiles already use: the card is its own size
-    container and its type is a clamp on cqh, so it shrinks continuously instead
-    of at a breakpoint, and tops out at the original sizes when given more room.
+    Same mechanism the sensor tiles use: the card is its own size container and
+    its type is a clamp on cqh, so it shrinks continuously instead of at a
+    breakpoint, and tops out at the designed sizes when given more room.
     """
     css = STYLES.read_text(encoding="utf-8")
 
     assert "#homeWeatherPanel { container-type: size; }" in css
-    for part in ("home-weather-body > i", "home-weather-temp", "home-weather-cond"):
-        assert re.search(rf"#homeWeatherPanel \.{re.escape(part)}[^{{]*\{{[^}}]*cqh", css),             f"{part} must scale with the card height"
-    # The label is the one part that is dropped rather than shrunk.
-    assert "@container (max-height: 110px)" in css
+    for part in ("home-weather-time", "home-weather-temp", "home-weather-icon"):
+        assert re.search(rf"#homeWeatherPanel \.{re.escape(part)}[^{{]*\{{[^}}]*cqh", css), \
+            f"{part} must scale with the card height"
+    # What is dropped rather than shrunk, in order: the week, then the date.
+    week = re.search(r"@container \(max-height: (\d+)px\) \{[^@]*home-weather-week \{ display: none; \}", css)
+    date = re.search(r"@container \(max-height: (\d+)px\) \{[^@]*home-weather-date \{ display: none; \}", css)
+    assert week and date
+    assert int(week.group(1)) > int(date.group(1)), "the week must go before the date"
 
 
 def test_weather_keeps_enough_rows_to_render_in_both_layouts() -> None:
-    """Two rows was 74px on the panel and read as too small; three is 120px.
+    """The clock, today and the week need about 210px on the wall panel.
 
-    The two layouts size it independently - fourteen rows on a small screen is a
+    Six of twenty rows is that with the News card above the grid. The two
+    layouts size it independently - fourteen rows on a small screen is a
     coarser scale than twenty - so neither number can be derived from the other.
     """
-    assert _default_layout()["weather"]["h"] == 3
-    assert _two_column_layout()["weather"]["h"] == 4
+    assert _default_layout()["weather"]["h"] == 6
+    assert _two_column_layout()["weather"]["h"] == 5
 
 
 def test_a_stored_cell_cannot_outlive_the_table_it_was_resolved_against() -> None:

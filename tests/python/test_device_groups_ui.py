@@ -1297,6 +1297,9 @@ const ensureDeviceGroupPanel = (g) => {
 const setDevicesBackVisible = (v) => { backVisible = v; };
 const renderDynamicGroupPanel = (v) => { renderedPanel = v; };
 const renderDevicesOverview = () => {};
+const stopYoutube = () => {};
+const loadAboutInfo = () => {};
+const loadNewsSettings = () => ({ catch() {} });
 const loadAmbientLights = () => ({ catch() {} });
 const loadHumidifiers = () => ({ catch() {} });
 const loadEnvironmentSensors = () => ({ catch() {} });
@@ -1339,6 +1342,9 @@ const ensureDeviceGroupPanel = () => { throw new Error('must not build a panel')
 const setDevicesBackVisible = (v) => { backVisible = v; };
 const renderDynamicGroupPanel = () => {};
 const renderDevicesOverview = () => {};
+const stopYoutube = () => {};
+const loadAboutInfo = () => {};
+const loadNewsSettings = () => ({ catch() {} });
 const CSS = { escape: (s) => s };
 const document = { body: { classList: { toggle() {} } }, querySelector: () => null };
 

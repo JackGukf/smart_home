@@ -41,13 +41,12 @@
     <div class="logo-icon"><i class="ti ti-home-2"></i></div>
     <div>
       <div class="logo-text" id="logoText" contenteditable="true" spellcheck="false" title="Click to edit dashboard title">HomeOS</div>
-      <div class="logo-sub">Orange Pi 6 Plus · Local Network · <span id="buildBadge" title="Deployed build number">Build —</span></div>
+      <div class="logo-sub">Orange Pi 6 Plus · Local Network</div>
     </div>
   </div>
   <div class="header-right">
     <div class="time-block">
-      <div class="time" id="clock">--:--:--</div>
-      <div class="date" id="dateDisplay">Loading…</div>
+      <div class="time" id="clock">--:--</div>
     </div>
     <div class="status-dot" id="statusDot" title="Connecting…"></div>
     <form method="post" action="/logout" id="logoutForm">
@@ -134,6 +133,14 @@
         <span class="room-icon"><i class="ti ti-pin"></i></span>
         Startup
         <select id="defaultViewSelect" class="startup-view-select" aria-label="View shown after refresh" title="View shown when the dashboard loads"></select>
+      </li>
+      <li class="room-item system-settings-item" data-view="news" hidden>
+        <span class="room-icon"><i class="ti ti-news"></i></span>
+        News
+      </li>
+      <li class="room-item system-settings-item" data-view="about" hidden>
+        <span class="room-icon"><i class="ti ti-info-circle"></i></span>
+        About
       </li>
       <li class="room-item" id="refreshButton">
         <span class="room-icon"><i class="ti ti-refresh"></i></span>
@@ -488,23 +495,45 @@
           </div>
         </div>
 
+        <!-- News card. Outside the card grid on purpose: it spans the view and
+             is switched on and off in Settings > News, not by Choose cards.
+             Hidden until the first answer says there is something to show. -->
+        <section class="panel home-news" id="homeNewsCard" aria-label="News" hidden>
+          <div class="home-news-story" id="homeNewsStory">
+            <div class="home-news-kicker">
+              <span class="home-news-kind" id="homeNewsKind"></span>
+              <span class="home-news-meta" id="homeNewsMeta"></span>
+            </div>
+            <p class="home-news-title" id="homeNewsTitle" aria-live="polite"></p>
+            <div class="home-news-pager" id="homeNewsPager" role="tablist" aria-label="Headlines"></div>
+          </div>
+          <div class="home-news-markets" id="homeNewsMarkets"></div>
+        </section>
+
         <div class="home-layout" id="homeCardGrid">
 
-          <!-- Weather display -->
-          <div class="panel home-panel home-card home-weather-card" id="homeWeatherPanel" data-home-card="weather">
+          <!-- Weather display. The card's sky follows the time of day - see
+               applyWeatherSky() - behind the clock, today's weather and the week. -->
+          <div class="panel home-panel home-card home-weather-card sky-day" id="homeWeatherPanel" data-home-card="weather">
             <div class="home-panel-head">
               <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
               <span class="panel-title"><i class="ti ti-cloud"></i> Weather</span>
               <span class="home-weather-loc"><i class="ti ti-map-pin-filled"></i> <span id="weatherLocation">—</span></span>
             </div>
-            <button class="home-weather-body" id="headerWeather" type="button" aria-expanded="false" aria-haspopup="true" title="Click for forecast">
-              <i class="ti ti-cloud home-weather-icon" id="weatherIcon" aria-hidden="true"></i>
-              <div class="home-weather-main">
-                <div class="home-weather-temp mono" id="weatherTemp">--°C</div>
-                <div class="home-weather-label">Outdoor Temperature</div>
-                <div class="home-weather-cond" id="weatherCondition">Weather</div>
-              </div>
+            <button class="home-weather-body" id="headerWeather" type="button" aria-expanded="false" aria-haspopup="true" title="Click for details">
+              <span class="home-weather-clock">
+                <span class="home-weather-time" id="weatherClock">--:--</span>
+                <span class="home-weather-date" id="weatherDate"></span>
+              </span>
+              <span class="home-weather-now">
+                <i class="ti ti-cloud home-weather-icon" id="weatherIcon" aria-hidden="true"></i>
+                <span class="home-weather-main">
+                  <span class="home-weather-temp" id="weatherTemp">--°</span>
+                  <span class="home-weather-cond"><span id="weatherCondition">Weather</span><span class="home-weather-hilo" id="weatherCardHiLo"></span></span>
+                </span>
+              </span>
             </button>
+            <div class="home-weather-week" id="weatherWeek" aria-label="7-day forecast"></div>
             <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
           </div>
           <div class="panel home-panel home-card" id="homeCameraPanel" data-home-card="camera">
@@ -621,6 +650,37 @@
         <span class="section-meta">Audio &amp; media</span>
       </div>
       <div class="media-grid">
+        <div class="panel youtube-panel" id="youtubePanel">
+          <div class="home-panel-head">
+            <span class="panel-title"><i class="ti ti-brand-youtube"></i> YouTube</span>
+            <a class="youtube-open" id="youtubeOpen" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer" title="Open on YouTube">
+              <i class="ti ti-external-link"></i> Open on YouTube
+            </a>
+          </div>
+          <form class="youtube-form" id="youtubeForm" autocomplete="off">
+            <label class="sr-only" for="youtubeUrl">YouTube link</label>
+            <input id="youtubeUrl" type="url" inputmode="url" placeholder="Paste a YouTube link" spellcheck="false">
+            <button class="btn-primary" type="submit">Play</button>
+          </form>
+          <p class="youtube-error" id="youtubeError" role="alert" hidden></p>
+          <div class="youtube-stage" id="youtubeStage">
+            <div class="youtube-frame" id="youtubeFrame">
+              <div class="youtube-empty" id="youtubeEmpty">
+                <i class="ti ti-brand-youtube"></i>
+                <span>Paste a link from YouTube and press Play</span>
+              </div>
+            </div>
+            <button class="youtube-exit" id="youtubeExit" type="button" hidden>
+              <i class="ti ti-x"></i> Exit full screen
+            </button>
+          </div>
+          <div class="youtube-actions">
+            <button class="area-add-btn" id="youtubeFullscreen" type="button" disabled>
+              <i class="ti ti-maximize"></i> Full screen
+            </button>
+            <span class="youtube-hint">Exit or Esc to leave full screen</span>
+          </div>
+        </div>
         <div class="panel" id="homeBluetoothPanel">
           <div class="home-panel-head">
             <span class="panel-title"><i class="ti ti-music"></i> Music</span>
@@ -729,6 +789,66 @@
             <span style="color:var(--t-accent)">ON</span>
             <span>BRIGHT</span>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── NEWS SETTINGS VIEW ── -->
+    <div class="view-panel" data-view-panel="news">
+      <div class="section-header">
+        <span class="section-title">News</span>
+        <span class="section-meta">The card at the top of Home · saved on the board, so every screen follows</span>
+      </div>
+      <div class="settings-group" id="newsSettings">
+        <div class="settings-row">
+          <div class="settings-label"><strong>Show news card</strong><small>Off hides the whole card</small></div>
+          <label class="settings-switch"><input type="checkbox" id="newsEnabled" data-news-flag="enabled"><span></span><span class="sr-only">Show news card</span></label>
+        </div>
+        <div class="settings-row settings-child">
+          <div class="settings-label"><strong>Breaking news</strong><small id="newsBreakingNote">Top stories; marked Breaking while under two hours old</small>
+            <div class="settings-chips" id="newsBreakingSources" data-news-list="breaking_sources"></div></div>
+          <label class="settings-switch"><input type="checkbox" id="newsBreaking" data-news-flag="breaking"><span></span><span class="sr-only">Breaking news</span></label>
+        </div>
+        <div class="settings-row settings-child">
+          <div class="settings-label"><strong>Finance news</strong>
+            <div class="settings-chips" id="newsFinanceSources" data-news-list="finance_sources"></div></div>
+          <label class="settings-switch"><input type="checkbox" id="newsFinance" data-news-flag="finance"><span></span><span class="sr-only">Finance news</span></label>
+        </div>
+        <div class="settings-row settings-child">
+          <div class="settings-label"><strong>Market prices</strong>
+            <div class="settings-chips" id="newsMarkets" data-news-list="market_ids"></div></div>
+          <label class="settings-switch"><input type="checkbox" id="newsMarketsOn" data-news-flag="markets"><span></span><span class="sr-only">Market prices</span></label>
+        </div>
+      </div>
+      <p class="settings-status" id="newsSettingsStatus" aria-live="polite"></p>
+    </div>
+
+    <!-- ── ABOUT VIEW ── -->
+    <div class="view-panel" data-view-panel="about">
+      <div class="section-header">
+        <span class="section-title">About</span>
+        <span class="section-meta">This dashboard and the board it runs on</span>
+      </div>
+      <div class="settings-group">
+        <div class="settings-row">
+          <div class="settings-label"><strong>Version</strong><small>Changes with each release</small></div>
+          <span class="settings-value" id="aboutVersion">—</span>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Build</strong><small>Goes up by one with every deploy</small></div>
+          <span class="settings-value" id="buildBadge">—</span>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Deployed</strong></div>
+          <span class="settings-value" id="aboutDeployed">—</span>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Updates</strong><small>Open screens reload by themselves when a new build appears</small></div>
+          <span class="settings-value">Checked every minute</span>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Board</strong></div>
+          <span class="settings-value" id="aboutBoard">Orange Pi 6 Plus</span>
         </div>
       </div>
     </div>

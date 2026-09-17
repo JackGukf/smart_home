@@ -113,7 +113,7 @@ console.log(JSON.stringify({ ...events, loadedBuild }));
 """, tmp_path)
     assert result["reloads"] == 0
     assert result["loadedBuild"] == 196
-    assert result["badge"] == "Build #196"
+    assert result["badge"] == "#196"
 
 
 def test_a_new_build_reloads_the_page(tmp_path: Path) -> None:
@@ -191,4 +191,4 @@ console.log(JSON.stringify({ ...events, loadedBuild }));
 """, tmp_path)
     assert result["reloads"] == 0
     assert result["loadedBuild"] == 197
-    assert result["badge"] == "Build #197"
+    assert result["badge"] == "#197"

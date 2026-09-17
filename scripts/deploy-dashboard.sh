@@ -32,9 +32,13 @@ PREV_BUILD="$(cat "${BUILD_COUNT_FILE}" 2>/dev/null || echo 0)"
 BUILD_NUMBER=$((PREV_BUILD + 1))
 echo "${BUILD_NUMBER}" > "${BUILD_COUNT_FILE}"
 DEPLOYED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-printf '{"build": %s, "deployed_at": "%s"}\n' "${BUILD_NUMBER}" "${DEPLOYED_AT}" \
+# The release version is written by hand in VERSION; the build number counts
+# every deploy. Settings > About shows both.
+VERSION="$(tr -d '[:space:]' < "${PROJECT_ROOT}/VERSION" 2>/dev/null || true)"
+VERSION="${VERSION:-unknown}"
+printf '{"build": %s, "version": "%s", "deployed_at": "%s"}\n' "${BUILD_NUMBER}" "${VERSION}" "${DEPLOYED_AT}" \
     > "${PROJECT_ROOT}/src/python/web_static/build_info.json"
-echo "==> Build #${BUILD_NUMBER}"
+echo "==> Version ${VERSION}, build #${BUILD_NUMBER}"
 
 # Bust browser cache for app.js/styles.css so clients pick up the new build immediately.
 INDEX_FILE="${PROJECT_ROOT}/src/python/web_static/index.html"
