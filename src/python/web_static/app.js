@@ -3528,8 +3528,17 @@ function alarmBreachedCount(zones) {
 const ALARM_KIND_COLUMNS = [
   { id: "entry", label: "Doors & windows", types: ["door", "window"] },
   { id: "safety", label: "Safety", types: ["smoke", "moisture", "gas", "co"] },
-  { id: "camera", label: "Cameras", types: ["motion"] },
+  { id: "camera", label: "Cameras", types: ["motion"], camera: true },
+  { id: "motion", label: "Motion", types: ["motion"], camera: false },
 ];
+
+/* A camera's person detector and a room's motion sensor both arrive as motion
+   zones, and they answer different questions: one is "someone is at the front
+   door", the other "someone is in the kitchen". The detector entities are the
+   NPU ones the vision service publishes. */
+function isCameraZone(zone) {
+  return /_npu_person$/i.test(String(zone.id || "")) || /\bcamera\b/i.test(String(zone.name || ""));
+}
 
 /* "Door sensor front door" is the device's name, not the place. */
 function shortZoneName(name) {
@@ -3585,7 +3594,11 @@ function renderHomeAlarmCard(payload = latestAlarmData) {
     : `all ${zones.length} normal`;
 
   const columns = ALARM_KIND_COLUMNS
-    .map((column) => ({ ...column, zones: sortedAlarmZones(zones.filter((z) => column.types.includes(z.type))) }))
+    .map((column) => ({
+      ...column,
+      zones: sortedAlarmZones(zones.filter((z) =>
+        column.types.includes(z.type) && (column.camera === undefined || isCameraZone(z) === column.camera))),
+    }))
     .filter((column) => column.zones.length);
 
   /* data-arm-mode, so the Security view's own handler drives these too. */
@@ -3618,10 +3631,7 @@ function renderHomeAlarmCard(payload = latestAlarmData) {
           </div>`;
         }).join("")}
       </div>`).join("") || `<div class="home-empty">No sensors chosen. Use the list button to pick some.</div>`}
-    </div>
-    <button class="alarm-add" id="homeAlarmAddButton" type="button">
-      <i class="ti ti-plus" aria-hidden="true"></i> Add sensors
-    </button>`;
+    </div>`;
 }
 
 /* ── Which sensors the Home alarm card shows ──
@@ -3724,11 +3734,6 @@ async function saveHomeAlarmSelection(sensors) {
   document.querySelector("#homeAlarmPickButton")?.addEventListener("click", (event) => {
     event.stopPropagation();   // the card header is draggable
     open();
-  });
-  /* The same picker from the card body: the header icon is easy to miss, and
-     adding a sensor you have just paired is the common reason to come here. */
-  document.addEventListener("click", (event) => {
-    if (event.target.closest("#homeAlarmAddButton")) open();
   });
   document.querySelector("#closeHomeAlarmModal")?.addEventListener("click", close);
   modal.addEventListener("click", (event) => { if (event.target === modal) close(); });
@@ -6437,7 +6442,7 @@ const HOME_CARD_LAYOUT_KEY = "home_card_layout";
    Climate frozen at y4/h8 from an older table, so when Weather shrank to two
    rows the freed row just sat there as a gap. */
 const HOME_CARD_LAYOUT_VERSION_KEY = "home_card_layout_version";
-const HOME_CARD_LAYOUT_VERSION = "2026-09-17-quick-actions";
+const HOME_CARD_LAYOUT_VERSION = "2026-09-17-no-home-heading";
 const HOME_GRID_COLS = 12;
 /* Fallback row height, used only where the grid has no measurable height yet
    (first paint) or is stacked into a flex column on a phone. Above 1101px the
@@ -6463,14 +6468,14 @@ const HOME_GRID_GAP = 16;
    and change another in the same column to match, or that column stops lining
    up - the totals are the invariant, not the individual numbers.
 
-     left    6 + 6 + 8  = 20     Weather, (Climate | Quick actions), Temperatures
-     middle 12 + 8      = 20     Camera, Alarm
+     left    6 + 5 + 9  = 20     Weather, (Climate | Quick actions), Temperatures
+     middle 11 + 9      = 20     Camera, Alarm
      right  20          = 20     Areas
 
    Two rows of that are load-bearing across columns, not just within one.
-   Weather plus Climate spans rows 1-12, which is exactly Camera, so the left
+   Weather plus Climate spans rows 1-11, which is exactly Camera, so the left
    and middle columns break at the same place; Temperatures and Alarm then both
-   run 13-20 and line up across the view. Move one and its opposite number has
+   run 12-20 and line up across the view. Move one and its opposite number has
    to move with it.
 
    Weather is six rows since 2026-09-17, when it took over the clock and the
@@ -6494,11 +6499,11 @@ const DEFAULT_HOME_LAYOUT = {
   weather:     { x: 1, y: 1,  w: 4, h: 6 },
   /* Climate keeps its dial and its height and gives up half its width, so the
      buttons pressed most often sit beside it rather than a scroll away. */
-  climate:     { x: 1, y: 7,  w: 2, h: 6 },
-  quick:       { x: 3, y: 7,  w: 2, h: 6 },
-  tempsensors: { x: 1, y: 13, w: 4, h: 8 },
-  camera:      { x: 5, y: 1,  w: 4, h: 12 },
-  alarm:       { x: 5, y: 13, w: 4, h: 8 },
+  climate:     { x: 1, y: 7,  w: 2, h: 5 },
+  quick:       { x: 3, y: 7,  w: 2, h: 5 },
+  tempsensors: { x: 1, y: 12, w: 4, h: 9 },
+  camera:      { x: 5, y: 1,  w: 4, h: 11 },
+  alarm:       { x: 5, y: 12, w: 4, h: 9 },
   areas:       { x: 9, y: 1,  w: 4, h: 20 },
 };
 

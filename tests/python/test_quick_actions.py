@@ -93,17 +93,32 @@ def test_good_night_turns_the_lights_off_even_without_a_thermostat() -> None:
     assert "/sleep/i" in body, "the thermostat goes to its sleep preset when it has one"
 
 
-def test_the_security_card_groups_by_kind_and_can_add_sensors() -> None:
+def test_the_security_card_groups_by_kind() -> None:
     js = APP_JS.read_text(encoding="utf-8")
+    html = INDEX_HTML.read_text(encoding="utf-8")
     body = js[js.index("function renderHomeAlarmCard("):js.index("/* ── Which sensors the Home alarm card shows ──")]
 
     assert "ALARM_KIND_COLUMNS" in js
-    for label in ("Doors & windows", "Safety", "Cameras"):
+    for label in ("Doors & windows", "Safety", "Cameras", "Motion"):
         assert label in js
     # Arming rides the Security view's handler rather than a second copy.
     assert 'data-arm-mode="home"' in body and 'data-arm-mode="away"' in body
-    assert 'id="homeAlarmAddButton"' in body
     assert "function shortZoneName(name)" in js
+    # One way in to the sensor picker: the button in the card header.
+    assert 'id="homeAlarmPickButton"' in html
+    assert "homeAlarmAddButton" not in js and "homeAlarmAddButton" not in html
+
+
+def test_a_camera_detector_and_a_room_sensor_are_different_columns() -> None:
+    """Both arrive as motion zones and answer different questions: "someone is
+    at the front door" against "someone is in the kitchen"."""
+    js = APP_JS.read_text(encoding="utf-8")
+
+    assert "function isCameraZone(zone)" in js
+    assert "_npu_person$" in js
+    columns = js[js.index("const ALARM_KIND_COLUMNS = ["):js.index("/* A camera's person detector")]
+    assert 'label: "Cameras", types: ["motion"], camera: true' in columns
+    assert 'label: "Motion", types: ["motion"], camera: false' in columns
 
 
 @pytest.mark.parametrize("raw, expected", [
