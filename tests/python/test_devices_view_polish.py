@@ -171,6 +171,9 @@ def test_tile_icon_square_reads_the_group_colour() -> None:
     assert accent, "no .device-group-tile-accent rule"
     assert "var(--group-color" in accent.group(1)
     assert 'class="app-tile-icon device-group-tile-accent"' in javascript
+    # .app-tile-icon sets the background shorthand later in the file; at equal
+    # specificity it erased the group colour, so this rule must outweigh it.
+    assert re.search(r"\.device-group-tile\s+\.device-group-tile-accent\s*\{[^}]*background-color:\s*var\(--group-color", css)
 
 
 def test_tile_has_a_group_colour_fallback() -> None:
