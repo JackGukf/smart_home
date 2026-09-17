@@ -43,21 +43,52 @@ def _grid_rows() -> int:
     return int(match.group(1))
 
 
+def _cells(layout: dict, columns: int) -> dict[int, set[tuple[int, int]]]:
+    """Which (row, column) squares each card covers, keyed by card name."""
+    return {
+        name: {(y, x) for y in range(cell["y"], cell["y"] + cell["h"])
+               for x in range(cell["x"], cell["x"] + cell["w"])}
+        for name, cell in layout.items()
+    }
+
+
 def test_every_column_totals_the_same_number_of_rows() -> None:
-    """This is what makes the three columns end flush instead of ragged."""
+    """This is what makes the three columns end flush instead of ragged.
+
+    Cards can share a column - Climate and Quick actions take half its width
+    each - so a column is a band of grid columns, not a single x.
+    """
     layout = _default_layout()
     rows = _grid_rows()
 
-    columns: dict[int, list[tuple[str, int, int]]] = {}
-    for name, cell in layout.items():
-        columns.setdefault(cell["x"], []).append((name, cell["y"], cell["h"]))
+    bands: dict[int, int] = {}
+    for cell in layout.values():
+        band = (cell["x"] - 1) // 4
+        bands[band] = max(bands.get(band, 0), cell["y"] + cell["h"] - 1)
 
-    ends = {x: max(y + h for _, y, h in cards) - 1 for x, cards in columns.items()}
-
-    assert set(ends.values()) == {rows}, (
-        f"columns end at different rows {ends}; every column must total {rows} "
+    assert set(bands.values()) == {rows}, (
+        f"columns end at different rows {bands}; every column must total {rows} "
         "or the Home view goes ragged again"
     )
+
+
+def test_cards_in_a_column_do_not_overlap_or_leave_gaps() -> None:
+    """Every square of the grid is covered exactly once.
+
+    Stronger than walking down each x: two cards side by side in one column
+    pass a per-x check while overlapping each other.
+    """
+    layout = _default_layout()
+    rows, columns = _grid_rows(), 12
+    seen: dict[tuple[int, int], str] = {}
+
+    for name, cells in _cells(layout, columns).items():
+        for cell in cells:
+            assert cell not in seen, f"{name} overlaps {seen[cell]} at row {cell[0]}, column {cell[1]}"
+            seen[cell] = name
+
+    missing = {(y, x) for y in range(1, rows + 1) for x in range(1, columns + 1)} - set(seen)
+    assert not missing, f"{len(missing)} empty squares, first at {min(missing)}"
 
 
 def test_no_card_is_placed_below_the_last_row() -> None:
@@ -70,19 +101,6 @@ def test_no_card_is_placed_below_the_last_row() -> None:
     }
 
     assert not too_low, f"cards past row {rows}: {too_low}"
-
-
-def test_cards_in_a_column_do_not_overlap_or_leave_gaps() -> None:
-    layout = _default_layout()
-    columns: dict[int, list[tuple[int, int]]] = {}
-    for cell in layout.values():
-        columns.setdefault(cell["x"], []).append((cell["y"], cell["h"]))
-
-    for x, cards in columns.items():
-        expected = 1
-        for y, h in sorted(cards):
-            assert y == expected, f"column {x}: card at row {y} expected row {expected}"
-            expected = y + h
 
 
 def test_the_grid_divides_the_real_height_rather_than_assuming_40px() -> None:
@@ -151,27 +169,32 @@ def test_small_screens_place_every_card_in_two_columns() -> None:
     layout = _two_column_layout()
 
     assert set(layout) == set(_default_layout()), "every Home card needs a small-screen cell"
-    assert {cell["x"] for cell in layout.values()} == {1, 7}
-    assert {cell["w"] for cell in layout.values()} == {6}
+    # Two columns of six, with Climate and Quick actions splitting one of them.
+    assert {cell["x"] for cell in layout.values()} <= {1, 4, 7}
+    assert {cell["w"] for cell in layout.values()} <= {3, 6}
+    for cell in layout.values():
+        assert (cell["x"] - 1) // 6 == (cell["x"] + cell["w"] - 2) // 6, \
+            "a card must sit inside one of the two columns, not across both"
 
 
 def test_both_small_screen_columns_total_the_same_rows() -> None:
     """Same invariant as the panel: agree, or the columns go ragged."""
     layout = _two_column_layout()
+    rows, columns = 14, 12
 
-    columns: dict[int, list[tuple[int, int]]] = {}
-    for cell in layout.values():
-        columns.setdefault(cell["x"], []).append((cell["y"], cell["h"]))
+    bands: dict[int, int] = {}
+    seen: dict[tuple[int, int], str] = {}
+    for name, cell in layout.items():
+        band = (cell["x"] - 1) // 6
+        bands[band] = max(bands.get(band, 0), cell["y"] + cell["h"] - 1)
+        for y in range(cell["y"], cell["y"] + cell["h"]):
+            for x in range(cell["x"], cell["x"] + cell["w"]):
+                assert (y, x) not in seen, f"{name} overlaps {seen[(y, x)]} at row {y}"
+                seen[(y, x)] = name
 
-    ends = {x: max(y + h for y, h in cards) - 1 for x, cards in columns.items()}
-
-    assert set(ends.values()) == {14}, f"columns end at {ends}, expected 14 rows each"
-
-    for x, cards in columns.items():
-        expected = 1
-        for y, h in sorted(cards):
-            assert y == expected, f"small-screen column {x}: row {y} expected {expected}"
-            expected = y + h
+    assert set(bands.values()) == {rows}, f"columns end at {bands}, expected {rows} rows each"
+    missing = {(y, x) for y in range(1, rows + 1) for x in range(1, columns + 1)} - set(seen)
+    assert not missing, f"{len(missing)} empty squares, first at {min(missing)}"
 
 
 def test_the_short_landscape_case_is_covered_by_width_and_height() -> None:

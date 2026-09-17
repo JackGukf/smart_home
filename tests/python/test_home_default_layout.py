@@ -28,11 +28,17 @@ STYLES = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 # DEFAULT_HOME_LAYOUT, where Alarm is still in the left column, so the two
 # orders differ on purpose.
 PHONE_ORDER = [
-    "weather", "camera", "alarm", "climate", "tempsensors", "areas",
+    "weather", "camera", "alarm", "climate", "quick", "tempsensors", "areas",
 ]
 
-# Grid columns are 4 wide, so these are the three column starts.
+# Grid columns are 4 wide, so these are the three column starts. Climate and
+# Quick actions share the left one, half each, so a card belongs to the column
+# its x falls inside rather than to an x equal to the start.
 LEFT, MIDDLE, RIGHT = 1, 5, 9
+
+
+def _column(cell: dict[str, int]) -> int:
+    return LEFT if cell["x"] < MIDDLE else MIDDLE if cell["x"] < RIGHT else RIGHT
 
 
 def _defaults() -> dict[str, dict[str, int]]:
@@ -56,9 +62,9 @@ def test_phone_order_is_markup_order() -> None:
 def test_desktop_columns_hold_the_intended_cards() -> None:
     cells = _defaults()
 
-    assert [n for n, c in cells.items() if c["x"] == LEFT] == ["weather", "climate", "tempsensors"]
-    assert [n for n, c in cells.items() if c["x"] == MIDDLE] == ["camera", "alarm"]
-    assert [n for n, c in cells.items() if c["x"] == RIGHT] == ["areas"]
+    assert [n for n, c in cells.items() if _column(c) == LEFT] == ["weather", "climate", "quick", "tempsensors"]
+    assert [n for n, c in cells.items() if _column(c) == MIDDLE] == ["camera", "alarm"]
+    assert [n for n, c in cells.items() if _column(c) == RIGHT] == ["areas"]
 
 
 def test_alarm_sits_directly_under_camera_on_the_desktop_grid() -> None:

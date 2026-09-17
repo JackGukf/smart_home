@@ -1289,6 +1289,15 @@ def create_app(
     async def home_assistant_command(entity_id: str, command: str) -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_service_command, app.state.config_path, entity_id, command)
 
+    @app.get("/api/home-assistant/scripts")
+    async def home_assistant_scripts() -> dict[str, Any]:
+        """Scripts and scenes the Quick actions card can offer as buttons."""
+        return await asyncio.to_thread(_home_assistant_runnables, app.state.config_path)
+
+    @app.post("/api/home-assistant/scripts/{entity_id}/run")
+    async def home_assistant_script_run(entity_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(_home_assistant_run, app.state.config_path, entity_id)
+
     @app.post("/api/home-assistant/entities/{entity_id}/brightness")
     async def home_assistant_brightness(entity_id: str, body: dict[str, Any]) -> dict[str, Any]:
         level = int(body.get("level", 50))
@@ -4308,6 +4317,44 @@ def _home_assistant_service_command(path: Path, entity_id: str, command: str) ->
     if domain == "lock":
         service = "lock" if command == "on" else "unlock"
     payload = _home_assistant_post(config, token, f"/api/services/{domain}/{service}", {"entity_id": entity_id})
+    return {"status": "ok", "result": payload}
+
+
+# Scripts and scenes for the Quick actions card. A separate pair of endpoints
+# rather than the command one above, because a script is neither on nor off: it
+# is run. Both domains are one-shot and take no arguments, which is what makes
+# them safe to expose as a button.
+HOME_ASSISTANT_RUNNABLE_DOMAINS = frozenset({"script", "scene"})
+
+
+def _home_assistant_runnables(path: Path) -> dict[str, Any]:
+    config = _load_home_assistant_config(path)
+    token = os.getenv(config.token_env)
+    if not token:
+        return {"status": "needs_auth", "items": []}
+    states = _home_assistant_get(config, token, "/api/states")
+    items = [
+        {
+            "entity_id": state["entity_id"],
+            "name": (state.get("attributes") or {}).get("friendly_name") or state["entity_id"],
+            "domain": _home_assistant_entity_domain(state["entity_id"]),
+        }
+        for state in states
+        if _home_assistant_entity_domain(state.get("entity_id", "")) in HOME_ASSISTANT_RUNNABLE_DOMAINS
+    ]
+    items.sort(key=lambda item: item["name"].lower())
+    return {"status": "ok", "items": items}
+
+
+def _home_assistant_run(path: Path, entity_id: str) -> dict[str, Any]:
+    config = _load_home_assistant_config(path)
+    token = os.getenv(config.token_env)
+    if not token:
+        raise HTTPException(status_code=503, detail=f"{config.token_env} is not configured")
+    domain = _home_assistant_entity_domain(entity_id)
+    if domain not in HOME_ASSISTANT_RUNNABLE_DOMAINS:
+        raise HTTPException(status_code=400, detail=f"Not a script or scene: {entity_id}")
+    payload = _home_assistant_post(config, token, f"/api/services/{domain}/turn_on", {"entity_id": entity_id})
     return {"status": "ok", "result": payload}
 
 

@@ -154,19 +154,17 @@ def test_breached_zones_sort_first_and_are_not_marked_by_colour_alone() -> None:
     assert ".zone-tile.unknown" in css
 
 
-def test_the_alarm_view_and_the_home_card_render_zones_from_one_place() -> None:
-    """Two surfaces showing the same zones from two copies of the markup is how
-    they drift -- one gains a state the other renders as "Closed"."""
+def test_both_alarm_surfaces_take_a_zone_s_wording_from_one_place() -> None:
+    """The Alarm view shows tiles and the Home card shows chips - two shapes on
+    purpose - but what a zone *says* is decided once. Two copies of the wording
+    is how one surface gains a state the other still calls "Closed"."""
     source = APP_JS.read_text(encoding="utf-8")
 
-    assert "function alarmZoneTilesHtml(zones)" in source
-    # Both call the helper; neither builds a tile itself.
-    for fn in ("renderAlarmSection", "renderHomeAlarmCard"):
+    assert "function zoneStateText(zone, breached)" in source
+    for fn in ("alarmZoneTilesHtml", "renderHomeAlarmCard"):
         body = source.split(f"function {fn}(")[1].split("\nfunction ")[0]
-        assert "alarmZoneTilesHtml(" in body, f"{fn} does not use the shared renderer"
-        # Both still own a .zone-tile-grid container; what neither may own is
-        # the tile itself, and zoneIconSVG is only called when building one.
-        assert "zoneIconSVG(" not in body, f"{fn} builds its own tile markup"
+        assert "zoneStateText(" in body, f"{fn} does not use the shared wording"
+        assert '"Closed"' not in body, f"{fn} spells a zone state itself"
 
 
 def test_the_home_alarm_card_is_builtin_so_it_reaches_every_device() -> None:

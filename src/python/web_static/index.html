@@ -454,41 +454,6 @@
       <div id="homeOverview">
         <div class="section-header">
           <span class="section-title">Home</span>
-          <div class="section-actions">
-            <span class="section-meta" id="homeMeta">Devices by area</span>
-            <!-- Populated by renderLightScenes, same markup as the Lights view. -->
-            <div class="light-scene-row" id="homeLightScenes"></div>
-            <!-- The four view controls, behind one button. Not a "+": two of them
-                 create something and two change the layout, and a plus sign would
-                 promise only the first pair. -->
-            <div class="view-menu" id="homeViewMenu">
-              <button class="view-menu-btn" id="homeViewMenuButton" type="button"
-                      aria-haspopup="menu" aria-expanded="false" aria-controls="homeViewMenuList"
-                      title="View options">
-                <i class="ti ti-dots" aria-hidden="true"></i>
-                <span class="sr-only">View options</span>
-              </button>
-              <div class="view-menu-list" id="homeViewMenuList" role="menu" hidden>
-                <button class="area-add-btn" id="addCustomCardButton" type="button" role="menuitem"
-                        title="Create a new card and pick the devices it shows">
-                  <i class="ti ti-layout-grid-add"></i> New Card
-                </button>
-                <button class="area-add-btn" id="addAreaButton" type="button" role="menuitem"
-                        title="Create a new area">
-                  <i class="ti ti-plus"></i> New Area
-                </button>
-                <div class="view-menu-sep" role="separator"></div>
-                <button class="area-add-btn" id="homeCardsButton" type="button" role="menuitem"
-                        aria-haspopup="dialog" title="Choose which cards appear on the Home view">
-                  <i class="ti ti-eye"></i> Choose cards
-                </button>
-                <button class="area-add-btn" id="homeResetLayout" type="button" role="menuitem"
-                        title="Put every card back to its default size and position">
-                  <i class="ti ti-layout-board-split"></i> Reset layout
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
 
         <div class="home-layout" id="homeCardGrid">
@@ -550,12 +515,23 @@
             </div>
             <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
           </div>
-          <div class="panel home-panel home-card" id="homeClimatePanel" data-home-card="climate">
+          <div class="panel home-panel home-card home-half" id="homeClimatePanel" data-home-card="climate">
             <div class="home-panel-head">
               <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
               <span class="panel-title"><i class="ti ti-temperature"></i> Climate</span>
             </div>
             <div class="home-climate-body" id="homeClimateBody">
+              <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+            </div>
+            <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
+          </div>
+          <!-- Quick actions: the things tapped most, beside Climate. -->
+          <div class="panel home-panel home-card home-half" id="homeQuickPanel" data-home-card="quick">
+            <div class="home-panel-head">
+              <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
+              <span class="panel-title"><i class="ti ti-bolt"></i> Quick actions</span>
+            </div>
+            <div class="home-quick-body" id="homeQuickBody">
               <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
             </div>
             <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
@@ -776,6 +752,11 @@
           <span class="app-tile-name">Theme</span>
           <span class="app-tile-sub" id="settingsThemeSub">Colours</span>
         </button>
+        <button type="button" class="app-tile" data-goto-view="homecards" style="--app-a:#22c55e;--app-b:#15803d">
+          <span class="app-tile-icon"><i class="ti ti-layout-dashboard" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Home view</span>
+          <span class="app-tile-sub" id="settingsHomeSub">Cards and areas</span>
+        </button>
         <button type="button" class="app-tile" data-goto-view="startup" style="--app-a:#4f8ef7;--app-b:#22d3ee">
           <span class="app-tile-icon"><i class="ti ti-pin" aria-hidden="true"></i></span>
           <span class="app-tile-name">Startup</span>
@@ -792,6 +773,47 @@
           <span class="app-tile-sub" id="settingsAboutSub">Version</span>
         </button>
       </div>
+    </div>
+
+    <!-- ── HOME VIEW SETTINGS ──
+         What the Home view's "..." menu used to hold. The buttons keep their
+         ids, so every handler bound to them still works. -->
+    <div class="view-panel" data-view-panel="homecards">
+      <div class="section-header">
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Home view</span></span>
+        <span class="section-meta" id="homeMeta">Devices by area</span>
+      </div>
+      <div class="settings-group">
+        <div class="settings-row">
+          <div class="settings-label"><strong>New card</strong><small>Create a card and pick the devices it shows</small></div>
+          <button class="area-add-btn" id="addCustomCardButton" type="button" role="menuitem"
+                        title="Create a new card and pick the devices it shows">
+                  <i class="ti ti-layout-grid-add"></i> New Card
+                </button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>New area</strong><small>Group devices by where they are</small></div>
+          <button class="area-add-btn" id="addAreaButton" type="button" role="menuitem"
+                        title="Create a new area">
+                  <i class="ti ti-plus"></i> New Area
+                </button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Choose cards</strong><small>Which cards appear on Home</small></div>
+          <button class="area-add-btn" id="homeCardsButton" type="button" role="menuitem"
+                        aria-haspopup="dialog" title="Choose which cards appear on the Home view">
+                  <i class="ti ti-eye"></i> Choose cards
+                </button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Reset layout</strong><small>Put every card back to its default size and position</small></div>
+          <button class="area-add-btn" id="homeResetLayout" type="button" role="menuitem"
+                        title="Put every card back to its default size and position">
+                  <i class="ti ti-layout-board-split"></i> Reset layout
+                </button>
+        </div>
+      </div>
+      <p class="settings-status">Card positions are saved in this browser, so each screen can differ.</p>
     </div>
 
     <!-- ── STARTUP VIEW ── -->

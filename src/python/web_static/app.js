@@ -3494,14 +3494,12 @@ function sortedAlarmZones(zones) {
 function alarmZoneTilesHtml(zones) {
   return sortedAlarmZones(zones).map((z) => {
     const breached = z.state === "open" || z.state === "motion" || z.state === "alert";
-    const unknown  = z.state === "unknown";
+    const unknown  = z.state === "unknown" || z.state === "unavailable";
     const color    = breached ? "var(--t-alert)" : "var(--t-text-dim2)";
-    /* An unavailable sensor has not reported clear, it has reported nothing.
-       Saying "Clear" for it would read as reassurance the card cannot give. */
-    const statusTxt = unknown ? "No data"
-      : z.type === "motion" ? (breached ? "Motion" : "Clear")
-      : (z.type === "smoke" || z.type === "moisture") ? (breached ? "Detected" : "Clear")
-      : (breached ? "Open" : "Closed");
+    /* What a zone says is decided in one place (zoneStateText) and shown in
+       two: tiles here, chips on the Home card. Two copies of the wording is how
+       one surface gains a state the other still reports as shut. */
+    const statusTxt = zoneStateText(z, breached);
     return `<div class="zone-tile${breached ? " breached" : ""}${unknown ? " unknown" : ""}"
                  title="${escapeHtml(z.name)} — ${statusTxt}">
       <span class="zone-tile-icon">${zoneIconSVG(z.type, breached)}</span>
@@ -3523,10 +3521,34 @@ function alarmBreachedCount(zones) {
    nothing to sync it. Being built-in is what makes it show everywhere by
    default.
 
-   Deliberately not the whole Alarm view: no arm buttons, because arming from a
-   card you scroll past is not something to make easy, and the zones are what
-   answers "is the house shut" at a glance. The header arrow opens the full
-   view. */
+   Laid out by kind since 2026-09-17: the state and the arm buttons first, then
+   a column each for doors and windows, safety and cameras. A row of identical
+   tiles with the names cut off ("Door sensor …") answered neither "is the house
+   shut" nor "which sensor is that". */
+const ALARM_KIND_COLUMNS = [
+  { id: "entry", label: "Doors & windows", types: ["door", "window"] },
+  { id: "safety", label: "Safety", types: ["smoke", "moisture", "gas", "co"] },
+  { id: "camera", label: "Cameras", types: ["motion"] },
+];
+
+/* "Door sensor front door" is the device's name, not the place. */
+function shortZoneName(name) {
+  return String(name || "")
+    .replace(/^door sensor\s+/i, "")
+    .replace(/\s*\(NPU\)\s*Person$/i, "")
+    .replace(/^fire alarm detector\s+smoke$/i, "Smoke detector")
+    .replace(/\s+(Smoke|Moisture|Contact|Occupancy|Motion)$/i, "")
+    .replace(/^(.)/, (c) => c.toUpperCase())
+    .trim() || String(name || "");
+}
+
+function zoneStateText(zone, breached) {
+  if (zone.state === "unknown" || zone.state === "unavailable") return "No data";
+  if (zone.type === "motion") return breached ? "Someone" : "No one";
+  if (["smoke", "moisture", "gas", "co"].includes(zone.type)) return breached ? "Detected" : "Clear";
+  return breached ? "Open" : "Closed";
+}
+
 function renderHomeAlarmCard(payload = latestAlarmData) {
   const body = document.querySelector("#homeAlarmBody");
   if (!body) return;
@@ -3549,18 +3571,50 @@ function renderHomeAlarmCard(payload = latestAlarmData) {
     ? allZones.filter((z) => z.type !== "motion")
     : allZones.filter((z) => chosen.includes(String(z.id)));
   const breached = alarmBreachedCount(zones);
-  const summary = !zones.length ? "No zones reported"
-    : breached ? `${breached} open` : "all clear";
+  const unknown = zones.filter((z) => z.state === "unknown" || z.state === "unavailable").length;
+  const summary = !zones.length ? "No sensors chosen"
+    : breached ? `${breached} open`
+    : unknown ? `${zones.length - unknown} normal · ${unknown} no data`
+    : `all ${zones.length} normal`;
+
+  const columns = ALARM_KIND_COLUMNS
+    .map((column) => ({ ...column, zones: sortedAlarmZones(zones.filter((z) => column.types.includes(z.type))) }))
+    .filter((column) => column.zones.length);
+
+  /* data-arm-mode, so the Security view's own handler drives these too. */
+  const armButtons = displayState === "disarmed"
+    ? `<button class="alarm-arm" type="button" data-arm-mode="home"><i class="ti ti-home" aria-hidden="true"></i>Arm home</button>
+       <button class="alarm-arm" type="button" data-arm-mode="away"><i class="ti ti-lock" aria-hidden="true"></i>Arm away</button>`
+    : `<button class="alarm-arm" type="button" data-arm-mode="disarmed"><i class="ti ti-lock-open" aria-hidden="true"></i>Disarm</button>`;
 
   body.innerHTML = `
-    <div class="home-alarm-state${displayState === "alarm" ? " alarm-active" : ""}">
-      <span class="home-alarm-status">${escapeHtml(statusText)}</span>
-      <span class="home-alarm-zones-count${breached ? " breached" : ""}">${escapeHtml(summary)}</span>
+    <div class="alarm-head${displayState === "alarm" ? " alarm-active" : ""}">
+      <span class="alarm-shield${breached ? " breached" : ""}"><i class="ti ti-shield-check" aria-hidden="true"></i></span>
+      <span class="alarm-headline">
+        <b>${escapeHtml(statusText)}</b>
+        <small class="${breached ? "breached" : ""}">${escapeHtml(summary)}</small>
+      </span>
+      <span class="alarm-arms">${armButtons}</span>
     </div>
-    <div class="zone-tile-grid">${
-      alarmZoneTilesHtml(zones) ||
-      '<div class="home-empty">No sensors chosen. Use the list button to pick some.</div>'
-    }</div>`;
+    <div class="alarm-kinds">${columns.map((column) => `
+      <div class="alarm-kind">
+        <div class="alarm-kind-head"><b>${escapeHtml(column.label)}</b><span class="${column.zones.some(zoneIsBreached) ? "breached" : "ok"}">${column.zones.filter((z) => !zoneIsBreached(z)).length}/${column.zones.length}</span></div>
+        ${column.zones.map((zone) => {
+          const isBreached = zoneIsBreached(zone);
+          const noData = zone.state === "unknown" || zone.state === "unavailable";
+          return `<div class="alarm-chip${isBreached ? " breached" : noData ? " unknown" : ""}" title="${escapeHtml(zone.name)}">
+            <span class="alarm-ring">${zoneIconSVG(zone.type, isBreached)}</span>
+            <span class="alarm-chip-text">
+              <b>${escapeHtml(shortZoneName(zone.name))}</b>
+              <small>${escapeHtml(zoneStateText(zone, isBreached))}</small>
+            </span>
+          </div>`;
+        }).join("")}
+      </div>`).join("") || `<div class="home-empty">No sensors chosen. Use the list button to pick some.</div>`}
+    </div>
+    <button class="alarm-add" id="homeAlarmAddButton" type="button">
+      <i class="ti ti-plus" aria-hidden="true"></i> Add sensors
+    </button>`;
 }
 
 /* ── Which sensors the Home alarm card shows ──
@@ -3663,6 +3717,11 @@ async function saveHomeAlarmSelection(sensors) {
   document.querySelector("#homeAlarmPickButton")?.addEventListener("click", (event) => {
     event.stopPropagation();   // the card header is draggable
     open();
+  });
+  /* The same picker from the card body: the header icon is easy to miss, and
+     adding a sensor you have just paired is the common reason to come here. */
+  document.addEventListener("click", (event) => {
+    if (event.target.closest("#homeAlarmAddButton")) open();
   });
   document.querySelector("#closeHomeAlarmModal")?.addEventListener("click", close);
   modal.addEventListener("click", (event) => { if (event.target === modal) close(); });
@@ -4791,6 +4850,8 @@ function renderHomeView() {
   layoutAreaGrid();
 
   renderHomeClimate();
+  renderHomeQuickActions();
+  loadQuickScripts();
   renderHomeTempSensors();
   renderHomeCamera();
   renderCustomHomeCards();
@@ -4997,6 +5058,95 @@ function renderHomeClimate() {
   renderHtml(body, `<div class="home-fit-clip"><div class="home-fit">${content}</div></div>`);
   fitClimateBody();
 }
+
+/* ── Quick actions ──
+   Four buttons beside Climate: the two light scenes the Home header used to
+   carry, plus Home Assistant scripts. Which scripts exist is asked once per
+   page load; a script that is not there is not offered.
+
+   "Good night" is ours rather than Home Assistant's: lights off, and the
+   thermostat to its sleep preset if it has one. */
+const QUICK_SCRIPT_CANDIDATES = [
+  { match: /^script\.movie_mode$/, label: "Movie mode", icon: "ti-movie", a: "#a78bfa", b: "#6d28d9" },
+];
+let quickScripts = null;
+
+async function loadQuickScripts() {
+  if (quickScripts) return;
+  try {
+    const payload = await requestJson("/api/home-assistant/scripts");
+    quickScripts = payload.items || [];
+  } catch (error) {
+    console.error(error);
+    quickScripts = [];
+  }
+  renderHomeQuickActions();
+}
+
+function quickActionButtons() {
+  const buttons = [
+    { key: "lights-on", label: "All lights on", icon: "ti-bulb", a: "#fbbf24", b: "#d97706", scene: "on" },
+    { key: "lights-off", label: "All lights off", icon: "ti-bulb-off", a: "#64748b", b: "#334155", scene: "off" },
+  ];
+  for (const candidate of QUICK_SCRIPT_CANDIDATES) {
+    const script = (quickScripts || []).find((item) => candidate.match.test(item.entity_id));
+    if (script) buttons.push({ key: script.entity_id, label: candidate.label, icon: candidate.icon, a: candidate.a, b: candidate.b, script: script.entity_id });
+  }
+  buttons.push({ key: "good-night", label: "Good night", icon: "ti-moon", a: "#4f8ef7", b: "#1e40af", quick: "good-night" });
+  return buttons;
+}
+
+function renderHomeQuickActions() {
+  const body = document.querySelector("#homeQuickBody");
+  if (!body) return;
+  renderHtml(body, `<div class="quick-grid">${quickActionButtons().map((button) => `
+    <button class="quick-btn" type="button"
+      ${button.scene ? `data-light-scene="${button.scene}"` : ""}
+      ${button.script ? `data-run-script="${escapeHtml(button.script)}"` : ""}
+      ${button.quick ? `data-quick-action="${button.quick}"` : ""}
+      title="${escapeHtml(button.label)}">
+      <span class="quick-ic" style="--a:${button.a};--b:${button.b}"><i class="ti ${button.icon}" aria-hidden="true"></i></span>
+      <span class="quick-label">${escapeHtml(button.label)}</span>
+    </button>`).join("")}</div>`);
+}
+
+async function runQuickScript(entityId, button) {
+  button.disabled = true;
+  try {
+    await requestJson(`/api/home-assistant/scripts/${encodeURIComponent(entityId)}/run`, { method: "POST" });
+    logActivity(`Ran ${entityId.split(".")[1].replace(/_/g, " ")}`);
+  } catch (error) {
+    console.error(error);
+    logActivity("Could not run that script", "error");
+  }
+  button.disabled = false;
+}
+
+/* Lights off, then the thermostat to sleep - each independent, so a thermostat
+   that cannot take a preset does not stop the lights going off. */
+async function runGoodNight(button) {
+  button.disabled = true;
+  try {
+    document.querySelector('.quick-btn[data-light-scene="off"]')?.click();
+    const thermostat = latestThermostats.find((t) => (t.preset_modes || []).some((m) => /sleep/i.test(m)));
+    if (thermostat) {
+      const preset = thermostat.preset_modes.find((m) => /sleep/i.test(m));
+      await updateClimate(thermostat.id, { preset_mode: preset, preset_entity_id: thermostat.preset_entity_id || null });
+    }
+    logActivity(thermostat ? "Good night: lights off, thermostat to sleep" : "Good night: lights off");
+  } catch (error) {
+    console.error(error);
+    logActivity("Good night did not finish", "error");
+  }
+  button.disabled = false;
+}
+
+document.addEventListener("click", (event) => {
+  const scriptBtn = event.target.closest("button[data-run-script]");
+  if (scriptBtn) { runQuickScript(scriptBtn.dataset.runScript, scriptBtn); return; }
+  const quickBtn = event.target.closest('button[data-quick-action="good-night"]');
+  if (quickBtn) runGoodNight(quickBtn);
+});
 
 /* ── Temperatures card ──
    The house as one number, the last day as four sparklines, then only the
@@ -6280,7 +6430,7 @@ const HOME_CARD_LAYOUT_KEY = "home_card_layout";
    Climate frozen at y4/h8 from an older table, so when Weather shrank to two
    rows the freed row just sat there as a gap. */
 const HOME_CARD_LAYOUT_VERSION_KEY = "home_card_layout_version";
-const HOME_CARD_LAYOUT_VERSION = "2026-09-17-clock-weather";
+const HOME_CARD_LAYOUT_VERSION = "2026-09-17-quick-actions";
 const HOME_GRID_COLS = 12;
 /* Fallback row height, used only where the grid has no measurable height yet
    (first paint) or is stacked into a flex column on a phone. Above 1101px the
@@ -6306,7 +6456,7 @@ const HOME_GRID_GAP = 16;
    and change another in the same column to match, or that column stops lining
    up - the totals are the invariant, not the individual numbers.
 
-     left    6 + 6 + 8  = 20     Weather, Climate, Temperatures
+     left    6 + 6 + 8  = 20     Weather, (Climate | Quick actions), Temperatures
      middle 12 + 8      = 20     Camera, Alarm
      right  20          = 20     Areas
 
@@ -6335,7 +6485,10 @@ const HOME_GRID_GAP = 16;
    will not do is move a card the user has already placed. */
 const DEFAULT_HOME_LAYOUT = {
   weather:     { x: 1, y: 1,  w: 4, h: 6 },
-  climate:     { x: 1, y: 7,  w: 4, h: 6 },
+  /* Climate keeps its dial and its height and gives up half its width, so the
+     buttons pressed most often sit beside it rather than a scroll away. */
+  climate:     { x: 1, y: 7,  w: 2, h: 6 },
+  quick:       { x: 3, y: 7,  w: 2, h: 6 },
   tempsensors: { x: 1, y: 13, w: 4, h: 8 },
   camera:      { x: 5, y: 1,  w: 4, h: 12 },
   alarm:       { x: 5, y: 13, w: 4, h: 8 },
@@ -6429,6 +6582,7 @@ function persistCardLayout(card, lay) {
 const HOME_HIDDEN_CARDS_KEY = "home_hidden_cards";
 
 const HOME_CARD_LABELS = {
+  quick: "Quick actions",
   weather: "Weather",
   camera: "Camera",
   climate: "Climate",
@@ -8103,57 +8257,6 @@ document.addEventListener("click", (event) => {
   }
 });
 
-/* ── The Home view's overflow menu ──
-   New Card, New Area, Choose cards and Reset layout used to sit in the header
-   as four labelled buttons. They are behind one control now, which freed that
-   row for the light scene chips.
-
-   The buttons themselves are untouched and keep their ids, so every handler
-   already bound to them still works - this only changes where they live and
-   when they are visible. */
-function closeHomeViewMenu() {
-  const list = document.querySelector("#homeViewMenuList");
-  const button = document.querySelector("#homeViewMenuButton");
-  if (!list || list.hidden) return;
-  list.hidden = true;
-  if (button) button.setAttribute("aria-expanded", "false");
-}
-
-function toggleHomeViewMenu() {
-  const list = document.querySelector("#homeViewMenuList");
-  const button = document.querySelector("#homeViewMenuButton");
-  if (!list) return;
-  const opening = list.hidden;
-  list.hidden = !opening;
-  if (button) button.setAttribute("aria-expanded", String(opening));
-  if (opening) list.querySelector("button")?.focus();
-}
-
-document.addEventListener("click", (event) => {
-  if (event.target.closest("#homeViewMenuButton")) {
-    event.stopPropagation();
-    toggleHomeViewMenu();
-    return;
-  }
-  /* Choosing an item closes the menu; clicking anywhere outside it does too.
-     Clicks inside that are not on an item (the separator, padding) leave it
-     open, so a near-miss does not dismiss what you were aiming at. */
-  if (event.target.closest("#homeViewMenuList [role='menuitem']")) {
-    closeHomeViewMenu();
-    return;
-  }
-  if (!event.target.closest("#homeViewMenu")) closeHomeViewMenu();
-});
-
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  const list = document.querySelector("#homeViewMenuList");
-  if (list && !list.hidden) {
-    closeHomeViewMenu();
-    document.querySelector("#homeViewMenuButton")?.focus();
-  }
-});
-
 /* Sidebar navigation — delegated, so nav items added at runtime work without
    registration and no item can ever be bound twice. */
 document.addEventListener("click", (event) => {
@@ -8527,7 +8630,7 @@ function setYoutubeCovering(on) {
    setting stands, so the page answers most questions without opening one. */
 /* An app's page keeps its launcher lit in the sidebar. */
 const PAGE_PARENTS = {
-  theme: "settings", startup: "settings", news: "settings", about: "settings",
+  theme: "settings", startup: "settings", news: "settings", about: "settings", homecards: "settings",
   youtube: "media", music: "media",
 };
 
@@ -8537,6 +8640,7 @@ async function renderSettingsApps() {
     if (el && text) el.textContent = text;
   };
   setSub("#settingsThemeSub", THEMES[currentThemeId]?.label);
+  setSub("#settingsHomeSub", document.querySelector("#homeMeta")?.textContent);
   const select = document.querySelector("#defaultViewSelect");
   setSub("#settingsStartupSub", select?.options[select.selectedIndex]?.text);
   try {

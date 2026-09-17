@@ -75,19 +75,6 @@ def test_scenes_sit_in_the_header_not_above_the_grid() -> None:
     assert 'id="lightDragLock"' in lights_panel
 
 
-def test_the_menu_is_closed_until_it_is_opened() -> None:
-    """An author `display` beats the user agent's `[hidden] { display: none }`,
-    so `.view-menu-list { display: flex }` left the four controls on screen from
-    the moment the page loaded. This file already warns about the same trap on
-    .device-back-btn six lines above."""
-    css = STYLES_CSS.read_text(encoding="utf-8")
-
-    assert ".view-menu-list[hidden] { display: none; }" in css
-    hidden_at = css.index(".view-menu-list[hidden]")
-    display_at = css.index(".view-menu-list {")
-    assert hidden_at < display_at, "the [hidden] rule must not be overridden by what follows"
-
-
 def test_the_header_wraps_rather_than_pushing_controls_off_a_phone() -> None:
     """On an iPhone 15 the Manage and Edit buttons, both chips and the lock come
     to about 400px against ~360px of usable width. Without wrapping the items on
@@ -129,37 +116,31 @@ def test_the_scene_chips_are_small_and_uncoloured_backgrounds() -> None:
     assert ".scene-button.all-off i" in css
 
 
-def test_home_renders_the_same_scene_markup_as_lights() -> None:
-    """One builder feeds both, so they cannot drift apart."""
+def test_the_home_scene_buttons_live_on_the_quick_actions_card() -> None:
+    """They left the Home header for a card of their own, keeping the same data
+    attribute, so the existing click handler drives them unchanged."""
     html = INDEX_HTML.read_text(encoding="utf-8")
     source = APP_JS.read_text(encoding="utf-8")
 
-    assert 'id="homeLightScenes"' in html
+    assert 'id="homeLightScenes"' not in html
+    assert 'id="homeQuickBody"' in html
     assert "function lightSceneChips(lightDevices)" in source
-    assert '#homeLightScenes' in source
-    # Still the same data attribute, so the existing click handler is untouched.
-    assert 'data-light-scene="on"' in source
+    assert 'data-light-scene="${button.scene}"' in source
+    assert 'scene: "on"' in source and 'scene: "off"' in source
 
 
-def test_the_four_view_controls_are_behind_one_button() -> None:
-    """They kept their ids so every handler already bound to them still works -
-    only where they live changed."""
+def test_the_home_view_controls_moved_to_settings() -> None:
+    """The "..." menu is gone: its four buttons are rows in Settings > Home
+    view, with their ids intact so every handler bound to them still works."""
     html = INDEX_HTML.read_text(encoding="utf-8")
-
-    menu = html[html.index('id="homeViewMenuList"'):]
-    menu = menu[:menu.index("</div>", menu.index('id="homeResetLayout"'))]
-    for control in ("addCustomCardButton", "addAreaButton", "homeCardsButton", "homeResetLayout"):
-        assert f'id="{control}"' in menu, f"{control} is not inside the menu"
-    assert 'aria-haspopup="menu"' in html
-    assert 'aria-expanded="false"' in html
-
-
-def test_the_menu_closes_on_escape_and_on_an_outside_click() -> None:
     source = APP_JS.read_text(encoding="utf-8")
 
-    assert "function closeHomeViewMenu()" in source
-    assert "function toggleHomeViewMenu()" in source
-    assert 'event.key !== "Escape"' in source
-    assert 'if (!event.target.closest("#homeViewMenu")) closeHomeViewMenu();' in source
-    # Choosing an item dismisses it; a click on the padding between items does not.
-    assert '#homeViewMenuList [role=\'menuitem\']' in source
+    page = html[html.index('data-view-panel="homecards"'):]
+    page = page[:page.index('<!-- ── STARTUP VIEW ── -->')]
+    for control in ("addCustomCardButton", "addAreaButton", "homeCardsButton", "homeResetLayout"):
+        assert f'id="{control}"' in page, f"{control} is not on the Home view settings page"
+    assert 'id="homeMeta"' in page, "the device and area count moved here too"
+    assert 'data-goto-view="homecards"' in html, "Settings needs a tile for it"
+    assert "homeViewMenu" not in html and "homeViewMenu" not in source
+
+
