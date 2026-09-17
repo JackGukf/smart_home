@@ -134,27 +134,9 @@
 
     <div class="sidebar-section">System</div>
     <ul class="room-list">
-      <li class="room-item" id="systemSettingsToggle" title="Show theme and startup settings">
+      <li class="room-item" data-view="settings" title="Theme, startup view, news and about">
         <span class="room-icon"><i class="ti ti-settings"></i></span>
         Settings
-        <i class="ti ti-chevron-right settings-chevron" aria-hidden="true"></i>
-      </li>
-      <li class="room-item system-settings-item" data-view="theme" hidden>
-        <span class="room-icon"><i class="ti ti-palette"></i></span>
-        Theme
-      </li>
-      <li class="room-item system-settings-item startup-view-row" hidden>
-        <span class="room-icon"><i class="ti ti-pin"></i></span>
-        Startup
-        <select id="defaultViewSelect" class="startup-view-select" aria-label="View shown after refresh" title="View shown when the dashboard loads"></select>
-      </li>
-      <li class="room-item system-settings-item" data-view="news" hidden>
-        <span class="room-icon"><i class="ti ti-news"></i></span>
-        News
-      </li>
-      <li class="room-item system-settings-item" data-view="about" hidden>
-        <span class="room-icon"><i class="ti ti-info-circle"></i></span>
-        About
       </li>
       <li class="room-item" id="refreshButton">
         <span class="room-icon"><i class="ti ti-refresh"></i></span>
@@ -511,9 +493,8 @@
 
         <div class="home-layout" id="homeCardGrid">
 
-          <!-- Weather display. The card's sky follows the time of day - see
-               applyWeatherSky() - behind the clock, today's weather and the week. -->
-          <div class="panel home-panel home-card home-weather-card sky-day" id="homeWeatherPanel" data-home-card="weather">
+          <!-- Weather display: the clock, today's weather and the week. -->
+          <div class="panel home-panel home-card home-weather-card" id="homeWeatherPanel" data-home-card="weather">
             <div class="home-panel-head">
               <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
               <span class="panel-title"><i class="ti ti-cloud"></i> Weather</span>
@@ -738,10 +719,56 @@
       </div>
     </div>
 
+    <!-- ── SETTINGS VIEW ──
+         Each setting is an app: a tile here opens its own page, and every page
+         has a way back. The same shape as Settings on the Voice Panel. -->
+    <div class="view-panel" data-view-panel="settings">
+      <div class="section-header">
+        <span class="section-title">Settings</span>
+        <span class="section-meta">HomeOS on this board</span>
+      </div>
+      <div class="settings-apps">
+        <button type="button" class="settings-app" data-goto-view="theme" style="--app-a:#a78bfa;--app-b:#ec4899">
+          <span class="settings-app-icon"><i class="ti ti-palette" aria-hidden="true"></i></span>
+          <span class="settings-app-name">Theme</span>
+          <span class="settings-app-sub" id="settingsThemeSub">Colours</span>
+        </button>
+        <button type="button" class="settings-app" data-goto-view="startup" style="--app-a:#4f8ef7;--app-b:#22d3ee">
+          <span class="settings-app-icon"><i class="ti ti-pin" aria-hidden="true"></i></span>
+          <span class="settings-app-name">Startup</span>
+          <span class="settings-app-sub" id="settingsStartupSub">First view</span>
+        </button>
+        <button type="button" class="settings-app" data-goto-view="news" style="--app-a:#fb923c;--app-b:#ef4444">
+          <span class="settings-app-icon"><i class="ti ti-news" aria-hidden="true"></i></span>
+          <span class="settings-app-name">News</span>
+          <span class="settings-app-sub" id="settingsNewsSub">Headlines &amp; prices</span>
+        </button>
+        <button type="button" class="settings-app" data-goto-view="about" style="--app-a:#64748b;--app-b:#94a3b8">
+          <span class="settings-app-icon"><i class="ti ti-info-circle" aria-hidden="true"></i></span>
+          <span class="settings-app-name">About</span>
+          <span class="settings-app-sub" id="settingsAboutSub">Version</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── STARTUP VIEW ── -->
+    <div class="view-panel" data-view-panel="startup">
+      <div class="section-header">
+        <span class="settings-page-title"><button type="button" class="settings-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Startup</span></span>
+        <span class="section-meta">What this screen opens on</span>
+      </div>
+      <div class="settings-group">
+        <div class="settings-row">
+          <div class="settings-label"><strong>Startup view</strong><small>Saved in this browser, so the wall panel and your phone can open on different views</small></div>
+          <select id="defaultViewSelect" class="startup-view-select" aria-label="View shown when the dashboard loads"></select>
+        </div>
+      </div>
+    </div>
+
     <!-- ── THEME VIEW ── -->
     <div class="view-panel" data-view-panel="theme">
       <div class="section-header">
-        <span class="section-title">Theme</span>
+        <span class="settings-page-title"><button type="button" class="settings-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Theme</span></span>
         <span class="section-meta">Dashboard appearance</span>
       </div>
       <div class="theme-panel">
@@ -795,7 +822,7 @@
     <!-- ── NEWS SETTINGS VIEW ── -->
     <div class="view-panel" data-view-panel="news">
       <div class="section-header">
-        <span class="section-title">News</span>
+        <span class="settings-page-title"><button type="button" class="settings-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">News</span></span>
         <span class="section-meta">Headlines and prices in the header · saved on the board, so every screen follows</span>
       </div>
       <div class="settings-group" id="newsSettings">
@@ -825,7 +852,7 @@
     <!-- ── ABOUT VIEW ── -->
     <div class="view-panel" data-view-panel="about">
       <div class="section-header">
-        <span class="section-title">About</span>
+        <span class="settings-page-title"><button type="button" class="settings-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">About</span></span>
         <span class="section-meta">This dashboard and the board it runs on</span>
       </div>
       <div class="settings-group">

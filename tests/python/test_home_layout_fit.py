@@ -297,39 +297,17 @@ def test_a_stored_cell_cannot_outlive_the_table_it_was_resolved_against() -> Non
     assert "DEFAULT_HOME_LAYOUT[id]" in body, "custom cards must survive the drop"
 
 
-def test_the_camera_player_grows_into_slack_but_never_shrinks() -> None:
-    """Locked to 16:9 it was sized by width alone.
+def test_the_camera_player_stays_16_by_9() -> None:
+    """Stretching the frame into a taller card cropped the picture's sides.
 
-    The wall panel gives the card 485px and a 506px-wide 16:9 frame needs 284,
-    so ~112px sat empty under the controls. `flex: 1 0 auto` lets it take the
-    remainder - and the 0 matters: where the frame already wants more height
-    than the card has, as on an iPad mini, it must not be flexed smaller.
+    It was tried (flex: 1 0 auto) and the camera's own date stamp was cut off
+    on the wall panel. The frame keeps its ratio; spare height sits below.
     """
     css = STYLES.read_text(encoding="utf-8")
 
-    assert "#homeCameraPanel .home-camera-frame { flex: 1 0 auto; }" in css, \
-        "must grow (1) and never shrink (0)"
-    # The 16:9 basis has to stay, because it is what the frame grows *from*.
     assert re.search(r"\.home-camera-frame \{[^}]*aspect-ratio: 16 / 9", css)
-    # Below 740px cards are natural height and the ratio is load-bearing.
-    block = css.split("The camera player takes the height the card actually has")[1]
-    assert "@media (min-width: 740px)" in block.split("@media")[0] + "@media (min-width: 740px)"
-
-
-def test_the_camera_grows_on_a_motion_route_too() -> None:
-    """With Auto on motion on, the frame sits inside the slot on screen.
-
-    That slot was a plain block, so the frame had no flex parent and fell back
-    to 16:9, leaving the dead space under the controls this fix exists to
-    remove - on the wall panel, which is where Auto on motion is used.
-    """
-    css = STYLES.read_text(encoding="utf-8")
-    block = css[css.index("#homeCameraPanel .home-camera-slot.showing {"):]
-    block = block[:block.index("}")]
-
-    assert "display: flex;" in block
-    assert "flex-direction: column;" in block
-    assert "flex: 1 0 auto;" in block
+    assert "home-camera-frame { flex: 1 0 auto; }" not in css
+    assert not re.search(r"home-camera-slot\.showing \{[^}]*flex: 1 0 auto", css)
 
 
 def test_the_live_player_frame_does_not_scroll() -> None:

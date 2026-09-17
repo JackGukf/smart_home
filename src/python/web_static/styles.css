@@ -323,17 +323,6 @@ aside {
 .room-item[hidden],
 .sidebar-activity[hidden] { display: none; }
 
-.settings-chevron {
-  margin-left: auto;
-  font-size: 14px;
-  color: var(--muted);
-  transition: transform 0.15s;
-}
-
-#systemSettingsToggle.open .settings-chevron { transform: rotate(90deg); }
-
-.system-settings-item { padding-left: 24px; }
-
 .sidebar-section-toggle {
   display: flex;
   align-items: center;
@@ -1692,14 +1681,13 @@ aside {
 .sidebar-activity .activity-text { font-size: 11px; }
 .sidebar-activity .activity-time { font-size: 9.5px; }
 
-/* Startup view picker in the sidebar */
-.startup-view-row { cursor: default; }
-
+/* Startup view picker, on Settings > Startup */
 .startup-view-select {
-  margin-left: auto;
-  max-width: 108px;
-  padding: 3px 6px;
-  font-size: 11px;
+  flex-shrink: 0;
+  min-width: 160px;
+  max-width: 45%;
+  padding: 7px 10px;
+  font-size: 13px;
   color: var(--text);
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -3806,62 +3794,24 @@ aside {
 }
 
 /* ── Weather card ──
-   The clock, today's weather and the week, over a sky that follows the time of
-   day. The sky is the card's own and ignores the theme palette on purpose: a
-   night sky is navy whichever accent colour the dashboard wears. Text on it is
-   always near-white, so every sky keeps it readable, including the pale bottom
-   of the day gradient, where the week sits on a darkened glass strip.
+   The clock, today's weather and the week. Same surface as every other card:
+   it had its own sky that followed the time of day, which did not sit well
+   beside the rest.
 
-   iOS 12 is a supported browser and has no flex gap, no inset and an unprefixed
-   backdrop-filter, so spacing here is margins and the glass is prefixed. */
-#homeWeatherPanel.home-weather-card {
-  color: #f4f7ff;
-  border-color: rgba(255, 255, 255, 0.08);
-  background: linear-gradient(170deg, #1b5389 0%, #3c86c2 60%, #8cc3e6 100%);
-  z-index: 0;
-}
-
-/* Stars, shown only at night. */
-#homeWeatherPanel.home-weather-card::before {
-  content: "";
-  position: absolute;
-  top: 0; right: 0; bottom: 0; left: 0;
-  z-index: -1;
-  opacity: 0;
-  transition: opacity 0.8s;
-  pointer-events: none;
-  background-image:
-    radial-gradient(1px 1px at 12% 22%, #fff 99%, transparent),
-    radial-gradient(1px 1px at 34% 12%, #fff 99%, transparent),
-    radial-gradient(1.4px 1.4px at 58% 30%, #fff 99%, transparent),
-    radial-gradient(1px 1px at 76% 16%, #fff 99%, transparent),
-    radial-gradient(1px 1px at 88% 40%, #fff 99%, transparent),
-    radial-gradient(1.2px 1.2px at 22% 48%, #fff 99%, transparent),
-    radial-gradient(1px 1px at 66% 8%, #fff 99%, transparent),
-    radial-gradient(1px 1px at 45% 44%, #fff 99%, transparent),
-    radial-gradient(1px 1px at 93% 12%, #fff 99%, transparent);
-}
-
-#homeWeatherPanel.sky-dawn  { background: linear-gradient(170deg, #25264d 0%, #7b5a8a 55%, #e0936f 100%); }
-#homeWeatherPanel.sky-day   { background: linear-gradient(170deg, #1b5389 0%, #3c86c2 60%, #8cc3e6 100%); }
-#homeWeatherPanel.sky-dusk  { background: linear-gradient(170deg, #2b2450 0%, #8a4f6f 55%, #f09a5b 100%); }
-#homeWeatherPanel.sky-night { background: linear-gradient(170deg, #0b1026 0%, #18204a 70%, #2a2a5e 100%); }
-#homeWeatherPanel.sky-night::before { opacity: 0.7; }
-
-#homeWeatherPanel .panel-title,
-#homeWeatherPanel .home-card-grip,
-#homeWeatherPanel .home-card-resize { color: rgba(244, 247, 255, 0.72); }
+   iOS 12 is a supported browser and has no flex gap and no inset, so spacing
+   here is margins. */
+#homeWeatherPanel .panel-title { color: var(--muted); }
 
 .home-weather-loc {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   font-size: 11.5px;
-  color: rgba(244, 247, 255, 0.85);
+  color: var(--t-text-dim);
   white-space: nowrap;
 }
 
-.home-weather-loc i { font-size: 13px; margin-right: 4px; }
+.home-weather-loc i { font-size: 13px; margin-right: 4px; color: var(--t-text); }
 
 .home-weather-body {
   display: flex;
@@ -3874,7 +3824,7 @@ aside {
   padding: 4px 6px;
   background: none;
   border: none;
-  color: inherit;
+  color: var(--t-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -3882,7 +3832,7 @@ aside {
   transition: background 0.15s;
 }
 
-.home-weather-body:hover { background: rgba(255, 255, 255, 0.07); }
+.home-weather-body:hover { background: rgba(255, 255, 255, 0.03); }
 
 .home-weather-clock {
   display: flex;
@@ -3902,7 +3852,7 @@ aside {
 .home-weather-date {
   font-size: 13px;
   margin-top: 6px;
-  color: rgba(244, 247, 255, 0.85);
+  color: var(--t-text-dim);
   white-space: nowrap;
 }
 
@@ -3917,9 +3867,11 @@ aside {
   line-height: 1;
   margin-right: 10px;
   flex-shrink: 0;
+  color: var(--t-text-dim);
 }
 
-.home-weather-icon.ti-sun { color: #ffd166; }
+.home-weather-icon.ti-sun { color: var(--amber); }
+.home-weather-icon.ti-moon { color: var(--t-text); }
 
 .home-weather-main {
   display: flex;
@@ -3937,7 +3889,7 @@ aside {
 .home-weather-cond {
   font-size: 12px;
   margin-top: 3px;
-  color: rgba(244, 247, 255, 0.85);
+  color: var(--t-text-dim);
   white-space: nowrap;
 }
 
@@ -3948,11 +3900,9 @@ aside {
   flex-shrink: 0;
   margin-top: 8px;
   padding: 4px;
-  border-radius: 12px;
-  background: rgba(10, 12, 30, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--t-card-border);
 }
 
 .home-weather-week:empty { display: none; }
@@ -3963,16 +3913,17 @@ aside {
   align-items: center;
   min-width: 0;
   padding: 2px 0;
-  border-radius: 8px;
+  border-radius: 7px;
   text-align: center;
 }
 
-.wk-day.today { background: rgba(255, 255, 255, 0.13); }
-.wk-name { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(244, 247, 255, 0.75); }
-.wk-day i { font-size: 16px; line-height: 1.1; margin: 1px 0; }
-.wk-temps { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.wk-day.today { background: rgba(var(--t-accent-rgb), 0.1); }
+.wk-name { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--t-text-dim); }
+.wk-day i { font-size: 16px; line-height: 1.1; margin: 1px 0; color: var(--t-text-dim); }
+.wk-day i.ti-sun { color: var(--amber); }
+.wk-temps { font-family: var(--mono); font-size: 11px; white-space: nowrap; color: var(--t-text); }
 .wk-temps strong { font-weight: 500; }
-.wk-temps span { margin-left: 3px; color: rgba(244, 247, 255, 0.6); }
+.wk-temps span { margin-left: 3px; color: var(--t-text-dim); }
 
 /* ── Custom device cards ── */
 .home-custom-body {
@@ -4458,42 +4409,12 @@ aside {
   #homeSensorsPanel .temp-tile-name { font-size: clamp(8.5px, 3.2cqh, 13px); }
 }
 
-/* ── The camera player takes the height the card actually has ──────────────
-   .home-camera-frame is locked to 16:9, so it was sized entirely by the card's
-   width. When the card is taller than that - the wall panel gives it 485px and
-   a 506px-wide 16:9 frame only needs 284 - the remainder sat as ~112px of dead
-   space under the controls.
-
-   `flex: 1 0 auto` is the whole fix, and the 0 is the important digit: the
-   frame grows into slack but never shrinks, so its 16:9 basis still applies
-   wherever there is no slack to take. On an iPad mini, where the frame already
-   wants more height than the card has, nothing changes at all.
-
-   Not applied below 740px: there the cards are a flex column at their natural
-   height, so the frame's own ratio is what gives the card its height, and
-   letting it flex would collapse it. */
-@media (min-width: 740px) {
-  #homeCameraPanel .home-camera-body {
-    display: flex;
-    flex-direction: column;
-  }
-
-  #homeCameraPanel .home-camera-frame { flex: 1 0 auto; }
-
-  /* With Auto on motion on, the frame is not a child of the body but of the
-     slot on screen (see "Camera path slots"), which was an ordinary block - so
-     the frame had no flex parent, fell back to its 16:9 height and left the
-     same dead space under the controls. The showing slot passes the flex on. */
-  #homeCameraPanel .home-camera-slot.showing {
-    display: flex;
-    flex-direction: column;
-    flex: 1 0 auto;
-  }
-
-  /* The pre-aspect-ratio fallback adds height with a padding box, which a
-     flexed height cannot override - it would stack on top. */
-  html.no-aspect-ratio #homeCameraPanel .home-camera-frame::before { content: none; }
-}
+/* ── The camera player stays 16:9 ───────────────────────────────────────────
+   The frame keeps its own 16:9 shape, sized by the card's width, and a card
+   taller than that leaves the spare space under the controls. It used to
+   stretch into that space instead (`flex: 1 0 auto`), which cropped the sides
+   of the picture - the camera's own date stamp was cut off on the wall panel -
+   and that was the worse trade. */
 
 /* ── Weather scales with its own height ────────────────────────────────────
    On the fitted Home grid the card is a fixed box, so everything in it is a
@@ -5910,7 +5831,85 @@ header > .header-right { flex-shrink: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .header-news-story { transition: none; }
-  #homeWeatherPanel.home-weather-card::before { transition: none; }
+}
+
+/* ── Settings: app tiles ──
+   Each setting is an app, as on a phone and on the Voice Panel: a tile with
+   its own coloured icon, name, and where that setting stands now. */
+.settings-apps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-gap: 14px;
+  max-width: 760px;
+}
+
+.settings-app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding: 20px 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--t-text);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.settings-app:hover { border-color: var(--border-hover); background: var(--card-2); }
+.settings-app:active { transform: scale(0.97); }
+.settings-app:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
+
+.settings-app-icon {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 12px;
+  border-radius: 16px;
+  background: linear-gradient(145deg, var(--app-a), var(--app-b));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 30px;
+}
+
+.settings-app-name { font-size: 14px; font-weight: 600; }
+
+.settings-app-sub {
+  max-width: 100%;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--t-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A settings page: back to Settings, then its title. */
+.settings-page-title { display: inline-flex; align-items: center; min-width: 0; }
+
+.settings-back {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 12px;
+  padding: 4px 10px 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--t-text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-back i { font-size: 15px; margin-right: 2px; }
+.settings-back:hover { color: var(--t-text); border-color: var(--border-hover); }
+
+@media (max-width: 480px) {
+  .settings-apps { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-gap: 10px; }
+  .settings-row { flex-wrap: wrap; }
+  .startup-view-select { max-width: 100%; margin-top: 8px; }
 }
 
 /* ── Settings views: News and About ── */

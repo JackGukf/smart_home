@@ -26,14 +26,11 @@ def test_weather_card_lives_in_home_view_with_forecast_dropdown() -> None:
     assert 'id="weatherForecast"' in html
 
 
-def test_theme_view_under_system_owns_palette_picker() -> None:
+def test_theme_view_owns_palette_picker() -> None:
     html = INDEX_HTML.read_text(encoding="utf-8")
     header = html[html.index("<header>"):html.index("</header>")]
-    system = html[html.index('<div class="sidebar-section">System</div>'):]
     theme_panel = html[html.index('data-view-panel="theme"'):]
 
-    assert 'data-view="theme"' in system
-    assert 'data-view-panel="theme"' in html
     assert 'id="palettePicker"' not in header
     assert 'id="palettePicker"' in theme_panel
 
@@ -64,18 +61,27 @@ def test_header_shows_hour_and_minute_only() -> None:
     assert "toTimeString().slice(0, 5)" in js
 
 
-def test_news_and_about_live_under_settings() -> None:
+def test_settings_is_one_view_of_app_tiles() -> None:
+    """Settings opens on the right like every other view; each setting is a tile."""
     html = INDEX_HTML.read_text(encoding="utf-8")
+    js = APP_JS.read_text(encoding="utf-8")
     system = html[html.index('<div class="sidebar-section">System</div>'):]
     system = system[:system.index("</ul>")]
+    settings = html[html.index('data-view-panel="settings"'):]
+    settings = settings[:settings.index("</div>\n    </div>")]
 
-    for view in ("news", "about"):
-        assert f'class="room-item system-settings-item" data-view="{view}" hidden' in system
-        assert f'data-view-panel="{view}"' in html
+    assert 'data-view="settings"' in system
+    for page in ("theme", "startup", "news", "about"):
+        assert f'data-view="{page}"' not in system, f"{page} moved out of the sidebar"
+        assert f'class="settings-app" data-goto-view="{page}"' in settings
+        panel = html[html.index(f'data-view-panel="{page}"'):]
+        panel = panel[:panel.index("</div>")]
+        assert 'class="settings-back" data-goto-view="settings"' in panel, f"{page} needs a way back"
 
+    assert 'id="defaultViewSelect"' in html[html.index('data-view-panel="startup"'):]
     about = html[html.index('data-view-panel="about"'):]
-    assert 'id="aboutVersion"' in about
-    assert 'id="buildBadge"' in about
+    assert 'id="aboutVersion"' in about and 'id="buildBadge"' in about
+    assert 'const SETTINGS_PAGES = ["settings", "theme", "startup", "news", "about"];' in js
 
 
 def test_news_lives_in_the_header_between_logo_and_clock() -> None:

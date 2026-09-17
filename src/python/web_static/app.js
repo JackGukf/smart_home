@@ -328,17 +328,8 @@ function logActivity(text, type = "normal") {
   while (activityLog.children.length > 8) activityLog.removeChild(activityLog.lastElementChild);
 }
 
-/* ── Sidebar collapsibles: Settings group + Recent Activity ── */
+/* ── Sidebar collapsible: Recent Activity ── */
 (function initSidebarCollapsibles() {
-  const settingsToggle = document.querySelector("#systemSettingsToggle");
-  settingsToggle?.addEventListener("click", () => {
-    const open = settingsToggle.classList.toggle("open");
-    document.querySelectorAll(".system-settings-item").forEach((item) => {
-      item.hidden = !open;
-    });
-    settingsToggle.title = open ? "Hide theme and startup settings" : "Show theme and startup settings";
-  });
-
   const activityToggle = document.querySelector("#activityToggle");
   activityToggle?.addEventListener("click", () => {
     if (!activityLog) return;
@@ -2620,10 +2611,12 @@ function weatherHeaderIcon(code, night = false) {
   return "ti-cloud";
 }
 
-/* The Weather card's sky follows the time of day: dawn, day, dusk, night.
+/* Day or night for the Weather card's icon: a moon after sunset.
 
-   Sunrise and sunset come from the forecast, so the card turns dark when the
-   sun actually sets in Coquitlam, not at a fixed hour. Open-Meteo gives them as
+   The card itself wears the same colour as every other card - it had a sky
+   that followed the time of day, and it did not sit well beside the rest.
+   Sunrise and sunset come from the forecast, so the moon appears when the sun
+   actually sets in Coquitlam, not at a fixed hour. Open-Meteo gives them as
    local wall-clock times with no offset ("2026-09-16T06:50"), which Date parses
    as local time - right, because the browser and the board share a time zone.
    Until the first forecast arrives, a fixed 07:00-19:00 day stands in. */
@@ -2647,12 +2640,7 @@ function skyPhase(now, weather) {
 }
 
 function applyWeatherSky(now = new Date()) {
-  const card = document.querySelector("#homeWeatherPanel");
-  if (!card) return;
   const phase = skyPhase(now, latestWeather);
-  ["dawn", "day", "dusk", "night"].forEach((name) => {
-    card.classList.toggle(`sky-${name}`, name === phase);
-  });
   if (latestWeather?.status === "ok" && weatherIcon) {
     weatherIcon.className = "ti home-weather-icon " + weatherHeaderIcon(latestWeather.weather_code, phase === "night");
   }
@@ -7189,7 +7177,8 @@ function activateView(viewName) {
   if (isDynamicGroup) ensureDeviceGroupPanel(group);
 
   railButtonEls().forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.view === viewName);
+    const view = btn.dataset.view;
+    btn.classList.toggle("active", view === viewName || (view === "settings" && SETTINGS_PAGES.includes(viewName)));
   });
   viewPanelEls().forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.viewPanel === viewName);
@@ -7213,6 +7202,9 @@ function activateView(viewName) {
   }
   if (viewName === "about") {
     loadAboutInfo();
+  }
+  if (viewName === "settings") {
+    renderSettingsApps();
   }
   if (viewName === "automations") {
     loadAutomationProposals().catch((error) => console.error(error));
@@ -8259,6 +8251,37 @@ function setYoutubeCovering(on) {
   });
 })();
 
+/* ── Settings ──
+   A page of app tiles; each opens its own view with a way back. The Settings
+   item in the sidebar stays lit on those pages. Each tile says where its
+   setting stands, so the page answers most questions without opening one. */
+const SETTINGS_PAGES = ["settings", "theme", "startup", "news", "about"];
+
+async function renderSettingsApps() {
+  const setSub = (id, text) => {
+    const el = document.querySelector(id);
+    if (el && text) el.textContent = text;
+  };
+  setSub("#settingsThemeSub", THEMES[currentThemeId]?.label);
+  const select = document.querySelector("#defaultViewSelect");
+  setSub("#settingsStartupSub", select?.options[select.selectedIndex]?.text);
+  try {
+    const doc = newsSettingsDoc || await requestJson("/api/news/settings");
+    const { settings } = doc;
+    const sources = (settings.breaking ? settings.breaking_sources.length : 0)
+      + (settings.finance ? settings.finance_sources.length : 0);
+    const prices = settings.markets ? settings.market_ids.length : 0;
+    setSub("#settingsNewsSub", settings.enabled ? `${sources} sources · ${prices} prices` : "Off");
+  } catch {}
+  try {
+    const response = await fetch(`/static/build_info.json?ts=${Date.now()}`, { cache: "no-store" });
+    if (response.ok) {
+      const info = await response.json();
+      setSub("#settingsAboutSub", [info.version && `v${info.version}`, info.build != null && `build ${info.build}`].filter(Boolean).join(" · "));
+    }
+  } catch {}
+}
+
 /* ── Startup (default) view ── */
 const DEFAULT_VIEW_KEY = "default_view";
 
@@ -8274,7 +8297,7 @@ function getDefaultView() {
    can be called again once loadDeviceGroups() has synced the nav and a
    custom group's <li> exists, without duplicating the option-building logic. */
 function populateDefaultViewSelect(select) {
-  select.innerHTML = railButtonEls().map((btn) => {
+  select.innerHTML = railButtonEls().filter((btn) => btn.dataset.view !== "settings").map((btn) => {
     const label = [...btn.childNodes]
       .filter((node) => node.nodeType === Node.TEXT_NODE)
       .map((node) => node.textContent.trim())
@@ -8292,8 +8315,6 @@ function populateDefaultViewSelect(select) {
       try { localStorage.setItem(DEFAULT_VIEW_KEY, select.value); } catch {}
       logActivity(`Startup view → ${select.options[select.selectedIndex]?.text || select.value}`);
     });
-    // Keep the row from hijacking clicks meant for the select.
-    select.addEventListener("click", (event) => event.stopPropagation());
   }
 
   // Activate immediately so the dashboard is never blank while the device

@@ -603,17 +603,14 @@ def test_sidebar_clicks_are_delegated_not_per_item() -> None:
     assert "addEventListener" not in body, "sync must attach no listeners of its own"
 
 
-def test_settings_chevron_cannot_be_hijacked_by_the_sidebar_handler() -> None:
-    """The Devices chevron is gone with its children, so the handler no longer
-    guards against it. The Settings chevron still exists, and is only safe
-    because #systemSettingsToggle carries no data-view — give it one and every
-    click on it would start navigating."""
+def test_settings_is_an_ordinary_view_in_the_sidebar() -> None:
+    """The collapsible Settings group and its chevron are gone: Settings is a
+    view like any other, so the sidebar handler navigating on it is correct."""
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    at = html.index('id="systemSettingsToggle"')
-    entry = html[html.rindex("<li", 0, at):html.index("</li>", at)]
-    assert "settings-chevron" in entry
-    assert "data-view=" not in entry
+    assert 'id="systemSettingsToggle"' not in html
+    assert "settings-chevron" not in html
+    assert '<li class="room-item" data-view="settings"' in html
 
 
 def test_override_merge_preserves_other_groups(tmp_path: Path) -> None:
