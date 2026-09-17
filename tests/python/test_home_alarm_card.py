@@ -175,3 +175,33 @@ def test_the_card_contents_resize_with_the_card_and_cannot_collide() -> None:
     assert "cqw" in status
     # Container queries need a container; without this every cqw is invalid.
     assert "#homeAlarmBody { container-type: inline-size; }" in css
+
+
+def test_a_vibration_sensor_is_a_zone() -> None:
+    """The backdoor sensor reports vibration, and Zigbee gives it a `contact`
+    entity it never reports. Leaving vibration out of the zone classes meant the
+    only pickable entity for a working sensor sat at "unknown" for ever, and the
+    card said "No data" about a sensor that had just fired."""
+    from src.python.web_app import _home_assistant_alarm_zone, _is_home_assistant_alarm_zone
+
+    entity = {
+        "entity_id": "binary_sensor.0xa4c1387000391a9e_vibration",
+        "state": "on",
+        "attributes": {"device_class": "vibration", "friendly_name": "Vibration sensor backdoor Vibration"},
+    }
+
+    assert _is_home_assistant_alarm_zone(entity)
+    zone = _home_assistant_alarm_zone(entity)
+    assert zone["type"] == "vibration"
+    assert zone["state"] == "alert", "a knock is not a door standing open"
+
+    still = _home_assistant_alarm_zone({**entity, "state": "off"})
+    assert still["state"] == "clear"
+
+
+def test_a_vibration_zone_reads_as_movement_in_the_card() -> None:
+    js = (Path(__file__).resolve().parents[2] / "src" / "python" / "web_static" / "app.js").read_text(encoding="utf-8")
+
+    assert '"Movement" : "Still"' in js
+    columns = js[js.index("const ALARM_KIND_COLUMNS = ["):js.index("/* A camera\'s person detector")]
+    assert '"vibration"' in columns, "a door's vibration sensor belongs with the doors"

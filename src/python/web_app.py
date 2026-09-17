@@ -4145,6 +4145,11 @@ ALARM_ZONE_CLASSES = frozenset({
     "door", "window", "garage_door", "opening",
     "smoke", "moisture", "gas", "carbon_monoxide", "safety",
     "occupancy", "motion",
+    # A vibration sensor on a back door is what says somebody is at it. Zigbee
+    # sensors of this kind also expose a `contact` entity they never report, so
+    # leaving vibration out meant the only pickable entity for the device sat at
+    # "unknown" for ever, and the card said "No data" about a working sensor.
+    "vibration",
 })
 
 # The Home card's default: everything except presence. A motion sensor tripping
@@ -4174,6 +4179,8 @@ def _home_assistant_alarm_zone(entity: dict[str, Any]) -> dict[str, Any] | None:
     state = str(entity.get("state") or "unknown")
     if device_class in {"occupancy", "motion"}:
         zone_type = "motion"
+    elif device_class == "vibration":
+        zone_type = "vibration"
     elif device_class in {"garage_door", "opening"}:
         zone_type = "door"
     elif device_class in {"gas", "carbon_monoxide"}:
@@ -4188,8 +4195,9 @@ def _home_assistant_alarm_zone(entity: dict[str, Any]) -> dict[str, Any] | None:
         zone_state = "unknown"
     elif zone_type == "motion":
         zone_state = "motion" if state == "on" else "clear"
-    elif zone_type in {"smoke", "moisture"}:
-        # A leak is not "open". The frontend maps this to Detected / Clear.
+    elif zone_type in {"smoke", "moisture", "vibration"}:
+        # A leak is not "open", and neither is a knock on the door. The frontend
+        # maps these to Detected / Clear and Movement / Still.
         zone_state = "alert" if state == "on" else "clear"
     else:
         zone_state = "open" if state == "on" else "closed"

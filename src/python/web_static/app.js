@@ -3469,6 +3469,7 @@ function zoneIconSVG(type, breached) {
   if (type === "door")   return `<svg width="16" height="16" viewBox="0 0 22 22"><rect x="5" y="2" width="12" height="18" rx="1" fill="none" stroke="${color}" stroke-width="1.5"/><circle cx="13.5" cy="11" r="1" fill="${color}"/></svg>`;
   if (type === "smoke")  return `<svg width="16" height="16" viewBox="0 0 22 22"><path d="M11 2.5c2.2 3 1 4.6.2 5.8-.9 1.3-1.6 2.4-.6 4 .5.8 1.5 1.2 1.5 1.2s-.4-1.6.5-2.6c1-1.1 3-1.8 3.4 1.1.2 1.3-.1 2.6-.8 3.6a5.6 5.6 0 01-9.6-1.2C4.4 11 7 8.4 8.6 6.6 10 5 11 3.9 11 2.5z" fill="none" stroke="${color}" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
   if (type === "moisture") return `<svg width="16" height="16" viewBox="0 0 22 22"><path d="M11 3s5.2 5.6 5.2 9.1A5.2 5.2 0 0111 17.3a5.2 5.2 0 01-5.2-5.2C5.8 8.6 11 3 11 3z" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+  if (type === "vibration") return `<svg width="16" height="16" viewBox="0 0 22 22"><rect x="7" y="4" width="8" height="14" rx="1.5" fill="none" stroke="${color}" stroke-width="1.5"/><path d="M4 8c-1 2-1 4 0 6M18 8c1 2 1 4 0 6" fill="none" stroke="${color}" stroke-width="1.4" stroke-linecap="round"/></svg>`;
   if (type === "window") return `<svg width="16" height="16" viewBox="0 0 22 22"><rect x="3" y="3" width="16" height="16" rx="1" fill="none" stroke="${color}" stroke-width="1.5"/><line x1="11" y1="3" x2="11" y2="19" stroke="${color}" stroke-width="1.5"/><line x1="3" y1="11" x2="19" y2="11" stroke="${color}" stroke-width="1.5"/></svg>`;
   return `<svg width="16" height="16" viewBox="0 0 22 22"><circle cx="11" cy="11" r="2.2" fill="${color}"/><circle cx="11" cy="11" r="6" fill="none" stroke="${color}" stroke-width="1.3" opacity="0.45"/></svg>`;
 }
@@ -3526,7 +3527,7 @@ function alarmBreachedCount(zones) {
    tiles with the names cut off ("Door sensor …") answered neither "is the house
    shut" nor "which sensor is that". */
 const ALARM_KIND_COLUMNS = [
-  { id: "entry", label: "Doors & windows", types: ["door", "window"] },
+  { id: "entry", label: "Doors & windows", types: ["door", "window", "vibration"] },
   { id: "safety", label: "Safety", types: ["smoke", "moisture", "gas", "co"] },
   { id: "camera", label: "Cameras", types: ["motion"], camera: true },
   { id: "motion", label: "Motion", types: ["motion"], camera: false },
@@ -3561,6 +3562,7 @@ function shortZoneName(name) {
 function zoneStateText(zone, breached) {
   if (zone.state === "unknown" || zone.state === "unavailable") return "No data";
   if (zone.type === "motion") return breached ? "Someone" : "No one";
+  if (zone.type === "vibration") return breached ? "Movement" : "Still";
   if (["smoke", "moisture", "gas", "co"].includes(zone.type)) return breached ? "Detected" : "Clear";
   return breached ? "Open" : "Closed";
 }
