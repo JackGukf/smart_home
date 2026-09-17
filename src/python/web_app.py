@@ -390,6 +390,11 @@ class CameraDefinition:
     # only offers the behaviour; each screen opts in for itself.
     motion_entity: str | None = None
     motion_linger_seconds: int = 300
+    # Whether this camera looks outside. The Home card's strip shows only
+    # these: a thumbnail of the living room adds nothing to a glance at the
+    # doors, and shows the room to anyone walking past the wall panel. Taken
+    # from `outdoor:` in the camera's config, or guessed from where it is.
+    outdoor: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -2362,6 +2367,7 @@ def _load_cameras(path: Path) -> list[CameraDefinition]:
                 battery_powered=bool(item.get("battery_powered", False)),
                 motion_entity=(str(item["motion_entity"]) if item.get("motion_entity") else None),
                 motion_linger_seconds=int(item.get("motion_linger_seconds", 300)),
+                outdoor=item.get("outdoor") if isinstance(item.get("outdoor"), bool) else None,
             )
         )
     return cameras
@@ -5790,7 +5796,21 @@ def _camera_card(camera: CameraDefinition, check_ports: bool = True) -> dict[str
     if camera.motion_entity:
         card["motion_entity"] = camera.motion_entity
         card["motion_linger_seconds"] = camera.motion_linger_seconds
+    card["outdoor"] = _camera_is_outdoor(camera)
     return card
+
+
+# Words that only appear in the name of a camera pointed outside. The config's
+# own `outdoor:` always wins; this is what a house that has never set it gets.
+OUTDOOR_CAMERA_WORDS = ("garage", "yard", "front door", "frontdoor", "driveway",
+                        "porch", "doorbell", "outdoor", "outside", "gate")
+
+
+def _camera_is_outdoor(camera: CameraDefinition) -> bool:
+    if camera.outdoor is not None:
+        return camera.outdoor
+    haystack = f"{camera.name} {camera.room or ''}".lower()
+    return any(word in haystack for word in OUTDOOR_CAMERA_WORDS)
 
 
 def _browser_view_url(camera: CameraDefinition) -> str | None:

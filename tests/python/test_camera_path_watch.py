@@ -442,3 +442,15 @@ def test_the_strip_lives_outside_the_body_an_episode_rebuilds(tmp_path: Path) ->
     # Refreshed in place, so a thumbnail never blinks back to a placeholder.
     assert "function refreshCameraThumbs()" in js
     assert "img.src = camera.snapshot_url" in js
+
+
+def test_the_strip_shows_outdoor_cameras_only(tmp_path: Path) -> None:
+    """A thumbnail of the living room adds nothing to a glance at the doors, and
+    puts the room on a panel anyone walking past can see."""
+    js = APP_JS.read_text(encoding="utf-8")
+    render = js[js.index("function renderHomeCameraExtra()"):js.index("/* Fresh thumbnails")]
+    sightings = js[js.index("function cameraSightings()"):js.index("function agoLabel(")]
+
+    assert "homeCameraList().filter(isOutdoorCamera)" in render
+    assert ".filter(isOutdoorCamera)" in sightings, "the last-person line is outdoor too"
+    assert "camera?.outdoor === true" in js, "the server decides; the browser reads the flag"

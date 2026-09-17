@@ -5538,6 +5538,14 @@ const CAMERA_STRIP_SIZE = 4;
 const CAMERA_STRIP_REFRESH_MS = 30_000;
 const CAMERA_RECENT_MINUTES = 10;   /* a green dot means "just now-ish" */
 
+/* Only cameras that look outside. A thumbnail of the living room adds nothing
+   to a glance at the doors, and puts the room on a wall panel anyone walking
+   past can see. The server decides (a camera's `outdoor:` in the config, or its
+   name); the browser only reads the flag. */
+function isOutdoorCamera(camera) {
+  return camera?.outdoor === true;
+}
+
 function cameraDetectorKey(camera) {
   return String(camera.name || "").trim().toLowerCase().replace(/\s+/g, "_");
 }
@@ -5555,6 +5563,7 @@ function cameraSightings() {
     byKey.set(match[1].toLowerCase(), minutes);
   }
   return homeCameraList()
+    .filter(isOutdoorCamera)
     .map((camera) => ({ camera, minutes: byKey.get(cameraDetectorKey(camera)) }))
     .filter((entry) => entry.minutes != null)
     .sort((a, b) => a.minutes - b.minutes);
@@ -5570,13 +5579,14 @@ function agoLabel(minutes) {
 function renderHomeCameraExtra() {
   const host = document.querySelector("#homeCameraExtra");
   if (!host) return;
-  const cameras = homeCameraList();
-  if (cameras.length < 2) { renderHtml(host, ""); return; }
+  const cameras = homeCameraList().filter(isOutdoorCamera);
+  if (!cameras.length) { renderHtml(host, ""); return; }
 
   const shown = shownHomeCameraId;
   const sightings = cameraSightings();
   const minutesById = new Map(sightings.map((s) => [cameraIdFor(s.camera), s.minutes]));
   const others = cameras.filter((camera) => cameraIdFor(camera) !== shown).slice(0, CAMERA_STRIP_SIZE);
+  if (!others.length) { renderHtml(host, ""); return; }
 
   const strip = others.map((camera) => {
     const id = cameraIdFor(camera);
@@ -5600,9 +5610,10 @@ function renderHomeCameraExtra() {
          ${escapeHtml(first.camera.name || "")} · ${agoLabel(first.minutes)}</span>
        ${rest.length ? `<span class="cam-last-rest">then ${rest.slice(0, 2).map((s) =>
          `${escapeHtml(s.camera.name || "")} ${agoLabel(s.minutes)}`).join(", ")}</span>` : ""}`
-    : `<span class="cam-last-label">No camera has reported a person yet</span>`;
+    : `<span class="cam-last-label">No outdoor camera has reported a person yet</span>`;
 
-  renderHtml(host, `<div class="cam-strip">${strip}</div><div class="cam-last">${line}</div>`);
+  renderHtml(host, `<div class="cam-strip" style="grid-template-columns:repeat(${others.length}, minmax(0, 1fr))">${strip}</div>`
+    + `<div class="cam-last">${line}</div>`);
 }
 
 /* Fresh thumbnails without rebuilding the strip: only the src changes, so the

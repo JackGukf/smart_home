@@ -256,3 +256,27 @@ def test_a_vibration_zone_reads_as_movement_in_the_card() -> None:
     assert '"Movement" : "Still"' in js
     columns = js[js.index("const ALARM_KIND_COLUMNS = ["):js.index("/* A camera\'s person detector")]
     assert '"vibration"' in columns, "a door's vibration sensor belongs with the doors"
+
+
+def test_a_camera_is_outdoor_by_its_config_or_its_name() -> None:
+    """`outdoor:` in the camera's config always wins; a house that has never set
+    it gets a guess from the name, which is what the Home strip filters on."""
+    from src.python.web_app import CameraDefinition, _camera_is_outdoor
+
+    def camera(name: str, room: str | None = None, outdoor: bool | None = None) -> CameraDefinition:
+        return CameraDefinition(
+            name=name, host="10.0.0.1", provider="wyze", model=None, room=room,
+            snapshot_url=None, stream_url=None, view_url=None, mjpeg_fps=5,
+            mjpeg_width=640, mjpeg_quality=60, stream_name="cam", go2rtc_url=None,
+            battery_powered=False, outdoor=outdoor,
+        )
+
+    assert _camera_is_outdoor(camera("Garage camera"))
+    assert _camera_is_outdoor(camera("Frontyard camera"))
+    assert _camera_is_outdoor(camera("Backyard camera"))
+    assert _camera_is_outdoor(camera("Front door camera"))
+    assert not _camera_is_outdoor(camera("Family room camera"))
+    assert not _camera_is_outdoor(camera("Office camera"))
+    # The config wins either way.
+    assert _camera_is_outdoor(camera("Office camera", outdoor=True))
+    assert not _camera_is_outdoor(camera("Garage camera", outdoor=False))

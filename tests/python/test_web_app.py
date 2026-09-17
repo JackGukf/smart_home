@@ -385,6 +385,7 @@ def test_cameras_endpoint_loads_configured_tplink_cameras(tmp_path: Path) -> Non
             "stream_name": "front_door_camera",
             "webrtc_url": "http://192.168.0.10:1984/webrtc.html?src=front_door_camera",
             "hls_url": "http://192.168.0.10:1984/stream.html?src=front_door_camera&mode=hls",
+            "outdoor": True,
         },
         {
             "id": "192.168.0.202",
@@ -403,6 +404,7 @@ def test_cameras_endpoint_loads_configured_tplink_cameras(tmp_path: Path) -> Non
             "stream_name": "garage_camera",
             "webrtc_url": "http://192.168.0.10:1984/webrtc.html?src=garage_camera",
             "hls_url": "http://192.168.0.10:1984/stream.html?src=garage_camera&mode=hls",
+            "outdoor": True,
         },
     ]
 
@@ -488,6 +490,7 @@ def test_camera_endpoint_builds_rtsp_stream_from_env_without_exposing_secret(tmp
             "stream_name": "family_room_camera",
             "webrtc_url": "http://192.168.0.10:1984/webrtc.html?src=family_room_camera",
             "hls_url": "http://192.168.0.10:1984/stream.html?src=family_room_camera&mode=hls",
+            "outdoor": False,
         }
     ]
 
