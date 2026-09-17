@@ -60,7 +60,12 @@ STAGE_DIR="$(mktemp -d)"
 trap 'rm -rf "${STAGE_DIR}"' EXIT
 bash "${PROJECT_ROOT}/scripts/build-dashboard-assets.sh" "${STAGE_DIR}"
 
-rsync --checksum -av \
+# build_info.json is held back until the service is answering again. Every open
+# browser polls it and reloads the moment it changes; ship it with the rest and
+# that reload lands in the restart, where index.html loads but app.js and
+# styles.css do not - leaving a dead, unstyled page that nothing retries. The
+# wall panel sat like that until somebody restarted its browser.
+rsync --checksum -av --exclude build_info.json \
     "${STAGE_DIR}/" \
     "${PI_TARGET}:${REMOTE_PATH}/src/python/web_static/"
 
@@ -125,5 +130,25 @@ echo "==> Installing and restarting smart-home-dashboard.service..."
 ssh "${PI_TARGET}" "cd ${REMOTE_PATH} && HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) bash scripts/install-dashboard-service.sh >/tmp/smart-home-dashboard-install.log 2>&1"
 restart_unit go2rtc.service
 restart_unit smart-home-dashboard.service
+
+# Only now do open browsers learn there is a new build.
+# /login rather than /api/health: health is behind the session cookie, so it
+# answers 401 from the board itself and would never signal readiness. The check
+# has to be one an unauthenticated request can pass, and it has to be a static
+# asset's neighbour - what the reloading browser needs is exactly this server
+# serving files again.
+echo "==> Waiting for the dashboard to serve pages again..."
+READY=0
+for attempt in $(seq 1 30); do
+    if ssh "${PI_TARGET}" "curl -fsS -m 3 -o /dev/null http://127.0.0.1:8000/static/app.js" 2>/dev/null; then
+        READY=1
+        break
+    fi
+    sleep 2
+done
+[ "${READY}" = "1" ] || echo "WARNING: the dashboard did not answer in 60s; announcing the build anyway." >&2
+rsync --checksum -av \
+    "${STAGE_DIR}/build_info.json" \
+    "${PI_TARGET}:${REMOTE_PATH}/src/python/web_static/build_info.json"
 
 echo "==> Done. Dashboard live at http://${PI_HOST}:8000"

@@ -29,7 +29,7 @@ def test_deploy_ships_the_compiled_bundle_not_the_source() -> None:
     assert "build-dashboard-assets.sh" in deploy
     # Deploying web_static/ directly would put the untranspiled source on the
     # board and silently break every older browser again.
-    assert 'rsync --checksum -av \\\n    "${STAGE_DIR}/"' in deploy
+    assert 'rsync --checksum -av --exclude build_info.json \\\n    "${STAGE_DIR}/"' in deploy
     assert '"${PROJECT_ROOT}/src/python/web_static/"' not in deploy
 
 
@@ -79,3 +79,22 @@ def test_compiled_bundle_is_not_larger_than_the_source(tmp_path: Path) -> None:
     # Compiling drops comments, so supporting old browsers costs modern ones
     # nothing. If this ever flips, the trade-off deserves a fresh look.
     assert (tmp_path / "stage" / "app.js").stat().st_size <= APP_JS.stat().st_size
+
+
+def test_the_build_number_ships_after_the_service_is_back() -> None:
+    """Every open browser polls build_info.json and reloads the moment it
+    changes. Shipped with the rest of the files, that reload lands inside the
+    restart: index.html loads, app.js and styles.css do not, and the page sits
+    there dead with nothing to retry - which is what happened to the wall panel.
+    So it is held back until the server is serving files again."""
+    deploy = (PROJECT_ROOT / "scripts" / "deploy-dashboard.sh").read_text(encoding="utf-8")
+
+    assert "--exclude build_info.json" in deploy
+    restart_at = deploy.index("restart_unit smart-home-dashboard.service")
+    ship_at = deploy.index('"${STAGE_DIR}/build_info.json"')
+    assert restart_at < ship_at, "the build number must ship after the restart"
+    # Readiness is checked with a request that needs no session, or it would
+    # never pass: /api/health answers 401 from the board itself.
+    wait_at = deploy.index("/static/app.js")
+    assert restart_at < wait_at < ship_at
+    assert "8000/api/health" not in deploy[restart_at:ship_at]
