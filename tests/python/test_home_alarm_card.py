@@ -199,6 +199,57 @@ def test_a_vibration_sensor_is_a_zone() -> None:
     assert still["state"] == "clear"
 
 
+def test_a_vibration_alert_clears_itself() -> None:
+    """These sensors announce a knock and never send "off", so the card sat at
+    Movement for ever. What the zone reports is "did it move recently"."""
+    from src.python.web_app import VIBRATION_ALERT_SECONDS, _home_assistant_alarm_zone
+
+    now = 1_789_700_000.0
+    def zone_at(seconds_ago: float) -> str:
+        from datetime import datetime, timezone
+        changed = datetime.fromtimestamp(now - seconds_ago, tz=timezone.utc).isoformat()
+        return _home_assistant_alarm_zone({
+            "entity_id": "binary_sensor.backdoor_vibration",
+            "state": "on",
+            "last_changed": changed,
+            "attributes": {"device_class": "vibration"},
+        }, now=now)["state"]
+
+    assert zone_at(5) == "alert"
+    assert zone_at(VIBRATION_ALERT_SECONDS - 1) == "alert"
+    assert zone_at(VIBRATION_ALERT_SECONDS + 1) == "clear", "a knock an hour ago is not movement now"
+
+
+def test_an_entity_that_never_reported_is_marked_and_left_out_of_the_default() -> None:
+    """Zigbee gives the vibration sensor a contact entity it never reports.
+    Offering it puts a permanent "No data" on the card."""
+    from src.python.web_app import _home_assistant_alarm_zone, default_home_alarm_sensors
+
+    quiet = _home_assistant_alarm_zone({
+        "entity_id": "binary_sensor.backdoor_contact",
+        "state": "unknown",
+        "attributes": {"device_class": "door"},
+    })
+    talking = _home_assistant_alarm_zone({
+        "entity_id": "binary_sensor.front_door_contact",
+        "state": "off",
+        "attributes": {"device_class": "door"},
+    })
+
+    assert quiet["reported"] is False and talking["reported"] is True
+    assert default_home_alarm_sensors([quiet, talking]) == ["binary_sensor.front_door_contact"]
+
+
+def test_the_picker_hides_them_unless_they_are_already_chosen() -> None:
+    js = (Path(__file__).resolve().parents[2] / "src" / "python" / "web_static" / "app.js").read_text(encoding="utf-8")
+    body = js[js.index("function renderHomeAlarmPicker()"):js.index("async function saveHomeAlarmSelection(")]
+
+    assert "z.reported === false && !selected.includes(String(z.id))" in body
+    # One already on the card stays listed, or it could never be removed.
+    assert "const available = homeAlarmAvailable.filter((z) => !hidden.includes(z));" in body
+    assert "never reported anything" in body
+
+
 def test_a_vibration_zone_reads_as_movement_in_the_card() -> None:
     js = (Path(__file__).resolve().parents[2] / "src" / "python" / "web_static" / "app.js").read_text(encoding="utf-8")
 

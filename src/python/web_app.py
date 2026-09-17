@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import threading
+from datetime import datetime, timezone
 import time
 import asyncio
 import contextlib
@@ -4152,6 +4153,12 @@ ALARM_ZONE_CLASSES = frozenset({
     "vibration",
 })
 
+# How long a vibration reads as movement. These sensors announce a knock and
+# then go quiet without ever sending "off": Zigbee2MQTT leaves the entity on
+# until the device says otherwise, which on this one is never, so the card sat
+# at "Movement" for ever. Anything older than this is over.
+VIBRATION_ALERT_SECONDS = 120
+
 # The Home card's default: everything except presence. A motion sensor tripping
 # is normal life in an occupied house; a door, a leak or smoke is the thing you
 # want to see without opening a view.
@@ -4172,7 +4179,22 @@ def _is_home_assistant_alarm_zone(
     return device_class in ALARM_ZONE_CLASSES
 
 
-def _home_assistant_alarm_zone(entity: dict[str, Any]) -> dict[str, Any] | None:
+def _entity_age_seconds(entity: dict[str, Any], now: float | None = None) -> float | None:
+    """How long the entity has held its state, or None if it does not say."""
+    raw = entity.get("last_changed") or entity.get("last_updated")
+    if not isinstance(raw, str):
+        return None
+    try:
+        changed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if changed.tzinfo is None:
+        changed = changed.replace(tzinfo=timezone.utc)
+    reference = now if now is not None else time.time()
+    return reference - changed.timestamp()
+
+
+def _home_assistant_alarm_zone(entity: dict[str, Any], now: float | None = None) -> dict[str, Any] | None:
     entity_id = str(entity.get("entity_id") or "")
     attributes = entity.get("attributes") or {}
     device_class = str(attributes.get("device_class") or "").lower()
@@ -4195,9 +4217,14 @@ def _home_assistant_alarm_zone(entity: dict[str, Any]) -> dict[str, Any] | None:
         zone_state = "unknown"
     elif zone_type == "motion":
         zone_state = "motion" if state == "on" else "clear"
-    elif zone_type in {"smoke", "moisture", "vibration"}:
-        # A leak is not "open", and neither is a knock on the door. The frontend
-        # maps these to Detected / Clear and Movement / Still.
+    elif zone_type == "vibration":
+        # A knock is a moment, not a state. The sensor never sends "off", so the
+        # reading is "did it move recently" rather than "is it still on".
+        age = _entity_age_seconds(entity, now)
+        recent = age is None or age <= VIBRATION_ALERT_SECONDS
+        zone_state = "alert" if state == "on" and recent else "clear"
+    elif zone_type in {"smoke", "moisture"}:
+        # A leak is not "open". The frontend maps this to Detected / Clear.
         zone_state = "alert" if state == "on" else "clear"
     else:
         zone_state = "open" if state == "on" else "closed"
@@ -4206,6 +4233,11 @@ def _home_assistant_alarm_zone(entity: dict[str, Any]) -> dict[str, Any] | None:
         "name": str(attributes.get("friendly_name") or entity_id),
         "type": zone_type,
         "state": zone_state,
+        # An entity that has never told us anything is not a sensor worth
+        # offering in the picker: Zigbee gives some devices entities they never
+        # report, and picking one puts a permanent "No data" on the card.
+        "reported": state not in {"unavailable", "unknown", "none", ""},
+        "age_seconds": _entity_age_seconds(entity, now),
         "time": "Home Assistant",
     }
 def _load_weather_config(path: Path) -> WeatherConfig | None:
@@ -4668,9 +4700,13 @@ def default_home_alarm_sensors(zones: list[dict[str, Any]]) -> list[str]:
     A fixed list of entity ids would have to be edited every time a door or leak
     sensor is added, and would be wrong on any other house. A rule picks new
     ones up on its own.
+
+    An entity that has never reported is left out: Zigbee gives some devices
+    entities they never use, and the card would carry a permanent "No data".
     """
     return [str(z["id"]) for z in zones
-            if str(z.get("type")) not in HOME_ALARM_DEFAULT_EXCLUDED_TYPES]
+            if str(z.get("type")) not in HOME_ALARM_DEFAULT_EXCLUDED_TYPES
+            and z.get("reported") is not False]
 
 
 def load_home_alarm_selection(path: Path) -> list[str] | None:

@@ -3664,7 +3664,14 @@ function renderHomeAlarmPicker() {
     ? homeAlarmAvailable.filter((z) => z.type !== "motion").map((z) => String(z.id))
     : homeAlarmSelection;
 
-  if (!homeAlarmAvailable.length) {
+  /* Zigbee gives some devices entities they never report - the backdoor
+     vibration sensor also has a contact entity that has never said anything -
+     and picking one puts a permanent "No data" on the card. They are hidden
+     here, except one already chosen, which stays so it can be removed. */
+  const hidden = homeAlarmAvailable.filter((z) => z.reported === false && !selected.includes(String(z.id)));
+  const available = homeAlarmAvailable.filter((z) => !hidden.includes(z));
+
+  if (!available.length) {
     list.innerHTML = '<div class="home-empty">No sensors reported yet.</div>';
     return;
   }
@@ -3675,11 +3682,12 @@ function renderHomeAlarmPicker() {
     ["Smoke & gas", ["smoke"]],
     ["Water", ["moisture"]],
     ["Motion & presence", ["motion"]],
+    ["Vibration", ["vibration"]],
   ];
   const seen = new Set();
   let html = "";
   for (const [label, types] of groups) {
-    const rows = homeAlarmAvailable.filter((z) => types.includes(String(z.type)));
+    const rows = available.filter((z) => types.includes(String(z.type)));
     if (!rows.length) continue;
     html += `<div class="net-modal-group">${escapeHtml(label)}</div>`;
     for (const zone of rows) {
@@ -3691,7 +3699,7 @@ function renderHomeAlarmPicker() {
       </label>`;
     }
   }
-  const rest = homeAlarmAvailable.filter((z) => !seen.has(String(z.id)));
+  const rest = available.filter((z) => !seen.has(String(z.id)));
   if (rest.length) {
     html += `<div class="net-modal-group">Other</div>`;
     for (const zone of rest) {
@@ -3701,6 +3709,10 @@ function renderHomeAlarmPicker() {
         <span>${escapeHtml(zone.name)}</span>
       </label>`;
     }
+  }
+  if (hidden.length) {
+    html += `<div class="net-modal-note">${hidden.length} sensor${hidden.length === 1 ? "" : "s"} hidden: ${
+      hidden.length === 1 ? "it has" : "they have"} never reported anything.</div>`;
   }
   list.innerHTML = html;
 }

@@ -5846,6 +5846,12 @@ header > .header-right { flex-shrink: 0; }
   .header-news-story { transition: none; }
 }
 
+.net-modal-note {
+  padding: 8px 10px 2px;
+  font-size: 11.5px;
+  color: var(--t-text-dim);
+}
+
 /* ── App tiles ──
    Settings, Media, Bluetooth, Add Matter and Devices are launchers, as on a
    phone and on the Voice Panel: each item is a tile with its own coloured icon,
