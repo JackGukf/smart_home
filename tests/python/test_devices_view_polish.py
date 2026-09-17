@@ -162,16 +162,15 @@ def test_tile_markup_has_an_accent_strip_and_keeps_navigation() -> None:
     assert 'data-goto-view="${escapeHtml(tile.view)}"' in javascript
 
 
-def test_tile_accent_and_icon_read_the_group_colour() -> None:
+def test_tile_icon_square_reads_the_group_colour() -> None:
+    """The tiles are app tiles now: the group colour fills the icon square."""
     css = STYLES_CSS.read_text(encoding="utf-8")
+    javascript = APP_JS.read_text(encoding="utf-8")
 
     accent = re.search(r"\.device-group-tile-accent\s*\{([^}]*)\}", css)
     assert accent, "no .device-group-tile-accent rule"
     assert "var(--group-color" in accent.group(1)
-
-    icon = re.search(r"\.device-group-tile-head\s+i\s*\{([^}]*)\}", css)
-    assert icon, "no .device-group-tile-head i rule"
-    assert "var(--group-color" in icon.group(1)
+    assert 'class="app-tile-icon device-group-tile-accent"' in javascript
 
 
 def test_tile_has_a_group_colour_fallback() -> None:

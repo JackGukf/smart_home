@@ -27,7 +27,6 @@ ASPECT_RATIO_SELECTORS = (
     ".home-camera-frame",
     ".area-icon-choice",
     ".custom-light-tile",
-    ".temp-sensor-tile",
 )
 
 

@@ -454,17 +454,15 @@ function environmentSummary() {
 function renderDevicesOverview() {
   const grid = document.querySelector("#devicesOverviewGrid");
   if (!grid) return;
+  /* App tiles, as in Settings: the group's colour fills the icon square
+     (device-group-tile-accent), then the name, how many, and a summary. */
   grid.innerHTML = deviceGroupTileData().map((tile) => `
-    <article class="device-group-tile" data-goto-view="${escapeHtml(tile.view)}"${tile.color ? ` style="--group-color:${tile.color}"` : ""}>
-      <div class="device-group-tile-accent" aria-hidden="true"></div>
-      <div class="device-group-tile-body">
-        <div class="device-group-tile-head">
-          <i class="ti ${escapeHtml(tile.icon)}" aria-hidden="true"></i>${escapeHtml(tile.label)}
-        </div>
-        <div class="device-group-tile-count">${tile.count}</div>
-        <div class="device-group-tile-summary">${escapeHtml(tile.summary)}</div>
-      </div>
-    </article>
+    <button type="button" class="app-tile device-group-tile" data-goto-view="${escapeHtml(tile.view)}"${tile.color ? ` style="--group-color:${tile.color}"` : ""}>
+      <span class="app-tile-count mono">${tile.count}</span>
+      <span class="app-tile-icon device-group-tile-accent"><i class="ti ${escapeHtml(tile.icon)}" aria-hidden="true"></i></span>
+      <span class="app-tile-name">${escapeHtml(tile.label)}</span>
+      <span class="app-tile-sub">${escapeHtml(tile.summary)}</span>
+    </button>
   `).join("");
 }
 
@@ -4884,19 +4882,60 @@ const HOME_CAMERA_KEY = "home_camera_id";
    Deliberately not persisted - see the motion watch further down. */
 let homeCameraOverride = null;
 
+/* Areas that count as outdoors for the Temperatures card. An area can also
+   say so itself with `outdoor: true` in the areas document. */
+const OUTDOOR_AREA_IDS = new Set(["front-door", "front-yard", "back-yard"]);
+
+function isOutdoorArea(areaId) {
+  if (!areaId) return false;
+  const area = (areasDoc.areas || []).find((a) => a.id === areaId);
+  return typeof area?.outdoor === "boolean" ? area.outdoor : OUTDOOR_AREA_IDS.has(areaId);
+}
+
+/* "Motion sensor and TH front door" -> "Front door motion". The raw names are
+   device models, not places; the card has room only for the place. */
+function shortSensorName(name) {
+  const raw = String(name || "").trim();
+  const rules = [
+    [/^motion sensor and th\s+(.+)$/i, "$1 motion"],
+    [/^motion and th\s+(.+)$/i, "$1 motion"],
+    [/^temperature and humidity\s+(.+)$/i, "$1 T&H"],
+    [/^motion sensor and illumination$/i, "Motion & light"],
+  ];
+  for (const [pattern, replacement] of rules) {
+    if (pattern.test(raw)) {
+      const short = raw.replace(pattern, replacement);
+      return short.charAt(0).toUpperCase() + short.slice(1);
+    }
+  }
+  return raw;
+}
+
 /* Every temperature source on the dashboard: ecobee remote sensors plus any
-   Tuya/HA sensor group that reports a temperature reading. */
+   Tuya/HA sensor group that reports a temperature, each once.
+
+   The ecobee's remote sensors are also Home Assistant sensor entities in their
+   own right (sensor.8jt7_temperature), so the same sensor used to appear twice
+   - once through the thermostat, once as a group. A group whose temperature
+   entity is an ecobee sensor's is skipped. */
 function homeTempSources() {
   const sources = [];
+  const ecobeeEntities = new Set();
   for (const th of latestThermostats) {
     const unit = th.temperature_unit?.includes("F") ? "°F" : "°C";
     for (const sensor of th.sensors || []) {
       if (sensor.temperature == null) continue;
+      const entity = /^[a-z0-9_]+$/.test(String(sensor.id || "")) ? `sensor.${sensor.id}` : null;
+      if (entity) ecobeeEntities.add(entity);
       sources.push({
         id: `ecobee:${th.id}:${sensor.name}`,
         name: sensor.name,
-        temp: Math.round(Number(sensor.temperature)),
+        temp: Number(sensor.temperature),
         unit,
+        humidity: null,
+        tempEntity: entity,
+        humEntity: null,
+        outdoor: false,   /* a thermostat's remote sensors are indoors */
         occupied: sensor.occupied,
       });
     }
@@ -4905,9 +4944,22 @@ function homeTempSources() {
   for (const group of groupSensorDevices(visibleSensors)) {
     const reading = group.readings.find((r) => String(r.category || "").includes("temperature"));
     if (!reading) continue;
+    if (reading.entity_id && ecobeeEntities.has(reading.entity_id)) continue;
     const value = readingMetricNumber(reading);
     if (!Number.isFinite(value)) continue;
-    sources.push({ id: `tuya:${areaSlug(group.name)}`, name: group.name, temp: Math.round(value), unit: "°" });
+    const humReading = group.readings.find((r) => String(r.category || "").includes("humidity"));
+    const humidity = humReading ? readingMetricNumber(humReading) : NaN;
+    const slug = areaSlug(group.name);
+    sources.push({
+      id: `tuya:${slug}`,
+      name: shortSensorName(group.name),
+      temp: value,
+      unit: "°",
+      humidity: Number.isFinite(humidity) ? humidity : null,
+      tempEntity: reading.entity_id || null,
+      humEntity: Number.isFinite(humidity) ? humReading.entity_id || null : null,
+      outdoor: isOutdoorArea(areasDoc.assignments?.[`sensor:${slug}`]),
+    });
   }
   return sources;
 }
@@ -4946,42 +4998,221 @@ function renderHomeClimate() {
   fitClimateBody();
 }
 
-/* Temperature sensors card: ecobee remote sensors + Tuya/HA readings as
-   thermometer tiles — drag to rearrange, sized by the card (CSS container
-   queries handle the scaling). */
-const HOME_TEMP_ORDER_KEY = "home_temp_sensor_order";
+/* ── Temperatures card ──
+   The house as one number, the last day as four sparklines, then only the
+   sensors worth a look. Sixteen tiles of near-identical numbers said less.
 
-function orderedTempSources(sources) {
-  try {
-    const saved = JSON.parse(localStorage.getItem(HOME_TEMP_ORDER_KEY) || "[]");
-    if (Array.isArray(saved) && saved.length) {
-      const pos = new Map(saved.map((id, index) => [id, index]));
-      return [...sources].sort(
-        (a, b) => (pos.has(a.id) ? pos.get(a.id) : Infinity) - (pos.has(b.id) ? pos.get(b.id) : Infinity)
-      );
-    }
-  } catch {}
-  return sources;
+   Indoor is the average of every chosen indoor sensor; outdoor is any sensor in
+   an outdoor area (isOutdoorArea). "Worth a look" is an indoor sensor more than
+   TEMP_OUTLIER_DEGREES from the indoor average right now. The history is hourly
+   averages from Home Assistant's recorder (POST /api/sensors/history), fetched
+   at most every five minutes and whenever the chosen sensors change. */
+const TEMP_OUTLIER_DEGREES = 1.5;
+const TEMP_HISTORY_MS = 5 * 60_000;
+let tempHistory = { key: "", at: 0, data: null, pending: false };
+
+const TEMP_SPARKS = [
+  { key: "indoor_temperature", name: "Indoor temperature", unit: "°", decimals: 1, color: "#4a9ae0" },
+  { key: "outdoor_temperature", name: "Outdoor temperature", unit: "°", decimals: 1, color: "#d9713a" },
+  { key: "indoor_humidity", name: "Indoor humidity", unit: "%", decimals: 0, color: "#4a9ae0" },
+  { key: "outdoor_humidity", name: "Outdoor humidity", unit: "%", decimals: 0, color: "#d9713a" },
+];
+
+const mean = (values) => values.reduce((sum, v) => sum + v, 0) / values.length;
+
+function tempCardModel() {
+  const sources = homeTempSources();
+  const chosen = selectedTempSensorIds(sources);
+  const picked = sources.filter((s) => chosen.has(s.id));
+  const indoor = picked.filter((s) => !s.outdoor);
+  const outdoor = picked.filter((s) => s.outdoor);
+  const humid = (list) => list.map((s) => s.humidity).filter((h) => h != null);
+  const indoorAvg = indoor.length ? mean(indoor.map((s) => s.temp)) : null;
+  const groups = {
+    indoor_temperature: indoor.map((s) => s.tempEntity).filter(Boolean),
+    outdoor_temperature: outdoor.map((s) => s.tempEntity).filter(Boolean),
+    indoor_humidity: indoor.map((s) => s.humEntity).filter(Boolean),
+    outdoor_humidity: outdoor.map((s) => s.humEntity).filter(Boolean),
+  };
+  return {
+    sources, picked, indoor, outdoor, groups,
+    now: {
+      indoor_temperature: indoorAvg,
+      outdoor_temperature: outdoor.length ? mean(outdoor.map((s) => s.temp)) : null,
+      indoor_humidity: humid(indoor).length ? mean(humid(indoor)) : null,
+      outdoor_humidity: humid(outdoor).length ? mean(humid(outdoor)) : null,
+    },
+    min: indoor.length ? Math.min(...indoor.map((s) => s.temp)) : null,
+    max: indoor.length ? Math.max(...indoor.map((s) => s.temp)) : null,
+    outliers: indoorAvg == null ? [] : indoor
+      .filter((s) => Math.abs(s.temp - indoorAvg) > TEMP_OUTLIER_DEGREES)
+      .sort((a, b) => Math.abs(b.temp - indoorAvg) - Math.abs(a.temp - indoorAvg)),
+  };
+}
+
+function formatReading(value, decimals, unit) {
+  return value == null || !Number.isFinite(value) ? "—" : `${value.toFixed(decimals)}${unit}`;
 }
 
 function renderHomeTempSensors() {
   const body = document.querySelector("#homeTempSensorsBody");
   if (!body) return;
+  const model = tempCardModel();
+  if (!model.sources.length) {
+    renderHtml(body, `<div class="home-empty">No temperature sensors found</div>`);
+    return;
+  }
+  if (!model.picked.length) {
+    renderHtml(body, `<div class="home-empty">No sensors selected — use the filter above</div>`);
+    return;
+  }
+  const { now, indoor, outdoor, outliers } = model;
+  const indoorAvg = now.indoor_temperature;
+  const outdoorWhere = outdoor.length === 1 ? outdoor[0].name : outdoor.length ? `${outdoor.length} sensors` : "no sensor";
+  const shown = outliers.slice(0, 3);
+  const within = indoor.length - outliers.length;
 
-  const sources = homeTempSources();
-  const chosen = selectedTempSensorIds(sources);
-  const tiles = orderedTempSources(sources.filter((s) => chosen.has(s.id))).map((s) => `
-    <div class="temp-sensor-tile" draggable="true" data-temp-tile-id="${escapeHtml(s.id)}"
-         title="${escapeHtml(s.name)} — drag to rearrange">
-      ${s.occupied != null ? `<span class="thermo-occ-dot${s.occupied ? " occupied" : ""}" title="${s.occupied ? "Occupied" : "Unoccupied"}"></span>` : ""}
-      <span class="temp-tile-icon" style="color:${tempRangeColor(s.temp)}"><i class="ti ti-temperature" aria-hidden="true"></i></span>
-      <span class="temp-tile-value mono" style="color:${tempRangeColor(s.temp)}">${s.temp}${s.unit}</span>
-      <span class="temp-tile-name">${escapeHtml(s.name)}</span>
-    </div>`).join("");
+  renderHtml(body, `
+    <div class="tc">
+      <div class="tc-hero">
+        <div class="tc-indoor">
+          <div class="tc-big mono">${formatReading(indoorAvg, 1, "°")}</div>
+          <div class="tc-cap">Indoor · ${indoor.length} sensor${indoor.length === 1 ? "" : "s"}${indoor.length > 1 ? ` · <b>${formatReading(model.min, 1, "")}–${formatReading(model.max, 1, "°")}</b>` : ""}</div>
+        </div>
+        <div class="tc-hum">
+          <div class="tc-mid mono">${formatReading(now.indoor_humidity, 0, "%")}</div>
+          <div class="tc-cap">Humidity</div>
+        </div>
+        <div class="tc-out">
+          <div class="tc-mid mono">${formatReading(now.outdoor_temperature, 1, "°")}${now.outdoor_humidity != null ? ` · ${formatReading(now.outdoor_humidity, 0, "%")}` : ""}</div>
+          <div class="tc-cap">Outdoor · ${escapeHtml(outdoorWhere)}</div>
+        </div>
+      </div>
+      <div class="tc-sparks">${TEMP_SPARKS.map((spark) => `
+        <div class="tc-spark" data-spark="${spark.key}">
+          <div class="tc-spark-top"><span>${spark.name}</span><b class="mono">${formatReading(now[spark.key], spark.decimals, spark.unit)}</b></div>
+          <div class="tc-spark-plot"><svg role="img" aria-label="${spark.name}, last 24 hours"></svg><span class="tc-tip" hidden></span></div>
+        </div>`).join("")}</div>
+      <div class="tc-look">${indoorAvg == null ? "" : `
+        ${shown.length ? `<span class="tc-look-label">Worth a look</span>` : ""}
+        ${shown.map((s) => {
+          const delta = s.temp - indoorAvg;
+          return `<span class="tc-chip">${escapeHtml(s.name)} <b class="mono">${s.temp.toFixed(1)}°</b><span class="mono ${delta > 0 ? "up" : "down"}">${delta > 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)}</span></span>`;
+        }).join("")}
+        <span class="tc-rest"><i aria-hidden="true">●</i> ${shown.length ? `${within} within ${TEMP_OUTLIER_DEGREES}°` : `All ${indoor.length} within ${TEMP_OUTLIER_DEGREES}° of the average`}</span>`}
+      </div>
+    </div>`);
 
-  renderHtml(body, sources.length
-    ? (tiles ? `<div class="temp-tile-grid">${tiles}</div>` : `<div class="home-empty">No sensors selected — use the filter above</div>`)
-    : `<div class="home-empty">No temperature sensors found</div>`);
+  drawTempSparks();
+  loadTempHistory(model.groups);
+}
+
+async function loadTempHistory(groups) {
+  const key = JSON.stringify(groups);
+  const fresh = tempHistory.key === key && Date.now() - tempHistory.at < TEMP_HISTORY_MS;
+  if (fresh || tempHistory.pending) return;
+  tempHistory.pending = true;
+  try {
+    const data = await requestJson("/api/sensors/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groups, hours: 24 }),
+    });
+    tempHistory = { key, at: Date.now(), data: data.status === "ok" ? data : null, pending: false };
+  } catch (error) {
+    console.error(error);
+    // Try again on the next refresh rather than hammering a board that said no.
+    tempHistory = { key, at: Date.now(), data: tempHistory.data, pending: false };
+  }
+  drawTempSparks();
+}
+
+/* Monotone cubic (Fritsch–Carlson): smooth, and never overshoots a low or a
+   high, so the curve does not invent a colder hour than the data had. */
+function smoothSparkPath(points) {
+  const n = points.length;
+  if (n < 2) return "";
+  const dx = [], m = [];
+  for (let i = 0; i < n - 1; i++) {
+    dx.push(points[i + 1][0] - points[i][0]);
+    m.push((points[i + 1][1] - points[i][1]) / dx[i]);
+  }
+  const t = [m[0]];
+  for (let i = 1; i < n - 1; i++) t.push(m[i - 1] * m[i] <= 0 ? 0 : (m[i - 1] + m[i]) / 2);
+  t.push(m[n - 2]);
+  for (let i = 0; i < n - 1; i++) {
+    if (m[i] === 0) { t[i] = 0; t[i + 1] = 0; continue; }
+    const a = t[i] / m[i], b = t[i + 1] / m[i], h = a * a + b * b;
+    if (h > 9) { const k = 3 / Math.sqrt(h); t[i] = k * a * m[i]; t[i + 1] = k * b * m[i]; }
+  }
+  let d = `M${points[0][0].toFixed(1)},${points[0][1].toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const third = dx[i] / 3;
+    d += `C${(points[i][0] + third).toFixed(1)},${(points[i][1] + third * t[i]).toFixed(1)} `
+      + `${(points[i + 1][0] - third).toFixed(1)},${(points[i + 1][1] - third * t[i + 1]).toFixed(1)} `
+      + `${points[i + 1][0].toFixed(1)},${points[i + 1][1].toFixed(1)}`;
+  }
+  return d;
+}
+
+function sparkHourLabel(iso) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : `${String(date.getHours()).padStart(2, "0")}:00`;
+}
+
+function drawTempSparks() {
+  const data = tempHistory.data;
+  for (const spark of TEMP_SPARKS) {
+    const el = document.querySelector(`#homeTempSensorsBody [data-spark="${spark.key}"]`);
+    const svg = el?.querySelector("svg");
+    if (!svg) continue;
+    const values = data?.series?.[spark.key] || [];
+    const pts = values.map((v, i) => [i, v]).filter(([, v]) => v != null);
+    const w = svg.clientWidth, h = svg.clientHeight;
+    if (pts.length < 2 || w < 40 || h < 16) {
+      svg.innerHTML = data ? `<text x="4" y="${Math.max(12, h / 2)}" font-size="10" fill="currentColor" opacity=".5">No history</text>` : "";
+      continue;
+    }
+    const n = values.length;
+    let lo = pts[0], hi = pts[0];
+    for (const p of pts) { if (p[1] < lo[1]) lo = p; if (p[1] > hi[1]) hi = p; }
+    const pad = (hi[1] - lo[1]) * 0.15 || 1;
+    const X = (i) => 4 + (i / (n - 1)) * (w - 8);
+    const Y = (v) => 12 + (1 - (v - (lo[1] - pad)) / (hi[1] - lo[1] + 2 * pad)) * (h - 24);
+    const xy = pts.map(([i, v]) => [X(i), Y(v)]);
+    const line = smoothSparkPath(xy);
+    const area = `${line}L${xy[xy.length - 1][0].toFixed(1)},${h}L${xy[0][0].toFixed(1)},${h}Z`;
+    const mark = ([i, v], above) => {
+      const x = X(i), anchor = x < 36 ? "start" : x > w - 36 ? "end" : "middle";
+      return `<circle cx="${x.toFixed(1)}" cy="${Y(v).toFixed(1)}" r="3" fill="${spark.color}" stroke="var(--card)" stroke-width="1.5"/>`
+        + `<text x="${x.toFixed(1)}" y="${(Y(v) + (above ? -6 : 13)).toFixed(1)}" text-anchor="${anchor}" class="tc-mark">`
+        + `${v.toFixed(spark.decimals)}${spark.unit} ${sparkHourLabel(data.hours[i]).slice(0, 2)}h</text>`;
+    };
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    svg.innerHTML = `
+      <defs><linearGradient id="tcg-${spark.key}" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0" stop-color="${spark.color}" stop-opacity=".22"/><stop offset="1" stop-color="${spark.color}" stop-opacity="0"/>
+      </linearGradient></defs>
+      <path d="${area}" fill="url(#tcg-${spark.key})"/>
+      <path d="${line}" fill="none" stroke="${spark.color}" stroke-width="2" stroke-linecap="round"/>
+      <line class="tc-cross" y1="0" y2="${h}" style="display:none"/>
+      ${lo === hi ? "" : mark(lo, false) + mark(hi, true)}`;
+
+    const tip = el.querySelector(".tc-tip");
+    const cross = svg.querySelector(".tc-cross");
+    const show = (event) => {
+      const rect = svg.getBoundingClientRect();
+      const i = Math.max(0, Math.min(n - 1, Math.round(((event.clientX - rect.left - 4) / (rect.width - 8)) * (n - 1))));
+      if (values[i] == null) return;
+      cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.style.display = "";
+      tip.textContent = `${sparkHourLabel(data.hours[i])} · ${values[i].toFixed(spark.decimals)}${spark.unit}`;
+      tip.style.left = `${Math.max(30, Math.min(rect.width - 30, X(i)))}px`;
+      tip.hidden = false;
+    };
+    svg.onpointermove = show;
+    svg.onpointerdown = show;
+    svg.onpointerleave = () => { tip.hidden = true; cross.style.display = "none"; };
+  }
 }
 
 /* Scale a card's fit-wrapped contents to fill it: grow with the width, and
@@ -5027,6 +5258,7 @@ function fitClimateBody() {
 function refitHomeCards() {
   layoutAreaGrid();
   fitClimateBody();
+  drawTempSparks();
 }
 
 /* Re-fit areas and climate live while their cards are resized. The sensors
@@ -5036,11 +5268,14 @@ function refitHomeCards() {
   const observer = new ResizeObserver(() => {
     layoutAreaGrid();
     fitClimateBody();
+    drawTempSparks();
   });
   const areasCard = document.querySelector(".home-areas.home-card");
   const climateCard = document.querySelector("#homeClimatePanel");
+  const sensorsCard = document.querySelector("#homeSensorsPanel");
   if (areasCard) observer.observe(areasCard);
   if (climateCard) observer.observe(climateCard);
+  if (sensorsCard) observer.observe(sensorsCard);
 })();
 
 function renderHomeSensorPicker() {
@@ -5053,7 +5288,7 @@ function renderHomeSensorPicker() {
         <label class="home-picker-row">
           <input type="checkbox" data-temp-sensor-id="${escapeHtml(s.id)}" ${chosen.has(s.id) ? "checked" : ""}>
           <span class="home-picker-name">${escapeHtml(s.name)}</span>
-          <span class="mono home-picker-temp">${s.temp}${s.unit}</span>
+          <span class="mono home-picker-temp">${Number(s.temp).toFixed(1)}${s.unit}</span>
         </label>`).join("")
     : `<div class="home-empty">No temperature sensors available</div>`;
 }
@@ -5664,21 +5899,29 @@ document.addEventListener("click", (event) => {
 });
 
 
-/* ── Bluetooth: music card on Home, scan/connect modal under Discovery ── */
+/* ── Bluetooth: the Bluetooth page, and the speaker line on Music ──
+   Every known device is an app tile; tapping it connects or disconnects, and
+   the last tile scans for more. */
 let latestBluetooth = null;
+let bluetoothBusy = null;   /* mac being connected or disconnected, or "scan" */
 
 async function refreshBluetooth() {
   latestBluetooth = await requestJson("/api/bluetooth/devices").catch(() => null);
   renderBluetoothCard();
-  renderBtModalList();
+  renderBluetoothTiles();
+  renderMediaApps();
 }
 
-/* Home card: playback placeholder that just reflects the connected speaker. */
+function connectedSpeakers() {
+  const devices = latestBluetooth?.status === "ok" ? latestBluetooth.devices || [] : [];
+  return devices.filter((device) => device.connected);
+}
+
+/* Music page: reflects the connected speaker. */
 function renderBluetoothCard() {
   const body = document.querySelector("#btDeviceList");
   if (!body) return;
-  const devices = latestBluetooth?.status === "ok" ? latestBluetooth.devices || [] : [];
-  const connected = devices.filter((device) => device.connected);
+  const connected = connectedSpeakers();
   const status = connected.length
     ? `Connected · ${connected.map((device) => escapeHtml(device.name)).join(", ")}`
     : "No speaker connected";
@@ -5686,52 +5929,72 @@ function renderBluetoothCard() {
     <div class="home-music-placeholder">
       <i class="ti ti-music" aria-hidden="true"></i>
       <div class="home-music-status">${status}</div>
-      <small>Music playback coming soon — pair speakers via Discovery → Bluetooth</small>
+      <small>Music playback is coming. Connect a speaker under Speakers.</small>
     </div>`;
 }
 
-function renderBtModalList() {
-  const list = document.querySelector("#btModalList");
-  if (!list) return;
-  if (!latestBluetooth) {
-    list.innerHTML = `<div class="home-empty">Bluetooth status unavailable</div>`;
-    return;
+function renderMediaApps() {
+  const connected = connectedSpeakers();
+  const music = document.querySelector("#mediaMusicSub");
+  if (music) music.textContent = connected.length ? `On ${connected[0].name}` : "No speaker connected";
+  const bt = document.querySelector("#mediaBluetoothSub");
+  if (bt) {
+    const known = latestBluetooth?.status === "ok" ? (latestBluetooth.devices || []).length : 0;
+    bt.textContent = connected.length ? `${connected.length} connected` : known ? `${known} known` : "Speakers";
   }
-  if (latestBluetooth.status !== "ok") {
-    list.innerHTML = `<div class="home-empty">${escapeHtml(latestBluetooth.message || "Bluetooth unavailable")}</div>`;
+  const yt = document.querySelector("#mediaYoutubeSub");
+  if (yt) {
+    let last = "";
+    try { last = localStorage.getItem(YOUTUBE_LAST_KEY) || ""; } catch {}
+    yt.textContent = last ? "Resume last link" : "Paste a link";
+  }
+}
+
+function renderBluetoothTiles() {
+  const grid = document.querySelector("#btTiles");
+  if (!grid) return;
+  const scanTile = `
+    <button type="button" class="app-tile" data-bt-scan style="--app-a:#64748b;--app-b:#475569"${bluetoothBusy ? " disabled" : ""}>
+      <span class="app-tile-icon"><i class="ti ${bluetoothBusy === "scan" ? "ti-loader-2 spin" : "ti-radar-2"}" aria-hidden="true"></i></span>
+      <span class="app-tile-name">${bluetoothBusy === "scan" ? "Scanning…" : "Scan"}</span>
+      <span class="app-tile-sub">${bluetoothBusy === "scan" ? "About 8 seconds" : "Find speakers nearby"}</span>
+    </button>`;
+  const meta = document.querySelector("#btMeta");
+  if (!latestBluetooth || latestBluetooth.status !== "ok") {
+    grid.innerHTML = `<div class="home-empty">${escapeHtml(latestBluetooth?.message || "Bluetooth status unavailable")}</div>${scanTile}`;
+    if (meta) meta.textContent = "Speakers near the board";
     return;
   }
   const devices = latestBluetooth.devices || [];
-  if (!devices.length) {
-    list.innerHTML = `<div class="home-empty">No devices known yet — press Scan to discover speakers nearby.</div>`;
-    return;
+  if (meta) {
+    const on = devices.filter((d) => d.connected).length;
+    meta.textContent = devices.length ? `${devices.length} known · ${on} connected` : "No devices known yet";
   }
-  list.innerHTML = devices.map((device) => {
+  grid.innerHTML = devices.map((device) => {
     const isAudio = /audio|headset|headphone|speaker/i.test(String(device.icon || ""));
+    const busy = bluetoothBusy === device.mac;
+    const action = device.connected ? "disconnect" : "connect";
+    const sub = busy ? (device.connected ? "Disconnecting…" : "Connecting…")
+      : device.connected ? "Connected · tap to disconnect" : "Tap to connect";
     return `
-      <div class="custom-device-row bt-device-row">
-        <span class="assign-device-icon"><i class="ti ${isAudio ? "ti-music" : "ti-bluetooth"}"></i></span>
-        <span class="custom-device-name">
-          ${escapeHtml(device.name)}
-          <small class="bt-mac mono">${device.type ? `${escapeHtml(device.type)} · ` : ""}${escapeHtml(device.mac)}</small>
-        </span>
-        ${device.connected ? `<span class="bt-status">Connected</span>` : ""}
-        <button class="command ${device.connected ? "" : "primary"}" type="button"
-          data-bt-action="${device.connected ? "disconnect" : "connect"}"
-          data-bt-mac="${escapeHtml(device.mac)}">
-          ${device.connected ? "Disconnect" : "Connect"}
-        </button>
-      </div>`;
-  }).join("");
+      <button type="button" class="app-tile${device.connected ? " is-on" : ""}" data-bt-action="${action}"
+              data-bt-mac="${escapeHtml(device.mac)}" title="${escapeHtml(device.mac)}"
+              style="--app-a:${isAudio ? "#f472b6;--app-b:#a855f7" : "#3b82f6;--app-b:#1d4ed8"}"${bluetoothBusy ? " disabled" : ""}>
+        ${device.connected ? '<span class="app-tile-badge" aria-hidden="true"></span>' : ""}
+        <span class="app-tile-icon"><i class="ti ${busy ? "ti-loader-2 spin" : isAudio ? "ti-device-speaker" : "ti-bluetooth"}" aria-hidden="true"></i></span>
+        <span class="app-tile-name">${escapeHtml(device.name)}</span>
+        <span class="app-tile-sub">${sub}</span>
+      </button>`;
+  }).join("") + scanTile;
 }
 
 document.addEventListener("click", async (event) => {
   const btn = event.target.closest("button[data-bt-action]");
-  if (!btn) return;
+  if (!btn || bluetoothBusy) return;
   const mac = btn.dataset.btMac;
   const action = btn.dataset.btAction;
-  btn.disabled = true;
-  btn.textContent = action === "connect" ? "Connecting…" : "Disconnecting…";
+  bluetoothBusy = mac;
+  renderBluetoothTiles();
   try {
     const result = await requestJson(`/api/bluetooth/devices/${encodeURIComponent(mac)}/${action}`, { method: "POST" });
     logActivity(result.message || `Bluetooth ${action} ${result.status}`, result.status === "ok" ? "normal" : "warn");
@@ -5739,44 +6002,27 @@ document.addEventListener("click", async (event) => {
     console.error(error);
     logActivity("Bluetooth action failed", "error");
   }
+  bluetoothBusy = null;
   await refreshBluetooth();
 });
 
-(function initBluetoothUi() {
-  const modal = document.querySelector("#btModal");
-  const openModal = () => {
-    if (modal) modal.hidden = false;
-    refreshBluetooth().catch(console.error);
-  };
-  const closeModal = () => { if (modal) modal.hidden = true; };
+document.addEventListener("click", async (event) => {
+  if (!event.target.closest("button[data-bt-scan]") || bluetoothBusy) return;
+  bluetoothBusy = "scan";
+  renderBluetoothTiles();
+  try {
+    latestBluetooth = await requestJson("/api/bluetooth/scan", { method: "POST" });
+    logActivity("Bluetooth scan finished");
+  } catch (error) {
+    console.error(error);
+  }
+  bluetoothBusy = null;
+  renderBluetoothCard();
+  renderBluetoothTiles();
+  renderMediaApps();
+});
 
-  document.querySelector("#btScanNav")?.addEventListener("click", openModal);
-  /* Same modal from the Media view, so the Music panel is not a
-     dead end once it no longer sits on Home beside the Bluetooth nav item. */
-  document.querySelector("#btScanFromMedia")?.addEventListener("click", openModal);
-  document.querySelector("#closeBtModal")?.addEventListener("click", closeModal);
-  modal?.addEventListener("click", (event) => {
-    if (event.target === modal) closeModal();
-  });
-
-  const scanBtn = document.querySelector("#btModalScan");
-  scanBtn?.addEventListener("click", async () => {
-    const list = document.querySelector("#btModalList");
-    scanBtn.disabled = true;
-    if (list) list.innerHTML = `<div class="home-empty"><i class="ti ti-loader-2 spin"></i> Scanning for ~8 seconds…</div>`;
-    try {
-      latestBluetooth = await requestJson("/api/bluetooth/scan", { method: "POST" });
-      logActivity("Bluetooth scan finished");
-    } catch (error) {
-      console.error(error);
-      latestBluetooth = null;
-    }
-    renderBluetoothCard();
-    renderBtModalList();
-    scanBtn.disabled = false;
-  });
-  refreshBluetooth().catch(console.error);
-})();
+refreshBluetooth().catch(console.error);
 
 /* ── Custom device cards: user-defined cards with hand-picked devices ── */
 const HOME_CUSTOM_CARDS_KEY = "home_custom_cards";
@@ -7212,7 +7458,7 @@ function activateView(viewName) {
 
   railButtonEls().forEach((btn) => {
     const view = btn.dataset.view;
-    btn.classList.toggle("active", view === viewName || (view === "settings" && SETTINGS_PAGES.includes(viewName)));
+    btn.classList.toggle("active", view === viewName || PAGE_PARENTS[viewName] === view);
   });
   viewPanelEls().forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.viewPanel === viewName);
@@ -7227,10 +7473,11 @@ function activateView(viewName) {
   if (viewName === "environment") {
     loadEnvironmentSensors().catch((error) => console.error(error));
   }
-  if (viewName === "media") {
+  if (viewName === "media" || viewName === "music" || viewName === "bluetooth") {
     refreshBluetooth().catch((error) => console.error(error));
   }
-  if (viewName !== "media") stopYoutube();
+  if (viewName === "media") renderMediaApps();
+  if (viewName !== "youtube") stopYoutube();
   if (viewName === "news") {
     loadNewsSettings().catch((error) => console.error(error));
   }
@@ -7606,10 +7853,10 @@ enablePointerReorder({
   },
 });
 
-/* ── Home card tile drag ordering (custom-card lights + temp sensors) ──
-   Both grids flow left-to-right, so insertion position follows the pointer's
+/* ── Home card tile drag ordering (custom-card lights) ──
+   The grid flows left-to-right, so insertion position follows the pointer's
    horizontal side of the hovered tile. */
-const TILE_DRAG_SELECTOR = ".custom-light-tile[data-tile-key], .temp-sensor-tile[data-temp-tile-id]";
+const TILE_DRAG_SELECTOR = ".custom-light-tile[data-tile-key]";
 
 function saveCustomTileOrderFromDom(cardEl) {
   const id = cardEl?.dataset.homeCard?.slice("custom:".length);
@@ -7624,27 +7871,16 @@ function saveCustomTileOrderFromDom(cardEl) {
   saveCustomCards(cards);
 }
 
-function saveTempTileOrderFromDom() {
-  const ids = [...document.querySelectorAll("#homeTempSensorsBody .temp-sensor-tile")]
-    .map((tile) => tile.dataset.tempTileId);
-  try { localStorage.setItem(HOME_TEMP_ORDER_KEY, JSON.stringify(ids)); } catch {}
-}
-
 function persistTileOrder(tile) {
-  if (tile.matches(".custom-light-tile")) {
-    saveCustomTileOrderFromDom(tile.closest(".home-custom-card"));
-    logActivity("Card switches rearranged");
-  } else {
-    saveTempTileOrderFromDom();
-    logActivity("Temperature sensors rearranged");
-  }
+  saveCustomTileOrderFromDom(tile.closest(".home-custom-card"));
+  logActivity("Card switches rearranged");
 }
 
 document.addEventListener("dragstart", (event) => {
   const tile = event.target.closest?.(TILE_DRAG_SELECTOR);
   if (!tile) return;
   event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("text/plain", tile.dataset.tileKey || tile.dataset.tempTileId || "");
+  event.dataTransfer.setData("text/plain", tile.dataset.tileKey || "");
   tile.classList.add("dragging");
 });
 
@@ -7657,7 +7893,7 @@ document.addEventListener("dragend", (event) => {
 
 document.addEventListener("dragover", (event) => {
   const target = event.target.closest?.(TILE_DRAG_SELECTOR);
-  const grid = target?.closest(".custom-tile-grid, .temp-tile-grid");
+  const grid = target?.closest(".custom-tile-grid");
   // querySelector scoped to the grid keeps reordering within one card.
   const dragging = grid?.querySelector(".dragging");
   if (!target || !grid || !dragging || target === dragging) return;
@@ -7669,7 +7905,7 @@ document.addEventListener("dragover", (event) => {
 
 document.addEventListener("drop", (event) => {
   const target = event.target.closest?.(TILE_DRAG_SELECTOR);
-  const grid = target?.closest(".custom-tile-grid, .temp-tile-grid");
+  const grid = target?.closest(".custom-tile-grid");
   const dragging = grid?.querySelector(".dragging");
   if (!target || !grid || !dragging) return;
   event.preventDefault();
@@ -8287,9 +8523,13 @@ function setYoutubeCovering(on) {
 
 /* ── Settings ──
    A page of app tiles; each opens its own view with a way back. The Settings
-   item in the sidebar stays lit on those pages. Each tile says where its
+   item in the sidebar stays lit on those pages (PAGE_PARENTS). Each tile says where its
    setting stands, so the page answers most questions without opening one. */
-const SETTINGS_PAGES = ["settings", "theme", "startup", "news", "about"];
+/* An app's page keeps its launcher lit in the sidebar. */
+const PAGE_PARENTS = {
+  theme: "settings", startup: "settings", news: "settings", about: "settings",
+  youtube: "media", music: "media",
+};
 
 async function renderSettingsApps() {
   const setSub = (id, text) => {
@@ -8972,31 +9212,30 @@ document.querySelector("#openZigbeeUI")?.addEventListener("click", () => {
 });
 
 function _updateMatterServerStatus(online) {
-  const badge = document.querySelector("#matterServerStatus");
-  if (!badge) return;
-  badge.textContent = online ? "Online" : "Offline";
-  badge.className = "discovery-server-badge " + (online ? "online" : "offline");
+  const text = document.querySelector("#matterServerStatus");
+  const dot = document.querySelector("#matterServerDot");
+  if (text) text.textContent = online ? "Online" : "Offline";
+  if (dot) dot.className = "app-tile-dot " + (online ? "online" : "offline");
 }
 
 function _renderMatterDeviceList(devices) {
   const list = document.querySelector("#matterDeviceList");
   if (!list) return;
+  const count = document.querySelector("#matterDeviceCount");
+  if (count) count.textContent = devices.length ? `${devices.length} paired` : "";
   if (!devices.length) {
-    list.innerHTML = '<p style="font-size:13px;color:var(--muted)">No Matter devices paired yet.</p>';
+    list.innerHTML = '<div class="home-empty">No Matter devices paired yet. Use Add device.</div>';
     return;
   }
   list.innerHTML = devices.map((d) => `
-    <div class="discovery-device-row">
-      <div>
-        <div class="discovery-device-row-name">${escapeHtml(d.name)}</div>
-        ${d.room ? `<div class="discovery-device-row-room">${escapeHtml(d.room)}</div>` : ""}
-      </div>
-      <button class="discovery-remove-btn"
-              data-matter-remove="${d.node_id}"
-              title="Remove ${escapeHtml(d.name)}"
-              type="button">
-        <i class="ti ti-trash"></i>
+    <div class="app-tile is-static" style="--app-a:#22d3ee;--app-b:#0e7490">
+      <button class="app-tile-remove" data-matter-remove="${d.node_id}"
+              title="Remove ${escapeHtml(d.name)}" aria-label="Remove ${escapeHtml(d.name)}" type="button">
+        <i class="ti ti-trash" aria-hidden="true"></i>
       </button>
+      <span class="app-tile-icon"><i class="ti ti-antenna" aria-hidden="true"></i></span>
+      <span class="app-tile-name">${escapeHtml(d.name)}</span>
+      <span class="app-tile-sub">${d.room ? escapeHtml(d.room) : "No room"}</span>
     </div>
   `).join("");
 }

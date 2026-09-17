@@ -126,7 +126,7 @@
         <span class="room-icon"><i class="ti ti-router"></i></span>
         Add Zigbee
       </li>
-      <li class="room-item" id="btScanNav" title="Scan and connect Bluetooth speakers">
+      <li class="room-item" data-view="bluetooth" title="Scan and connect Bluetooth speakers">
         <span class="room-icon"><i class="ti ti-bluetooth"></i></span>
         Bluetooth
       </li>
@@ -441,7 +441,7 @@
         <span class="section-title">Devices</span>
         <span class="section-meta">All device groups</span>
       </div>
-      <div class="devices-overview-grid" id="devicesOverviewGrid"></div>
+      <div class="app-grid devices-overview-grid" id="devicesOverviewGrid"></div>
       <button class="device-group-add" id="deviceGroupAdd" type="button">
         <i class="ti ti-plus" aria-hidden="true"></i> New Group
       </button>
@@ -624,19 +624,42 @@
     </div>
 
     <!-- ── MEDIA VIEW ── -->
+    <!-- ── MEDIA VIEW ──
+         A launcher, like Settings: each thing to watch or listen to is an app
+         that opens its own page. -->
     <div class="view-panel" data-view-panel="media">
       <div class="section-header">
         <span class="section-title">Media</span>
-        <span class="section-meta">Audio &amp; media</span>
+        <span class="section-meta">Watch and listen</span>
       </div>
-      <div class="media-grid">
-        <div class="panel youtube-panel" id="youtubePanel">
-          <div class="home-panel-head">
-            <span class="panel-title"><i class="ti ti-brand-youtube"></i> YouTube</span>
-            <a class="youtube-open" id="youtubeOpen" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer" title="Open on YouTube">
-              <i class="ti ti-external-link"></i> Open on YouTube
-            </a>
-          </div>
+      <div class="app-grid">
+        <button type="button" class="app-tile" data-goto-view="youtube" style="--app-a:#ff4b4b;--app-b:#c4161c">
+          <span class="app-tile-icon"><i class="ti ti-brand-youtube" aria-hidden="true"></i></span>
+          <span class="app-tile-name">YouTube</span>
+          <span class="app-tile-sub" id="mediaYoutubeSub">Paste a link</span>
+        </button>
+        <button type="button" class="app-tile" data-goto-view="music" style="--app-a:#f472b6;--app-b:#a855f7">
+          <span class="app-tile-icon"><i class="ti ti-music" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Music</span>
+          <span class="app-tile-sub" id="mediaMusicSub">No speaker connected</span>
+        </button>
+        <button type="button" class="app-tile" data-goto-view="bluetooth" style="--app-a:#3b82f6;--app-b:#1d4ed8">
+          <span class="app-tile-icon"><i class="ti ti-bluetooth" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Bluetooth</span>
+          <span class="app-tile-sub" id="mediaBluetoothSub">Speakers</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── YOUTUBE VIEW ── -->
+    <div class="view-panel" data-view-panel="youtube">
+      <div class="section-header">
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="media" title="Back to Media"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Media</button><span class="section-title">YouTube</span></span>
+        <a class="youtube-open" id="youtubeOpen" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer" title="Open on YouTube">
+          <i class="ti ti-external-link"></i> Open on YouTube
+        </a>
+      </div>
+      <div class="panel youtube-panel" id="youtubePanel">
           <form class="youtube-form" id="youtubeForm" autocomplete="off">
             <label class="sr-only" for="youtubeUrl">YouTube link</label>
             <input id="youtubeUrl" type="url" inputmode="url" placeholder="Paste a YouTube link" spellcheck="false">
@@ -660,18 +683,38 @@
             </button>
             <span class="youtube-hint">Exit or Esc to leave full screen</span>
           </div>
+      </div>
+    </div>
+
+    <!-- ── MUSIC VIEW ── -->
+    <div class="view-panel" data-view-panel="music">
+      <div class="section-header">
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="media" title="Back to Media"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Media</button><span class="section-title">Music</span></span>
+        <span class="section-meta">Plays through a Bluetooth speaker</span>
+      </div>
+      <div class="panel music-panel" id="homeBluetoothPanel">
+        <div class="home-bt-body" id="btDeviceList">
+          <div class="home-empty">Checking Bluetooth…</div>
         </div>
-        <div class="panel" id="homeBluetoothPanel">
-          <div class="home-panel-head">
-            <span class="panel-title"><i class="ti ti-music"></i> Music</span>
-            <button class="home-gear-btn" id="btScanFromMedia" type="button" title="Scan for Bluetooth speakers">
-              <i class="ti ti-bluetooth"></i>
-            </button>
-          </div>
-          <div class="home-bt-body" id="btDeviceList">
-            <div class="home-empty">Checking Bluetooth…</div>
-          </div>
-        </div>
+      </div>
+      <div class="app-grid">
+        <button type="button" class="app-tile" data-goto-view="bluetooth" style="--app-a:#3b82f6;--app-b:#1d4ed8">
+          <span class="app-tile-icon"><i class="ti ti-bluetooth" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Speakers</span>
+          <span class="app-tile-sub">Connect a speaker</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── BLUETOOTH VIEW ──
+         Every known device is a tile: tap it to connect or disconnect. -->
+    <div class="view-panel" data-view-panel="bluetooth">
+      <div class="section-header">
+        <span class="section-title">Bluetooth</span>
+        <span class="section-meta" id="btMeta">Speakers near the board</span>
+      </div>
+      <div class="app-grid" id="btTiles">
+        <div class="home-empty">Checking Bluetooth…</div>
       </div>
     </div>
 
@@ -727,26 +770,26 @@
         <span class="section-title">Settings</span>
         <span class="section-meta">HomeOS on this board</span>
       </div>
-      <div class="settings-apps">
-        <button type="button" class="settings-app" data-goto-view="theme" style="--app-a:#a78bfa;--app-b:#ec4899">
-          <span class="settings-app-icon"><i class="ti ti-palette" aria-hidden="true"></i></span>
-          <span class="settings-app-name">Theme</span>
-          <span class="settings-app-sub" id="settingsThemeSub">Colours</span>
+      <div class="app-grid">
+        <button type="button" class="app-tile" data-goto-view="theme" style="--app-a:#a78bfa;--app-b:#ec4899">
+          <span class="app-tile-icon"><i class="ti ti-palette" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Theme</span>
+          <span class="app-tile-sub" id="settingsThemeSub">Colours</span>
         </button>
-        <button type="button" class="settings-app" data-goto-view="startup" style="--app-a:#4f8ef7;--app-b:#22d3ee">
-          <span class="settings-app-icon"><i class="ti ti-pin" aria-hidden="true"></i></span>
-          <span class="settings-app-name">Startup</span>
-          <span class="settings-app-sub" id="settingsStartupSub">First view</span>
+        <button type="button" class="app-tile" data-goto-view="startup" style="--app-a:#4f8ef7;--app-b:#22d3ee">
+          <span class="app-tile-icon"><i class="ti ti-pin" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Startup</span>
+          <span class="app-tile-sub" id="settingsStartupSub">First view</span>
         </button>
-        <button type="button" class="settings-app" data-goto-view="news" style="--app-a:#fb923c;--app-b:#ef4444">
-          <span class="settings-app-icon"><i class="ti ti-news" aria-hidden="true"></i></span>
-          <span class="settings-app-name">News</span>
-          <span class="settings-app-sub" id="settingsNewsSub">Headlines &amp; prices</span>
+        <button type="button" class="app-tile" data-goto-view="news" style="--app-a:#fb923c;--app-b:#ef4444">
+          <span class="app-tile-icon"><i class="ti ti-news" aria-hidden="true"></i></span>
+          <span class="app-tile-name">News</span>
+          <span class="app-tile-sub" id="settingsNewsSub">Headlines &amp; prices</span>
         </button>
-        <button type="button" class="settings-app" data-goto-view="about" style="--app-a:#64748b;--app-b:#94a3b8">
-          <span class="settings-app-icon"><i class="ti ti-info-circle" aria-hidden="true"></i></span>
-          <span class="settings-app-name">About</span>
-          <span class="settings-app-sub" id="settingsAboutSub">Version</span>
+        <button type="button" class="app-tile" data-goto-view="about" style="--app-a:#64748b;--app-b:#94a3b8">
+          <span class="app-tile-icon"><i class="ti ti-info-circle" aria-hidden="true"></i></span>
+          <span class="app-tile-name">About</span>
+          <span class="app-tile-sub" id="settingsAboutSub">Version</span>
         </button>
       </div>
     </div>
@@ -754,7 +797,7 @@
     <!-- ── STARTUP VIEW ── -->
     <div class="view-panel" data-view-panel="startup">
       <div class="section-header">
-        <span class="settings-page-title"><button type="button" class="settings-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Startup</span></span>
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Startup</span></span>
         <span class="section-meta">What this screen opens on</span>
       </div>
       <div class="settings-group">
@@ -768,7 +811,7 @@
     <!-- ── THEME VIEW ── -->
     <div class="view-panel" data-view-panel="theme">
       <div class="section-header">
-        <span class="settings-page-title"><button type="button" class="settings-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Theme</span></span>
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Theme</span></span>
         <span class="section-meta">Dashboard appearance</span>
       </div>
       <div class="theme-panel">
@@ -822,7 +865,7 @@
     <!-- ── NEWS SETTINGS VIEW ── -->
     <div class="view-panel" data-view-panel="news">
       <div class="section-header">
-        <span class="settings-page-title"><button type="button" class="settings-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">News</span></span>
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">News</span></span>
         <span class="section-meta">Headlines and prices in the header · saved on the board, so every screen follows</span>
       </div>
       <div class="settings-group" id="newsSettings">
@@ -852,7 +895,7 @@
     <!-- ── ABOUT VIEW ── -->
     <div class="view-panel" data-view-panel="about">
       <div class="section-header">
-        <span class="settings-page-title"><button type="button" class="settings-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">About</span></span>
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">About</span></span>
         <span class="section-meta">This dashboard and the board it runs on</span>
       </div>
       <div class="settings-group">
@@ -917,24 +960,31 @@
     <!-- ── DISCOVERY VIEW ── -->
     <div class="view-panel" data-view-panel="discovery">
       <div class="section-header">
-        <span class="section-title">Discovery</span>
+        <span class="section-title">Add Matter</span>
         <span class="section-meta">Pair new Matter and Zigbee devices</span>
       </div>
-      <div class="discovery-panel">
-        <div class="discovery-server-row">
-          <span class="discovery-server-label">Matter Server</span>
-          <span class="discovery-server-badge" id="matterServerStatus">Checking…</span>
-        </div>
-        <button class="discovery-add-btn" id="openMatterModal" type="button">
-          <i class="ti ti-circle-plus"></i>
-          Add Matter Device
+      <div class="app-grid">
+        <button type="button" class="app-tile" id="openMatterModal" style="--app-a:#34d399;--app-b:#059669">
+          <span class="app-tile-icon"><i class="ti ti-circle-plus" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Add device</span>
+          <span class="app-tile-sub">Pair with a Matter code</span>
         </button>
-        <div id="matterDeviceList" class="discovery-device-list"></div>
-        <button class="discovery-add-btn discovery-add-link" id="openZigbeeUI" type="button">
-          <i class="ti ti-router"></i>
-          Add Zigbee
+        <div class="app-tile is-static" id="matterServerTile" style="--app-a:#64748b;--app-b:#475569">
+          <span class="app-tile-icon"><i class="ti ti-server" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Matter server</span>
+          <span class="app-tile-sub"><span class="app-tile-dot" id="matterServerDot"></span><span id="matterServerStatus">Checking…</span></span>
+        </div>
+        <button type="button" class="app-tile" id="openZigbeeUI" style="--app-a:#fbbf24;--app-b:#d97706">
+          <span class="app-tile-icon"><i class="ti ti-router" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Zigbee</span>
+          <span class="app-tile-sub">Pair a Zigbee sensor</span>
         </button>
       </div>
+      <div class="section-header app-section">
+        <span class="section-title">Paired Matter devices</span>
+        <span class="section-meta" id="matterDeviceCount"></span>
+      </div>
+      <div class="app-grid" id="matterDeviceList"></div>
     </div>
 
   </div><!-- /content -->
@@ -1132,26 +1182,6 @@
       </button>
       <button class="btn-secondary" id="customCardCancel" type="button">Cancel</button>
       <button class="btn-primary" id="customCardSave" type="button">Save Card</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── BLUETOOTH SCAN MODAL ── -->
-<div class="modal-overlay" id="btModal" hidden aria-modal="true" role="dialog" aria-labelledby="btModalTitle">
-  <div class="modal-card">
-    <div class="modal-header">
-      <span class="modal-title" id="btModalTitle">Bluetooth Devices</span>
-      <button class="modal-close" id="closeBtModal" type="button" aria-label="Close">
-        <i class="ti ti-x"></i>
-      </button>
-    </div>
-    <div class="bt-modal-list" id="btModalList">
-      <div class="home-empty">Checking Bluetooth…</div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn-primary" id="btModalScan" type="button" title="Scan for nearby Bluetooth devices (~8s)">
-        <i class="ti ti-radar-2"></i> Scan
-      </button>
     </div>
   </div>
 </div>

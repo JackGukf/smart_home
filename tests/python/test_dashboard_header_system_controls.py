@@ -73,15 +73,16 @@ def test_settings_is_one_view_of_app_tiles() -> None:
     assert 'data-view="settings"' in system
     for page in ("theme", "startup", "news", "about"):
         assert f'data-view="{page}"' not in system, f"{page} moved out of the sidebar"
-        assert f'class="settings-app" data-goto-view="{page}"' in settings
+        assert f'class="app-tile" data-goto-view="{page}"' in settings
         panel = html[html.index(f'data-view-panel="{page}"'):]
         panel = panel[:panel.index("</div>")]
-        assert 'class="settings-back" data-goto-view="settings"' in panel, f"{page} needs a way back"
+        assert 'class="page-back" data-goto-view="settings"' in panel, f"{page} needs a way back"
 
     assert 'id="defaultViewSelect"' in html[html.index('data-view-panel="startup"'):]
     about = html[html.index('data-view-panel="about"'):]
     assert 'id="aboutVersion"' in about and 'id="buildBadge"' in about
-    assert 'const SETTINGS_PAGES = ["settings", "theme", "startup", "news", "about"];' in js
+    for page in ("theme", "startup", "news", "about"):
+        assert f'{page}: "settings"' in js, f"{page} keeps Settings lit in the sidebar"
 
 
 def test_news_lives_in_the_header_between_logo_and_clock() -> None:

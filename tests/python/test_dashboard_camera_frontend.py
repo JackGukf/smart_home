@@ -187,17 +187,24 @@ def test_the_home_alarm_card_is_builtin_so_it_reaches_every_device() -> None:
     assert 'data-home-card="bluetooth"' not in html
 
 
-def test_music_moved_to_the_media_view_intact() -> None:
-    """The panel moved wholesale rather than being rebuilt: #btDeviceList is
-    what refreshBluetooth() writes into, and it is queried at call time."""
+def test_music_is_an_app_under_media() -> None:
+    """Media is a launcher; Music is one of its apps, on its own page.
+
+    #btDeviceList is what refreshBluetooth() writes into, and it is queried at
+    call time, so it has to survive the move."""
     html = (PROJECT_ROOT / "src" / "python" / "web_static" / "index.html").read_text(encoding="utf-8")
 
-    panel = html.split('data-view-panel="media"')[1].split("</div>\n\n")[0]
-    assert 'id="btDeviceList"' in panel
-    assert "Music" in panel
-    # Reachable: the view exists in the sidebar and the scan modal is not orphaned.
+    media = html.split('data-view-panel="media"')[1].split('data-view-panel="youtube"')[0]
+    for app in ("youtube", "music", "bluetooth"):
+        assert f'class="app-tile" data-goto-view="{app}"' in media
+    music = html.split('data-view-panel="music"')[1].split('data-view-panel="bluetooth"')[0]
+    assert 'id="btDeviceList"' in music
+    assert 'class="page-back" data-goto-view="media"' in music
     assert 'data-view="media"' in html
-    assert 'id="btScanFromMedia"' in html
+    # Bluetooth is a page now, not a modal.
+    assert 'data-view="bluetooth"' in html
+    assert 'id="btModal"' not in html
+    assert 'id="btTiles"' in html
 
 
 def test_custom_card_renders_sensors_as_tiles_not_rows() -> None:
@@ -212,9 +219,9 @@ def test_custom_card_renders_sensors_as_tiles_not_rows() -> None:
     block = css[css.index(".custom-sensor-tile {"):css.index(".custom-sensor-tile {") + 400]
     assert "aspect-ratio: 1 / 1" in block
 
-    # .custom-device-row is still used by the Bluetooth list, so its CSS stays.
-    assert "bt-device-row" in source
-    assert ".custom-device-row" in css
+    # The rows are gone everywhere, Bluetooth included (it is tiles now).
+    assert "custom-device-row" not in source
+    assert ".custom-device-row" not in css
 
 
 def test_custom_card_orders_controls_by_hand_and_readouts_alphabetically() -> None:

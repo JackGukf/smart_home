@@ -50,6 +50,7 @@ from src.python.matter_device import (
 from src.python import bridge_sync
 from src.python.house_digest import read_digest
 from src.python import news_feed
+from src.python import sensor_history
 from src.python.automation_author import (
     AuthorError,
     Draft,
@@ -476,6 +477,13 @@ class HomeAlarmCardRequest(BaseModel):
     sensors: list[str]
 
 
+class SensorHistoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    groups: dict[str, list[str]]
+    hours: int = 24
+
+
 class NewsSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -560,6 +568,7 @@ def create_app(
     digest_path: Path | None = None,
     news_settings_path: Path | None = None,
     news_service: news_feed.NewsService | None = None,
+    history_service: sensor_history.SensorHistory | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
     app.state.discovery_path = discovery_path
@@ -575,6 +584,7 @@ def create_app(
     app.state.digest_path = digest_path or DEFAULT_DIGEST_PATH
     app.state.news_settings_path = news_settings_path or DEFAULT_NEWS_SETTINGS_PATH
     app.state.news_service = news_service or news_feed.NewsService()
+    app.state.history_service = history_service
     # One draft at a time. Ollama serialises requests anyway, so a second
     # concurrent draft would not run sooner - it would just hold a worker
     # thread and a connection for a minute to find that out.
@@ -1047,6 +1057,28 @@ def create_app(
         """
         settings = await asyncio.to_thread(news_feed.load_settings, app.state.news_settings_path)
         return await asyncio.to_thread(app.state.news_service.payload, settings)
+
+    @app.post("/api/sensors/history")
+    async def sensors_history(request: SensorHistoryRequest) -> dict[str, Any]:
+        """Hourly averages of groups of sensors, for the Temperatures card.
+
+        The card sends which sensors are indoor and which outdoor; Home
+        Assistant's recorder supplies the readings. Cached for five minutes per
+        grouping, so every screen showing the card costs one query.
+        """
+        service = app.state.history_service
+        if service is None:
+            ha_config = _load_home_assistant_config(app.state.config_path)
+            service = sensor_history.SensorHistory(
+                ha_config.base_url, lambda: os.getenv(ha_config.token_env)
+            )
+            app.state.history_service = service
+        try:
+            return await asyncio.to_thread(service.hourly, request.groups, request.hours)
+        except sensor_history.HistoryRequestError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except OSError as error:
+            raise HTTPException(status_code=502, detail="Home Assistant history is unavailable") from error
 
     @app.get("/api/news/settings")
     async def news_settings() -> dict[str, Any]:
