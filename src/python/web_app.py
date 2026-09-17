@@ -4157,7 +4157,7 @@ ALARM_ZONE_CLASSES = frozenset({
 # then go quiet without ever sending "off": Zigbee2MQTT leaves the entity on
 # until the device says otherwise, which on this one is never, so the card sat
 # at "Movement" for ever. Anything older than this is over.
-VIBRATION_ALERT_SECONDS = 120
+VIBRATION_ALERT_SECONDS = 30
 
 # The Home card's default: everything except presence. A motion sensor tripping
 # is normal life in an occupied house; a door, a leak or smoke is the thing you

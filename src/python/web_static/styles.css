@@ -4299,6 +4299,21 @@ aside {
 .alarm-chip-text small { font-size: 10.5px; color: var(--t-text-dim); white-space: nowrap; }
 .alarm-chip.breached .alarm-chip-text small { color: var(--amber); }
 
+/* A phone stacks the cards full width, which is about 358px on an iPhone 15 -
+   four columns of sensors there is four 80px slivers. Two columns, and the
+   head wraps so the arm buttons get a line of their own. */
+@media (max-width: 739px) {
+  .alarm-kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+  .alarm-head { flex-wrap: wrap; row-gap: 8px; }
+  .alarm-arms { width: 100%; }
+  .alarm-arms .alarm-arm { flex: 1; justify-content: center; }
+  .alarm-kind { overflow: visible; }
+}
+
+@media (max-width: 420px) {
+  .alarm-kinds { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Short card: the columns scroll rather than the chips shrinking. */
 @media (min-width: 1101px) {
   @container (max-width: 330px) {
