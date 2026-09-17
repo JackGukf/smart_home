@@ -3492,24 +3492,6 @@ function sortedAlarmZones(zones) {
   });
 }
 
-function alarmZoneTilesHtml(zones) {
-  return sortedAlarmZones(zones).map((z) => {
-    const breached = z.state === "open" || z.state === "motion" || z.state === "alert";
-    const unknown  = z.state === "unknown" || z.state === "unavailable";
-    const color    = breached ? "var(--t-alert)" : "var(--t-text-dim2)";
-    /* What a zone says is decided in one place (zoneStateText) and shown in
-       two: tiles here, chips on the Home card. Two copies of the wording is how
-       one surface gains a state the other still reports as shut. */
-    const statusTxt = zoneStateText(z, breached);
-    return `<div class="zone-tile${breached ? " breached" : ""}${unknown ? " unknown" : ""}"
-                 title="${escapeHtml(z.name)} — ${statusTxt}">
-      <span class="zone-tile-icon">${zoneIconSVG(z.type, breached)}</span>
-      <span class="zone-tile-state" style="color:${color}">${statusTxt}</span>
-      <span class="zone-tile-name">${escapeHtml(z.name)}</span>
-    </div>`;
-  }).join("");
-}
-
 function alarmBreachedCount(zones) {
   return zones.filter(zoneIsBreached).length;
 }
@@ -3770,16 +3752,208 @@ async function saveHomeAlarmSelection(sensors) {
   });
 })();
 
+/* ── The Security view: the house ──────────────────────────────────────────
+   A wall of identical tiles answered neither "is the house shut" nor "which
+   sensor is that". The view is now a cutaway of the house: rooms in their
+   places, each carrying its own sensors, amber when something is happening.
+   Clicking a room lists its sensors beside the drawing.
+
+   The plan is a table of percentages (HOUSE_ROOMS) over one SVG, so moving a
+   room or adding one is a few numbers rather than new markup. Sensors find
+   their room through Areas; the two exceptions are written down in
+   ROOM_OVERRIDES, where Areas cannot say what the house knows. */
+const HOUSE_ROOMS = [
+  { name: "Master Bedroom", x: 13.5, y: 30,   w: 14,   h: 16 },
+  { name: "North Bedroom",  x: 28,   y: 30,   w: 13.5, h: 16 },
+  { name: "Hallway",        x: 42,   y: 30,   w: 10.5, h: 16 },
+  { name: "South Bedroom",  x: 53,   y: 30,   w: 14,   h: 16 },
+  { name: "Bathroom",       x: 67.5, y: 30,   w: 16.5, h: 16 },
+  { name: "Garage",         x: 13.5, y: 52,   w: 14.5, h: 21 },
+  { name: "Office",         x: 28.5, y: 52,   w: 11,   h: 21 },
+  { name: "Living Room",    x: 40,   y: 52,   w: 12.5, h: 21 },
+  { name: "Kitchen",        x: 53,   y: 52,   w: 10.5, h: 21 },
+  { name: "Family Room",    x: 64,   y: 52,   w: 11,   h: 21 },
+  { name: "Utility Room",   x: 75.5, y: 52,   w: 9,    h: 21, label: "Utility" },
+  { name: "Front Door",     x: 31.5, y: 61,   w: 8.5,  h: 13, outdoor: true },
+  { name: "Front Yard",     x: 41,   y: 77,   w: 34,   h: 9,  outdoor: true },
+  { name: "Back Yard",      x: 87,   y: 46,   w: 11,   h: 27, outdoor: true },
+];
+
+/* Areas has one "Bedroom" for the whole upstairs. The ecobee sensors name the
+   master bedroom; the other two sit in the hallway between the bedrooms. Split
+   the areas and these rules stop being consulted. */
+const ROOM_OVERRIDES = [
+  { area: "Bedroom", match: /^master bedroom/i, room: "Master Bedroom" },
+  { area: "Bedroom", match: /^(upstairs|bedroom)$/i, room: "Hallway" },
+  { area: "Bedroom", match: /./, room: "Hallway" },
+];
+
+/* A camera's person detector belongs where the camera looks, which its name
+   says and no assignment does. */
+function cameraZoneRoom(zone) {
+  const name = String(zone.name || "").replace(/\s*\(NPU\)\s*Person$/i, "").replace(/\s*camera$/i, "").trim();
+  const canonical = { frontyard: "Front Yard", backyard: "Back Yard", "front door": "Front Door" };
+  const key = name.toLowerCase();
+  return canonical[key] || name;
+}
+
+function zoneRoom(zone) {
+  if (/_npu_person$/i.test(String(zone.id || ""))) return cameraZoneRoom(zone);
+  const areaId = areasDoc.assignments?.[`sensor:${areaSlug(sensorBaseName(String(zone.name || "")))}`];
+  const area = (areasDoc.areas || []).find((a) => a.id === areaId);
+  const areaName = area?.name || null;
+  if (!areaName) return null;
+  const short = shortZoneName(zone.name);
+  for (const rule of ROOM_OVERRIDES) {
+    if (rule.area === areaName && rule.match.test(short)) return rule.room;
+  }
+  return areaName;
+}
+
+/* The drawing: walls, roof, rooms, the drive and the garden. Static, so it is
+   built once and the rooms are laid over it. */
+const HOUSE_SVG = `
+  <svg viewBox="0 0 900 660" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="houseWall" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0" stop-color="#1b2136"/><stop offset="1" stop-color="#141827"/>
+      </linearGradient>
+      <linearGradient id="houseRoof" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0" stop-color="#3a4166"/><stop offset="1" stop-color="#252a44"/>
+      </linearGradient>
+      <linearGradient id="houseLawn" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0" stop-color="#16251d"/><stop offset="1" stop-color="#0e1a15"/>
+      </linearGradient>
+    </defs>
+
+    <rect x="0" y="490" width="900" height="170" fill="url(#houseLawn)"/>
+    <path d="M0 492 H900" stroke="#1d3329" stroke-width="2"/>
+
+    <g opacity=".85">
+      <path d="M778 300 V492 M896 300 V492" stroke="#22304a" stroke-width="3"/>
+      <path d="M778 320 H896 M778 360 H896 M778 400 H896" stroke="#1b2740" stroke-width="3"/>
+      <circle cx="838" cy="252" r="42" fill="#163a2b"/><circle cx="812" cy="278" r="28" fill="#143326"/>
+      <circle cx="864" cy="276" r="26" fill="#15382a"/><rect x="833" y="288" width="10" height="42" fill="#2a2015"/>
+    </g>
+
+    <rect x="112" y="186" width="653" height="306" rx="5" fill="url(#houseWall)" stroke="#2a2f4a" stroke-width="2.5"/>
+    <path d="M86 190 L438 52 L790 190 Z" fill="url(#houseRoof)" stroke="#2a2f4a" stroke-width="2.5"/>
+    <path d="M438 52 L438 190" stroke="#2a2f4a" stroke-width="1.5" opacity=".5"/>
+    <rect x="600" y="96" width="32" height="60" rx="3" fill="#2f3553" stroke="#252a44" stroke-width="2"/>
+    <circle cx="438" cy="142" r="13" fill="#151a2c" stroke="#2a2f4a" stroke-width="2"/>
+
+    <path d="M114 336 H763" stroke="#2a2f4a" stroke-width="3"/>
+    <path d="M252 196 V330 M378 196 V330 M477 196 V330 M607 196 V330" stroke="#232942" stroke-width="2"/>
+    <path d="M256 344 V488 M360 344 V488 M477 344 V488 M576 344 V488 M679 344 V488" stroke="#232942" stroke-width="2"/>
+
+    <rect x="130" y="386" width="112" height="104" rx="3" fill="#0f1524" stroke="#2a2f4a" stroke-width="2"/>
+    <path d="M130 412 H242 M130 438 H242 M130 464 H242" stroke="#1b2138" stroke-width="2"/>
+
+    <g fill="#0f1524" stroke="#2a2f4a" stroke-width="2">
+      <rect x="146" y="214" width="52" height="40" rx="3"/><rect x="286" y="214" width="46" height="40" rx="3"/>
+      <rect x="510" y="214" width="46" height="40" rx="3"/><rect x="640" y="214" width="46" height="40" rx="3"/>
+      <rect x="392" y="396" width="46" height="52" rx="3"/><rect x="506" y="396" width="40" height="52" rx="3"/>
+      <rect x="604" y="396" width="40" height="52" rx="3"/>
+    </g>
+
+    <rect x="292" y="420" width="42" height="72" rx="3" fill="#1b2136" stroke="#3a4166" stroke-width="2"/>
+    <circle cx="324" cy="458" r="3" fill="#5FC0EA"/>
+
+    <path d="M118 492 H356 L372 660 H96 Z" fill="#161c28"/>
+    <path d="M118 492 H356" stroke="#222b3c" stroke-width="2"/>
+    <g>
+      <rect x="150" y="536" width="168" height="46" rx="16" fill="#28304a" stroke="#333d5e" stroke-width="2"/>
+      <path d="M178 536 q22 -30 62 -30 q40 0 58 30 Z" fill="#2f3959" stroke="#333d5e" stroke-width="2"/>
+      <path d="M186 534 q20 -22 52 -22 q32 0 46 22 Z" fill="#141b2c"/>
+      <circle cx="186" cy="584" r="15" fill="#0f1420" stroke="#39425e" stroke-width="3"/>
+      <circle cx="284" cy="584" r="15" fill="#0f1420" stroke="#39425e" stroke-width="3"/>
+      <rect x="150" y="552" width="10" height="7" rx="3" fill="#f2d98b" opacity=".8"/>
+      <rect x="308" y="552" width="10" height="7" rx="3" fill="#f0837a" opacity=".8"/>
+    </g>
+    <path d="M300 492 L286 560 L352 560 L336 492 Z" fill="#17202e" opacity=".9"/>
+  </svg>`;
+
+/* Which room the view is showing on the right. Kept across refreshes so a poll
+   does not move it. */
+let selectedHouseRoom = null;
+
+function zonesByRoom(zones) {
+  const rooms = new Map();
+  const loose = [];
+  for (const zone of zones) {
+    const room = zoneRoom(zone);
+    if (!room) { loose.push(zone); continue; }
+    if (!rooms.has(room)) rooms.set(room, []);
+    rooms.get(room).push(zone);
+  }
+  for (const list of rooms.values()) list.splice(0, list.length, ...sortedAlarmZones(list));
+  return { rooms, loose: sortedAlarmZones(loose) };
+}
+
+function houseRoomHtml(room, zones) {
+  const list = zones || [];
+  const hot = list.some(zoneIsBreached);
+  const style = `left:${room.x}%;top:${room.y}%;width:${room.w}%;height:${room.h}%`;
+  const label = escapeHtml(room.label || room.name);
+  if (!list.length) {
+    return `<div class="house-room house-room-empty" style="${style}">
+      <span class="house-room-name">${label}</span><span class="house-room-note">no sensors</span></div>`;
+  }
+  const newest = Math.min(...list.map((z) => (Number.isFinite(z.age_seconds) ? z.age_seconds : Infinity)));
+  return `
+    <button class="house-room${hot ? " breached" : ""}${selectedHouseRoom === room.name ? " selected" : ""}"
+            type="button" data-house-room="${escapeHtml(room.name)}" style="${style}">
+      <span class="house-room-name">${label}</span>
+      <span class="house-pips">${list.slice(0, 6).map((z) => {
+        const breached = zoneIsBreached(z);
+        const unknown = z.state === "unknown" || z.state === "unavailable";
+        return `<span class="house-pip${breached ? " on" : ""}${unknown ? " off" : ""}"
+                      title="${escapeHtml(z.name)} — ${escapeHtml(zoneStateText(z, breached))}">${zoneIconSVG(z.type, breached)}</span>`;
+      }).join("")}</span>
+      <span class="house-room-note">${hot
+        ? `${list.filter(zoneIsBreached).length} active`
+        : Number.isFinite(newest) ? `quiet · ${zoneAgeLabel(newest)}` : `${list.length} sensor${list.length === 1 ? "" : "s"}`}</span>
+    </button>`;
+}
+
+function zoneAgeLabel(seconds) {
+  const minutes = seconds / 60;
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const hours = minutes / 60;
+  return hours < 48 ? `${hours.toFixed(1)} h` : `${Math.round(hours / 24)} d`;
+}
+
+function houseDetailHtml(room, list, controls) {
+  const zones = list || [];
+  const hot = zones.filter(zoneIsBreached).length;
+  const rows = zones.map((z) => {
+    const breached = zoneIsBreached(z);
+    const unknown = z.state === "unknown" || z.state === "unavailable";
+    return `
+      <div class="house-detail-row${breached ? " breached" : ""}${unknown ? " unknown" : ""}">
+        <span class="house-detail-icon">${zoneIconSVG(z.type, breached)}</span>
+        <span class="house-detail-name">${escapeHtml(shortZoneName(z.name))}</span>
+        <span class="house-detail-state">${escapeHtml(zoneStateText(z, breached))}${
+          Number.isFinite(z.age_seconds) ? `<span class="house-detail-age">${zoneAgeLabel(z.age_seconds)}</span>` : ""}</span>
+      </div>`;
+  }).join("");
+
+  return `
+    <h3>${escapeHtml(room || "Nothing selected")}</h3>
+    <div class="house-detail-sub">${zones.length
+      ? `${zones.length} sensor${zones.length === 1 ? "" : "s"} · ${hot ? `${hot} active now` : "all quiet"}`
+      : "Pick a room on the plan"}</div>
+    ${rows}
+    ${controls}`;
+}
+
 function renderAlarmSection(payload = latestAlarmData) {
   const panel = document.querySelector("#alarmPanel");
   if (!panel) return;
 
   const haState = payload?.panel?.entity_id ? normalizeAlarmPanelState(payload.panel.state) : null;
   const displayState = haState || alarmState;
-  const STATE_COLOR = { disarmed: null, arming: "#F2B84B", home: "#F2B84B", away: "#7ED9A0", alarm: null };
-  const shieldColor = displayState === "alarm" ? "var(--t-alert)" : STATE_COLOR[displayState];
-  const pulsing     = displayState === "alarm" || displayState === "arming";
-
   const statusText =
     displayState === "disarmed" ? "Disarmed" :
     displayState === "arming"   ? (haState ? "Arming" : `Arming ${alarmPending === "home" ? "Home" : "Away"} in ${alarmCountdown}s`) :
@@ -3787,84 +3961,81 @@ function renderAlarmSection(payload = latestAlarmData) {
     displayState === "away"     ? "Armed · Away" :
     "SOS ALARM ACTIVE";
 
-  const modes = [
-    { id: "disarmed", label: "DISARM",   iconColor: "var(--t-text-dim2)",
-      icon: `<svg width="18" height="18" viewBox="0 0 22 22"><rect x="5" y="10" width="12" height="9" rx="2" fill="none" stroke="${alarmState==="disarmed"?"var(--t-accent)":"var(--t-text-dim2)"}" stroke-width="1.6"/><path d="M7.5 10V7a3.5 3.5 0 016.5-1.8" fill="none" stroke="${alarmState==="disarmed"?"var(--t-accent)":"var(--t-text-dim2)"}" stroke-width="1.6" stroke-linecap="round"/><circle cx="11" cy="14.2" r="1.3" fill="${alarmState==="disarmed"?"var(--t-accent)":"var(--t-text-dim2)"}"/></svg>`,
-      activeClass: "active-disarm" },
-    { id: "home",     label: "ARM HOME",
-      icon: `<svg width="18" height="18" viewBox="0 0 22 22"><path d="M3 11L11 4l8 7" fill="none" stroke="${alarmState==="home"||alarmPending==="home"?"#F2B84B":"var(--t-text-dim2)"}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 9.5V18h11V9.5" fill="none" stroke="${alarmState==="home"||alarmPending==="home"?"#F2B84B":"var(--t-text-dim2)"}" stroke-width="1.6" stroke-linejoin="round"/><rect x="9.3" y="12.5" width="3.4" height="5.5" fill="none" stroke="${alarmState==="home"||alarmPending==="home"?"#F2B84B":"var(--t-text-dim2)"}" stroke-width="1.4"/></svg>`,
-      activeClass: "active-home" },
-    { id: "away",     label: "ARM AWAY",
-      icon: `<svg width="16" height="18" viewBox="0 0 18 20"><path d="M9 1 L17 4 V10 C17 15 13.5 18.3 9 19.5 C4.5 18.3 1 15 1 10 V4 Z" fill="none" stroke="${alarmState==="away"||alarmPending==="away"?"#7ED9A0":"var(--t-text-dim2)"}" stroke-width="1.6" stroke-linejoin="round"/></svg>`,
-      activeClass: "active-away" },
-  ];
+  const zones = payload?.zones?.length ? payload.zones : ALARM_ZONES;
+  const { rooms, loose } = zonesByRoom(zones);
+  const breached = alarmBreachedCount(zones);
 
-  const modesHtml = modes.map((m) => {
-    const isActive = (displayState === m.id) || (!haState && displayState === "arming" && alarmPending === m.id);
-    return `<button class="arm-mode-btn ${isActive ? m.activeClass : ""}" data-arm-mode="${m.id}">
-      ${m.icon}
-      <span class="arm-mode-label">${m.label}</span>
-    </button>`;
+  if (!selectedHouseRoom || (!rooms.has(selectedHouseRoom) && selectedHouseRoom !== "Not placed")) {
+    const busiest = HOUSE_ROOMS.find((room) => (rooms.get(room.name) || []).some(zoneIsBreached));
+    selectedHouseRoom = busiest?.name || HOUSE_ROOMS.find((room) => rooms.has(room.name))?.name || null;
+  }
+
+  const modes = displayState === "disarmed"
+    ? [["home", "Arm home", "ti-home"], ["away", "Arm away", "ti-shield-lock"]]
+    : [["disarmed", "Disarm", "ti-lock-open"]];
+  const armButtons = modes.map(([mode, label, icon]) =>
+    `<button class="house-arm${mode === "disarmed" ? "" : " primary"}" type="button" data-arm-mode="${mode}">
+       <i class="ti ${icon}" aria-hidden="true"></i>${label}</button>`).join("");
+
+  const haControls = (payload?.controls || []).map((control) => {
+    const isOn = control.state === "on";
+    const action = isOn ? "off" : "on";
+    const button = control.controllable
+      ? `<button class="house-control-btn" data-ha-command="${action}" data-ha-entity-id="${escapeHtml(control.entity_id)}">${isOn ? "Turn off" : "Turn on"}</button>`
+      : `<span class="camera-note">${escapeHtml(formatStatus(control.state || "unknown"))}</span>`;
+    return `<div class="house-control"><span>${escapeHtml(control.name)}<small>${escapeHtml(formatStatus(control.state || "unknown"))}</small></span>${button}</div>`;
   }).join("");
 
-  const alarmZones = payload?.zones?.length ? payload.zones : ALARM_ZONES;
-  const zonesSorted = sortedAlarmZones(alarmZones);
-  const zonesHtml = alarmZoneTilesHtml(alarmZones);
-  const breachedCount = alarmBreachedCount(zonesSorted);
-  /* The count belongs next to the label, not buried in the tiles: it answers
-     "is anything open?" without reading every tile. */
-  const zonesLabel = alarmZones.length
-    ? `ZONES <span class="alarm-zone-count${breachedCount ? " breached" : ""}">${
-         breachedCount ? `${breachedCount} open` : "all clear"}</span>`
-    : "ZONES";
-
-  const disarmSilenceBtn = displayState === "alarm"
-    ? `<button class="disarm-silence-btn" data-arm-mode="disarmed">DISARM TO SILENCE</button>` : "";
-
-  const haControls = payload?.controls || [];
-  const haControlsHtml = haControls.length ? `
-    <span class="alarm-section-label">HOME ASSISTANT PANEL</span>
-    <div class="alarm-ha-controls">
-      ${haControls.map((control) => {
-        const isOn = control.state === "on";
-        const stateText = formatStatus(control.state || control.status || "unknown");
-        const action = isOn ? "off" : "on";
-        const button = control.controllable
-          ? `<button class="command ${isOn ? "" : "primary"}" data-ha-command="${action}" data-ha-entity-id="${escapeHtml(control.entity_id)}">${isOn ? "Turn off" : "Turn on"}</button>`
-          : `<span class="camera-note">${escapeHtml(stateText)}</span>`;
-        return `<div class="alarm-ha-row">
-          <div><strong>${escapeHtml(control.name)}</strong><small>${escapeHtml(stateText)}</small></div>
-          ${button}
-        </div>`;
-      }).join("")}
-    </div>` : "";
-
-  const panelName = payload?.panel?.name || "Local alarm panel";
+  const controlsHtml = `
+    <div class="house-controls">
+      ${haControls}
+      <div class="house-control">
+        <span>Siren<small>Sounds for two seconds</small></span>
+        <button class="house-control-btn ${sirenTesting ? "testing" : ""}" id="sirenTestBtn">${sirenTesting ? "Testing…" : "Test"}</button>
+      </div>
+      <button class="sos-btn" id="sosTriggerBtn">SOS — TRIGGER ALARM</button>
+    </div>`;
 
   renderHomeAlarmCard(payload);
-
   const alarmBadgeEl = document.querySelector("#alarmBadge");
   if (alarmBadgeEl) alarmBadgeEl.textContent = displayState === "alarm" ? "!" : displayState === "disarmed" ? "–" : "ON";
 
+  const detailZones = selectedHouseRoom === "Not placed" ? loose : (rooms.get(selectedHouseRoom) || []);
+
   panel.innerHTML = `
-    <div class="alarm-shield-wrap">
-      ${alarmShieldSVG(shieldColor, pulsing)}
-      <span class="alarm-status-text ${displayState === "alarm" ? "alarm-active" : ""}">${statusText}</span>
-      <span class="alarm-source-text">${escapeHtml(panelName)}</span>
+    <div class="house-head${displayState === "alarm" ? " alarm-active" : ""}">
+      <span class="house-shield${breached ? " breached" : ""}"><i class="ti ti-shield-check" aria-hidden="true"></i></span>
+      <span class="house-state">
+        <b>${escapeHtml(statusText)}</b>
+        <small>${escapeHtml(payload?.panel?.name || "Local alarm panel")} · ${
+          breached ? `${breached} sensor${breached === 1 ? "" : "s"} active` : `all ${zones.length} normal`}</small>
+      </span>
+      <span class="house-arms">${armButtons}</span>
     </div>
-    <div class="arm-mode-grid">${modesHtml}</div>
-    ${disarmSilenceBtn}
-    ${haControlsHtml}
-    <span class="alarm-section-label">${zonesLabel}</span>
-    <div class="zone-tile-grid">${zonesHtml || `<div class="home-empty">No zones reported</div>`}</div>
-    <div class="siren-row">
-      <span class="siren-label">SIREN</span>
-      <button class="siren-test-btn ${sirenTesting ? "testing" : ""}" id="sirenTestBtn">
-        ${sirenTesting ? "TESTING…" : "TEST"}
-      </button>
-    </div>
-    <button class="sos-btn" id="sosTriggerBtn">SOS — TRIGGER ALARM</button>`;
+    <div class="house-stage">
+      <div>
+        <div class="house-scene">
+          ${HOUSE_SVG}
+          ${HOUSE_ROOMS.map((room) => houseRoomHtml(room, rooms.get(room.name))).join("")}
+        </div>
+        <div class="house-legend">
+          <span><i class="house-swatch"></i>quiet</span>
+          <span><i class="house-swatch breached"></i>something active</span>
+          <span>Tap a room for its sensors</span>
+          ${loose.length ? `<button class="house-loose" type="button" data-house-room="Not placed">${loose.length} not in a room</button>` : ""}
+        </div>
+      </div>
+      <aside class="house-detail">${houseDetailHtml(selectedHouseRoom, detailZones, controlsHtml)}</aside>
+    </div>`;
 }
+
+/* Choosing a room only changes what the panel beside the house lists. */
+document.addEventListener("click", (event) => {
+  const room = event.target.closest("[data-house-room]");
+  if (!room) return;
+  selectedHouseRoom = room.dataset.houseRoom;
+  renderAlarmSection();
+});
 
 function normalizeAlarmPanelState(state) {
   const normalized = String(state || "").toLowerCase();

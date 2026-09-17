@@ -123,21 +123,20 @@ def test_live_refresh_is_debounced_and_reuses_the_normal_refresh() -> None:
     assert "LIVE_REFRESH_DEBOUNCE_MS" in body
 
 
-def test_alarm_zones_render_as_tiles_like_the_temperature_card() -> None:
-    """Zones moved from full-width rows to a square tile grid.
-
-    The two cards sit side by side on Home, so they share a shape deliberately.
-    """
+def test_the_security_view_draws_the_house_and_the_card_draws_chips() -> None:
+    """Two surfaces, two shapes, on purpose: the view is a plan of the house
+    with the rooms as buttons over one drawing, the Home card is columns of
+    chips. The square tile grid both used to share is gone with them."""
     source = APP_JS.read_text(encoding="utf-8")
     css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
 
-    assert 'class="zone-tile-grid"' in source
-    assert "zone-tile-icon" in source and "zone-tile-state" in source and "zone-tile-name" in source
-    # The superseded row markup and its rules are gone, not left orphaned.
-    assert "zone-row" not in source and "zone-row" not in css
-    assert ".zone-tile-grid {" in css and ".zone-tile {" in css
-    # Same grid geometry as the temperature tiles is what makes them match.
-    assert "aspect-ratio: 1 / 1" in css[css.index(".zone-tile {"):css.index(".zone-tile {") + 400]
+    assert "const HOUSE_ROOMS = [" in source
+    assert "const HOUSE_SVG = `" in source
+    assert 'data-house-room="' in source
+    assert ".house-scene {" in css and ".house-room {" in css
+    # The superseded tile markup and its rules are gone, not left orphaned.
+    assert "zone-tile" not in source and "zone-tile" not in css
+    assert "alarmZoneTilesHtml" not in source
 
 
 def test_breached_zones_sort_first_and_are_not_marked_by_colour_alone() -> None:
@@ -147,11 +146,11 @@ def test_breached_zones_sort_first_and_are_not_marked_by_colour_alone() -> None:
 
     start = source.index("function sortedAlarmZones")
     assert "ab - bb" in source[start:start + 400]          # breached first
-    rule = css[css.index(".zone-tile.breached {"):]
+    rule = css[css.index(".house-room.breached {"):]
     rule = rule[:rule.index("}")]
     assert "border-color" in rule and "background" in rule  # not colour alone
     # A zone that never reported must not look identical to a confirmed-closed one.
-    assert ".zone-tile.unknown" in css
+    assert ".house-pip.off" in css and ".alarm-chip.unknown" in css
 
 
 def test_both_alarm_surfaces_take_a_zone_s_wording_from_one_place() -> None:
@@ -161,7 +160,7 @@ def test_both_alarm_surfaces_take_a_zone_s_wording_from_one_place() -> None:
     source = APP_JS.read_text(encoding="utf-8")
 
     assert "function zoneStateText(zone, breached)" in source
-    for fn in ("alarmZoneTilesHtml", "renderHomeAlarmCard"):
+    for fn in ("houseDetailHtml", "renderHomeAlarmCard"):
         body = source.split(f"function {fn}(")[1].split("\nfunction ")[0]
         assert "zoneStateText(" in body, f"{fn} does not use the shared wording"
         assert '"Closed"' not in body, f"{fn} spells a zone state itself"
