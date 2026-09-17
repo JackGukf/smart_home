@@ -78,13 +78,16 @@ def test_news_and_about_live_under_settings() -> None:
     assert 'id="buildBadge"' in about
 
 
-def test_news_card_sits_above_the_home_card_grid() -> None:
-    """Outside the grid: it spans the view and is not one of the arrangeable cards."""
+def test_news_lives_in_the_header_between_logo_and_clock() -> None:
+    """One line in the header, not a card on Home: it costs the grid no height."""
     html = INDEX_HTML.read_text(encoding="utf-8")
+    header = html[html.index("<header>"):html.index("</header>")]
     home = html[html.index('data-view-panel="home"'):html.index('data-view-panel="cameras"')]
 
-    assert home.index('id="homeNewsCard"') < home.index('id="homeCardGrid"')
-    assert 'data-home-card="news"' not in home
+    assert header.index('class="logo"') < header.index('id="headerNews"') < header.index('id="clock"')
+    assert 'id="headerNewsTitle"' in header
+    assert 'id="headerNewsMarkets"' in header
+    assert 'id="headerNews"' not in home
 
 
 def test_youtube_player_lives_in_media() -> None:

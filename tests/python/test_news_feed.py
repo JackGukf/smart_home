@@ -1,4 +1,4 @@
-"""The News card's data: parsing, what counts as breaking, and the settings.
+"""The header news line's data: parsing, what counts as breaking, and the settings.
 
 The rules that matter:
 

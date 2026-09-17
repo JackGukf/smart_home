@@ -115,7 +115,7 @@ DEFAULT_PROPOSALS_PATH = PROJECT_ROOT / "automation-proposals"
 # file rather than generated on request: it takes a minute to produce and says
 # the same thing all day, so a page load must never wait for it.
 DEFAULT_DIGEST_PATH = PROJECT_ROOT / "house_digest.json"
-# What the News card on Home shows. On the board rather than in each browser, so
+# What the news line in the header shows. On the board rather than in each browser, so
 # switching news off on a phone switches it off on the wall panel too.
 DEFAULT_NEWS_SETTINGS_PATH = PROJECT_ROOT / "dashboard_news.json"
 # A proposal file name, as this code writes them. Anything else is refused
@@ -1040,7 +1040,7 @@ def create_app(
 
     @app.get("/api/news")
     async def news() -> dict[str, Any]:
-        """Headlines and prices for the News card, as chosen in Settings.
+        """Headlines and prices for the header news line, as chosen in Settings.
 
         Cached per feed on the board, so every open screen polling this costs
         one fetch per site every few minutes, not one per screen.

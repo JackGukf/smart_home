@@ -269,7 +269,7 @@ def test_weather_scales_with_its_own_height_rather_than_clipping() -> None:
 def test_weather_keeps_enough_rows_to_render_in_both_layouts() -> None:
     """The clock, today and the week need about 210px on the wall panel.
 
-    Six of twenty rows is that with the News card above the grid. The two
+    Six of twenty rows gives them that with room to spare. The two
     layouts size it independently - fourteen rows on a small screen is a
     coarser scale than twenty - so neither number can be derived from the other.
     """

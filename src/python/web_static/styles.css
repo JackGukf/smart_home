@@ -5755,137 +5755,142 @@ body.youtube-covering .youtube-stage.is-fullscreen .youtube-frame { height: 100%
 .youtube-actions { display: flex; align-items: center; margin-top: 12px; }
 .youtube-hint { margin-left: auto; font-size: 12px; color: var(--muted); }
 
-/* ── News card (Home) ──
-   One headline in serif type beside a market list, spanning the view above the
-   card grid. It must not shrink in the fitted Home layout - the grid gives up
-   the height instead, and the cards scale down with it. */
-.home-news {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
-  padding: 0;
-  overflow: hidden;
-  margin-bottom: 16px;
-  flex-shrink: 0;
+/* ── News (header) ──
+   Between the logo and the clock. The header is a fixed 72px that `main`
+   subtracts from the screen height, so this never adds a line: the headline
+   truncates, and prices drop away one by one as the screen narrows. On a phone,
+   where `main` is not fitted to the screen, it takes its own row instead.
+   Spacing is margins, not flex gap, for iOS 12. */
+.header-news {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0 28px;
 }
-.home-news[hidden] { display: none; }
-.home-news.no-markets { grid-template-columns: minmax(0, 1fr); }
-.home-news.no-markets .home-news-markets { display: none; }
-.home-news.no-story { grid-template-columns: minmax(0, 1fr); }
-.home-news.no-story .home-news-story { display: none; }
-.home-news.no-story .home-news-markets {
-  border-left: 0;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  grid-column-gap: 24px;
-}
+.header-news[hidden] { display: none; }
+.header-news.no-story .header-news-story { display: none; }
+.header-news.no-story .header-news-markets { margin-left: auto; border-left: 0; }
+.header-news.no-markets .header-news-markets { display: none; }
 
-.home-news-story {
+.header-news-story {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-width: 0;
-  padding: 14px 18px 12px;
+  /* 1px, not more: two lines plus this must stay inside the header's 44px of
+     content height, or the header grows and the fitted Home view overflows. */
+  padding: 1px 8px;
+  margin-left: -8px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: opacity 0.3s, background 0.15s;
 }
+.header-news-story:hover { background: rgba(255, 255, 255, 0.04); }
+.header-news-story.fading { opacity: 0; }
 
-.home-news-kicker {
+.header-news-kicker {
   display: flex;
   align-items: center;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 10px;
+  line-height: 16px;
 }
 
-.home-news-kind {
+.header-news-kind {
   flex-shrink: 0;
-  margin-right: 10px;
-  padding: 2px 7px;
-  border-radius: 5px;
+  margin-right: 8px;
+  padding: 0 6px;
+  border-radius: 4px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   background: var(--card-2);
   color: var(--t-text-dim);
 }
-.home-news-kind.kind-breaking { background: rgba(248, 113, 113, 0.15); color: var(--red); }
-.home-news-kind.kind-finance { background: rgba(var(--t-accent-rgb), 0.14); color: var(--t-accent); }
+.header-news-kind.kind-breaking { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+.header-news-kind.kind-finance { background: rgba(var(--t-accent-rgb), 0.14); color: var(--t-accent); }
 
-.home-news-meta {
-  color: var(--t-text-dim);
+.header-news-meta {
+  color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.home-news-title {
-  margin: 8px 0 10px;
-  min-height: 2.6em;
+.header-news-title {
+  display: block;
+  margin-top: 2px;
   font-family: 'Fraunces', Georgia, 'Times New Roman', serif;
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 400;
   line-height: 1.3;
-  color: var(--t-text);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  color: var(--text);
+  white-space: nowrap;
   overflow: hidden;
-  transition: opacity 0.3s;
+  text-overflow: ellipsis;
 }
-.home-news-title.fading { opacity: 0; }
 
-.home-news-pager { display: flex; margin-top: auto; }
-.home-news-pager button {
-  width: 18px;
-  height: 13px;
-  margin-right: 5px;
-  padding: 5px 0;
-  border: 0;
-  border-radius: 2px;
-  background: var(--border-hover);
-  background-clip: content-box;
-  cursor: pointer;
-}
-.home-news-pager button[aria-selected="true"] { background-color: var(--t-accent); }
-
-.home-news-markets {
-  display: grid;
-  align-content: center;
-  padding: 6px 16px;
+.header-news-markets {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 20px;
+  padding-left: 6px;
   border-left: 1px solid var(--border);
 }
 
-.home-news-market {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px 78px;
-  grid-column-gap: 10px;
-  align-items: center;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border);
+.header-news-market {
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px;
+  line-height: 1.25;
 }
-.home-news-market:last-child { border-bottom: 0; }
 
-.home-news-market-name {
-  font-size: 12px;
-  color: var(--t-text);
+.header-news-market-name {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.home-news-market-name span { margin-left: 8px; font-family: var(--mono); font-size: 11px; color: var(--t-text-dim); }
 
-.home-news-spark { display: block; width: 64px; height: 22px; }
-.home-news-spark path { fill: none; stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.home-news-spark.up path { stroke: var(--green); }
-.home-news-spark.down path { stroke: var(--red); }
+.header-news-market-row { display: flex; align-items: center; white-space: nowrap; }
+.header-news-price { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.header-news-spark { display: block; width: 36px; height: 14px; margin: 0 6px; }
+.header-news-spark path { fill: none; stroke-width: 1.4; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.header-news-spark.up path { stroke: var(--green); }
+.header-news-spark.down path { stroke: var(--red); }
+.header-news-change { font-family: var(--mono); font-size: 11px; }
+.header-news-change.up { color: var(--green); }
+.header-news-change.down { color: var(--red); }
 
-.home-news-change { font-family: var(--mono); font-size: 12px; text-align: right; white-space: nowrap; }
-.home-news-change.up { color: var(--green); }
-.home-news-change.down { color: var(--red); }
+@media (max-width: 1700px) { .header-news-market:nth-child(n+4) { display: none; } }
+@media (max-width: 1350px) { .header-news-market:nth-child(n+3) { display: none; } }
+@media (max-width: 1100px) {
+  .header-news-markets { display: none; }
+  .header-news { margin: 0 16px; }
+}
 
 @media (max-width: 739px) {
-  .home-news { grid-template-columns: minmax(0, 1fr); }
-  .home-news-markets { border-left: 0; border-top: 1px solid var(--border); }
-  .home-news-title { font-size: 18px; }
+  header { flex-wrap: wrap; }
+  .header-news {
+    order: 3;
+    flex-basis: 100%;
+    margin: 8px 0 0;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+  .header-news-title { font-size: 15px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .home-news-title { transition: none; }
+  .header-news-story { transition: none; }
   #homeWeatherPanel.home-weather-card::before { transition: none; }
 }
 

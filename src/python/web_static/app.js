@@ -6053,9 +6053,8 @@ const HOME_GRID_GAP = 16;
    to move with it.
 
    Weather is six rows since 2026-09-17, when it took over the clock and the
-   date and grew a 7-day strip: about 210px on the wall panel with the News
-   card showing above the grid, which is what the clock, today and the week
-   need. The rows came from Climate (the ecobee dial scales itself) and
+   date and grew a 7-day strip: about 260px on the wall panel, comfortably
+   what the clock, today and the week need. The rows came from Climate (the ecobee dial scales itself) and
    Temperatures (the sensor grid scrolls). It still scales with its own height
    through a container query - see "#homeWeatherPanel" in styles.css - dropping
    the week first and the date second on a short window.
@@ -7923,22 +7922,24 @@ document.addEventListener("change", (event) => {
   if (checkbox) toggleManageDevice(checkbox).catch((error) => console.error(error));
 });
 
-/* ── News card (Home) ──
-   One headline at a time beside a short market list. The board fetches and
-   caches the feeds (see news_feed.py), so polling here is cheap; what to show is
-   chosen in Settings > News and saved on the board.
+/* ── News (header) ──
+   One headline at a time, beside a few prices, between the logo and the clock.
+   The board fetches and caches the feeds (see news_feed.py), so polling here is
+   cheap; what to show is chosen in Settings > News and saved on the board.
 
-   Headlines are not links. The wall panel is a kiosk: a tap that opened a news
-   site would leave it on that page with nobody there to come back. */
+   The header is a fixed 72px that `main` subtracts from the screen height, so
+   everything here is one line: the headline truncates rather than wraps.
+   Tapping it moves to the next one. It is not a link: the wall panel is a kiosk
+   with nobody there to come back from a news site. */
 const NEWS_POLL_MS = 5 * 60_000;
 const NEWS_ROTATE_MS = 8_000;
 const NEWS_FADE_MS = 300;
 const NEWS_KIND_LABELS = { breaking: "Breaking", world: "Top story", finance: "Markets" };
 let newsHeadlines = [];
 let newsIndex = 0;
-/* A pointer over the card holds the current headline, but only for a while:
-   a tap on the wall panel fires mouseenter and never the matching mouseleave,
-   which would otherwise stop the card rotating until the next reload. */
+/* A pointer over the headline holds it, but only for a while: a tap on the
+   wall panel fires mouseenter and never the matching mouseleave, which would
+   otherwise stop the headlines rotating until the next reload. */
 const NEWS_HOLD_MS = 30_000;
 let newsHeldUntil = 0;
 
@@ -7951,19 +7952,19 @@ function newsAge(published) {
 }
 
 function newsMarketSpark(values, rising) {
-  if (!Array.isArray(values) || values.length < 2) return `<span class="home-news-spark"></span>`;
+  if (!Array.isArray(values) || values.length < 2) return "";
   const lo = Math.min(...values);
   const hi = Math.max(...values);
   const path = values.map((v, i) => {
-    const x = (i * 64) / (values.length - 1);
-    const y = 20 - ((v - lo) / (hi - lo || 1)) * 18;
+    const x = (i * 36) / (values.length - 1);
+    const y = 13 - ((v - lo) / (hi - lo || 1)) * 12;
     return `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  return `<svg class="home-news-spark ${rising ? "up" : "down"}" viewBox="0 0 64 22" preserveAspectRatio="none" aria-hidden="true"><path d="${path}"/></svg>`;
+  return `<svg class="header-news-spark ${rising ? "up" : "down"}" viewBox="0 0 36 14" preserveAspectRatio="none" aria-hidden="true"><path d="${path}"/></svg>`;
 }
 
 function renderNewsMarkets(markets) {
-  const box = document.querySelector("#homeNewsMarkets");
+  const box = document.querySelector("#headerNewsMarkets");
   if (!box) return;
   box.innerHTML = markets.map((m) => {
     const change = Number(m.change_percent);
@@ -7973,48 +7974,48 @@ function renderNewsMarkets(markets) {
       minimumFractionDigits: m.decimals, maximumFractionDigits: m.decimals,
     });
     return `
-      <div class="home-news-market">
-        <span class="home-news-market-name">${escapeHtml(m.name)}<span>${escapeHtml(price)}</span></span>
-        ${newsMarketSpark(m.spark, rising)}
-        <span class="home-news-change ${rising ? "up" : "down"}">${known ? `${rising ? "▲" : "▼"} ${Math.abs(change).toFixed(2)}%` : "—"}</span>
+      <div class="header-news-market">
+        <span class="header-news-market-name">${escapeHtml(m.name)}</span>
+        <span class="header-news-market-row">
+          <span class="header-news-price">${escapeHtml(price)}</span>
+          ${newsMarketSpark(m.spark, rising)}
+          <span class="header-news-change ${rising ? "up" : "down"}">${known ? `${rising ? "▲" : "▼"}${Math.abs(change).toFixed(2)}%` : "—"}</span>
+        </span>
       </div>`;
   }).join("");
 }
 
 function showHeadline(animate) {
-  const title = document.querySelector("#homeNewsTitle");
-  const kind = document.querySelector("#homeNewsKind");
-  const meta = document.querySelector("#homeNewsMeta");
-  const pager = document.querySelector("#homeNewsPager");
-  if (!title || !newsHeadlines.length) return;
+  const story = document.querySelector("#headerNewsStory");
+  const title = document.querySelector("#headerNewsTitle");
+  const kind = document.querySelector("#headerNewsKind");
+  const meta = document.querySelector("#headerNewsMeta");
+  if (!story || !title || !newsHeadlines.length) return;
   newsIndex = ((newsIndex % newsHeadlines.length) + newsHeadlines.length) % newsHeadlines.length;
   const item = newsHeadlines[newsIndex];
   const paint = () => {
     if (kind) {
-      kind.className = `home-news-kind kind-${item.kind}`;
+      kind.className = `header-news-kind kind-${item.kind}`;
       kind.textContent = NEWS_KIND_LABELS[item.kind] || "News";
     }
-    if (meta) meta.textContent = [item.source, newsAge(item.published)].filter(Boolean).join(" · ");
+    const position = newsHeadlines.length > 1 ? `${newsIndex + 1}/${newsHeadlines.length}` : "";
+    if (meta) meta.textContent = [item.source, newsAge(item.published), position].filter(Boolean).join(" · ");
     title.textContent = item.title;
-    if (pager) {
-      pager.innerHTML = newsHeadlines.length > 1 ? newsHeadlines.map((h, i) => `
-        <button type="button" role="tab" data-news-index="${i}" aria-selected="${i === newsIndex}"
-                aria-label="Headline ${i + 1} of ${newsHeadlines.length}"></button>`).join("") : "";
-    }
-    title.classList.remove("fading");
+    story.title = newsHeadlines.length > 1 ? `${item.title}\n\nTap for the next headline` : item.title;
+    story.classList.remove("fading");
   };
   if (!animate) { paint(); return; }
-  title.classList.add("fading");
+  story.classList.add("fading");
   setTimeout(paint, NEWS_FADE_MS);
 }
 
 function renderNews(data) {
-  const card = document.querySelector("#homeNewsCard");
-  if (!card) return;
+  const news = document.querySelector("#headerNews");
+  if (!news) return;
   const headlines = data?.headlines || [];
   const markets = data?.markets || [];
   if (!data?.settings?.enabled || (!headlines.length && !markets.length)) {
-    card.hidden = true;
+    news.hidden = true;
     newsHeadlines = [];
     return;
   }
@@ -8022,9 +8023,9 @@ function renderNews(data) {
   newsHeadlines = headlines;
   const kept = headlines.findIndex((h) => h.title === current);
   newsIndex = kept >= 0 ? kept : 0;
-  card.classList.toggle("no-story", !headlines.length);
-  card.classList.toggle("no-markets", !markets.length);
-  card.hidden = false;
+  news.classList.toggle("no-story", !headlines.length);
+  news.classList.toggle("no-markets", !markets.length);
+  news.hidden = false;
   showHeadline(false);
   renderNewsMarkets(markets);
 }
@@ -8033,22 +8034,22 @@ async function loadNews() {
   try {
     renderNews(await requestJson("/api/news"));
   } catch (error) {
-    // Leave whatever is on screen: a feed hiccup should not blank the card.
+    // Leave whatever is on screen: a feed hiccup should not blank the header.
     console.error(error);
   }
 }
 
-(function initNewsCard() {
-  const card = document.querySelector("#homeNewsCard");
-  if (!card) return;
+(function initHeaderNews() {
+  const story = document.querySelector("#headerNewsStory");
+  if (!story) return;
   const hold = () => { newsHeldUntil = Date.now() + NEWS_HOLD_MS; };
-  card.addEventListener("mouseenter", hold);
-  card.addEventListener("mousemove", hold);
-  card.addEventListener("mouseleave", () => { newsHeldUntil = 0; });
-  document.querySelector("#homeNewsPager")?.addEventListener("click", (event) => {
-    const dot = event.target.closest("[data-news-index]");
-    if (!dot) return;
-    newsIndex = Number(dot.dataset.newsIndex);
+  story.addEventListener("mouseenter", hold);
+  story.addEventListener("mousemove", hold);
+  story.addEventListener("mouseleave", () => { newsHeldUntil = 0; });
+  story.addEventListener("click", () => {
+    if (newsHeadlines.length < 2) return;
+    newsIndex += 1;
+    newsHeldUntil = Date.now() + NEWS_ROTATE_MS;
     showHeadline(true);
   });
   setInterval(() => {

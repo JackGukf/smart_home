@@ -1,4 +1,4 @@
-"""Headlines and market prices for the dashboard's News card.
+"""Headlines and market prices for the news line in the dashboard header.
 
 The board fetches them, not the browser. The browser cannot read these sites
 directly, and the wall panel should show exactly what any other screen shows, so

@@ -44,6 +44,20 @@
       <div class="logo-sub">Orange Pi 6 Plus · Local Network</div>
     </div>
   </div>
+  <!-- News: one headline at a time and a few prices, chosen in Settings > News.
+       Hidden until the first answer says there is something to show. Tapping
+       the headline moves to the next one - it is not a link, because the wall
+       panel is a kiosk with nobody there to come back from a news site. -->
+  <div class="header-news" id="headerNews" hidden>
+    <button class="header-news-story" id="headerNewsStory" type="button" title="Next headline">
+      <span class="header-news-kicker">
+        <span class="header-news-kind" id="headerNewsKind"></span>
+        <span class="header-news-meta" id="headerNewsMeta"></span>
+      </span>
+      <span class="header-news-title" id="headerNewsTitle"></span>
+    </button>
+    <div class="header-news-markets" id="headerNewsMarkets"></div>
+  </div>
   <div class="header-right">
     <div class="time-block">
       <div class="time" id="clock">--:--</div>
@@ -495,21 +509,6 @@
           </div>
         </div>
 
-        <!-- News card. Outside the card grid on purpose: it spans the view and
-             is switched on and off in Settings > News, not by Choose cards.
-             Hidden until the first answer says there is something to show. -->
-        <section class="panel home-news" id="homeNewsCard" aria-label="News" hidden>
-          <div class="home-news-story" id="homeNewsStory">
-            <div class="home-news-kicker">
-              <span class="home-news-kind" id="homeNewsKind"></span>
-              <span class="home-news-meta" id="homeNewsMeta"></span>
-            </div>
-            <p class="home-news-title" id="homeNewsTitle" aria-live="polite"></p>
-            <div class="home-news-pager" id="homeNewsPager" role="tablist" aria-label="Headlines"></div>
-          </div>
-          <div class="home-news-markets" id="homeNewsMarkets"></div>
-        </section>
-
         <div class="home-layout" id="homeCardGrid">
 
           <!-- Weather display. The card's sky follows the time of day - see
@@ -797,12 +796,12 @@
     <div class="view-panel" data-view-panel="news">
       <div class="section-header">
         <span class="section-title">News</span>
-        <span class="section-meta">The card at the top of Home · saved on the board, so every screen follows</span>
+        <span class="section-meta">Headlines and prices in the header · saved on the board, so every screen follows</span>
       </div>
       <div class="settings-group" id="newsSettings">
         <div class="settings-row">
-          <div class="settings-label"><strong>Show news card</strong><small>Off hides the whole card</small></div>
-          <label class="settings-switch"><input type="checkbox" id="newsEnabled" data-news-flag="enabled"><span></span><span class="sr-only">Show news card</span></label>
+          <div class="settings-label"><strong>Show news</strong><small>Off leaves the header with just the clock</small></div>
+          <label class="settings-switch"><input type="checkbox" id="newsEnabled" data-news-flag="enabled"><span></span><span class="sr-only">Show news</span></label>
         </div>
         <div class="settings-row settings-child">
           <div class="settings-label"><strong>Breaking news</strong><small id="newsBreakingNote">Top stories; marked Breaking while under two hours old</small>
