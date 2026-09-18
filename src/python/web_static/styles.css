@@ -6406,7 +6406,8 @@ header > .header-right { flex-shrink: 0; }
 }
 .status-strip .stat-card:nth-child(6) { --stat-color: var(--amber); }
 .status-strip .stat-card:nth-child(7) { --stat-color: var(--teal); }
-.status-strip .stat-value { font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-strip .stat-card { padding: 14px 14px; }
+.status-strip .stat-value { font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat-value.st-good { color: var(--green); }
 .stat-value.st-warn { color: var(--amber); }
 
@@ -6482,4 +6483,5 @@ header > .header-right { flex-shrink: 0; }
   .stat-row.status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .status-grid, .status-two { grid-template-columns: minmax(0, 1fr); }
   .st-bar-row { grid-template-columns: minmax(0, 104px) minmax(0, 1fr) 40px; }
+  .status-svc { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

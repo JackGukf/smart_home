@@ -8563,7 +8563,8 @@ function renderStatusStrip(data) {
   setStatusText("#statusAlarm",
     state === "disarmed" ? "Disarmed" : state === "home" ? "Home" : state === "away" ? "Away"
       : state === "arming" ? "Arming" : "ALARM", state === "alarm" ? "warn" : null);
-  setStatusText("#statusAlarmSub", !zones.length ? "Security" : open ? `${open} open` : "all sensors normal");
+  /* Every zone, motion included, so "active" rather than "open". */
+  setStatusText("#statusAlarmSub", !zones.length ? "Security" : open ? `${open} active` : "all sensors normal");
 
   if (!data) return;
   const activity = data.activity || [];
@@ -8619,7 +8620,7 @@ function renderStatusOverview(data = latestStatusOverview) {
 
   const batteries = data.batteries || [];
   set("#statusBatteries", statusBarsHtml(
-    batteries.map((b) => ({ name: statusName(b.name), title: b.name, value: b.percent,
+    batteries.slice(0, STATUS_BUSIEST).map((b) => ({ name: statusName(b.name), title: b.name, value: b.percent,
       kind: b.percent < STATUS_LOW_BATTERY ? "low" : "door" })), 100, "%"));
   const low = batteries.filter((b) => b.percent < STATUS_LOW_BATTERY).length;
   setStatusText("#statusBatteryMeta", low ? `${low} low` : "all good");
