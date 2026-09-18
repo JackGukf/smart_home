@@ -5636,24 +5636,167 @@ function renderHomeQuickActions() {
   const body = document.querySelector("#homeQuickBody");
   if (!body) return;
   renderHtml(body, `<div class="quick-grid">${quickActionButtons().map((button) => `
-    <button class="quick-btn" type="button"
-      ${button.scene ? `data-light-scene="${button.scene}"` : ""}
-      ${button.script ? `data-run-script="${escapeHtml(button.script)}"` : ""}
-      ${button.quick ? `data-quick-action="${button.quick}"` : ""}
-      title="${escapeHtml(button.label)}">
-      <span class="quick-ic" style="--a:${button.a};--b:${button.b}"><i class="ti ${button.icon}" aria-hidden="true"></i></span>
-      <span class="quick-label">${escapeHtml(button.label)}</span>
-    </button>`).join("")}</div>`);
+    <div class="quick-item">
+      <button class="quick-btn" type="button" data-quick-key="${escapeHtml(button.key)}"
+        ${button.scene ? `data-light-scene="${button.scene}"` : ""}
+        ${button.script ? `data-run-script="${escapeHtml(button.script)}"` : ""}
+        ${button.quick ? `data-quick-action="${button.quick}"` : ""}
+        title="${escapeHtml(button.label)}">
+        <span class="quick-ic" style="--a:${button.a};--b:${button.b}"><i class="ti ${button.icon}" aria-hidden="true"></i></span>
+        <span class="quick-label">${escapeHtml(button.label)}</span>
+      </button>
+      <button class="quick-info" type="button" data-quick-info="${escapeHtml(button.key)}"
+        title="What ${escapeHtml(button.label)} controls" aria-label="What ${escapeHtml(button.label)} controls"><i class="ti ti-info-circle" aria-hidden="true"></i></button>
+    </div>`).join("")}</div>
+    <div class="quick-sheet" id="quickSheet" hidden></div>`);
+}
+
+/* ── What a Quick action did ──
+   A tap used to give no sign that anything happened, or of what the button
+   controls. The button now shows it is working, then done or not; and a
+   sheet over the card lists each device the action touched and where it
+   ended up. The ⓘ beside each button shows the same list before a run. */
+const QUICK_SHEET_MS = 12_000;
+let quickSheetTimer = null;
+
+function quickButton(key) {
+  return [...document.querySelectorAll(".quick-btn[data-quick-key]")].find((b) => b.dataset.quickKey === key) || null;
+}
+
+function quickLabel(key) {
+  return (quickActionButtons().find((b) => b.key === key) || {}).label || "Quick action";
+}
+
+function setQuickState(button, state) {
+  if (!button) return;
+  button.classList.remove("running", "done", "partial", "failed");
+  if (state) button.classList.add(state);
+  if (state && state !== "running") {
+    setTimeout(() => button.classList.remove(state), 4000);
+  }
+}
+
+/* rows: { name, detail, ok: true | false | null } */
+function quickSheetHtml({ title, status, tone, rows, note }) {
+  const mark = (ok) => ok === true ? '<i class="ti ti-check" aria-hidden="true"></i>'
+    : ok === false ? '<i class="ti ti-x" aria-hidden="true"></i>' : '<i class="ti ti-point" aria-hidden="true"></i>';
+  return `
+    <div class="quick-sheet-head">
+      <span><b>${escapeHtml(title)}</b><small class="${tone || ""}">${escapeHtml(status)}</small></span>
+      <button class="quick-sheet-close" type="button" data-quick-sheet-close aria-label="Close"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <ul class="quick-sheet-list">${rows.map((row) => `
+      <li class="${row.ok === true ? "ok" : row.ok === false ? "bad" : ""}">
+        <span class="quick-sheet-mark">${mark(row.ok)}</span>
+        <span class="quick-sheet-name">${escapeHtml(row.name)}</span>
+        <span class="quick-sheet-detail">${escapeHtml(row.detail || "")}</span>
+      </li>`).join("") || '<li><span></span><span class="quick-sheet-name">Nothing to show</span><span></span></li>'}</ul>
+    ${note ? `<p class="quick-sheet-note">${escapeHtml(note)}</p>` : ""}`;
+}
+
+function showQuickSheet(content, { stay = false } = {}) {
+  const sheet = document.querySelector("#quickSheet");
+  if (!sheet) return;
+  sheet.innerHTML = quickSheetHtml(content);
+  sheet.hidden = false;
+  clearTimeout(quickSheetTimer);
+  if (!stay) quickSheetTimer = setTimeout(() => { sheet.hidden = true; }, QUICK_SHEET_MS);
+}
+
+function hideQuickSheet() {
+  const sheet = document.querySelector("#quickSheet");
+  if (sheet) sheet.hidden = true;
+  clearTimeout(quickSheetTimer);
+}
+
+/* The light switches a scene sets: the same cards the scene itself uses. */
+function sceneLightCards() {
+  return Array.from(document.querySelectorAll('.device-card[data-category="light_switch"]'));
+}
+
+function lightCardName(card) {
+  const heading = card.querySelector(".device-name");
+  return (heading?.firstChild?.textContent || card.dataset.host || "Light").trim();
+}
+
+function outcomeStatus(ok, failed, seconds) {
+  const time = seconds != null ? ` in ${seconds} s` : "";
+  if (!failed) return { status: `Done${time}${ok ? ` · all ${ok} OK` : ""}`, tone: "good", state: "done" };
+  if (!ok) return { status: `Failed${time} · ${failed} did not respond`, tone: "bad", state: "failed" };
+  return { status: `Done${time} · ${failed} of ${ok + failed} did not respond`, tone: "warn", state: "partial" };
+}
+
+/* A script's steps as rows: one per device, or one per wait. */
+function scriptRows(steps) {
+  const rows = [];
+  for (const step of steps || []) {
+    if (step.kind !== "action") {
+      rows.push({ name: step.alias || step.text || "Step", detail: "", ok: null });
+      continue;
+    }
+    const verb = /turn_on$/.test(step.action) ? "on" : /turn_off$/.test(step.action) ? "off"
+      : /^button\./.test(step.action) ? "press" : step.action.split(".").pop().replace(/_/g, " ");
+    for (const device of step.devices || []) {
+      const now = device.problem ? device.problem
+        : device.state == null ? "" : /^button\./.test(step.action) ? "" : `now ${device.state}`;
+      const when = step.when ? `${verb}, ${step.when}` : verb;
+      rows.push({ name: shortZoneName(device.name), detail: [when, now].filter(Boolean).join(" · "), ok: device.ok ?? null });
+    }
+  }
+  return rows;
+}
+
+async function quickInfo(key) {
+  const label = quickLabel(key);
+  const button = quickActionButtons().find((b) => b.key === key);
+  if (!button) return;
+  if (button.scene) {
+    const cards = sceneLightCards();
+    showQuickSheet({ title: label, status: `${cards.length} light switch${cards.length === 1 ? "" : "es"}`, tone: "",
+      rows: cards.map((card) => ({ name: lightCardName(card), detail: `turns ${button.scene} · now ${card.classList.contains("on") ? "on" : "off"}`, ok: null })) }, { stay: true });
+    return;
+  }
+  if (button.quick === "good-night") {
+    const cards = sceneLightCards();
+    const thermostat = latestThermostats.find((t) => (t.preset_modes || []).some((m) => /sleep/i.test(m)));
+    showQuickSheet({ title: label, status: "What it does", tone: "",
+      rows: [{ name: "All lights off", detail: `${cards.length} light switches`, ok: null },
+             { name: thermostat ? thermostat.name || "Thermostat" : "Thermostat", detail: thermostat ? "to its sleep preset" : "has no sleep preset - skipped", ok: null }] }, { stay: true });
+    return;
+  }
+  showQuickSheet({ title: label, status: "Loading…", tone: "", rows: [] }, { stay: true });
+  try {
+    const info = await requestJson(`/api/home-assistant/scripts/${encodeURIComponent(button.script)}/steps`);
+    const devices = info.summary?.devices ?? 0;
+    showQuickSheet({ title: label, status: `${devices} device${devices === 1 ? "" : "s"}, in this order`, tone: "", rows: scriptRows(info.steps) }, { stay: true });
+  } catch (error) {
+    showQuickSheet({ title: label, status: apiErrorDetail(error), tone: "bad", rows: [] }, { stay: true });
+  }
 }
 
 async function runQuickScript(entityId, button) {
+  const label = quickLabel(button.dataset.quickKey || entityId);
   button.disabled = true;
+  setQuickState(button, "running");
+  showQuickSheet({ title: label, status: "Running…", tone: "", rows: [] }, { stay: true });
   try {
-    await requestJson(`/api/home-assistant/scripts/${encodeURIComponent(entityId)}/run`, { method: "POST" });
-    logActivity(`Ran ${entityId.split(".")[1].replace(/_/g, " ")}`);
+    const result = await requestJson(`/api/home-assistant/scripts/${encodeURIComponent(entityId)}/run?wait=true`, { method: "POST" });
+    const summary = result.summary || {};
+    const outcome = outcomeStatus(summary.ok || 0, summary.failed || 0, result.seconds);
+    if (result.status === "still_running") {
+      outcome.status = `Still running after ${result.seconds} s`;
+      outcome.tone = "warn";
+      outcome.state = "partial";
+    }
+    setQuickState(button, outcome.state);
+    showQuickSheet({ title: label, status: outcome.status, tone: outcome.tone, rows: scriptRows(result.steps),
+      note: summary.unknown ? "A dot is a step whose effect a state cannot show - a wait, or a step whose condition did not hold." : "" });
+    logActivity(`${label}: ${outcome.status}`);
   } catch (error) {
     console.error(error);
-    logActivity("Could not run that script", "error");
+    setQuickState(button, "failed");
+    showQuickSheet({ title: label, status: `Did not run: ${apiErrorDetail(error)}`, tone: "bad", rows: [] });
+    logActivity(`${label} did not run`, "error");
   }
   button.disabled = false;
 }
@@ -5662,18 +5805,35 @@ async function runQuickScript(entityId, button) {
    that cannot take a preset does not stop the lights going off. */
 async function runGoodNight(button) {
   button.disabled = true;
-  try {
-    document.querySelector('.quick-btn[data-light-scene="off"]')?.click();
-    const thermostat = latestThermostats.find((t) => (t.preset_modes || []).some((m) => /sleep/i.test(m)));
-    if (thermostat) {
-      const preset = thermostat.preset_modes.find((m) => /sleep/i.test(m));
+  setQuickState(button, "running");
+  const started = Date.now();
+  showQuickSheet({ title: "Good night", status: "Running…", tone: "", rows: [] }, { stay: true });
+  const rows = [];
+  let failed = 0;
+  // Lights first, and on their own: a thermostat that cannot take a preset
+  // must not stop them going off.
+  const lights = await runLightScene("off", document.querySelector('.quick-btn[data-light-scene="off"]'));
+  rows.push(...lights.rows);
+  failed += lights.failed;
+  const thermostat = latestThermostats.find((t) => (t.preset_modes || []).some((m) => /sleep/i.test(m)));
+  if (thermostat) {
+    const preset = thermostat.preset_modes.find((m) => /sleep/i.test(m));
+    try {
       await updateClimate(thermostat.id, { preset_mode: preset, preset_entity_id: thermostat.preset_entity_id || null });
+      rows.push({ name: thermostat.name || "Thermostat", detail: `preset ${preset}`, ok: true });
+    } catch (error) {
+      console.error(error);
+      failed += 1;
+      rows.push({ name: thermostat.name || "Thermostat", detail: `preset ${preset} not taken`, ok: false });
     }
-    logActivity(thermostat ? "Good night: lights off, thermostat to sleep" : "Good night: lights off");
-  } catch (error) {
-    console.error(error);
-    logActivity("Good night did not finish", "error");
+  } else {
+    rows.push({ name: "Thermostat", detail: "has no sleep preset - skipped", ok: null });
   }
+  const ok = rows.filter((r) => r.ok === true).length;
+  const outcome = outcomeStatus(ok, failed, ((Date.now() - started) / 1000).toFixed(1));
+  setQuickState(button, outcome.state);
+  showQuickSheet({ title: "Good night", status: outcome.status, tone: outcome.tone, rows });
+  logActivity(`Good night: ${outcome.status}`);
   button.disabled = false;
 }
 
@@ -5681,7 +5841,10 @@ document.addEventListener("click", (event) => {
   const scriptBtn = event.target.closest("button[data-run-script]");
   if (scriptBtn) { runQuickScript(scriptBtn.dataset.runScript, scriptBtn); return; }
   const quickBtn = event.target.closest('button[data-quick-action="good-night"]');
-  if (quickBtn) runGoodNight(quickBtn);
+  if (quickBtn) { runGoodNight(quickBtn); return; }
+  const info = event.target.closest("button[data-quick-info]");
+  if (info) { quickInfo(info.dataset.quickInfo); return; }
+  if (event.target.closest("[data-quick-sheet-close]")) hideQuickSheet();
 });
 
 /* ── Temperatures card ──
@@ -9914,21 +10077,23 @@ if (homeAssistantBack) {
   homeAssistantBack.addEventListener("click", () => activateView("lights"));
 }
 
-/* ── Light scenes ── */
-document.addEventListener("click", async (event) => {
-  const btn = event.target.closest("button[data-light-scene]");
-  if (!btn) return;
-  const command = btn.dataset.lightScene;
-  const lightCards = Array.from(document.querySelectorAll('.device-card[data-category="light_switch"]'));
-  if (lightCards.length === 0) return;
+/* ── Light scenes ──
+   Every light switch on or off. Reports each switch that did not answer, so
+   a Quick action can say so rather than leave you guessing. */
+async function runLightScene(command, btn) {
+  const lightCards = sceneLightCards();
+  const empty = { rows: [], ok: 0, failed: 0 };
+  if (lightCards.length === 0) return empty;
   const sceneStartRevision = manualLightCommandRevision;
   const sceneHosts = new Set(lightCards.map((card) => String(card.dataset.host || "")).filter((host) => host !== ""));
-  btn.disabled = true;
+  const names = lightCards.map(lightCardName);
+  if (btn) btn.disabled = true;
   activeLightSceneCount += 1;
   apiStatus.textContent = "Running scene";
   applyLightSceneOptimistic(lightCards, command);
+  let results = [];
   try {
-    await Promise.allSettled(
+    results = await Promise.allSettled(
       lightCards.map((card) => {
         const host = card.dataset.host;
         if (host === undefined || host === null || String(host) === "") return Promise.resolve();
@@ -9944,8 +10109,32 @@ document.addEventListener("click", async (event) => {
     await loadDevices().catch(console.error);
   } finally {
     activeLightSceneCount = Math.max(0, activeLightSceneCount - 1);
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
+  const rows = results.map((result, i) => ({
+    name: names[i],
+    detail: result.status === "fulfilled" ? `turned ${command}` : "did not respond",
+    ok: result.status === "fulfilled",
+  }));
+  return { rows, ok: rows.filter((r) => r.ok).length, failed: rows.filter((r) => !r.ok).length };
+}
+
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-light-scene]");
+  if (!btn) return;
+  const command = btn.dataset.lightScene;
+  const quick = btn.classList.contains("quick-btn");
+  const label = quick ? quickLabel(btn.dataset.quickKey) : "";
+  const started = Date.now();
+  if (quick) {
+    setQuickState(btn, "running");
+    showQuickSheet({ title: label, status: "Running…", tone: "", rows: [] }, { stay: true });
+  }
+  const result = await runLightScene(command, btn);
+  if (!quick) return;
+  const outcome = outcomeStatus(result.ok, result.failed, ((Date.now() - started) / 1000).toFixed(1));
+  setQuickState(btn, outcome.state);
+  showQuickSheet({ title: label, status: result.rows.length ? outcome.status : "No light switches found", tone: result.rows.length ? outcome.tone : "warn", rows: result.rows });
 });
 
 /* ── Ambient light actions ── */

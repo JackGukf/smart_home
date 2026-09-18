@@ -55,6 +55,7 @@ from src.python import sensor_history
 from src.python import status_overview
 from src.python import house_memory
 from src.python import tuya_ir
+from src.python import script_steps
 from src.python.automation_author import (
     AuthorError,
     Draft,
@@ -1483,8 +1484,18 @@ def create_app(
         return await asyncio.to_thread(_home_assistant_runnables, app.state.config_path)
 
     @app.post("/api/home-assistant/scripts/{entity_id}/run")
-    async def home_assistant_script_run(entity_id: str) -> dict[str, Any]:
+    async def home_assistant_script_run(entity_id: str, wait: bool = False) -> dict[str, Any]:
+        """Run a script or scene. With wait, a script is run to its end and the
+        answer says, device by device, whether each step took - which is what
+        a Quick action shows after a tap."""
+        if wait:
+            return await asyncio.to_thread(_home_assistant_run_and_check, app.state.config_path, entity_id)
         return await asyncio.to_thread(_home_assistant_run, app.state.config_path, entity_id)
+
+    @app.get("/api/home-assistant/scripts/{entity_id}/steps")
+    async def home_assistant_script_steps(entity_id: str) -> dict[str, Any]:
+        """What a script or scene does, step by step, with each device's state."""
+        return await asyncio.to_thread(_home_assistant_steps, app.state.config_path, entity_id)
 
     @app.post("/api/home-assistant/entities/{entity_id}/brightness")
     async def home_assistant_brightness(entity_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -4813,6 +4824,76 @@ def _home_assistant_run(path: Path, entity_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"Not a script or scene: {entity_id}")
     payload = _home_assistant_post(config, token, f"/api/services/{domain}/turn_on", {"entity_id": entity_id})
     return {"status": "ok", "result": payload}
+
+
+SCRIPT_WAIT_TIMEOUT_S = 45.0
+
+
+def _home_assistant_post_waiting(config: HomeAssistantConfig, token: str, path: str, body: dict[str, Any]) -> Any:
+    """A service call that waits for a script to finish, which can take its
+    delays' worth of seconds - longer than the usual call is allowed."""
+    request = _URLRequest(
+        f"{config.base_url}{path}", data=json.dumps(body).encode("utf-8"),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="POST")
+    with urlopen(request, timeout=SCRIPT_WAIT_TIMEOUT_S) as response:
+        text = response.read().decode("utf-8")
+    return json.loads(text) if text else None
+
+
+def _script_sequence(config: HomeAssistantConfig, token: str, entity_id: str,
+                     states: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    domain, _, object_id = entity_id.partition(".")
+    if domain == "script":
+        script = _home_assistant_get(config, token, f"/api/config/script/config/{quote(object_id, safe='')}")
+        return script_steps.flatten((script or {}).get("sequence") or [])
+    # A scene is its entities, each set as the scene says.
+    members = ((states.get(entity_id) or {}).get("attributes") or {}).get("entity_id") or []
+    return [{"kind": "action", "action": "scene.apply", "entities": list(members), "alias": None, "when": None}]
+
+
+def _home_assistant_steps(path: Path, entity_id: str, ran_at: float | None = None) -> dict[str, Any]:
+    config = _load_home_assistant_config(path)
+    token = os.getenv(config.token_env)
+    if not token:
+        raise HTTPException(status_code=503, detail=f"{config.token_env} is not configured")
+    if _home_assistant_entity_domain(entity_id) not in HOME_ASSISTANT_RUNNABLE_DOMAINS:
+        raise HTTPException(status_code=400, detail=f"Not a script or scene: {entity_id}")
+    states = {s["entity_id"]: s for s in _home_assistant_get(config, token, "/api/states")}
+    try:
+        steps = _script_sequence(config, token, entity_id, states)
+    except OSError as error:
+        raise HTTPException(status_code=502, detail=f"Home Assistant did not return the script: {error}") from error
+    described = script_steps.describe(steps, states.get, ran_at)
+    return {"entity_id": entity_id,
+            "name": ((states.get(entity_id) or {}).get("attributes") or {}).get("friendly_name") or entity_id,
+            "steps": described, "summary": script_steps.summary(described)}
+
+
+def _home_assistant_run_and_check(path: Path, entity_id: str) -> dict[str, Any]:
+    config = _load_home_assistant_config(path)
+    token = os.getenv(config.token_env)
+    if not token:
+        raise HTTPException(status_code=503, detail=f"{config.token_env} is not configured")
+    domain, _, object_id = entity_id.partition(".")
+    if domain not in HOME_ASSISTANT_RUNNABLE_DOMAINS:
+        raise HTTPException(status_code=400, detail=f"Not a script or scene: {entity_id}")
+    started = time.time()
+    finished = True
+    try:
+        if domain == "script":
+            # Called by its own name, a script is run to its end before the
+            # call returns; script.turn_on would return at once.
+            _home_assistant_post_waiting(config, token, f"/api/services/script/{quote(object_id, safe='')}", {})
+        else:
+            _home_assistant_post(config, token, "/api/services/scene/turn_on", {"entity_id": entity_id})
+    except TimeoutError:
+        finished = False
+    except OSError as error:
+        if "timed out" not in str(error).lower():
+            raise HTTPException(status_code=502, detail=f"Home Assistant did not run it: {error}") from error
+        finished = False
+    result = _home_assistant_steps(path, entity_id, ran_at=started)
+    return {"status": "ok" if finished else "still_running", "seconds": round(time.time() - started, 1), **result}
 
 
 def _home_assistant_brightness_command(
