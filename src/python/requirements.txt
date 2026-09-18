@@ -24,3 +24,6 @@ numpy
 # Home Assistant. It arrives transitively today; pinning it here makes the
 # live-update path an explicit dependency rather than a lucky one.
 aiohttp
+# Learned IR buttons (Tuya IR hubs, driven locally) are offered to Home
+# Assistant through MQTT discovery, so its scripts - Movie mode - can press them.
+paho-mqtt>=2.0,<3.0

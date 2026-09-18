@@ -54,6 +54,7 @@ from src.python import news_feed
 from src.python import sensor_history
 from src.python import status_overview
 from src.python import house_memory
+from src.python import tuya_ir
 from src.python.automation_author import (
     AuthorError,
     Draft,
@@ -193,9 +194,12 @@ async def _lifespan(app: FastAPI):
     _schedule_device_refresh(app)
     recorder = asyncio.create_task(_motion_log_recorder(app))
     environment = asyncio.create_task(_environment_poller(app))
+    bridge = await asyncio.to_thread(_start_ir_bridge, app)
     try:
         yield
     finally:
+        if bridge is not None:
+            await asyncio.to_thread(bridge.stop)
         for task in (recorder, environment):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -490,6 +494,19 @@ class HomeAlarmCardRequest(BaseModel):
 MEMORY_TZ = re.compile(r"[A-Za-z_]+(?:/[A-Za-z0-9_+\-]+){0,2}")
 
 
+class IRButtonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=tuya_ir.MAX_NAME_LENGTH * 2)
+    code: str = Field(max_length=tuya_ir.MAX_CODE_LENGTH)
+
+
+class IRCodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(max_length=tuya_ir.MAX_CODE_LENGTH)
+
+
 class MemoryFeedbackRequest(BaseModel):
     event_id: int = Field(ge=1)
     label: str = Field(max_length=32)
@@ -608,6 +625,9 @@ def create_app(
     app.state.history_service = history_service
     app.state.status_service = status_service
     app.state.memory_service = memory_service or house_memory.SummaryCache()
+    app.state.ir_store = tuya_ir.ButtonStore(config_path.parent / "ir_buttons.json")
+    app.state.ir_bridge = None
+    app.state.ir_hub_loader = lambda: tuya_ir.load_hubs(app.state.config_path)
     # One draft at a time. Ollama serialises requests anyway, so a second
     # concurrent draft would not run sooner - it would just hold a worker
     # thread and a connection for a minute to find that out.
@@ -1261,6 +1281,81 @@ def create_app(
                 app.state.memory_service.label, request.event_id, request.label, request.note)
         except house_memory.FeedbackError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+
+    # ── Tuya IR hubs: learn a remote's buttons, send them ──
+    def _ir_hub(hub_id: str) -> tuya_ir.IRHub:
+        try:
+            return tuya_ir.hub_by_id(app.state.ir_hub_loader(), hub_id)
+        except tuya_ir.IRError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    def _ir_republish() -> None:
+        if app.state.ir_bridge is not None:
+            app.state.ir_bridge.publish_all()
+
+    @app.get("/api/ir/hubs")
+    async def ir_hubs() -> dict[str, Any]:
+        hubs = await asyncio.to_thread(app.state.ir_hub_loader)
+        return {"hubs": [{
+            "id": hub.id, "name": hub.name, "host": hub.host,
+            "buttons": [{**b, "entity_id": tuya_ir.entity_id(hub, b["id"])} for b in app.state.ir_store.buttons(hub.id)],
+        } for hub in hubs], "home_assistant": app.state.ir_bridge is not None}
+
+    @app.post("/api/ir/hubs/{hub_id}/learn")
+    async def ir_learn(hub_id: str) -> dict[str, Any]:
+        """Study mode for up to 20 s: press the remote's button at the hub."""
+        hub = _ir_hub(hub_id)
+        try:
+            code = await asyncio.to_thread(tuya_ir.learn, hub)
+        except tuya_ir.IRError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except Exception as error:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"The IR hub did not answer: {error}") from error
+        return {"status": "learned", "code": code} if code else {"status": "timeout"}
+
+    @app.post("/api/ir/hubs/{hub_id}/buttons")
+    async def ir_save_button(hub_id: str, request: IRButtonRequest) -> dict[str, Any]:
+        hub = _ir_hub(hub_id)
+        try:
+            button = await asyncio.to_thread(app.state.ir_store.save, hub.id, request.name, request.code)
+        except tuya_ir.IRError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        await asyncio.to_thread(_ir_republish)
+        return {**button, "entity_id": tuya_ir.entity_id(hub, button["id"])}
+
+    @app.post("/api/ir/hubs/{hub_id}/buttons/{button_id}/send")
+    async def ir_send(hub_id: str, button_id: str) -> dict[str, Any]:
+        hub = _ir_hub(hub_id)
+        try:
+            code = app.state.ir_store.code(hub.id, button_id)
+            await asyncio.to_thread(tuya_ir.send, hub, code)
+        except tuya_ir.IRError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except Exception as error:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"The IR hub did not answer: {error}") from error
+        return {"status": "sent", "button": button_id}
+
+    @app.post("/api/ir/hubs/{hub_id}/test")
+    async def ir_test(hub_id: str, request: IRCodeRequest) -> dict[str, Any]:
+        """Send a just-learned code before it is saved, to check it works."""
+        hub = _ir_hub(hub_id)
+        try:
+            await asyncio.to_thread(tuya_ir.send, hub, request.code)
+        except tuya_ir.IRError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except Exception as error:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"The IR hub did not answer: {error}") from error
+        return {"status": "sent"}
+
+    @app.delete("/api/ir/hubs/{hub_id}/buttons/{button_id}")
+    async def ir_delete(hub_id: str, button_id: str) -> dict[str, Any]:
+        hub = _ir_hub(hub_id)
+        try:
+            await asyncio.to_thread(app.state.ir_store.delete, hub.id, button_id)
+        except tuya_ir.IRError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        await asyncio.to_thread(_ir_republish)
+        return {"deleted": button_id}
 
     @app.get("/api/automations/proposals")
     async def list_proposals() -> dict[str, Any]:
@@ -3637,6 +3732,26 @@ def _poll_environment_once(app: FastAPI) -> dict[str, Any]:
     app.state.environment_cache = {"payload": payload, "at": time.time()}
     _mirror_co2_to_home_assistant(app.state.config_path, payload["sensors"])
     return payload
+
+
+def _start_ir_bridge(app: FastAPI) -> "tuya_ir.MQTTBridge | None":
+    """Offer learned IR buttons to Home Assistant, when there is an IR hub."""
+    try:
+        if not tuya_ir.load_hubs(app.state.config_path):
+            return None
+        payload = yaml.safe_load(app.state.config_path.read_text(encoding="utf-8")) or {}
+        broker = payload.get("mqtt") or {}
+        user, password = tuya_ir.mqtt_credentials(app.state.zigbee_secret_path)
+        bridge = tuya_ir.MQTTBridge(
+            lambda: tuya_ir.load_hubs(app.state.config_path), app.state.ir_store,
+            str(broker.get("broker_host") or "127.0.0.1"), int(broker.get("broker_port") or 1883),
+            user, password)
+        bridge.start()
+        app.state.ir_bridge = bridge
+        return bridge
+    except Exception as error:  # noqa: BLE001 - IR is an extra; the dashboard starts regardless
+        _matter_log.info("IR bridge not started: %s", error)
+        return None
 
 
 async def _environment_poller(app: FastAPI) -> None:

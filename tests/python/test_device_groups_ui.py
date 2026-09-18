@@ -1095,6 +1095,7 @@ globalThis.activateView = (view) => { activateViewCalls.push(view); };
 globalThis.loadAmbientLights = async () => {};
 globalThis.loadHumidifiers = async () => {};
 globalThis.loadEnvironmentSensors = async () => {};
+globalThis.loadIRHubs = async () => {};
 let loadDeviceGroupsResolve;
 globalThis.loadDeviceGroups = () => new Promise((resolve) => { loadDeviceGroupsResolve = resolve; });
 

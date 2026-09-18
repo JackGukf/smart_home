@@ -109,3 +109,5 @@ house_digest.jsonl
 configs/esphome/secrets.yaml
 configs/esphome/.esphome/
 configs/esphome/*.bin
+# Learned IR codes, per hub - device data kept on the board.
+configs/ir_buttons.json

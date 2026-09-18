@@ -451,6 +451,24 @@
       </div>
     </div>
 
+    <!-- ── IR REMOTES VIEW ──
+         Tuya IR hubs, driven locally: each learned button is also a button
+         entity in Home Assistant, so scripts such as Movie mode can press it. -->
+    <div class="view-panel" data-view-panel="ir">
+      <div class="section-header">
+        <span class="section-title">IR remotes</span>
+        <div class="section-actions">
+          <button class="command device-back-btn" type="button" data-back-to-devices hidden>
+            <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
+          </button>
+          <span class="section-meta">Tuya IR hubs · local control</span>
+        </div>
+      </div>
+      <div class="ir-grid" id="irGrid">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+    </div>
+
     <!-- ── TUYA / SENSORS VIEW ── -->
     <div class="view-panel" data-view-panel="tuya">
       <div class="section-header">

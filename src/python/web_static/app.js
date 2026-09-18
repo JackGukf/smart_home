@@ -456,7 +456,12 @@ function renderDevicesOverview() {
   if (!grid) return;
   /* App tiles, as in Settings: the group's colour fills the icon square
      (device-group-tile-accent), then the name, how many, and a summary. */
-  grid.innerHTML = deviceGroupTileData().map((tile) => `
+  /* IR remotes is not a device group - its hubs are senders, not devices with
+     a state - so its tile follows the groups' rather than being one of them. */
+  const irTile = latestIRHubs.length
+    ? [{ view: "ir", label: "IR remotes", icon: "ti-device-remote", count: latestIRHubs.length, summary: irSummary() }]
+    : [];
+  grid.innerHTML = [...deviceGroupTileData(), ...irTile].map((tile) => `
     <button type="button" class="app-tile device-group-tile" data-goto-view="${escapeHtml(tile.view)}"${tile.color ? ` style="--group-color:${tile.color}"` : ""}>
       <span class="app-tile-count mono">${tile.count}</span>
       <span class="app-tile-icon device-group-tile-accent"><i class="ti ${escapeHtml(tile.icon)}" aria-hidden="true"></i></span>
@@ -1212,6 +1217,188 @@ async function loadHumidifiers() {
   const payload = await requestJson("/api/humidifiers");
   renderHumidifiers(payload);
 }
+
+/* ── IR remotes (Tuya IR hubs, local) ──
+   A hub sends the codes it is given; the codes are learned here, locally,
+   from the original remote - the Tuya cloud that held the Smart Life ones is
+   not something to depend on. Each learned button is also a button entity in
+   Home Assistant, so a script can press it. */
+let latestIRHubs = [];
+const irLearning = new Map();   // hub id -> { phase, code, error }
+const irMessages = new Map();   // hub id -> the last thing that went wrong
+
+/* An error belongs on the card it happened on, not in a log nobody sees. */
+function irMessage(hubId, text) {
+  irMessages.set(hubId, text);
+  logActivity(text, "warn");
+  renderIRHubs();
+}
+const IR_LEARN_SECONDS = 20;
+
+function irSummary() {
+  const buttons = latestIRHubs.reduce((sum, hub) => sum + hub.buttons.length, 0);
+  return `${buttons} button${buttons === 1 ? "" : "s"} learned`;
+}
+
+/* Names worth offering: the thing the hub is for, then the usual ones. */
+function irNameSuggestions(hub) {
+  const base = /cabinet/i.test(hub.name) ? ["Cabinet light off", "Cabinet light on", "Cabinet light"] : [];
+  return [...base, "Power", "On", "Off"].slice(0, 5);
+}
+
+function irHubCard(hub) {
+  const learning = irLearning.get(hub.id) || { phase: "idle" };
+  const buttons = hub.buttons.map((b) => `
+    <div class="ir-button">
+      <button type="button" class="ir-press" data-ir-send="${escapeHtml(b.id)}" data-ir-hub="${escapeHtml(hub.id)}" title="Send">
+        <i class="ti ti-player-play" aria-hidden="true"></i><span>${escapeHtml(b.name)}</span>
+      </button>
+      <button type="button" class="ir-delete" data-ir-delete="${escapeHtml(b.id)}" data-ir-hub="${escapeHtml(hub.id)}" title="Forget ${escapeHtml(b.name)}" aria-label="Forget ${escapeHtml(b.name)}"><i class="ti ti-x" aria-hidden="true"></i></button>
+      <code class="ir-entity" title="In Home Assistant">${escapeHtml(b.entity_id)}</code>
+    </div>`).join("");
+
+  let learn;
+  if (learning.phase === "waiting") {
+    learn = `<div class="ir-learn waiting"><i class="ti ti-antenna-bars-5" aria-hidden="true"></i>
+      <span>Point the remote at the hub and press the button now…<small>Listening for ${IR_LEARN_SECONDS} seconds</small></span></div>`;
+  } else if (learning.phase === "learned") {
+    learn = `<form class="ir-learn learned" data-ir-save="${escapeHtml(hub.id)}">
+      <span class="ir-learn-ok"><i class="ti ti-circle-check" aria-hidden="true"></i> Got it. Name the button:</span>
+      <input type="text" name="name" maxlength="40" required placeholder="e.g. Cabinet light off" value="${escapeHtml(learning.name || "")}">
+      <div class="ir-suggest">${irNameSuggestions(hub).map((n) => `<button type="button" data-ir-suggest="${escapeHtml(n)}">${escapeHtml(n)}</button>`).join("")}</div>
+      <div class="ir-learn-actions">
+        <button type="button" class="command" data-ir-test="${escapeHtml(hub.id)}"><i class="ti ti-player-play" aria-hidden="true"></i> Test</button>
+        <button type="submit" class="command primary"><i class="ti ti-device-floppy" aria-hidden="true"></i> Save</button>
+        <button type="button" class="command" data-ir-cancel="${escapeHtml(hub.id)}">Cancel</button>
+      </div>
+    </form>`;
+  } else {
+    const problem = learning.error || irMessages.get(hub.id);
+    const note = problem ? `<p class="ir-note warn">${escapeHtml(problem)}</p>` : "";
+    learn = `${note}<button type="button" class="command ir-learn-start" data-ir-learn="${escapeHtml(hub.id)}"><i class="ti ti-plus" aria-hidden="true"></i> Learn a button</button>`;
+  }
+
+  return `<article class="ir-card" data-ir-card="${escapeHtml(hub.id)}">
+    <div class="ir-card-head">
+      <span class="ir-card-icon"><i class="ti ti-device-remote" aria-hidden="true"></i></span>
+      <span><h3>${escapeHtml(hub.name)}</h3><small>Tuya Smart IR · ${escapeHtml(hub.host)}</small></span>
+    </div>
+    ${hub.buttons.length ? `<div class="ir-buttons">${buttons}</div>` : `<p class="ir-note">No buttons learned yet.</p>`}
+    ${learn}
+  </article>`;
+}
+
+function renderIRHubs() {
+  const grid = document.querySelector("#irGrid");
+  if (!grid) return;
+  grid.innerHTML = latestIRHubs.length
+    ? latestIRHubs.map(irHubCard).join("")
+    : `<div class="empty">No Tuya IR hubs with a local key are configured.</div>`;
+}
+
+async function loadIRHubs() {
+  const payload = await requestJson("/api/ir/hubs");
+  latestIRHubs = payload.hubs || [];
+  renderIRHubs();
+  renderDevicesOverview();
+}
+
+async function irLearn(hubId) {
+  irLearning.set(hubId, { phase: "waiting" });
+  renderIRHubs();
+  try {
+    const result = await requestJson(`/api/ir/hubs/${encodeURIComponent(hubId)}/learn`, { method: "POST" });
+    irLearning.set(hubId, result.status === "learned"
+      ? { phase: "learned", code: result.code }
+      : { phase: "idle", error: "Nothing was received. Hold the remote close to the hub and try again." });
+  } catch (error) {
+    irLearning.set(hubId, { phase: "idle", error: apiErrorDetail(error) });
+  }
+  renderIRHubs();
+}
+
+document.addEventListener("click", async (event) => {
+  const learn = event.target.closest("[data-ir-learn]");
+  if (learn) { irMessages.delete(learn.dataset.irLearn); irLearn(learn.dataset.irLearn); return; }
+
+  const suggest = event.target.closest("[data-ir-suggest]");
+  if (suggest) {
+    const input = suggest.closest("form")?.querySelector('input[name="name"]');
+    if (input) input.value = suggest.dataset.irSuggest;
+    return;
+  }
+
+  const cancel = event.target.closest("[data-ir-cancel]");
+  if (cancel) { irLearning.delete(cancel.dataset.irCancel); renderIRHubs(); return; }
+
+  const test = event.target.closest("[data-ir-test]");
+  if (test) {
+    const state = irLearning.get(test.dataset.irTest);
+    if (!state?.code) return;
+    test.disabled = true;
+    try {
+      await requestJson(`/api/ir/hubs/${encodeURIComponent(test.dataset.irTest)}/test`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: state.code }),
+      });
+    } catch (error) {
+      logActivity(apiErrorDetail(error), "warn");
+      const form = test.closest("form");
+      form?.querySelector(".ir-learn-ok")?.replaceChildren(document.createTextNode(`Test failed: ${apiErrorDetail(error)}`));
+    }
+    test.disabled = false;
+    return;
+  }
+
+  const send = event.target.closest("[data-ir-send]");
+  if (send) {
+    send.classList.add("sending");
+    try {
+      await requestJson(`/api/ir/hubs/${encodeURIComponent(send.dataset.irHub)}/buttons/${encodeURIComponent(send.dataset.irSend)}/send`, { method: "POST" });
+      irMessages.delete(send.dataset.irHub);
+      send.classList.remove("sending");
+      send.classList.add("sent");
+      setTimeout(() => send.classList.remove("sent"), 900);
+    } catch (error) {
+      send.classList.remove("sending");
+      irMessage(send.dataset.irHub, apiErrorDetail(error));
+    }
+    return;
+  }
+
+  const forget = event.target.closest("[data-ir-delete]");
+  if (forget) {
+    const name = forget.closest(".ir-button")?.querySelector(".ir-press span")?.textContent || "this button";
+    if (!window.confirm(`Forget "${name}"? Anything in Home Assistant that presses it will stop working.`)) return;
+    try {
+      await requestJson(`/api/ir/hubs/${encodeURIComponent(forget.dataset.irHub)}/buttons/${encodeURIComponent(forget.dataset.irDelete)}`, { method: "DELETE" });
+    } catch (error) {
+      irMessages.set(forget.dataset.irHub, apiErrorDetail(error));
+    }
+    loadIRHubs().catch((err) => console.error(err));
+  }
+});
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-ir-save]");
+  if (!form) return;
+  event.preventDefault();
+  const hubId = form.dataset.irSave;
+  const state = irLearning.get(hubId);
+  const name = form.querySelector('input[name="name"]').value.trim();
+  if (!state?.code || !name) return;
+  try {
+    await requestJson(`/api/ir/hubs/${encodeURIComponent(hubId)}/buttons`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, code: state.code }),
+    });
+    irLearning.delete(hubId);
+    await loadIRHubs();
+  } catch (error) {
+    irLearning.set(hubId, { ...state, name });
+    renderIRHubs();
+    const ok = document.querySelector(`[data-ir-save="${CSS.escape(hubId)}"] .ir-learn-ok`);
+    if (ok) ok.textContent = `Not saved: ${apiErrorDetail(error)}`;
+  }
+});
 
 /* ── Environment sensors (Govee cloud thermo-hygrometers) ── */
 async function loadEnvironmentSensors() {
@@ -8060,6 +8247,9 @@ function activateView(viewName) {
   if (viewName === "environment") {
     loadEnvironmentSensors().catch((error) => console.error(error));
   }
+  if (viewName === "ir") {
+    loadIRHubs().catch((error) => console.error(error));
+  }
   if (viewName === "media" || viewName === "music" || viewName === "bluetooth") {
     refreshBluetooth().catch((error) => console.error(error));
   }
@@ -9540,6 +9730,7 @@ function setYoutubeCovering(on) {
 const PAGE_PARENTS = {
   theme: "settings", startup: "settings", news: "settings", about: "settings", homecards: "settings",
   youtube: "media", music: "media",
+  ir: "devices",
 };
 
 async function renderSettingsApps() {
@@ -9614,6 +9805,7 @@ function populateDefaultViewSelect(select) {
   loadAmbientLights().catch((error) => console.error(error));
   loadHumidifiers().catch((error) => console.error(error));
   loadEnvironmentSensors().catch((error) => console.error(error));
+  loadIRHubs().catch((error) => console.error(error));
 
   // Once the group nav is synced, a custom group's <li> exists: rebuild the
   // dropdown so it lists that group, and re-resolve the saved default_view --
