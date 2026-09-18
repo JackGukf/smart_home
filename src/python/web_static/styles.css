@@ -6557,6 +6557,7 @@ header > .header-right { flex-shrink: 0; }
 .learn-item.learned { opacity: 0.35; }
 .learn-item-what { display: flex; align-items: center; min-width: 0; font-size: 12.5px; }
 .learn-item-what > i { flex-shrink: 0; margin-right: 8px; font-size: 16px; color: var(--kind-camera); }
+.learn-item-what > i.ti-door { color: var(--kind-door); }
 .learn-item-what span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .learn-item-what small { display: block; font-size: 10.5px; color: var(--muted); }
 .learn-item-actions { display: flex; flex-shrink: 0; margin-left: 8px; }
