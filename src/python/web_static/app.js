@@ -4220,23 +4220,21 @@ function renderAlarmSection(payload = latestAlarmData) {
     `<button class="house-arm${mode === "disarmed" ? "" : " primary"}" type="button" data-arm-mode="${mode}">
        <i class="ti ${icon}" aria-hidden="true"></i>${label}</button>`).join("");
 
+  /* One row of small buttons: the room's sensors are what the card is for. */
   const haControls = (payload?.controls || []).map((control) => {
     const isOn = control.state === "on";
-    const action = isOn ? "off" : "on";
-    const button = control.controllable
-      ? `<button class="house-control-btn" data-ha-command="${action}" data-ha-entity-id="${escapeHtml(control.entity_id)}">${isOn ? "Turn off" : "Turn on"}</button>`
-      : `<span class="camera-note">${escapeHtml(formatStatus(control.state || "unknown"))}</span>`;
-    return `<div class="house-control"><span>${escapeHtml(control.name)}<small>${escapeHtml(formatStatus(control.state || "unknown"))}</small></span>${button}</div>`;
+    const label = `${shortControlName(control.name)} · ${formatStatus(control.state || "unknown").toLowerCase()}`;
+    return control.controllable
+      ? `<button class="house-chip${isOn ? " on" : ""}" type="button" data-ha-command="${isOn ? "off" : "on"}"
+                 data-ha-entity-id="${escapeHtml(control.entity_id)}" title="${escapeHtml(`${control.name}: turn ${isOn ? "off" : "on"}`)}">${escapeHtml(label)}</button>`
+      : `<span class="house-chip muted" title="${escapeHtml(control.name)}">${escapeHtml(label)}</span>`;
   }).join("");
 
   const controlsHtml = `
     <div class="house-controls">
       ${haControls}
-      <div class="house-control">
-        <span>Siren<small>Sounds for two seconds</small></span>
-        <button class="house-control-btn ${sirenTesting ? "testing" : ""}" id="sirenTestBtn">${sirenTesting ? "Testing…" : "Test"}</button>
-      </div>
-      <button class="sos-btn" id="sosTriggerBtn">SOS — TRIGGER ALARM</button>
+      <button class="house-chip ${sirenTesting ? "testing" : ""}" type="button" id="sirenTestBtn" title="Sounds for two seconds">${sirenTesting ? "Testing…" : "Test siren"}</button>
+      <button class="house-chip sos" type="button" id="sosTriggerBtn" title="Sound the alarm now">SOS</button>
     </div>`;
 
   renderHomeAlarmCard(payload);
@@ -4278,9 +4276,89 @@ function renderAlarmSection(payload = latestAlarmData) {
           ${loose.length ? `<button class="house-loose" type="button" data-house-room="Not placed">${loose.length} not in a room</button>` : ""}
         </div>
       </div>
-      <aside class="house-detail">${houseDetailHtml(selectedHouseRoom, detailZones, controlsHtml)}</aside>
+      <div class="house-side">
+        <aside class="house-detail">${houseDetailHtml(selectedHouseRoom, detailZones, controlsHtml)}</aside>
+        <section class="house-activity" id="houseActivity" aria-label="Recent activity">${houseActivityHtml()}</section>
+      </div>
     </div>`;
 }
+
+/* ── Security activity: the house memory's recent events and today's counts ──
+   One request feeds two cards: Recent activity on the Security view and Today
+   at a glance on Status. A sensor firing again within ten minutes is folded
+   into one line by the board. */
+const SECURITY_ACTIVITY_MS = 60_000;
+const ACTIVITY_WORDS = { camera: "person", door: "opened", motion: "motion", vibration: "vibration", safety: "alert" };
+let latestSecurityActivity = null;
+
+function shortControlName(name) {
+  return String(name || "").replace(/^alarm system\s+/i, "").replace(/^\w/, (c) => c.toUpperCase());
+}
+
+function activityTime(ts) {
+  const at = new Date(ts * 1000);
+  return Number.isNaN(at.getTime()) ? "" : at.toTimeString().slice(0, 5);
+}
+
+function houseActivityHtml(data = latestSecurityActivity) {
+  const head = `<div class="house-activity-head"><h3>Recent activity</h3>${
+    data?.today ? `<small>${data.today.doors + data.today.people + data.today.motion + data.today.other} today</small>` : ""}</div>`;
+  if (!data) return `${head}<p class="house-activity-empty">Loading…</p>`;
+  if (!data.available) return `${head}<p class="house-activity-empty">The house memory is not running yet.</p>`;
+  const lines = data.recent || [];
+  if (!lines.length) return `${head}<p class="house-activity-empty">Nothing in the last day.</p>`;
+  return head + `<ol class="house-activity-list">${lines.map((line) => {
+    const what = ACTIVITY_WORDS[line.kind] || line.kind;
+    const more = line.count > 1 ? `, ${line.count} times since ${activityTime(line.first_ts)}` : "";
+    const room = zoneRoom({ id: line.entity_id, name: line.name });
+    return `<li><button type="button" class="house-activity-line kind-${escapeHtml(line.kind)}"${room ? ` data-house-room="${escapeHtml(room)}"` : ""}>
+      <time>${activityTime(line.ts)}</time><i aria-hidden="true"></i>
+      <span>${escapeHtml(shortZoneName(line.name))}<small> · ${escapeHtml(what + more)}</small></span></button></li>`;
+  }).join("")}</ol>`;
+}
+
+/* Today at a glance, on Status: three counts and the day so far, by hour. */
+function statusTodayHtml(data = latestSecurityActivity) {
+  const today = data?.today;
+  if (!data?.available || !today) {
+    return `<div class="home-panel-head"><span class="panel-title"><i class="ti ti-calendar-stats"></i> Today at a glance</span></div>
+      <p class="st-empty">${data && !data.available ? "The house memory is not running yet." : "Loading…"}</p>`;
+  }
+  const hours = today.hours || [];
+  const max = Math.max(1, ...hours);
+  const stat = (value, label) => `<div class="today-stat"><b class="mono">${value}</b><span>${label}</span></div>`;
+  return `<div class="home-panel-head"><span class="panel-title"><i class="ti ti-calendar-stats"></i> Today at a glance</span><span class="section-meta">since midnight</span></div>
+    <div class="today-body">
+      <div class="today-stats">${stat(today.doors, `door${today.doors === 1 ? "" : "s"} opened`)}${stat(today.people, "people seen")}${stat(today.motion, "motion")}</div>
+      <div class="today-hours" role="img" aria-label="Security events per hour today">
+        ${hours.map((value, hour) => `<i class="${hour === today.hour_now ? "now" : hour > today.hour_now ? "later" : ""}"
+          style="height:${hour > today.hour_now ? 0 : Math.max(value ? 6 : 2, (value / max) * 100).toFixed(1)}%"
+          title="${String(hour).padStart(2, "0")}:00 · ${value} event${value === 1 ? "" : "s"}"></i>`).join("")}
+        <span class="today-axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></span>
+      </div>
+    </div>`;
+}
+
+function renderSecurityActivity() {
+  const activity = document.querySelector("#houseActivity");
+  if (activity) activity.innerHTML = houseActivityHtml();
+  const today = document.querySelector("#statusToday");
+  if (today) today.innerHTML = statusTodayHtml();
+}
+
+async function loadSecurityActivity() {
+  try {
+    latestSecurityActivity = await requestJson(`/api/memory/security?tz=${encodeURIComponent(browserTimeZone())}`);
+  } catch (error) {
+    console.error(error);
+  }
+  renderSecurityActivity();
+}
+
+setInterval(() => {
+  if (document.hidden || !document.querySelector('.view-panel.active[data-view-panel="alarm"], .view-panel.active[data-view-panel="status"]')) return;
+  loadSecurityActivity();
+}, SECURITY_ACTIVITY_MS);
 
 /* Choosing a room only changes what the panel beside the house lists. */
 document.addEventListener("click", (event) => {
@@ -8251,6 +8329,10 @@ function activateView(viewName) {
     loadHouseDigest().catch((error) => console.error(error));
     loadStatusOverview();
     loadHouseLearning();
+    loadSecurityActivity();
+  }
+  if (viewName === "alarm") {
+    loadSecurityActivity();
   }
   if (viewName === "zigbee") {
     loadZigbeeFrame().catch((error) => console.error(error));
@@ -10116,6 +10198,8 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (event.target.closest("#sosTriggerBtn")) {
+    // It sits in a row of small buttons now; a stray tap must not sound the siren.
+    if (!window.confirm("Trigger the alarm now? The siren will sound.")) return;
     triggerSOS();
     return;
   }

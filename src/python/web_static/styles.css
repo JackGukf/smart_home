@@ -2941,20 +2941,6 @@ aside {
   color: #1A0F0D;
 }
 
-.sos-btn {
-  width: 100%;
-  border-radius: 12px;
-  padding: 16px;
-  font-size: 14px;
-  letter-spacing: 0.06em;
-  font-weight: 700;
-  border: none;
-  cursor: pointer;
-  background: var(--t-alert);
-  color: #1A0F0D;
-  box-shadow: 0 6px 18px -6px rgba(255,138,122,0.55);
-}
-
 /* sidebar icon colour for alarm */
 .room-item[data-view="alarm"] { --group-color: var(--red); }
 .room-item[data-view="media"] { --group-color: var(--purple); }
@@ -4111,12 +4097,17 @@ aside {
 .house-arm:hover { border-color: var(--t-accent); }
 .house-arm i { font-size: 15px; }
 
+/* The picture takes the height the screen has left, not the width: on the wall
+   panel (1280 x 800) the whole view fits without scrolling. Its column is at
+   most as wide as that height allows; the side column takes the rest. */
 .house-stage {
+  --house-fit: calc((100vh - 292px) * 1.0942);
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(250px, 1fr);
-  gap: 18px;
-  align-items: start;
+  grid-template-columns: minmax(0, var(--house-fit)) minmax(280px, 1fr);
+  gap: 16px;
+  align-items: stretch;
 }
+.house-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
 
 .house-scene {
   position: relative;
@@ -4261,9 +4252,7 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
 .house-loose:hover { color: var(--t-text); border-color: var(--t-accent); }
 
 .house-detail {
-  position: sticky;
-  top: 16px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
@@ -4288,26 +4277,90 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
 .house-detail-row.unknown .house-detail-name, .house-detail-row.unknown .house-detail-state { color: var(--muted); }
 .house-detail-age { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 8px; }
 
-.house-controls { display: grid; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-.house-control { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
-.house-control small { display: block; font-size: 11.5px; color: var(--t-text-dim); }
-.house-control-btn {
-  padding: 5px 11px;
-  border-radius: var(--radius-sm);
+.house-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.house-chip {
+  padding: 5px 10px;
+  border-radius: 8px;
   border: 1px solid var(--border-hover);
   background: var(--card-2);
   color: var(--t-text);
   font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
 }
-.house-control-btn:hover { border-color: var(--t-accent); }
-.house-control-btn.testing { color: var(--amber); border-color: rgba(251, 191, 36, 0.5); }
+.house-chip:hover { border-color: var(--t-accent); }
+.house-chip.on { border-color: rgba(52, 211, 153, 0.45); }
+.house-chip.muted { cursor: default; color: var(--t-text-dim); font-weight: 400; }
+.house-chip.testing { color: var(--amber); border-color: rgba(251, 191, 36, 0.5); }
+.house-chip.sos { margin-left: auto; border: 0; background: var(--red); color: #2a0707; font-weight: 700; letter-spacing: 0.04em; }
+.house-chip.sos:hover { background: #ff9a9a; }
+
+/* Recent activity: fills the side column under the room, scrolling inside. */
+.house-activity {
+  flex: 1 1 0;
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+}
+.house-activity-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.house-activity-head h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.house-activity-head small { margin-left: auto; font-size: 11px; color: var(--muted); }
+.house-activity-empty { margin: 8px 0 0; font-size: 12.5px; color: var(--t-text-dim); }
+.house-activity-list { margin: 0; padding: 0; list-style: none; overflow-y: auto; min-height: 0; }
+.house-activity-line {
+  display: grid;
+  grid-template-columns: 40px 12px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 5px 2px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: var(--t-text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.house-activity-list li:first-child .house-activity-line { border-top: 0; }
+.house-activity-line:not([data-house-room]) { cursor: default; }
+.house-activity-line:hover[data-house-room] { background: rgba(255, 255, 255, 0.03); }
+.house-activity-line time { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.house-activity-line i { width: 8px; height: 8px; border-radius: 50%; justify-self: center; background: var(--kind-motion); }
+.house-activity-line.kind-camera i { background: var(--kind-camera); }
+.house-activity-line.kind-door i { background: var(--red); }
+.house-activity-line.kind-vibration i { background: var(--amber); }
+.house-activity-line.kind-safety i { background: var(--kind-door); }
+.house-activity-line span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.house-activity-line small { color: var(--t-text-dim); font-size: 11.5px; }
+
+/* Today at a glance, on Status: counts beside the day's columns. */
+.status-today { margin-bottom: 14px; }
+.today-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 20px; align-items: end; }
+.today-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.today-stat { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--card-2); }
+.today-stat b { display: block; font-size: 22px; font-weight: 600; line-height: 1.1; }
+.today-stat span { font-size: 11px; color: var(--t-text-dim); }
+.today-hours { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 84px; padding-bottom: 14px; }
+.today-hours i { flex: 1 1 0; min-height: 0; border-radius: 2px 2px 0 0; background: var(--kind-motion); opacity: 0.85; }
+.today-hours i.now { background: var(--amber); opacity: 1; }
+.today-hours i.later { background: transparent; }
+.today-axis { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9px; color: var(--muted); }
+@media (max-width: 739px) {
+  .today-body { grid-template-columns: minmax(0, 1fr); }
+}
 
 @media (max-width: 900px) {
   .house-stage { grid-template-columns: minmax(0, 1fr); }
-  .house-detail { position: static; }
+  .house-activity { flex: none; max-height: 360px; }
   .house-pip { width: 16px; height: 16px; }
   .house-pip svg { width: 11px; height: 11px; }
 }

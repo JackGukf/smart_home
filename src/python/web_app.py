@@ -1273,6 +1273,12 @@ def create_app(
         zone = tz if MEMORY_TZ.fullmatch(tz) else "UTC"
         return await asyncio.to_thread(app.state.memory_service.summary, zone)
 
+    @app.get("/api/memory/security")
+    async def memory_security(tz: str = "UTC") -> dict[str, Any]:
+        """The recent security events, folded into moments, and today's counts."""
+        zone = tz if MEMORY_TZ.fullmatch(tz) else "UTC"
+        return await asyncio.to_thread(app.state.memory_service.security, zone)
+
     @app.post("/api/memory/feedback")
     async def memory_feedback(request: MemoryFeedbackRequest) -> dict[str, Any]:
         """Your label on one event: what the Phase 1 models will learn from."""

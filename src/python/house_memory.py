@@ -39,6 +39,7 @@ WEEKS_NEEDED = 4
 DAY_COVERAGE_HOURS = 20
 HEARTBEAT_STALE_S = 180
 SUMMARY_CACHE_S = 60
+SECURITY_CACHE_S = 20
 
 # Domains whose state changes are not the house doing anything: a camera
 # entity "changes" every time its snapshot token rotates, TTS and
@@ -368,6 +369,86 @@ class HouseMemory:
         return out
 
 
+# ── Security activity: what happened, for the Security and Status views ──────
+
+SECURITY_DOOR = frozenset({"door", "window", "garage_door", "opening"})
+SECURITY_MOTION = frozenset({"motion", "occupancy", "presence"})
+SECURITY_SAFETY = frozenset({"moisture", "smoke", "gas", "carbon_monoxide"})
+# One sensor firing again within this long is the same moment, told once.
+BURST_S = 10 * 60
+RECENT_LIMIT = 12
+
+
+def security_kind(entity_id: str, device_class: str | None) -> str | None:
+    if entity_id.endswith("_npu_person"):
+        return "camera"
+    if device_class in SECURITY_DOOR:
+        return "door"
+    if device_class == "vibration":
+        return "vibration"
+    if device_class in SECURITY_SAFETY:
+        return "safety"
+    if device_class in SECURITY_MOTION:
+        return "motion"
+    return None
+
+
+def fold_bursts(events: list[dict[str, Any]], window: float = BURST_S) -> list[dict[str, Any]]:
+    """Newest first. A sensor that fires again within `window` of its previous
+    firing joins that line: "Office camera, person, 4 times since 09:19"."""
+    lines: list[dict[str, Any]] = []
+    open_line: dict[str, dict[str, Any]] = {}
+    for event in events:  # newest first
+        line = open_line.get(event["entity_id"])
+        if line is not None and line["first_ts"] - event["ts"] <= window:
+            line["count"] += 1
+            line["first_ts"] = event["ts"]
+            continue
+        line = {**event, "count": 1, "first_ts": event["ts"]}
+        lines.append(line)
+        open_line[event["entity_id"]] = line
+    return lines
+
+
+def security_activity(conn: sqlite3.Connection, tz_name: str, now: float,
+                      limit: int = RECENT_LIMIT) -> dict[str, Any]:
+    """The recent security events, folded, and today's counts since local midnight."""
+    try:
+        tz = ZoneInfo(tz_name)
+    except (KeyError, ValueError):
+        tz = ZoneInfo("UTC")
+    midnight = datetime.fromtimestamp(now, tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    since = min(midnight.timestamp(), now - 86400)
+    rows = conn.execute(
+        """SELECT e.id, e.ts, e.entity_id, n.name, n.device_class
+           FROM events e LEFT JOIN entities n ON n.entity_id = e.entity_id
+           WHERE e.ts >= ? AND e.entity_id LIKE 'binary_sensor.%'
+             AND e.state = 'on' AND e.old_state = 'off'
+           ORDER BY e.ts DESC""", (since,)).fetchall()
+    events = []
+    for event_id, ts, entity_id, name, device_class in rows:
+        kind = security_kind(entity_id, device_class)
+        if kind:
+            events.append({"id": event_id, "ts": ts, "entity_id": entity_id,
+                           "name": name or entity_id, "kind": kind})
+
+    today = midnight.timestamp()
+    hours = [0] * 24
+    counts = {"doors": 0, "people": 0, "motion": 0, "other": 0}
+    for event in events:
+        if event["ts"] < today:
+            continue
+        hours[datetime.fromtimestamp(event["ts"], tz).hour] += 1
+        key = {"door": "doors", "camera": "people", "motion": "motion"}.get(event["kind"], "other")
+        counts[key] += 1
+    return {
+        "recent": fold_bursts(events)[:limit],
+        "today": {**counts, "hours": hours, "hour_now": datetime.fromtimestamp(now, tz).hour,
+                  "since": today},
+        "time_zone": str(tz),
+    }
+
+
 class SummaryCache:
     """The dashboard's view of the store: read-only, cached briefly.
 
@@ -380,6 +461,7 @@ class SummaryCache:
         self._clock = clock
         self._memory: HouseMemory | None = None
         self._cache: tuple[float, str, dict[str, Any]] | None = None
+        self._security_cache: tuple[float, str, dict[str, Any]] | None = None
         self._lock = threading.Lock()
 
     def _store(self) -> HouseMemory | None:
@@ -401,6 +483,22 @@ class SummaryCache:
             with store._lock:
                 result["learning"] = house_learning.learning_summary(store._conn, now)
             self._cache = (now, tz_name, result)
+            return result
+
+    def security(self, tz_name: str) -> dict[str, Any]:
+        """Recent security events and today's counts, cached briefly: every open
+        Security and Status view polls this."""
+        now = self._clock()
+        with self._lock:
+            hit = self._security_cache
+            if hit and hit[1] == tz_name and now - hit[0] < SECURITY_CACHE_S:
+                return hit[2]
+            store = self._store()
+            if store is None:
+                return {"available": False}
+            with store._lock:
+                result = {"available": True, **security_activity(store._conn, tz_name, now)}
+            self._security_cache = (now, tz_name, result)
             return result
 
     def label(self, event_id: int, label: str, note: str | None = None) -> dict[str, Any]:
