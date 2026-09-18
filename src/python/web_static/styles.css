@@ -4202,9 +4202,16 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
 .house-cover-status { left: 0.8%; top: 1%; width: 16.2%; height: 33.4%; }
 .house-cover-status.breached b { color: var(--amber); }
 .house-cover-hint { margin-top: auto; font-size: 10.5px; color: var(--muted); }
+.house-cover-row {
+  display: flex; justify-content: space-between; gap: 6px;
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.house-cover-row span:last-child { color: var(--t-text); font-weight: 600; }
+.house-cover-row.breached span:last-child { color: var(--amber); }
 .house-cover-latest { left: 75.7%; top: 88.5%; width: 23.6%; height: 8.6%; justify-content: center; }
 @container (max-width: 640px) {
   .house-cover { padding: 6px 8px; font-size: 10px; }
+  .house-cover-row { margin-top: 3px; padding-top: 3px; }
   .house-cover b { font-size: 12px; }
   .house-cover-hint { display: none; }
   .house-label { font-size: 10px; padding: 3px 6px; }
@@ -4213,7 +4220,8 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
 }
 @container (max-width: 420px) {
   .house-cover { padding: 4px 5px; font-size: 8.5px; }
-  .house-cover b { font-size: 10px; }
+  .house-cover b { font-size: 9px; }
+  .house-cover-row { display: none; }
   .house-cover-latest span { display: none; }
   .house-label { font-size: 8.5px; padding: 2px 4px; }
   .house-pin-empty { font-size: 8.5px; padding: 3px 4px; }

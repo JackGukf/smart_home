@@ -4044,11 +4044,11 @@ const HOUSE_ROOMS = [
      one-sensor pin still hides all of it. Where it paints a name that is not
      ours ("Bedroom 1"), cover puts ours over it. named: the picture has no
      label there, so the pin carries the room's name. */
-  { name: "Master Bedroom", x: 30.72, y: 15.60, w: 6.9, cover: [29.88, 27.36] },
-  { name: "North Bedroom",  x: 47.10, y: 15.60, w: 6.9, cover: [46.95, 25.69] },
-  { name: "Hallway",        x: 50.30, y: 32.94, named: true },
-  { name: "South Bedroom",  x: 70.43, y: 15.60, w: 6.9, cover: [71.04, 25.69] },
-  { name: "Bathroom",       x: 58.69, y: 20.85, named: true },
+  { name: "Master Bedroom", x: 30.72, y: 15.60, w: 6.9, cover: [29.88, 27.36] , floor: "up" },
+  { name: "North Bedroom",  x: 47.10, y: 15.60, w: 6.9, cover: [46.95, 25.69] , floor: "up" },
+  { name: "Hallway",        x: 50.30, y: 32.94, named: true , floor: "up" },
+  { name: "South Bedroom",  x: 70.43, y: 15.60, w: 6.9, cover: [71.04, 25.69] , floor: "up" },
+  { name: "Bathroom",       x: 58.69, y: 20.85, named: true , floor: "up" },
   { name: "Garage",         x: 19.05, y: 49.79, w: 9.4 },
   { name: "Office",         x: 41.01, y: 63.72, w: 7.1 },
   { name: "Living Room",    x: 73.32, y: 63.39, w: 9.1 },
@@ -4139,6 +4139,17 @@ function houseRoomHtml(room, zones) {
       }).join("")}
       ${room.named ? `<span class="house-pin-name">${escapeHtml(room.label || room.name)}</span>` : ""}
     </button>`;
+}
+
+/* The corner the picture fills with a legend: how each floor is, in a line. */
+function houseFloorLines(rooms) {
+  const floors = [["Upstairs", (r) => r.floor === "up"], ["Ground floor", (r) => !r.floor && !r.outdoor], ["Outside", (r) => r.outdoor]];
+  return floors.map(([label, test]) => {
+    const zones = HOUSE_ROOMS.filter(test).flatMap((r) => rooms.get(r.name) || []);
+    const hot = zones.filter(zoneIsBreached).length;
+    return `<span class="house-cover-row${hot ? " breached" : ""}"><span>${label}</span><span>${
+      !zones.length ? "–" : hot ? `${hot} active` : "quiet"}</span></span>`;
+  }).join("");
 }
 
 /* What happened last, anywhere: the newest reading, for the picture's corner. */
@@ -4252,6 +4263,7 @@ function renderAlarmSection(payload = latestAlarmData) {
           <div class="house-cover house-cover-status${breached ? " breached" : ""}">
             <b>${escapeHtml(statusText)}</b>
             <span>${breached ? `${breached} active now` : `all ${zones.length} normal`}</span>
+            ${houseFloorLines(rooms)}
             <span class="house-cover-hint">Tap a pin for its sensors</span>
           </div>
           <div class="house-cover house-cover-latest">${latest
