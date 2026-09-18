@@ -4,8 +4,10 @@ Description=Write the morning digest at 04:00
 [Timer]
 # 04:00 is the quietest hour on this board: nothing else wants the eight big
 # cores, and the digest covers the whole of the preceding day by the time
-# anybody is awake to read it.
-OnCalendar=*-*-* 04:00:00
+# anybody is awake to read it. In the house's time zone: the board runs on
+# UTC, where 04:00 is 21:00 here - the "morning" digest arrived in the evening
+# and covered 9pm to 9pm.
+OnCalendar=*-*-* 04:00:00 America/Vancouver
 # The board is not always up at 04:00. Without this a missed run is simply
 # lost and there is no digest that morning.
 Persistent=true

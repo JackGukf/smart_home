@@ -373,7 +373,8 @@ def test_house_digest_units_run_the_project_interpreter_on_a_schedule() -> None:
 def test_house_digest_timer_survives_a_reboot_and_a_logout() -> None:
     timer = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "house-digest.timer").read_text(encoding="utf-8")
 
-    assert "OnCalendar=*-*-* 04:00:00" in timer
+    # House time, not the board's UTC, where 04:00 is the evening before.
+    assert "OnCalendar=*-*-* 04:00:00 America/Vancouver" in timer
     # Without Persistent the digest is simply missing on any morning the board
     # happened to be off at 04:00.
     assert "Persistent=true" in timer
