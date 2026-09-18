@@ -6828,9 +6828,12 @@ header > .header-right { flex-shrink: 0; }
 
    Plain media queries, not container queries: Safari before iPadOS 16 ignores
    @container entirely, so a fix built on it changed nothing on an older iPad.
-   In this band the cards are always this narrow, so the window's width says
-   what the card's would. Phones and the wall panel keep their own rules. */
-@media (min-width: 740px) and (max-width: 1100px) {
+   In these bands the cards are always this narrow, so the window's width says
+   what the card's would: the two-column Home (740-1100px), and the
+   three-column one on a 13-inch iPad in landscape (1366 x 1024), whose cards
+   are about 354px. Phones and the wall panel keep their own rules. */
+@media (min-width: 740px) and (max-width: 1100px),
+       (min-width: 1101px) and (max-width: 1400px) and (min-height: 821px) {
   /* The clock and today's weather stay on one line, smaller, above the week. */
   #homeWeatherPanel .home-weather-body { flex-wrap: nowrap; align-items: center; }
   #homeWeatherPanel .home-weather-clock { margin-right: 10px; }
@@ -6853,7 +6856,8 @@ header > .header-right { flex-shrink: 0; }
    Humidity is in the charts right below. The columns share the width, so a
    long caption ends in an ellipsis rather than running under the next one. */
 @media (min-width: 740px) and (max-width: 1100px),
-       (min-width: 1101px) and (max-height: 820px) {
+       (min-width: 1101px) and (max-height: 820px),
+       (min-width: 1101px) and (max-width: 1400px) and (min-height: 821px) {
   #homeSensorsPanel .tc-hum, #homeSensorsPanel .tc-out-hum { display: none; }
   #homeSensorsPanel .tc-hero, #homeSensorsPanel .tc-hero.has-co2 {
     grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr);
@@ -6861,6 +6865,10 @@ header > .header-right { flex-shrink: 0; }
   }
   #homeSensorsPanel .tc-hero > * { min-width: 0; }
 }
-@media (min-width: 740px) and (max-width: 1100px) {
+@media (min-width: 740px) and (max-width: 1100px),
+       (min-width: 1101px) and (max-width: 1400px) and (min-height: 821px) {
   #homeSensorsPanel .tc-big { font-size: 28px; }
+  /* Two columns of sensor kinds, as on the two-column Home: one column in a
+     short card leaves each kind its heading and half a chip. */
+  #homeAlarmBody .alarm-kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

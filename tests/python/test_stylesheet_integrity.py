@@ -76,11 +76,13 @@ def test_the_ipad_home_fixes_work_without_container_queries() -> None:
     overlapping cards was built on it and changed nothing on an older iPad."""
     css = STYLES.read_text(encoding="utf-8")
     start = css.index("/* ── Cards narrower than their design ──")
-    block = css[start:css.index("#homeSensorsPanel .tc-big { font-size: 28px; }", start)]
+    block = css[start:css.index("#homeAlarmBody .alarm-kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); }", start)]
     rules = _without_comments_and_strings(block)
     assert "@container" not in rules and "cqh" not in rules and "cqw" not in rules
     for selector in ("#homeWeatherPanel .home-weather-body", "#homeAlarmBody .alarm-arm span", "#homeSensorsPanel .tc-hum"):
         assert selector in rules
+    # The 13-inch iPad in landscape is three columns of ~354px cards: covered too.
+    assert rules.count("(min-width: 1101px) and (max-width: 1400px) and (min-height: 821px)") >= 3
 
 
 def test_container_units_have_a_fallback_for_older_safari() -> None:
