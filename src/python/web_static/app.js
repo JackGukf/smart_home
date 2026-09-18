@@ -8775,7 +8775,7 @@ function learnRoutineHtml(routine) {
   if (!Array.isArray(routine) || routine.length !== 7) return `<p class="learn-note">No routine yet.</p>`;
   const rows = routine.map((hours, day) => `
     <span class="learn-heat-day">${LEARN_WEEKDAYS[day]}</span>
-    <span class="learn-heat-row">${hours.map((p, hour) => `<i style="opacity:${(0.08 + 0.92 * Math.max(0, Math.min(1, p))).toFixed(2)}" title="${LEARN_WEEKDAYS[day]} ${String(hour).padStart(2, "0")}:00 · active ${Math.round(p * 100)}% of the time"></i>`).join("")}</span>`).join("");
+    <span class="learn-heat-row">${hours.map((p, hour) => `<i style="opacity:${(0.06 + 0.94 * Math.pow(Math.max(0, Math.min(1, p)), 2)).toFixed(2)}" title="${LEARN_WEEKDAYS[day]} ${String(hour).padStart(2, "0")}:00 · active ${Math.round(p * 100)}% of the time"></i>`).join("")}</span>`).join("");
   const axis = [0, 6, 12, 18].map((h) => `<span style="left:${((h / 24) * 100).toFixed(2)}%">${String(h).padStart(2, "0")}</span>`).join("");
   return `
     <div class="learn-sub">When the house is usually active</div>
@@ -8811,15 +8811,38 @@ function learnScoreHtml(learning) {
     <p class="learn-note">${escapeHtml(stage)}${when ? ` · trained ${escapeHtml(when.toLocaleDateString(undefined, { day: "numeric", month: "short" }))} ${escapeHtml(when.toTimeString().slice(0, 5))}` : ""}<br>${escapeHtml(learnProfileText(learning.config))} · best of ${m.candidates || 0}</p>`;
 }
 
+/* Several sensors tripping in the same hour are one moment - someone upstairs
+   at 11:00 wakes the bedroom, hallway and landing sensors together - so they
+   are one row. The label goes to the first sensor's event. */
+function groupLearnAlerts(alerts) {
+  const groups = [];
+  const byKey = new Map();
+  alerts.forEach((alert) => {
+    const key = `${alert.ts}|${alert.kind}`;
+    let group = byKey.get(key);
+    if (!group) {
+      group = { ...alert, names: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.names.push(statusName(alert.name));
+    if (!group.event_id && alert.event_id && !alert.label) { group.event_id = alert.event_id; group.label = null; }
+  });
+  return groups.map((group) => ({
+    ...group,
+    name: group.names.length > 2 ? `${group.names.slice(0, 2).join(", ")} +${group.names.length - 2}` : group.names.join(", "),
+  }));
+}
+
 function learnAlertsHtml(learning) {
-  const alerts = learning.alerts || [];
+  const alerts = groupLearnAlerts(learning.alerts || []);
   const labels = learning.alert_labels || {};
   const judged = Object.values(labels).reduce((a, b) => a + b, 0);
   const precision = judged ? `${Math.round(((labels.unusual || 0) / judged) * 100)}% worth it so far` : "no labels yet";
   const items = alerts.map((alert) => `
     <li class="learn-item${alert.label ? " learned" : ""}"${alert.event_id ? ` data-event-id="${alert.event_id}"` : ""}>
       <span class="learn-item-what"><i class="ti ti-${alert.kind === "unusually_quiet" ? "volume-off" : alert.kind === "unusually_busy" ? "flame" : "clock-exclamation"} learn-alert-icon" aria-hidden="true"></i>
-        <span>${escapeHtml(statusName(alert.name))} · ${escapeHtml(LEARN_ALERT_TEXT[alert.kind] || alert.kind)}<small>${escapeHtml(alert.detail)} · ${escapeHtml(learnAgo(alert.ts))}</small></span></span>
+        <span>${escapeHtml(alert.name)} · ${escapeHtml(LEARN_ALERT_TEXT[alert.kind] || alert.kind)}<small>${escapeHtml(alert.detail)} · ${escapeHtml(learnAgo(alert.ts))}</small></span></span>
       ${alert.event_id && !alert.label ? `<span class="learn-item-actions">${LEARN_LABELS.map((l) => `
         <button type="button" class="learn-label" data-learn-label="${l.label}" title="${l.text}" aria-label="${l.text}"><i class="ti ${l.icon}" aria-hidden="true"></i></button>`).join("")}</span>` : ""}
     </li>`).join("");

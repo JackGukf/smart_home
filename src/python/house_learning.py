@@ -423,21 +423,21 @@ def find_alerts(frame: Frame, models: dict[str, SignalModel], start_h: int, end_
             if cell.active and p < UNUSUAL_P:
                 alerts.append(Alert(utc_hour * 3600.0, signal.entity_id, "unusual_time",
                                     round(-math.log10(max(p, 1e-6)), 2),
-                                    f"active at {hour:02d}:00, which it is on {p:.0%} of the time",
+                                    f"{hour:02d}:00 · usually {p:.0%}",
                                     cell.first_event))
             expected = model.rate[weekday][hour]
             if cell.rises > expected + BUSY_SIGMAS * math.sqrt(max(expected, 0.25)) + 3:
                 alerts.append(Alert(utc_hour * 3600.0, signal.entity_id, "unusually_busy",
                                     round((cell.rises - expected) / math.sqrt(max(expected, 0.25)), 2),
-                                    f"{cell.rises} events at {hour:02d}:00, about {expected:.0f} is usual",
+                                    f"{cell.rises} events at {hour:02d}:00 · usually ~{expected:.0f}",
                                     cell.first_event))
             if signal.kind == "room" and not cell.active and p >= QUIET_P:
                 quiet_run.append(utc_hour)
                 if len(quiet_run) == QUIET_HOURS:
                     alerts.append(Alert(quiet_run[0] * 3600.0, signal.entity_id, "unusually_quiet",
                                         float(QUIET_HOURS),
-                                        f"quiet for {QUIET_HOURS} hours from "
-                                        f"{frame.at(quiet_run[0])[2]:02d}:00, usually busy then",
+                                        f"quiet {QUIET_HOURS} h from {frame.at(quiet_run[0])[2]:02d}:00 · "
+                                        "usually busy",
                                         None))
             else:
                 quiet_run = []

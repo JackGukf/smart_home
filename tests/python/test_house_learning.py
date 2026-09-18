@@ -153,7 +153,7 @@ def test_the_unexpected_is_recorded_silently_and_a_label_silences_it(tmp_path: P
     assert len(alert) == 1
     kind, entity_id, event_id, suppressed, detail = alert[0]
     assert (kind, entity_id, suppressed) == ("unusual_time", "binary_sensor.kitchen_occupancy", 0)
-    assert "03:00" in detail and event_id
+    assert detail.startswith("03:00 · usually") and event_id
 
     # Running again does not record it twice.
     hl.run(db, "America/Vancouver", now=now + 60)
@@ -181,7 +181,7 @@ def test_a_room_gone_quiet_when_it_is_always_busy(tmp_path: Path) -> None:
     alerts = hl.find_alerts(frame, models, int(now // 3600) - 8, int(now // 3600))
     quiet = [a for a in alerts if a.kind == "unusually_quiet"]
     assert len(quiet) == 1 and quiet[0].entity_id == "binary_sensor.kitchen_occupancy"
-    assert "11:00" in quiet[0].detail
+    assert quiet[0].detail.startswith("quiet 3 h from 11:00")
 
 
 def test_summary_digest_and_endpoint(tmp_path: Path) -> None:
@@ -255,12 +255,14 @@ globalThis.learnAgo = () => '2 h ago';
 for (const c of ['LEARN_WEEKDAYS', 'LEARN_LABELS', 'LEARN_ALERT_TEXT']) {
   eval(src.match(new RegExp(`const ${c} = [\\s\\S]*?;\\n`))[0].replace('const ', 'globalThis.'));
 }
-eval(pick('learnRoutineHtml') + pick('learnAlertsHtml'));
+eval(pick('learnRoutineHtml') + pick('groupLearnAlerts') + pick('learnAlertsHtml'));
 const routine = Array.from({ length: 7 }, () => Array.from({ length: 24 }, (_, h) => (h > 6 && h < 23 ? 0.95 : 0.02)));
 const alerts = learnAlertsHtml({ alerts: [
   { id: 1, ts: 0, kind: 'unusual_time', name: '<Kitchen>', detail: 'active at 03:00', event_id: 9, label: null },
   { id: 2, ts: 0, kind: 'unusually_quiet', name: 'Hall', detail: 'quiet for 3 hours', event_id: null, label: null },
-  { id: 3, ts: 0, kind: 'unusual_time', name: 'Door', detail: 'x', event_id: 4, label: 'normal' },
+  { id: 3, ts: 5, kind: 'unusual_time', name: 'Door', detail: 'x', event_id: 4, label: 'normal' },
+  { id: 4, ts: 0, kind: 'unusual_time', name: 'Upstairs', detail: 'x', event_id: 10, label: null },
+  { id: 5, ts: 0, kind: 'unusual_time', name: 'Bedroom', detail: 'x', event_id: 11, label: null },
 ], alert_labels: { unusual: 1, normal: 3 } });
 console.log(JSON.stringify({
   cells: (learnRoutineHtml(routine).match(/<i style=/g) || []).length,
@@ -268,6 +270,8 @@ console.log(JSON.stringify({
   buttons: (alerts.match(/data-learn-label=/g) || []).length,
   escaped: alerts.includes('&lt;Kitchen>'),
   precision: /25% worth it so far/.test(alerts),
+  rows: (alerts.match(/<li /g) || []).length,
+  merged: alerts.includes('&lt;Kitchen>, Upstairs +1'),
 }));
 """
 
@@ -284,3 +288,5 @@ def test_the_tile_draws_the_week_and_labels_only_what_can_be_labelled(tmp_path: 
     assert "No routine yet" in result["bad"]
     assert result["buttons"] == 3, "one alert has an event to label; a quiet hour and a labelled one do not"
     assert result["escaped"] and result["precision"]
+    assert result["rows"] == 3, "the three sensors of one moment are one row"
+    assert result["merged"]
