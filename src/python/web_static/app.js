@@ -4269,7 +4269,6 @@ function renderAlarmSection(payload = latestAlarmData) {
             <b>${escapeHtml(statusText)}</b>
             <span>${breached ? `${breached} active now` : `all ${zones.length} normal`}</span>
             ${houseFloorLines(rooms)}
-            <span class="house-cover-hint">Tap a pin for its sensors</span>
           </div>
           <div class="house-cover house-cover-latest">${latest
             ? `<b>${escapeHtml(shortZoneName(latest.name))}</b><span>${escapeHtml(zoneStateText(latest, zoneIsBreached(latest)))} · ${zoneAgeLabel(latest.age_seconds)}</span>`

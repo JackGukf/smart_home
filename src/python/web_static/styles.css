@@ -4109,10 +4109,10 @@ aside {
 
 /* The picture takes the height the screen has left, not the width: on the wall
    panel (1280 x 800) the whole view fits without scrolling. Its column is at
-   most as wide as that height allows (176px: the header, the status line and
-   the gaps); the side column takes the rest, and never less than 250px. */
+   most as wide as that height allows (193px: the header, the status line and
+   the gaps, measured on the panel); the side column takes the rest, and never less than 250px. */
 .house-stage {
-  --house-fit: calc((100vh - 176px) * 1.0942);
+  --house-fit: calc((100vh - 193px) * 1.0942);
   display: grid;
   grid-template-columns: minmax(0, var(--house-fit)) minmax(250px, 1fr);
   gap: 16px;
@@ -4203,7 +4203,6 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
 .house-cover b { color: var(--t-text); font-size: 14px; font-weight: 600; }
 .house-cover-status { left: 0.8%; top: 1%; width: 16.2%; height: 33.4%; }
 .house-cover-status.breached b { color: var(--amber); }
-.house-cover-hint { margin-top: auto; font-size: 10.5px; color: var(--muted); }
 /* Label over value: the corner is narrow, and "2 active" must not break. */
 .house-cover-row {
   display: block;
@@ -4218,7 +4217,6 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
   .house-cover { padding: 6px 8px; font-size: 10px; }
   .house-cover-row { margin-top: 3px; padding-top: 3px; }
   .house-cover b { font-size: 12px; }
-  .house-cover-hint { display: none; }
   .house-label { font-size: 10px; padding: 3px 6px; }
   .house-pin { padding: 3px 4px; gap: 2px; }
   .house-pin-name { font-size: 9.5px; }
