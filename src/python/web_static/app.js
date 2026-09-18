@@ -5478,6 +5478,10 @@ const HOME_CAMERA_KEY = "home_camera_id";
 /* Set while a motion episode is showing a camera the user did not choose.
    Deliberately not persisted - see the motion watch further down. */
 let homeCameraOverride = null;
+/* What the camera card shows on a screen that has never picked one - and the
+   cast to the TV always starts that way, with a fresh browser profile. Matched
+   by go2rtc stream name: camera ids are IP addresses, and those move. */
+const HOME_CAMERA_DEFAULT_STREAM = "front_door_camera";
 
 /* Areas that count as outdoors for the Temperatures card. An area can also
    say so itself with `outdoor: true` in the areas document. */
@@ -6176,7 +6180,9 @@ function renderHomeCamera() {
   // A motion episode shows its camera without touching the saved choice, so
   // the card goes back to the one you picked when the episode ends.
   const wantedId = homeCameraOverride ?? savedId;
-  const camera = cameras.find((c) => cameraIdFor(c) === wantedId) || cameras[0] || null;
+  const camera = cameras.find((c) => cameraIdFor(c) === wantedId)
+    || cameras.find((c) => c.stream_name === HOME_CAMERA_DEFAULT_STREAM)
+    || cameras[0] || null;
 
   // Rebuilding the option list resets the dropdown, so leave it alone when
   // the cameras have not changed.
@@ -8489,6 +8495,11 @@ function activateView(viewName) {
   if (viewName === "news") {
     loadNewsSettings().catch((error) => console.error(error));
   }
+  if (viewName === "cast") {
+    loadCast().catch((error) => console.error(error));
+  } else {
+    stopCastPolling();
+  }
   if (viewName === "about") {
     loadAboutInfo();
   }
@@ -9958,7 +9969,7 @@ function setYoutubeCovering(on) {
    setting stands, so the page answers most questions without opening one. */
 /* An app's page keeps its launcher lit in the sidebar. */
 const PAGE_PARENTS = {
-  theme: "settings", startup: "settings", news: "settings", about: "settings", homecards: "settings",
+  theme: "settings", startup: "settings", news: "settings", cast: "settings", about: "settings", homecards: "settings",
   youtube: "media", music: "media",
   ir: "devices",
 };
@@ -9981,6 +9992,9 @@ async function renderSettingsApps() {
     setSub("#settingsNewsSub", settings.enabled ? `${sources} sources · ${prices} prices` : "Off");
   } catch {}
   try {
+    setSub("#settingsCastSub", castSummary(castDoc || await requestJson("/api/cast")));
+  } catch {}
+  try {
     const response = await fetch(`/static/build_info.json?ts=${Date.now()}`, { cache: "no-store" });
     if (response.ok) {
       const info = await response.json();
@@ -9988,6 +10002,86 @@ async function renderSettingsApps() {
     }
   } catch {}
 }
+
+/* ── Cast to TV ──
+   The switch is a systemd unit on the board; the page polls while it is open,
+   because what the service is doing changes on its own (the TV goes off). */
+let castDoc = null;
+let castTimer = null;
+
+const CAST_STATES = {
+  waiting: "Looking for the TV",
+  busy: "TV busy with something else",
+  casting: "Casting",
+  paused: "Stopped for now",
+};
+
+function castSummary(doc) {
+  if (!doc) return "";
+  if (!doc.installed) return "Not installed";
+  if (!doc.enabled) return "Off";
+  if (doc.status?.state === "casting") return `Casting to ${doc.status.renderer}`;
+  return "On";
+}
+
+function renderCast() {
+  const input = document.querySelector("#castEnabled");
+  const now = document.querySelector("#castNow");
+  if (!input || !castDoc) return;
+  input.checked = Boolean(castDoc.enabled);
+  input.disabled = !castDoc.installed;
+  const status = castDoc.status;
+  let text = "Off";
+  if (!castDoc.installed) text = "Not installed on this board";
+  else if (castDoc.enabled && !castDoc.running) text = "Switched on, but not running";
+  else if (castDoc.enabled && !status) text = "Starting…";
+  else if (castDoc.enabled) {
+    text = CAST_STATES[status.state] || status.state;
+    if (status.state === "casting") text += ` to ${status.renderer} · ${status.fps} fps`;
+    if (status.detail) text += ` · ${status.detail}`;
+  }
+  if (now) now.textContent = text;
+}
+
+function stopCastPolling() {
+  if (castTimer) clearInterval(castTimer);
+  castTimer = null;
+}
+
+async function loadCast() {
+  castDoc = await requestJson("/api/cast");
+  renderCast();
+  if (!castTimer) {
+    castTimer = setInterval(() => {
+      requestJson("/api/cast").then((doc) => { castDoc = doc; renderCast(); }).catch(() => {});
+    }, 5000);
+  }
+}
+
+(function initCast() {
+  const input = document.querySelector("#castEnabled");
+  if (!input) return;
+  input.addEventListener("change", async () => {
+    const status = document.querySelector("#castStatus");
+    const enabled = input.checked;
+    input.disabled = true;
+    if (status) status.textContent = enabled ? "Switching on…" : "Switching off…";
+    try {
+      castDoc = await requestJson("/api/cast", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (status) status.textContent = enabled
+        ? "On. The TV shows the dashboard within a minute when its dongle is on."
+        : "Off. Nothing is running for it now.";
+    } catch (error) {
+      if (status) status.textContent = `Not switched: ${apiErrorDetail(error)}`;
+      castDoc = await requestJson("/api/cast").catch(() => castDoc);
+    }
+    renderCast();
+  });
+})();
 
 /* ── Startup (default) view ── */
 const DEFAULT_VIEW_KEY = "default_view";

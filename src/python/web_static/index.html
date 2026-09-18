@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build261">
+  <link rel="stylesheet" href="/static/styles.css?v=build263">
 </head>
 <body>
 
@@ -869,6 +869,11 @@
           <span class="app-tile-name">News</span>
           <span class="app-tile-sub" id="settingsNewsSub">Headlines &amp; prices</span>
         </button>
+        <button type="button" class="app-tile" data-goto-view="cast" style="--app-a:#14b8a6;--app-b:#0e7490">
+          <span class="app-tile-icon"><i class="ti ti-cast" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Cast to TV</span>
+          <span class="app-tile-sub" id="settingsCastSub">Off</span>
+        </button>
         <button type="button" class="app-tile" data-goto-view="about" style="--app-a:#64748b;--app-b:#94a3b8">
           <span class="app-tile-icon"><i class="ti ti-info-circle" aria-hidden="true"></i></span>
           <span class="app-tile-name">About</span>
@@ -1014,6 +1019,30 @@
         </div>
       </div>
       <p class="settings-status" id="newsSettingsStatus" aria-live="polite"></p>
+    </div>
+
+    <!-- ── CAST TO TV ──
+         The switch is the board's dashboard-cast.service: off, nothing runs. -->
+    <div class="view-panel" data-view-panel="cast">
+      <div class="section-header">
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Cast to TV</span></span>
+        <span class="section-meta">The dashboard as live video on a TV's cast dongle · saved on the board</span>
+      </div>
+      <div class="settings-group" id="castSettings">
+        <div class="settings-row">
+          <div class="settings-label"><strong>Cast the dashboard</strong><small>Plays Home on the TV whenever its dongle is on and idle. A picture: it cannot be touched, and runs a few seconds behind</small></div>
+          <label class="settings-switch"><input type="checkbox" id="castEnabled"><span></span><span class="sr-only">Cast the dashboard</span></label>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Now</strong></div>
+          <span class="settings-value" id="castNow">—</span>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Cost</strong><small>Nothing runs while this is off. On, the board only looks for the TV until it finds it</small></div>
+          <span class="settings-value">~1.5 cores while casting</span>
+        </div>
+      </div>
+      <p class="settings-status" id="castStatus" aria-live="polite"></p>
     </div>
 
     <!-- ── ABOUT VIEW ── -->
@@ -1391,6 +1420,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build261"></script>
+<script src="/static/app.js?v=build263"></script>
 </body>
 </html>

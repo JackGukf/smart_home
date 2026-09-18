@@ -76,6 +76,7 @@ rsync --checksum -av \
 rsync --checksum -av \
     "${PROJECT_ROOT}/scripts/run-dashboard.sh" \
     "${PROJECT_ROOT}/scripts/run-go2rtc.sh" \
+    "${PROJECT_ROOT}/scripts/run-dashboard-cast.sh" \
     "${PROJECT_ROOT}/scripts/generate-go2rtc-config.py" \
     "${PROJECT_ROOT}/scripts/install-dashboard-service.sh" \
     "${PROJECT_ROOT}/scripts/discover-govee-ble.py" \

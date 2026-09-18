@@ -17,6 +17,12 @@ TIMER_UNITS=(
   "house-learning.service"
   "house-learning.timer"
 )
+# Installed so the Settings switch can start them, but never enabled or started
+# here: they are off until somebody turns them on. A deploy restarts one only if
+# it is already running, to pick up new code.
+OPTIONAL_UNITS=(
+  "dashboard-cast.service"
+)
 
 if [[ -z "${USER_HOME}" || ! -d "${USER_HOME}" ]]; then
   echo "ERROR: could not resolve home directory for ${RUN_USER}" >&2
@@ -41,9 +47,10 @@ for service_name in "${SERVICE_NAMES[@]}"; do
   install -m 0644 "${unit_source}" "${unit_target}"
 done
 
-for unit_name in "${TIMER_UNITS[@]}"; do
+for unit_name in "${TIMER_UNITS[@]}" "${OPTIONAL_UNITS[@]}"; do
   install -m 0644 "${PROJECT_ROOT}/deploy/systemd/user/${unit_name}" "${UNIT_TARGET_DIR}/${unit_name}"
 done
+chmod +x "${PROJECT_ROOT}/scripts/run-dashboard-cast.sh"
 systemctl --user daemon-reload
 systemctl --user enable --now house-learning.timer
 for service_name in "${SERVICE_NAMES[@]}"; do
@@ -63,4 +70,8 @@ for service_name in "${SERVICE_NAMES[@]}"; do
   systemctl --user reset-failed "${service_name}" 2>/dev/null || true
   systemctl --user restart "${service_name}"
   systemctl --user --no-pager --full status "${service_name}"
+done
+
+for unit_name in "${OPTIONAL_UNITS[@]}"; do
+  systemctl --user try-restart "${unit_name}" || true
 done

@@ -50,6 +50,7 @@ from src.python.matter_device import (
 )
 from src.python import bridge_sync
 from src.python.house_digest import read_digest
+from src.python import dashboard_cast
 from src.python import news_feed
 from src.python import sensor_history
 from src.python import status_overview
@@ -527,6 +528,12 @@ class SensorHistoryRequest(BaseModel):
     hours: int = 24
 
 
+class CastRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
 class NewsSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -614,6 +621,8 @@ def create_app(
     history_service: sensor_history.SensorHistory | None = None,
     status_service: status_overview.StatusOverview | None = None,
     memory_service: house_memory.SummaryCache | None = None,
+    cast_runner: Callable[..., subprocess.CompletedProcess] | None = None,
+    cast_status_path: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
     app.state.discovery_path = discovery_path
@@ -632,6 +641,9 @@ def create_app(
     app.state.history_service = history_service
     app.state.status_service = status_service
     app.state.memory_service = memory_service or house_memory.SummaryCache()
+    # systemctl, swapped out in tests so they never touch the real user manager.
+    app.state.cast_runner = cast_runner or subprocess.run
+    app.state.cast_status_path = cast_status_path
     app.state.ir_store = tuya_ir.ButtonStore(config_path.parent / "ir_buttons.json")
     app.state.ir_bridge = None
     app.state.ir_hub_loader = lambda: tuya_ir.load_hubs(app.state.config_path)
@@ -1144,6 +1156,31 @@ def create_app(
             news_feed.save_settings, app.state.news_settings_path, request.model_dump()
         )
         return {"settings": settings, "available": news_feed.available_options()}
+
+    def _cast_doc() -> dict[str, Any]:
+        state = dashboard_cast.unit_state(app.state.cast_runner)
+        # A status file outlives a crash; only a running service's report is current.
+        status = dashboard_cast.read_status(app.state.cast_status_path) if state["running"] else None
+        return {**state, "status": status}
+
+    @app.get("/api/cast")
+    async def cast_state() -> dict[str, Any]:
+        """Cast to TV: whether it is switched on, and what it is doing."""
+        return await asyncio.to_thread(_cast_doc)
+
+    @app.put("/api/cast")
+    async def set_cast(request: CastRequest) -> dict[str, Any]:
+        """Switch casting on or off. Off stops everything it runs; the choice survives a reboot."""
+        def apply() -> dict[str, Any]:
+            if not dashboard_cast.unit_state(app.state.cast_runner)["installed"]:
+                raise HTTPException(status_code=503, detail="Casting is not installed on this board - deploy the dashboard")
+            try:
+                dashboard_cast.set_enabled(request.enabled, app.state.cast_runner)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                raise HTTPException(status_code=502, detail=f"Could not switch casting: {error}") from error
+            return _cast_doc()
+
+        return await asyncio.to_thread(apply)
 
     @app.get("/api/motion/log")
     async def motion_log(limit: int = MOTION_LOG_DEFAULT_LIMIT) -> dict[str, Any]:

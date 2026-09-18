@@ -1298,6 +1298,8 @@ const renderDevicesOverview = () => {};
 const stopYoutube = () => {};
 const loadAboutInfo = () => {};
 const loadNewsSettings = () => ({ catch() {} });
+const loadCast = () => ({ catch() {} });
+const stopCastPolling = () => {};
 const loadAmbientLights = () => ({ catch() {} });
 const loadHumidifiers = () => ({ catch() {} });
 const loadEnvironmentSensors = () => ({ catch() {} });
@@ -1343,6 +1345,8 @@ const renderDevicesOverview = () => {};
 const stopYoutube = () => {};
 const loadAboutInfo = () => {};
 const loadNewsSettings = () => ({ catch() {} });
+const loadCast = () => ({ catch() {} });
+const stopCastPolling = () => {};
 const CSS = { escape: (s) => s };
 const document = { body: { classList: { toggle() {} } }, querySelector: () => null };
 

@@ -1,0 +1,25 @@
+[Unit]
+Description=Cast the dashboard to the TV (live video over DLNA)
+After=network-online.target smart-home-dashboard.service
+Wants=network-online.target
+
+# Off by default, and a deploy never switches it on: the Cast to TV switch in
+# Settings runs `systemctl --user enable --now` / `disable --now` on this unit.
+# Off, nothing runs. On, it idles as one Python process until the TV's dongle is
+# reachable; only then Chromium and ffmpeg start (~1.5 cores at 4 fps).
+[Service]
+Type=simple
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/scripts/run-dashboard-cast.sh
+Restart=on-failure
+RestartSec=30
+# It is a nicety; the NPU detector, Home Assistant and the LLM come first.
+Nice=10
+CPUWeight=50
+# Chromium plus ffmpeg, measured well under this. No swap on this board, so bound it.
+MemoryMax=1536M
+OOMPolicy=stop
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
