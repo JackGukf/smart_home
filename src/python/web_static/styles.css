@@ -4202,10 +4202,13 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
 .house-cover-status { left: 0.8%; top: 1%; width: 16.2%; height: 33.4%; }
 .house-cover-status.breached b { color: var(--amber); }
 .house-cover-hint { margin-top: auto; font-size: 10.5px; color: var(--muted); }
+/* Label over value: the corner is narrow, and "2 active" must not break. */
 .house-cover-row {
-  display: flex; justify-content: space-between; gap: 6px;
+  display: block;
   margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
 }
+.house-cover-row span { display: block; overflow: hidden; text-overflow: ellipsis; }
 .house-cover-row span:last-child { color: var(--t-text); font-weight: 600; }
 .house-cover-row.breached span:last-child { color: var(--amber); }
 .house-cover-latest { left: 75.7%; top: 88.5%; width: 23.6%; height: 8.6%; justify-content: center; }
