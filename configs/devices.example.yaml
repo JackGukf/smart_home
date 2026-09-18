@@ -250,15 +250,16 @@ humidifiers:
       thermometer_model: H5179
 
 environment:
-  # Standalone temperature/humidity sensors read through the Govee Developer
-  # API v2. Same GOVEE_API_KEY as the humidifiers above — set it in the
-  # environment on the Pi, never here.
+  # Standalone sensors read through the Govee Developer API v2: thermo-
+  # hygrometers, and CO2 monitors (H5140), whose CO2 is also mirrored into Home
+  # Assistant as sensor.<name>_co2. Same GOVEE_API_KEY as the humidifiers
+  # above — set it in the environment on the Pi, never here.
   sensors:
     # device_id is the "device" value from the Govee API device list; find it
     # with: GOVEE_API_KEY=... python3 scripts/probe-govee-cloud-device.py H5140
     # Leave replace_me and the app matches by model when the account has
     # exactly one device of that model.
-    - name: Bedroom Thermo-Hygrometer
+    - name: CO₂ Monitor
       provider: govee_cloud
       model: H5140
       room: Bedroom

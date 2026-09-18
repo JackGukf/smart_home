@@ -6608,3 +6608,22 @@ header > .header-right { flex-shrink: 0; }
   .learn-body, .learn-model { grid-template-columns: minmax(0, 1fr); }
   .learn-label { width: 36px; height: 36px; }
 }
+
+/* ── CO2 on the Environment card ──
+   The level reads as a word first ("Stuffy - open a window"), coloured to
+   match; the shaded band on the 24 h line is where stuffy starts (1000 ppm). */
+.co2-level { font-size: 11px; font-weight: 600; color: var(--text); }
+.co2-level::before {
+  content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 5px;
+  border-radius: 50%; vertical-align: 0; background: currentColor;
+}
+.co2-fresh  { color: var(--green); }
+.co2-ok     { color: var(--teal); }
+.co2-stuffy { color: var(--amber); }
+.co2-poor   { color: var(--red); }
+.co2-spark { margin-top: 10px; min-height: 18px; }
+.co2-spark svg { display: block; width: 100%; height: auto; max-height: 60px; overflow: visible; }
+.co2-band-stuffy { fill: var(--amber); opacity: 0.08; }
+.co2-spark-line { fill: none; stroke: var(--tint, var(--teal)); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.co2-spark-dot { fill: var(--tint, var(--teal)); }
+.co2-spark-caption, .co2-spark-empty { display: block; margin-top: 3px; font-size: 10.5px; color: var(--muted); }

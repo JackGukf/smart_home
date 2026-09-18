@@ -26,7 +26,7 @@ from typing import Any, Callable
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-GROUPS = ("indoor_temperature", "outdoor_temperature", "indoor_humidity", "outdoor_humidity")
+GROUPS = ("indoor_temperature", "outdoor_temperature", "indoor_humidity", "outdoor_humidity", "co2")
 ENTITY_ID = re.compile(r"^sensor\.[a-z0-9_]{1,120}$")
 MAX_ENTITIES_PER_GROUP = 40
 MAX_HOURS = 48

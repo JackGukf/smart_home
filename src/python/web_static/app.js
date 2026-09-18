@@ -1217,14 +1217,30 @@ async function loadEnvironmentSensors() {
 }
 
 /* Govee cloud thermo-hygrometers use the same tile as the grouped sensors, so
-   the Environment grid reads as one set rather than two card designs. */
+   the Environment grid reads as one set rather than two card designs. A CO2
+   monitor leads with CO2 - the reading that says "open a window" - and keeps
+   temperature and humidity underneath. */
+const CO2_TINT = { fresh: "var(--green)", ok: "var(--teal)", stuffy: "var(--amber)", poor: "var(--red)" };
+const CO2_HISTORY_MS = 5 * 60_000;
+let co2History = { key: "", at: 0, data: null, pending: false };
+
 function environmentSensorCard(sensor) {
+  const hasCo2 = sensor.co2 != null;
   const hasTemp = sensor.temperature != null;
-  const hero = hasTemp
-    ? `<div class="sdc-tile-big">${escapeHtml(String(sensor.temperature))}<span class="sdc-tile-unit">°C</span></div>`
-    : `<div class="sdc-tile-state">No reading</div>`;
+  const level = sensor.co2_level;
+  const hero = hasCo2
+    ? `<div class="sdc-tile-big">${escapeHtml(String(sensor.co2))}<span class="sdc-tile-unit">ppm CO₂</span></div>`
+    : hasTemp
+      ? `<div class="sdc-tile-big">${escapeHtml(String(sensor.temperature))}<span class="sdc-tile-unit">°C</span></div>`
+      : `<div class="sdc-tile-state">No reading</div>`;
 
   const facets = [];
+  if (hasCo2 && level) {
+    facets.push(`<span class="co2-level co2-${escapeHtml(level.key)}">${escapeHtml(level.text)}</span>`);
+  }
+  if (hasCo2 && hasTemp) {
+    facets.push(sensorTileFacet({ key: "temperature", text: `${sensor.temperature}°C` }));
+  }
   if (sensor.humidity != null) {
     facets.push(sensorTileFacet({ key: "humidity", text: `${sensor.humidity}%` }));
   }
@@ -1234,21 +1250,75 @@ function environmentSensorCard(sensor) {
   const note = sensor.note
     ? `<p class="sdc-tile-note sdc-tile-note-line">${escapeHtml(sensor.note)}</p>`
     : "";
+  const spark = hasCo2 && sensor.co2_entity_id
+    ? `<div class="co2-spark" data-co2-spark="${escapeHtml(sensor.co2_entity_id)}" aria-label="CO₂, last 24 hours"></div>`
+    : "";
+  const tint = hasCo2 && level ? CO2_TINT[level.key] || "var(--teal)" : "var(--teal)";
 
   return `<article class="sdc-tile${sensor.online ? "" : " sdc-tile-offline"}"
-    data-device-id="${escapeHtml(sensor.name)}" style="--tint:var(--teal)">
+    data-device-id="${escapeHtml(sensor.name)}" style="--tint:${tint}">
     ${sensorTileIcon("environment", "sdc-tile-mark")}
     <div class="sdc-tile-top">
-      <span class="sdc-tile-badge">${sensorTileIcon("environment")}Environment</span>
+      <span class="sdc-tile-badge">${sensorTileIcon("environment")}${hasCo2 ? "Air quality" : "Environment"}</span>
       <span class="sdc-tile-live">${sensor.online ? "ONLINE" : "OFFLINE"}</span>
     </div>
     <div class="sdc-tile-read">
       ${hero}
       <h3 class="sdc-tile-name" title="${escapeHtml(sensor.name)}">${escapeHtml(sensor.name)}</h3>
       <div class="sdc-tile-sub">${facets.join("")}</div>
+      ${spark}
       ${note}
     </div>
   </article>`;
+}
+
+/* The last 24 hours of CO2, hourly means from Home Assistant's history of the
+   mirrored entity. Bands behind the line say where "stuffy" starts. */
+function co2SparkSvg(values) {
+  const points = values.map((v, i) => [i, v]).filter(([, v]) => typeof v === "number" && Number.isFinite(v));
+  if (points.length < 2) return `<span class="co2-spark-empty">History fills in over the next hours.</span>`;
+  const w = 240, h = 48, last = values.length - 1 || 1;
+  const hi = Math.max(1200, ...points.map(([, v]) => v)), lo = 400;
+  const X = (i) => (i / last) * w;
+  const Y = (v) => h - ((Math.max(lo, v) - lo) / (hi - lo)) * (h - 4) - 2;
+  const line = points.map(([i, v], n) => `${n ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  const [lastI, lastV] = points[points.length - 1];
+  const peak = Math.round(Math.max(...points.map(([, v]) => v)));
+  return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="CO₂ over 24 hours, peak ${peak} ppm">
+      <rect class="co2-band-stuffy" x="0" y="0" width="${w}" height="${Y(1000).toFixed(1)}"/>
+      <path class="co2-spark-line" d="${line}"/>
+      <circle class="co2-spark-dot" cx="${X(lastI).toFixed(1)}" cy="${Y(lastV).toFixed(1)}" r="2.5"/>
+    </svg><span class="co2-spark-caption">24 h · peak ${peak} ppm</span>`;
+}
+
+function drawCo2Sparks() {
+  const series = co2History.data?.series?.co2;
+  document.querySelectorAll("[data-co2-spark]").forEach((el) => {
+    el.innerHTML = Array.isArray(series) ? co2SparkSvg(series) : "";
+  });
+}
+
+async function loadCo2History() {
+  const ids = [...new Set([...document.querySelectorAll("[data-co2-spark]")].map((el) => el.dataset.co2Spark))];
+  if (!ids.length) return;
+  const key = ids.join(",");
+  if ((co2History.key === key && Date.now() - co2History.at < CO2_HISTORY_MS) || co2History.pending) {
+    drawCo2Sparks();
+    return;
+  }
+  co2History.pending = true;
+  try {
+    const data = await requestJson("/api/sensors/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groups: { co2: ids }, hours: 24 }),
+    });
+    co2History = { key, at: Date.now(), data: data.status === "ok" ? data : null, pending: false };
+  } catch (error) {
+    console.error(error);
+    co2History = { key, at: Date.now(), data: co2History.data, pending: false };
+  }
+  drawCo2Sparks();
 }
 
 function renderHumidifiers(payload) {
@@ -2249,6 +2319,7 @@ function renderEnvironmentSensors() {
     latestEnvironmentSensors.map(environmentSensorCard).join("") +
     groups.map((g) => renderSensorDeviceCard(g, "environment")).join("");
   renderForeignKinds("environment", ["sensor", "environment"], "#environmentGrid");
+  loadCo2History();
 }
 
 function primaryTuyaState(device) {

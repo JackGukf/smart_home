@@ -192,12 +192,14 @@ async def _lifespan(app: FastAPI):
     """
     _schedule_device_refresh(app)
     recorder = asyncio.create_task(_motion_log_recorder(app))
+    environment = asyncio.create_task(_environment_poller(app))
     try:
         yield
     finally:
-        recorder.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await recorder
+        for task in (recorder, environment):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 class _CachedStaticFiles(StaticFiles):
@@ -1014,6 +1016,9 @@ def create_app(
 
     @app.get("/api/environment-sensors")
     async def environment_sensors() -> dict[str, Any]:
+        cached = getattr(app.state, "environment_cache", None)
+        if cached and time.time() - cached["at"] < ENVIRONMENT_FRESH_S:
+            return cached["payload"]
         return await asyncio.to_thread(_environment_sensor_cards, app.state.config_path)
 
     @app.post("/api/humidifiers/{humidifier_id}/commands/{command}")
@@ -3348,10 +3353,40 @@ def _govee_thermometer_reading(entry: dict[str, Any]) -> dict[str, Any] | None:
             reading["humidity"] = float(value)
         elif instance == "sensorTemperature" and isinstance(value, (int, float)):
             reading["temperature_f"] = float(value)
+        elif instance == "carbonDioxideConcentration" and isinstance(value, (int, float)):
+            # A CO2 monitor (H5140). Outside what the sensor can measure is a
+            # glitch or a warm-up value, not air.
+            if CO2_MIN_PPM <= value <= CO2_MAX_PPM:
+                reading["co2"] = int(round(value))
     return reading or None
 
 
 ENVIRONMENT_RUNTIME_STATE: dict[str, dict[str, Any]] = {}
+
+CO2_MIN_PPM = 250
+CO2_MAX_PPM = 10_000
+# Indoor CO2 bands, in ppm. Outdoor air is ~420; a room people are in rises from
+# there, and past ~1000 most people notice it as stuffy. The bands say what to
+# do, not a health verdict.
+CO2_LEVELS = ((800, "fresh", "Fresh"), (1000, "ok", "OK"), (1500, "stuffy", "Stuffy - open a window"))
+CO2_POOR = ("poor", "Poor - ventilate")
+ENVIRONMENT_POLL_S = 60.0
+ENVIRONMENT_FRESH_S = 90.0
+
+
+def co2_level(ppm: int | float | None) -> dict[str, str] | None:
+    if ppm is None:
+        return None
+    for ceiling, key, text in CO2_LEVELS:
+        if ppm < ceiling:
+            return {"key": key, "text": text}
+    return {"key": CO2_POOR[0], "text": CO2_POOR[1]}
+
+
+def _environment_entity_id(sensor_name: str, quantity: str) -> str:
+    """The Home Assistant entity a sensor's reading is mirrored to."""
+    slug = re.sub(r"[^a-z0-9]+", "_", sensor_name.lower().replace("₂", "2")).strip("_") or "environment"
+    return f"sensor.{slug}_{quantity}"
 
 
 def _match_environment_sensor(
@@ -3382,6 +3417,9 @@ def _environment_sensor_card(sensor: EnvironmentSensorDefinition) -> dict[str, A
         "model": sensor.model,
         "temperature": None,
         "humidity": None,
+        "co2": None,
+        "co2_level": None,
+        "co2_entity_id": _environment_entity_id(sensor.name, "co2"),
         "online": False,
         "status": "ok",
         "note": None,
@@ -3429,6 +3467,9 @@ def _environment_sensor_card(sensor: EnvironmentSensorDefinition) -> dict[str, A
         values["temperature"] = _fahrenheit_to_celsius(float(reading["temperature_f"]))
     if reading.get("humidity") is not None:
         values["humidity"] = reading["humidity"]
+    if reading.get("co2") is not None:
+        values["co2"] = reading["co2"]
+        values["co2_level"] = co2_level(reading["co2"])
 
     ENVIRONMENT_RUNTIME_STATE[runtime_key] = values
     card.update(values)
@@ -3438,6 +3479,58 @@ def _environment_sensor_card(sensor: EnvironmentSensorDefinition) -> dict[str, A
 
 def _environment_sensor_cards(path: Path) -> dict[str, Any]:
     return {"sensors": [_environment_sensor_card(s) for s in _load_environment_sensors(path)]}
+
+
+def _mirror_co2_to_home_assistant(config_path: Path, cards: list[dict[str, Any]]) -> None:
+    """Give Home Assistant each monitor's CO2, so it has a history and the house
+    memory - and the learning - see it. CO2 rising in a room is one of the
+    better signs that someone is in it.
+
+    Set through the states API: the entity lives until Home Assistant restarts
+    and is set again on the next poll, a minute later at most.
+    """
+    readings = [c for c in cards if c.get("online") and c.get("co2") is not None]
+    if not readings:
+        return
+    config = _load_home_assistant_config(config_path)
+    token = os.getenv(config.token_env)
+    if not token:
+        return
+    for card in readings:
+        try:
+            _home_assistant_post(config, token, f"/api/states/{card['co2_entity_id']}", {
+                "state": card["co2"],
+                "attributes": {
+                    "friendly_name": f"{card['name']} CO2",
+                    "unit_of_measurement": "ppm",
+                    "device_class": "carbon_dioxide",
+                    "state_class": "measurement",
+                    "level": (card.get("co2_level") or {}).get("key"),
+                    "source": "govee_cloud",
+                },
+            })
+        except (OSError, ValueError) as error:
+            _matter_log.info("CO2 mirror to Home Assistant failed: %s", error)
+
+
+def _poll_environment_once(app: FastAPI) -> dict[str, Any]:
+    payload = _environment_sensor_cards(app.state.config_path)
+    app.state.environment_cache = {"payload": payload, "at": time.time()}
+    _mirror_co2_to_home_assistant(app.state.config_path, payload["sensors"])
+    return payload
+
+
+async def _environment_poller(app: FastAPI) -> None:
+    """Read the environment sensors once a minute whether or not a page is open,
+    so CO2 has an unbroken history. Pages are served from this reading, which
+    also keeps several open screens from each spending Govee API calls."""
+    while True:
+        try:
+            if _govee_api_key() and _load_environment_sensors(app.state.config_path):
+                await asyncio.to_thread(_poll_environment_once, app)
+        except Exception as error:  # noqa: BLE001 - a bad poll must not end the loop
+            _matter_log.info("Environment poll failed: %s", error)
+        await asyncio.sleep(ENVIRONMENT_POLL_S)
 
 
 def _govee_nightlight_caps(entry: dict[str, Any]) -> dict[str, dict[str, Any]]:
