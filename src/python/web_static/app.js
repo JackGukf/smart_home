@@ -4277,7 +4277,7 @@ function renderAlarmSection(payload = latestAlarmData) {
         </div>
       </div>
       <div class="house-side">
-        <aside class="house-detail">${houseDetailHtml(selectedHouseRoom, detailZones, controlsHtml)}</aside>
+        <section class="house-detail" aria-label="The selected room">${houseDetailHtml(selectedHouseRoom, detailZones, controlsHtml)}</section>
         <section class="house-activity" id="houseActivity" aria-label="Recent activity">${houseActivityHtml()}</section>
       </div>
     </div>`;
