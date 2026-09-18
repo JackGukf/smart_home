@@ -1169,14 +1169,19 @@ function renderAmbientLights(payload) {
 function ambientLightCard(light) {
   const providerLabel = light.provider === "govee_ble" ? "Govee Bluetooth" : light.provider === "govee_lan" ? "Govee Wi-Fi" : light.provider === "alexa" ? "Alexa bridge" : light.provider;
   const statusClass = light.controllable ? "online" : "setup";
-  const powerLabel = light.is_on === true ? "On" : light.is_on === false ? "Off" : "Unknown";
+  /* A Bluetooth-only strip cannot be asked, so what the dashboard last sent is
+     all there is - said so, rather than passed off as a reading. */
+  const basePower = light.is_on === true ? "On" : light.is_on === false ? "Off" : "Not known yet";
+  const powerLabel = light.is_on != null && light.state_source === "last_set" ? `${basePower} · as last set` : basePower;
+  const level = Number.isFinite(Number(light.brightness)) && light.brightness != null
+    ? Math.max(1, Math.min(100, Math.round(Number(light.brightness)))) : 80;
   const onActive = light.is_on === true ? " active" : "";
   const offActive = light.is_on === false ? " active" : "";
   const powerButtons = light.controllable
     ? '<div class="ambient-actions"><button class="command primary' + onActive + '" data-ambient-command="on" data-ambient-id="' + escapeHtml(light.id) + '">On</button><button class="command' + offActive + '" data-ambient-command="off" data-ambient-id="' + escapeHtml(light.id) + '">Off</button></div>'
     : '<div class="ambient-actions"><button class="command" disabled>Setup needed</button></div>';
   const brightnessControl = light.controllable && light.capabilities?.brightness
-    ? '<div class="ambient-control-row"><i class="ti ti-sun"></i><input type="range" min="1" max="100" value="80" data-ambient-brightness data-ambient-id="' + escapeHtml(light.id) + '"><span>80%</span></div>'
+    ? '<div class="ambient-control-row"><i class="ti ti-sun"></i><input type="range" min="1" max="100" value="' + level + '" data-ambient-brightness data-ambient-id="' + escapeHtml(light.id) + '"><span>' + level + '%</span></div>'
     : '';
   const colorControl = light.controllable && light.capabilities?.color
     ? '<div class="ambient-swatches"><button style="--swatch:#ff8040" data-ambient-color data-red="255" data-green="128" data-blue="64" data-ambient-id="' + escapeHtml(light.id) + '" title="Warm"></button><button style="--swatch:#ffffff" data-ambient-color data-red="255" data-green="255" data-blue="255" data-ambient-id="' + escapeHtml(light.id) + '" title="White"></button><button style="--swatch:#4da3ff" data-ambient-color data-red="77" data-green="163" data-blue="255" data-ambient-id="' + escapeHtml(light.id) + '" title="Cool"></button><button style="--swatch:#b15cff" data-ambient-color data-red="177" data-green="92" data-blue="255" data-ambient-id="' + escapeHtml(light.id) + '" title="Purple"></button></div>'
@@ -1214,7 +1219,17 @@ async function loadEnvironmentSensors() {
   latestEnvironmentSensors = payload.sensors || [];
   renderEnvironmentSensors();
   renderDevicesOverview();
+  renderHomeTempSensors();
 }
+
+/* CO2 is on Home, and it moves within minutes of people coming into a room.
+   The board polls the monitor every minute and serves this from that poll, so
+   refreshing while Home is showing costs no Govee calls. */
+const ENVIRONMENT_HOME_POLL_MS = 2 * 60_000;
+setInterval(() => {
+  if (document.hidden || !document.querySelector('.view-panel.active[data-view-panel="home"]')) return;
+  loadEnvironmentSensors().catch((error) => console.error(error));
+}, ENVIRONMENT_HOME_POLL_MS);
 
 /* Govee cloud thermo-hygrometers use the same tile as the grouped sensors, so
    the Environment grid reads as one set rather than two card designs. A CO2
@@ -5468,6 +5483,15 @@ function tempCardModel() {
   };
 }
 
+/* The monitor to show on Home: the highest CO2 of those reading now - with
+   more than one, the stuffiest room is the one worth seeing. */
+const CO2_SHORT = { fresh: "Fresh", ok: "OK", stuffy: "Stuffy", poor: "Poor" };
+
+function homeCo2Reading(sensors = latestEnvironmentSensors) {
+  const live = (sensors || []).filter((s) => s.online && s.co2 != null && s.co2_level);
+  return live.length ? live.reduce((worst, s) => (s.co2 > worst.co2 ? s : worst)) : null;
+}
+
 function formatReading(value, decimals, unit) {
   return value == null || !Number.isFinite(value) ? "—" : `${value.toFixed(decimals)}${unit}`;
 }
@@ -5489,10 +5513,11 @@ function renderHomeTempSensors() {
   const outdoorWhere = outdoor.length === 1 ? outdoor[0].name : outdoor.length ? `${outdoor.length} sensors` : "no sensor";
   const shown = outliers.slice(0, 3);
   const within = indoor.length - outliers.length;
+  const co2 = homeCo2Reading();
 
   renderHtml(body, `
     <div class="tc">
-      <div class="tc-hero">
+      <div class="tc-hero${co2 ? " has-co2" : ""}">
         <div class="tc-indoor">
           <div class="tc-big mono">${formatReading(indoorAvg, 1, "°")}</div>
           <div class="tc-cap">Indoor · ${indoor.length} sensor${indoor.length === 1 ? "" : "s"}${indoor.length > 1 ? ` · <b>${formatReading(model.min, 1, "")}–${formatReading(model.max, 1, "°")}</b>` : ""}</div>
@@ -5501,6 +5526,10 @@ function renderHomeTempSensors() {
           <div class="tc-mid mono">${formatReading(now.indoor_humidity, 0, "%")}</div>
           <div class="tc-cap">Humidity</div>
         </div>
+        ${co2 ? `<div class="tc-co2" title="${escapeHtml(`${co2.name}: ${co2.co2_level.text}`)}">
+          <div class="tc-mid mono">${co2.co2}<span class="tc-unit">ppm</span></div>
+          <div class="tc-cap">CO₂ · <span class="co2-level co2-${escapeHtml(co2.co2_level.key)}">${escapeHtml(CO2_SHORT[co2.co2_level.key] || co2.co2_level.text)}</span></div>
+        </div>` : ""}
         <div class="tc-out">
           <div class="tc-mid mono">${formatReading(now.outdoor_temperature, 1, "°")}${now.outdoor_humidity != null ? ` · ${formatReading(now.outdoor_humidity, 0, "%")}` : ""}</div>
           <div class="tc-cap">Outdoor · ${escapeHtml(outdoorWhere)}</div>

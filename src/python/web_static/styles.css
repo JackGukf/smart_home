@@ -4520,6 +4520,11 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
 .tc-cap { margin-top: 3px; font-size: 11px; color: var(--t-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tc-cap b { font-family: var(--mono); font-weight: 500; color: var(--t-text); }
 .tc-out { justify-self: end; min-width: 0; text-align: right; }
+/* CO2 joins the top row between humidity and outdoor, its level in colour. */
+.tc-hero.has-co2 { grid-template-columns: auto auto auto minmax(0, 1fr); }
+.tc-co2 { min-width: 0; }
+.tc-unit { margin-left: 3px; font-size: 11px; color: var(--t-text-dim); }
+.tc-co2 .co2-level { font-size: 11px; }
 
 .tc-sparks {
   display: grid;
@@ -4618,6 +4623,7 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
 
 @media (max-width: 480px) {
   .tc-hero { grid-template-columns: auto minmax(0, 1fr); }
+  .tc-hero.has-co2 { grid-template-columns: auto auto minmax(0, 1fr); }
   .tc-hum { display: none; }
   .tc-look { flex-wrap: wrap; white-space: normal; }
   .tc-rest { margin-left: 0; }

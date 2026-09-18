@@ -990,13 +990,13 @@ def create_app(
         if light.provider == "alexa":
             raise HTTPException(status_code=501, detail="Lepro via Alexa needs an Alexa routine or bridge before dashboard commands can be sent.")
         if light.provider == "govee_lan":
-            result = await asyncio.to_thread(_govee_lan_command_payload, light, command, body or {})
+            result = await asyncio.to_thread(_ambient_command_with_fallback, light, command, body or {})
         elif light.provider != "govee_ble":
             raise HTTPException(status_code=400, detail=f"Unsupported ambient provider: {light.provider}")
         elif not light.address:
             raise HTTPException(status_code=400, detail="Govee BLE light needs a Bluetooth address from Pi discovery before it can be controlled.")
         else:
-            result = await asyncio.to_thread(_govee_ble_command_payload, light, command, body or {})
+            result = await asyncio.to_thread(_ambient_command_with_fallback, light, command, body or {})
         _save_ambient_runtime_state(app.state.config_path)
         return result
 
@@ -2943,6 +2943,9 @@ def _ambient_light_card(light: AmbientLightDefinition) -> dict[str, Any]:
         "is_on": runtime_state.get("is_on"),
         "brightness": runtime_state.get("brightness"),
         "color": runtime_state.get("color"),
+        # lan / cloud: read from the light just now. last_set: what the
+        # dashboard last sent - a BLE strip cannot be asked.
+        "state_source": runtime_state.get("source") or ("last_set" if runtime_state.get("is_on") is not None else None),
         "capabilities": {
             "power": supports_full,
             "brightness": supports_full,
@@ -2956,12 +2959,128 @@ def _ambient_light_cards(path: Path) -> list[dict[str, Any]]:
 
 
 def _refresh_ambient_live_state(lights: list[AmbientLightDefinition]) -> None:
-    """Update the runtime-state cache with real status from live-readable providers."""
+    """Update the runtime-state cache with real status where a light can say it.
+
+    The LAN answer first (local, instant); then the Govee cloud, for any light
+    the account knows - which is also what keeps a light readable when its
+    LAN Control has been switched off, as a firmware update can do. A light
+    neither can read (a BLE-only strip) keeps the last state the dashboard set,
+    marked as such.
+    """
     for light in lights:
+        key = light.address or light.name
         if light.provider == "govee_lan":
             status = _govee_lan_status(light)
             if status is not None:
-                AMBIENT_LIGHT_RUNTIME_STATE[light.address or light.name] = status
+                AMBIENT_LIGHT_RUNTIME_STATE[key] = {**status, "source": "lan"}
+                continue
+        if light.provider not in ("govee_lan", "govee_ble"):
+            continue
+        # Just commanded: what was sent is newer than any reading the cloud
+        # has - it can lag the light by seconds, and its cache by a minute.
+        if time.time() - float(AMBIENT_LIGHT_RUNTIME_STATE.get(key, {}).get("set_at") or 0) < AMBIENT_TRUST_SET_S:
+            continue
+        entry = _govee_cloud_light_entry(light)
+        state = _govee_cloud_light_state(entry) if entry else None
+        if state is not None:
+            AMBIENT_LIGHT_RUNTIME_STATE[key] = {**AMBIENT_LIGHT_RUNTIME_STATE.get(key, {}), **state, "source": "cloud"}
+
+
+# ── Govee cloud, for lights: state, and control when the local path fails ──
+GOVEE_CLOUD_LIGHT_STATE_TTL = 60.0
+AMBIENT_TRUST_SET_S = 20.0
+_GOVEE_CLOUD_LIGHT_STATE: dict[str, tuple[float, dict[str, Any] | None]] = {}
+
+
+def _govee_cloud_light_entry(light: AmbientLightDefinition) -> dict[str, Any] | None:
+    """The account's device for this light: by device id, else a unique model."""
+    if not _govee_api_key():
+        return None
+    try:
+        devices = [d for d in _govee_cloud_devices() if str(d.get("type") or "") == "devices.types.light"]
+    except Exception:
+        return None
+    if _is_real_ble_address(light.address):
+        for entry in devices:
+            if str(entry.get("device") or "").lower() == str(light.address).lower():
+                return entry
+    if light.model:
+        matches = [d for d in devices if str(d.get("sku") or "").upper() == light.model.upper()]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
+def _govee_cloud_light_state(entry: dict[str, Any], now: float | None = None) -> dict[str, Any] | None:
+    """Power, brightness and colour from the cloud, cached for a minute: every
+    open screen refreshes this list, and the account has 10,000 calls a day."""
+    now = time.time() if now is None else now
+    device = str(entry.get("device") or "")
+    hit = _GOVEE_CLOUD_LIGHT_STATE.get(device)
+    if hit and now - hit[0] < GOVEE_CLOUD_LIGHT_STATE_TTL:
+        return hit[1]
+    state: dict[str, Any] | None = None
+    try:
+        payload = _govee_cloud_request(
+            "/router/api/v1/device/state",
+            {"requestId": "smart-home-ai", "payload": {"sku": entry.get("sku"), "device": device}},
+        )
+        values = {c.get("instance"): (c.get("state") or {}).get("value")
+                  for c in (payload.get("payload") or {}).get("capabilities") or []}
+        if values.get("online") is not False and values.get("powerSwitch") in (0, 1):
+            state = {"is_on": values["powerSwitch"] == 1}
+            if isinstance(values.get("brightness"), (int, float)):
+                state["brightness"] = int(values["brightness"])
+            rgb = values.get("colorRgb")
+            if isinstance(rgb, int) and 0 <= rgb <= 0xFFFFFF:
+                state["color"] = {"red": (rgb >> 16) & 255, "green": (rgb >> 8) & 255, "blue": rgb & 255}
+    except Exception:
+        state = None
+    _GOVEE_CLOUD_LIGHT_STATE[device] = (now, state)
+    return state
+
+
+def _govee_cloud_light_command(light: AmbientLightDefinition, command: str, body: dict[str, Any]) -> dict[str, Any] | None:
+    """Send the command through the cloud. None when the account has no such light."""
+    entry = _govee_cloud_light_entry(light)
+    if entry is None:
+        return None
+    if command in ("on", "off"):
+        _govee_cloud_control(entry, "devices.capabilities.on_off", "powerSwitch", 1 if command == "on" else 0)
+    elif command == "brightness":
+        value = _bounded_byte(body.get("brightness", body.get("value", 100)), minimum=1, maximum=100)
+        _govee_cloud_control(entry, "devices.capabilities.range", "brightness", value)
+    elif command == "color":
+        _govee_cloud_control(entry, "devices.capabilities.color_setting", "colorRgb", _rgb_int_from_body(body))
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported command: {command}")
+    # What was just set is the state now; the next cloud read confirms it.
+    _GOVEE_CLOUD_LIGHT_STATE.pop(str(entry.get("device") or ""), None)
+    _remember_ambient_light_command(light, command, body)
+    AMBIENT_LIGHT_RUNTIME_STATE[light.address or light.name]["source"] = "cloud"
+    return {"status": "ok", "name": light.name, "via": "cloud", "command": command,
+            "light": _ambient_light_card(light)}
+
+
+def _ambient_command_with_fallback(light: AmbientLightDefinition, command: str, body: dict[str, Any]) -> dict[str, Any]:
+    """The local path first - LAN or Bluetooth, fast and cloud-free - and the
+    Govee cloud when it fails, for a light the account knows."""
+    local = _govee_lan_command_payload if light.provider == "govee_lan" else _govee_ble_command_payload
+    try:
+        return local(light, command, body)
+    except HTTPException as error:
+        if error.status_code not in (502, 503, 504):
+            raise
+        try:
+            result = _govee_cloud_light_command(light, command, body)
+        except HTTPException:
+            raise
+        except Exception as cloud_error:
+            raise HTTPException(status_code=502, detail=f"{error.detail} The Govee cloud also failed: {cloud_error}") from cloud_error
+        if result is None:
+            raise
+        result["local_error"] = error.detail
+        return result
 
 
 def _rename_ambient_light(path: Path, light_id: str, name: str) -> AmbientLightDefinition:
@@ -3981,6 +4100,8 @@ def _govee_ble_command_payload(light: AmbientLightDefinition, command: str, body
 def _remember_ambient_light_command(light: AmbientLightDefinition, command: str, body: dict[str, Any]) -> None:
     key = light.address or light.name
     state = AMBIENT_LIGHT_RUNTIME_STATE.setdefault(key, {})
+    state["source"] = "last_set"
+    state["set_at"] = time.time()
     if command == "on":
         state["is_on"] = True
     elif command == "off":
