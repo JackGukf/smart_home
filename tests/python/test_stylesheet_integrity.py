@@ -69,3 +69,26 @@ def test_views_are_hidden_until_they_are_active(selector: str) -> None:
     block = css[at:css.index("}", at)]
 
     assert "display" in block, f"{selector} must say whether it is shown"
+
+
+def test_the_ipad_home_fixes_work_without_container_queries() -> None:
+    """Safari before iPadOS 16 ignores @container. The first fix for the iPad's
+    overlapping cards was built on it and changed nothing on an older iPad."""
+    css = STYLES.read_text(encoding="utf-8")
+    start = css.index("/* ── Cards narrower than their design ──")
+    block = css[start:css.index("#homeSensorsPanel .tc-big { font-size: 28px; }", start)]
+    rules = _without_comments_and_strings(block)
+    assert "@container" not in rules and "cqh" not in rules and "cqw" not in rules
+    for selector in ("#homeWeatherPanel .home-weather-body", "#homeAlarmBody .alarm-arm span", "#homeSensorsPanel .tc-hum"):
+        assert selector in rules
+
+
+def test_container_units_have_a_fallback_for_older_safari() -> None:
+    """A font-size in cqh alone is dropped by old Safari, leaving the base size."""
+    css = _without_comments_and_strings(STYLES.read_text(encoding="utf-8"))
+    for match in re.finditer(r"([^{};]*)\{([^{}]*)\}", css):
+        body = match.group(2)
+        for prop in ("font-size",):
+            values = re.findall(rf"{prop}\s*:\s*([^;]+)", body)
+            if any("cq" in v for v in values) and match.group(1).strip().startswith("#homeWeatherPanel"):
+                assert any("cq" not in v for v in values), f"{match.group(1).strip()} needs a plain {prop} first"
