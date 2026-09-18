@@ -251,6 +251,27 @@
         </div>
       </div>
 
+      <!-- House learning: Phase 0 of the plan. The collector keeps every event;
+           this shows how much it holds, how far it is from enough to learn a
+           routine, and asks for the labels the models will learn from. -->
+      <div class="panel learn-card" id="learnCard">
+        <div class="home-panel-head">
+          <span class="panel-title"><i class="ti ti-brain"></i> House learning</span>
+          <span class="section-meta" id="learnMeta">–</span>
+        </div>
+        <ol class="learn-steps" aria-label="Learning phases">
+          <li class="learn-step" data-step="collect"><b>Collect</b><small>every event, kept</small></li>
+          <li class="learn-step" data-step="label"><b>Teach</b><small>your labels</small></li>
+          <li class="learn-step" data-step="learn"><b>Learn</b><small>routines &amp; anomalies</small></li>
+          <li class="learn-step" data-step="act"><b>Act</b><small>after a silent trial</small></li>
+        </ol>
+        <div class="learn-body">
+          <div class="learn-col" id="learnStats"></div>
+          <div class="learn-col" id="learnReady"></div>
+          <div class="learn-col" id="learnReview"></div>
+        </div>
+      </div>
+
       <div class="status-two">
         <div class="panel status-services">
           <div class="home-panel-head"><span class="panel-title"><i class="ti ti-server-2"></i> Services</span><span class="section-meta" id="statusServicesMeta">–</span></div>

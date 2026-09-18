@@ -1,0 +1,19 @@
+[Unit]
+Description=House memory - keeps every Home Assistant event for learning
+# Home Assistant is a container and may start after this; the collector
+# retries with backoff and fills the gap from history once it answers.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/.venv/bin/python -m src.python.house_memory_collector
+Restart=always
+RestartSec=15
+# A recorder of the house, not part of running it: it yields to everything.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

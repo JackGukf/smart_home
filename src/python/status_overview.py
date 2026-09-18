@@ -50,6 +50,7 @@ SERVICE_UNITS: tuple[tuple[str, str, str], ...] = (
     ("matter-bridge.service", "user", "Matter bridge"),
     ("panel-camera.service", "user", "Panel camera"),
     ("resource-logger.service", "user", "Resource logger"),
+    ("house-memory.service", "user", "House memory"),
     ("zigbee-adapter-watch.service", "user", "Zigbee watchdog"),
     ("ollama.service", "system", "Ollama"),
     ("matter-server.service", "system", "Matter server"),

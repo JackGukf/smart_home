@@ -9,6 +9,7 @@ USER_HOME="$(getent passwd "${RUN_USER}" | cut -d: -f6)"
 SERVICE_NAMES=(
   "go2rtc.service"
   "smart-home-dashboard.service"
+  "house-memory.service"
 )
 
 if [[ -z "${USER_HOME}" || ! -d "${USER_HOME}" ]]; then

@@ -7980,6 +7980,7 @@ function activateView(viewName) {
   if (viewName === "status") {
     loadHouseDigest().catch((error) => console.error(error));
     loadStatusOverview();
+    loadHouseLearning();
   }
   if (viewName === "zigbee") {
     loadZigbeeFrame().catch((error) => console.error(error));
@@ -8651,7 +8652,165 @@ async function loadStatusOverview() {
 setInterval(() => {
   if (document.hidden || !document.querySelector('.view-panel.active[data-view-panel="status"]')) return;
   loadStatusOverview();
+  loadHouseLearning();
 }, STATUS_POLL_MS);
+
+/* ── House learning (Phase 0) ──
+   The collector keeps every Home Assistant event; this tile says how much it
+   holds, how far that is from enough to learn a routine (every weekday seen
+   LEARN_WEEKS times), and asks for labels on the moments worth one - the
+   Phase 1 models learn from those, and they cannot be recovered later. */
+const LEARN_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];  /* Python's weekday(): Monday is 0 */
+const LEARN_LABELS = [
+  { label: "normal", icon: "ti-check", text: "Normal" },
+  { label: "false_alarm", icon: "ti-x", text: "False alarm" },
+  { label: "unusual", icon: "ti-alert-triangle", text: "Unusual" },
+];
+let latestLearning = null;
+
+function browserTimeZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
+}
+
+/* Days until every weekday has been seen `needed` times, counting today (it
+   will be complete by midnight). Monday-first, like the server. */
+function learnDaysToReady(coverage, needed, today = new Date()) {
+  const remaining = coverage.map((seen) => Math.max(0, needed - seen));
+  if (remaining.every((n) => n === 0)) return 0;
+  const start = (today.getDay() + 6) % 7;
+  for (let day = 0; day < 7 * needed + 7; day++) {
+    const weekday = (start + day) % 7;
+    if (remaining[weekday] > 0) remaining[weekday] -= 1;
+    if (remaining.every((n) => n === 0)) return day + 1;
+  }
+  return null;
+}
+
+function learnAgo(ts, now = Date.now()) {
+  const minutes = Math.max(0, Math.round((now - ts * 1000) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
+}
+
+function formatBytes(bytes) {
+  if (!(bytes > 0)) return "0 MB";
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+}
+
+function learnStatsHtml(data) {
+  const since = data.first_ts ? new Date(data.first_ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "–";
+  const rows = [
+    ["Events kept", Number(data.events || 0).toLocaleString()],
+    ["Since", since],
+    ["Today", Number(data.events_today || 0).toLocaleString()],
+    ["Devices seen", String(data.entities || 0)],
+    ["Storage", formatBytes(data.db_bytes)],
+  ];
+  const daily = data.daily || [];
+  const max = Math.max(1, ...daily.map((d) => d.events));
+  const bars = daily.map((d) => {
+    const at = new Date(`${d.date}T12:00:00`);
+    const label = `${at.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} · ${d.events.toLocaleString()} events${d.complete ? "" : " (partial)"}`;
+    return `<i class="learn-day${d.complete ? "" : " partial"}" style="height:${Math.max(6, (d.events / max) * 100).toFixed(0)}%" title="${escapeHtml(label)}"></i>`;
+  }).join("");
+  return `
+    <div class="learn-sub">What it has kept</div>
+    <dl class="learn-stats">${rows.map(([k, v]) => `<div><dt>${k}</dt><dd class="mono">${escapeHtml(v)}</dd></div>`).join("")}</dl>
+    <div class="learn-days" role="img" aria-label="Events kept per day, last ${daily.length} days">${bars}</div>`;
+}
+
+function learnReadyHtml(data) {
+  const needed = data.weeks_needed || 4;
+  const coverage = data.weekday_coverage || [0, 0, 0, 0, 0, 0, 0];
+  const seen = coverage.reduce((sum, n) => sum + Math.min(n, needed), 0);
+  const pct = Math.round((seen / (7 * needed)) * 100);
+  const days = learnDaysToReady(coverage, needed);
+  const eta = data.ready || days === 0 ? "Enough to start learning routines."
+    : days == null ? "" : `About ${days} more day${days === 1 ? "" : "s"} until every weekday has been seen ${needed} times.`;
+  const pips = LEARN_WEEKDAYS.map((name, i) => `
+    <div class="learn-weekday" title="${name}: ${coverage[i]} complete day${coverage[i] === 1 ? "" : "s"}">
+      <span>${name}</span>
+      <span class="learn-pips">${Array.from({ length: needed }, (_, k) => `<i class="${k < coverage[i] ? "on" : ""}"></i>`).join("")}</span>
+    </div>`).join("");
+  return `
+    <div class="learn-sub">Ready to learn routines</div>
+    <div class="learn-progress"><span class="learn-bar"><i style="width:${pct}%"></i></span><b class="mono">${pct}%</b></div>
+    <div class="learn-weekdays">${pips}</div>
+    <p class="learn-note">${escapeHtml(eta)} ${data.days_complete || 0} complete day${data.days_complete === 1 ? "" : "s"} so far.</p>`;
+}
+
+function learnReviewHtml(data) {
+  const labels = data.labels || {};
+  const total = LEARN_LABELS.reduce((sum, l) => sum + (labels[l.label] || 0), 0);
+  const items = (data.review || []).map((item) => `
+    <li class="learn-item" data-event-id="${item.id}">
+      <span class="learn-item-what"><i class="ti ${item.kind === "camera" ? "ti-user-scan" : "ti-door"}" aria-hidden="true"></i>
+        <span>${escapeHtml(statusName(item.name))}<small>${item.kind === "camera" ? "person seen" : "opened"} · ${escapeHtml(learnAgo(item.ts))}</small></span></span>
+      <span class="learn-item-actions">${LEARN_LABELS.map((l) => `
+        <button type="button" class="learn-label" data-learn-label="${l.label}" title="${l.text}" aria-label="${l.text}"><i class="ti ${l.icon}" aria-hidden="true"></i></button>`).join("")}</span>
+    </li>`).join("");
+  return `
+    <div class="learn-sub">Teach it <small>${total} label${total === 1 ? "" : "s"} · ${labels.false_alarm || 0} false alarm${labels.false_alarm === 1 ? "" : "s"}</small></div>
+    ${items ? `<ul class="learn-list">${items}</ul>` : `<p class="learn-note">Nothing new to review in the last 24 hours.</p>`}`;
+}
+
+function renderHouseLearning(data = latestLearning) {
+  const card = document.querySelector("#learnCard");
+  if (!card) return;
+  const set = (selector, html) => { const el = card.querySelector(selector); if (el) el.innerHTML = html; };
+  if (!data || !data.available) {
+    setStatusText("#learnMeta", "Collector not started");
+    set("#learnStats", `<p class="learn-note">The house memory starts with the house-memory service. Nothing is kept until it runs.</p>`);
+    set("#learnReady", "");
+    set("#learnReview", "");
+    return;
+  }
+  const running = data.collector?.running;
+  const meta = card.querySelector("#learnMeta");
+  if (meta) {
+    meta.innerHTML = `<i class="learn-dot${running ? " on" : ""}" aria-hidden="true"></i>${running ? "Collecting" : "Collector stopped"}${data.last_ts ? ` · last event ${escapeHtml(learnAgo(data.last_ts))}` : ""}`;
+  }
+  const labelled = Object.values(data.labels || {}).reduce((a, b) => a + b, 0);
+  card.querySelectorAll(".learn-step").forEach((step) => {
+    const name = step.dataset.step;
+    step.classList.toggle("done", name === "collect" && running);
+    step.classList.toggle("active", name === "label" ? labelled > 0 : name === "learn" ? Boolean(data.ready) : false);
+  });
+  set("#learnStats", learnStatsHtml(data));
+  set("#learnReady", learnReadyHtml(data));
+  set("#learnReview", learnReviewHtml(data));
+}
+
+async function loadHouseLearning() {
+  try {
+    latestLearning = await requestJson(`/api/memory/summary?tz=${encodeURIComponent(browserTimeZone())}`);
+  } catch (error) {
+    console.error(error);
+  }
+  renderHouseLearning();
+}
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-learn-label]");
+  if (!button) return;
+  const item = button.closest("[data-event-id]");
+  if (!item) return;
+  item.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  try {
+    await requestJson("/api/memory/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_id: Number(item.dataset.eventId), label: button.dataset.learnLabel }),
+    });
+    item.classList.add("learned");
+    loadHouseLearning();
+  } catch (error) {
+    console.error(error);
+    item.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+  }
+});
 
 /* ── Automations: the LLM authors, Home Assistant executes ──
    Drafting is slow by nature - a 4B model on eight CPU cores takes tens of

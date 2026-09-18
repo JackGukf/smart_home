@@ -30,7 +30,7 @@ from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -53,6 +53,7 @@ from src.python.house_digest import read_digest
 from src.python import news_feed
 from src.python import sensor_history
 from src.python import status_overview
+from src.python import house_memory
 from src.python.automation_author import (
     AuthorError,
     Draft,
@@ -484,6 +485,15 @@ class HomeAlarmCardRequest(BaseModel):
     sensors: list[str]
 
 
+MEMORY_TZ = re.compile(r"[A-Za-z_]+(?:/[A-Za-z0-9_+\-]+){0,2}")
+
+
+class MemoryFeedbackRequest(BaseModel):
+    event_id: int = Field(ge=1)
+    label: str = Field(max_length=32)
+    note: str | None = Field(default=None, max_length=500)
+
+
 class SensorHistoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -577,6 +587,7 @@ def create_app(
     news_service: news_feed.NewsService | None = None,
     history_service: sensor_history.SensorHistory | None = None,
     status_service: status_overview.StatusOverview | None = None,
+    memory_service: house_memory.SummaryCache | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
     app.state.discovery_path = discovery_path
@@ -594,6 +605,7 @@ def create_app(
     app.state.news_service = news_service or news_feed.NewsService()
     app.state.history_service = history_service
     app.state.status_service = status_service
+    app.state.memory_service = memory_service or house_memory.SummaryCache()
     # One draft at a time. Ollama serialises requests anyway, so a second
     # concurrent draft would not run sooner - it would just hold a worker
     # thread and a connection for a minute to find that out.
@@ -1225,6 +1237,25 @@ def create_app(
             )
             app.state.status_service = service
         return await asyncio.to_thread(service.overview)
+
+    @app.get("/api/memory/summary")
+    async def memory_summary(tz: str = "UTC") -> dict[str, Any]:
+        """How much the house memory holds, and how far it is from Phase 1.
+
+        `tz` is the browser's zone, so "a day" is your day rather than the
+        board's UTC one. Only a well-formed zone name is passed on.
+        """
+        zone = tz if MEMORY_TZ.fullmatch(tz) else "UTC"
+        return await asyncio.to_thread(app.state.memory_service.summary, zone)
+
+    @app.post("/api/memory/feedback")
+    async def memory_feedback(request: MemoryFeedbackRequest) -> dict[str, Any]:
+        """Your label on one event: what the Phase 1 models will learn from."""
+        try:
+            return await asyncio.to_thread(
+                app.state.memory_service.label, request.event_id, request.label, request.note)
+        except house_memory.FeedbackError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/api/automations/proposals")
     async def list_proposals() -> dict[str, Any]:
