@@ -2376,16 +2376,55 @@ lvgl:
                   id: open_app
                   page: 0
             widgets:
-            - !include {file: panel/card-view.yaml, vars: {key: home, title: "Home", icon: "", x: 24, y: 70}}
-            - !include {file: panel/card-view.yaml, vars: {key: cameras, title: "Cameras", icon: "", x: 247, y: 70}}
-            - !include {file: panel/card-view.yaml, vars: {key: alarm, title: "Security", icon: "", x: 24, y: 179}}
-            - !include {file: panel/card-view.yaml, vars: {key: devices, title: "Devices", icon: "", x: 247, y: 179}}
-            - !include {file: panel/card-view.yaml, vars: {key: climate, title: "Climate", icon: "", x: 24, y: 288}}
-            - !include {file: panel/card-view.yaml, vars: {key: status, title: "Status", icon: "", x: 247, y: 288}}
+            - !include {file: panel/card-view.yaml, vars: {key: home, title: "Home", icon: "", x: 24, y: 66}}
+            - !include {file: panel/card-view.yaml, vars: {key: cameras, title: "Cameras", icon: "", x: 247, y: 66}}
+            - !include {file: panel/card-view.yaml, vars: {key: alarm, title: "Security", icon: "", x: 24, y: 134}}
+            - !include {file: panel/card-view.yaml, vars: {key: devices, title: "Devices", icon: "", x: 247, y: 134}}
+            - !include {file: panel/card-view.yaml, vars: {key: climate, title: "Climate", icon: "", x: 24, y: 202}}
+            - !include {file: panel/card-view.yaml, vars: {key: status, title: "Status", icon: "", x: 247, y: 202}}
+            # Scroll the hallway screen: most of a screen at a time. Events, like
+            # the views, so the panel's main loop never waits on the network; the
+            # dashboard forwards them to the wall panel's browser only.
+            - !include {file: panel/wall-button.yaml, vars: {key: scroll_up, text: "\uF077   Scroll up", event: esphome.wall_panel_scroll, field: direction, value: up, toast: "Hallway wall panel: scrolled up", x: 24, y: 276, width: 209}}
+            - !include {file: panel/wall-button.yaml, vars: {key: scroll_down, text: "\uF078   Scroll down", event: esphome.wall_panel_scroll, field: direction, value: down, toast: "Hallway wall panel: scrolled down", x: 247, y: 276, width: 209}}
+            # The camera on the wall panel's Home view: previous and next, with
+            # its name in between as the wall panel reports it.
+            - !include {file: panel/wall-button.yaml, vars: {key: camera_prev, text: "\uF053", event: esphome.wall_panel_camera, field: step, value: prev, toast: "Hallway wall panel: previous camera", x: 24, y: 342, width: 64}}
+            - obj:
+                x: 96
+                y: 342
+                width: 288
+                height: 54
+                radius: 14
+                pad_all: 0
+                border_width: 0
+                bg_color: 0x2A2F37
+                bg_opa: 74%
+                scrollable: false
+                widgets:
+                  - label:
+                      x: 0
+                      y: 6
+                      width: 288
+                      text_align: CENTER
+                      text: "Home camera"
+                      text_font: montserrat_14
+                      text_color: 0xD1D6DC
+                  - label:
+                      id: wall_camera_name
+                      x: 8
+                      y: 26
+                      width: 272
+                      text_align: CENTER
+                      long_mode: DOT
+                      text: "..."
+                      text_font: montserrat_16
+                      text_color: 0xF2F5F8
+            - !include {file: panel/wall-button.yaml, vars: {key: camera_next, text: "\uF054", event: esphome.wall_panel_camera, field: step, value: next, toast: "Hallway wall panel: next camera", x: 392, y: 342, width: 64}}
             - label:
                 id: wall_toast
                 x: 28
-                y: 402
+                y: 412
                 width: 424
                 text: "Tap a view to show it on the hallway wall panel"
                 text_font: montserrat_14
@@ -3613,6 +3652,18 @@ text_sensor:
     scan_results:
       id: wifi_scan_results
       internal: true
+  # The camera the hallway wall panel's Home view shows, as the dashboard
+  # reports it (web_app.py, /api/wall-panel/camera).
+  - platform: homeassistant
+    id: wall_camera
+    entity_id: sensor.wall_panel_camera
+    internal: true
+    on_value:
+      - lvgl.label.update:
+          id: wall_camera_name
+          text: !lambda |-
+            std::string text = (x.empty() || x == "unknown" || x == "unavailable") ? "..." : x;
+            return text;
   - platform: homeassistant
     id: alarm_state
     entity_id: alarm_control_panel.duo_gong_neng_bao_jing_zhu_ji

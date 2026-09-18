@@ -507,6 +507,12 @@ class IRCodeRequest(BaseModel):
     code: str = Field(max_length=tuya_ir.MAX_CODE_LENGTH)
 
 
+class WallPanelCameraReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=120)
+
+
 class MemoryFeedbackRequest(BaseModel):
     event_id: int = Field(ge=1)
     label: str = Field(max_length=32)
@@ -1362,6 +1368,26 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
         await asyncio.to_thread(_ir_republish)
         return {"deleted": button_id}
+
+    @app.post("/api/wall-panel/camera")
+    async def wall_panel_camera(request: Request, report: WallPanelCameraReport) -> dict[str, Any]:
+        """The wall panel says which camera its Home card shows, for the Voice
+        Panel's remote. Only the wall panel itself is heard; anyone else's
+        report is dropped, so a phone cannot put words on the remote."""
+        if not _host_is_trusted(request.client.host if request.client else None, _trusted_hosts):
+            return {"status": "ignored"}
+        ha_config = _load_home_assistant_config(app.state.config_path)
+        token = os.getenv(ha_config.token_env)
+        if not token:
+            return {"status": "needs_auth"}
+        name = " ".join(report.name.split())[:60] or "No camera"
+        try:
+            await asyncio.to_thread(_home_assistant_post, ha_config, token, f"/api/states/{WALL_PANEL_CAMERA_ENTITY}",
+                                    {"state": name, "attributes": {"friendly_name": "Wall panel camera",
+                                                                   "icon": "mdi:cctv"}})
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Home Assistant did not take the camera name") from error
+        return {"status": "ok", "name": name}
 
     @app.get("/api/automations/proposals")
     async def list_proposals() -> dict[str, Any]:
@@ -4944,6 +4970,16 @@ _EVENT_REFRESH_DOMAINS = frozenset({"light", "switch"})
 # PC never changes view on its own.
 WALL_PANEL_VIEW_EVENT = "esphome.wall_panel_show_view"
 WALL_PANEL_VIEWS = frozenset({"home", "cameras", "alarm", "devices", "climate", "status"})
+# The same remote also scrolls the wall panel's screen and steps the Home
+# camera card through the cameras. Each is its own event, checked against its
+# own fixed list of values before anything is forwarded.
+WALL_PANEL_SCROLL_EVENT = "esphome.wall_panel_scroll"
+WALL_PANEL_SCROLLS = frozenset({"up", "down", "top"})
+WALL_PANEL_CAMERA_EVENT = "esphome.wall_panel_camera"
+WALL_PANEL_CAMERA_STEPS = frozenset({"next", "prev"})
+# Where the wall panel says which camera its Home card shows, so the Voice
+# Panel's remote can name it. Set through the states API by the dashboard.
+WALL_PANEL_CAMERA_ENTITY = "sensor.wall_panel_camera"
 # Proxies and browsers drop an idle event stream. A comment frame is not an
 # event, so it costs the client nothing but keeps the socket alive.
 _EVENT_KEEPALIVE_SECONDS = 20.0
@@ -4988,11 +5024,16 @@ async def _home_assistant_event_stream(
                 await ws.send_json({"id": 1, "type": "subscribe_events", "event_type": "state_changed"})
                 await ws.receive_json()  # subscription result
                 if follow_wall_panel:
-                    # Its result arrives as a non-event message, which the
+                    # Their results arrive as non-event messages, which the
                     # coalescer skips like any other.
-                    await ws.send_json({"id": 2, "type": "subscribe_events",
-                                        "event_type": WALL_PANEL_VIEW_EVENT})
+                    for number, event_type in enumerate(_WALL_PANEL_FRAMES, start=2):
+                        await ws.send_json({"id": number, "type": "subscribe_events",
+                                            "event_type": event_type})
                 yield 'event: ready\ndata: {}\n\n'
+                if follow_wall_panel:
+                    # The page learns it is the wall panel, so only it reports
+                    # which camera it shows.
+                    yield 'event: wall_panel\ndata: {}\n\n'
 
                 async def receive(timeout: float) -> dict[str, Any]:
                     return await asyncio.wait_for(ws.receive_json(), timeout=timeout)
@@ -5011,6 +5052,28 @@ def _wall_panel_frame(data: dict[str, Any]) -> str | None:
     if view not in WALL_PANEL_VIEWS:
         return None
     return f"event: show_view\ndata: {json.dumps({'view': view})}\n\n"
+
+
+def _wall_scroll_frame(data: dict[str, Any]) -> str | None:
+    direction = str(data.get("direction") or "").strip().lower()
+    if direction not in WALL_PANEL_SCROLLS:
+        return None
+    return f"event: wall_scroll\ndata: {json.dumps({'direction': direction})}\n\n"
+
+
+def _wall_camera_frame(data: dict[str, Any]) -> str | None:
+    step = str(data.get("step") or "").strip().lower()
+    if step not in WALL_PANEL_CAMERA_STEPS:
+        return None
+    return f"event: wall_camera\ndata: {json.dumps({'step': step})}\n\n"
+
+
+# Each remote event, and what turns it into a frame for the wall panel.
+_WALL_PANEL_FRAMES: dict[str, Callable[[dict[str, Any]], str | None]] = {
+    WALL_PANEL_VIEW_EVENT: _wall_panel_frame,
+    WALL_PANEL_SCROLL_EVENT: _wall_scroll_frame,
+    WALL_PANEL_CAMERA_EVENT: _wall_camera_frame,
+}
 
 
 def _changed_frame(entity_id: str) -> str:
@@ -5052,10 +5115,11 @@ async def _coalesced_changes(
             if message.get("type") != "event":
                 continue
             event = message.get("event") or {}
-            if event.get("event_type") == WALL_PANEL_VIEW_EVENT:
+            framer = _WALL_PANEL_FRAMES.get(str(event.get("event_type") or ""))
+            if framer is not None:
                 # A deliberate request, not a state change: sent at once, and it
                 # neither waits for nor disturbs a coalescing window.
-                frame = _wall_panel_frame(event.get("data") or {})
+                frame = framer(event.get("data") or {})
                 if frame:
                     yield frame
                 continue

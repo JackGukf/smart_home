@@ -281,6 +281,13 @@ let areasDoc            = { areas: [], assignments: {} };
 let currentAreaId       = null;
 let doorbellEventsReady = false;
 const latestCameraById  = new Map();
+/* The Voice Panel's remote (see "The rest of the Voice Panel's remote").
+   Declared up here: renderHomeCamera reads them, and it runs during start-up,
+   long before the remote's own section of this file. */
+const WALL_PANEL_SCROLLS = new Set(["up", "down", "top"]);
+const WALL_PANEL_CAMERA_STEPS = new Set(["next", "prev"]);
+let isWallPanel = false;
+let reportedWallCamera = null;
 const lastDoorbellEventById = new Map();
 let manualLightCommandRevision = 0;
 let activeLightSceneCount = 0;
@@ -6024,6 +6031,7 @@ function renderHomeCamera() {
     syncPathSlots(route);
     shownHomeCameraId = activePathCameraId();
     renderHomeCameraExtra();
+    reportWallPanelCamera();
     return;
   }
   /* No episode wants the card, so it must not still be holding path slots.
@@ -6040,6 +6048,7 @@ function renderHomeCamera() {
   }
   renderHtml(body, homeCameraMarkup(camera));
   renderHomeCameraExtra();
+  reportWallPanelCamera();
 }
 
 /* ── Under the picture: the other cameras, and who was seen last ──────────
@@ -10892,6 +10901,60 @@ function wallPanelView(data) {
   }
 }
 
+/* ── The rest of the Voice Panel's remote: scroll, and step the Home camera ──
+   Only this browser - the wall panel - is ever sent these, and the server has
+   already checked each value; checked again here, as show_view is. */
+
+function wallPanelField(data, field, allowed) {
+  try {
+    const value = String(JSON.parse(data || "{}")[field] || "").toLowerCase();
+    return allowed.has(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/* Most of a screen at a time, leaving a strip of the last one for context. */
+function scrollWallPanel(direction) {
+  const scroller = document.querySelector(".content") || document.scrollingElement;
+  if (!scroller) return;
+  if (direction === "top") {
+    scroller.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  const step = Math.round(scroller.clientHeight * 0.7) * (direction === "up" ? -1 : 1);
+  scroller.scrollBy({ top: step, behavior: "smooth" });
+}
+
+/* The next or previous camera on the Home card, as if picked from its list -
+   so it is remembered, and a motion episode gives way to it. */
+function stepHomeCamera(step) {
+  if (!document.querySelector('.view-panel.active[data-view-panel="home"]')) activateView("home");
+  const select = document.querySelector("#homeCameraSelect");
+  if (!select || !select.options.length) return;
+  const count = select.options.length;
+  const index = Math.max(0, select.selectedIndex);
+  select.selectedIndex = (index + (step === "next" ? 1 : count - 1)) % count;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/* Tell the Voice Panel which camera the Home card shows, when that changes. */
+function reportWallPanelCamera(force = false) {
+  if (!isWallPanel) return;
+  const camera = shownHomeCameraId ? latestCameraById.get(shownHomeCameraId) : null;
+  const name = camera?.name || (shownHomeCameraId ? String(shownHomeCameraId) : "No camera");
+  if (!force && name === reportedWallCamera) return;
+  reportedWallCamera = name;
+  requestJson("/api/wall-panel/camera", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  }).catch((error) => {
+    reportedWallCamera = null;   // try again on the next change
+    console.error(error);
+  });
+}
+
 function connectLiveUpdates() {
   if (typeof EventSource !== "function") return;   /* older Safari: poll only */
   /* The whole wiring is guarded, not just the constructor. This is an
@@ -10909,6 +10972,18 @@ function connectLiveUpdates() {
     source.addEventListener("show_view", (event) => {
       const view = wallPanelView(event.data);
       if (view) activateView(view);
+    });
+    source.addEventListener("wall_panel", () => {
+      isWallPanel = true;
+      reportWallPanelCamera(true);
+    });
+    source.addEventListener("wall_scroll", (event) => {
+      const direction = wallPanelField(event.data, "direction", WALL_PANEL_SCROLLS);
+      if (direction) scrollWallPanel(direction);
+    });
+    source.addEventListener("wall_camera", (event) => {
+      const step = wallPanelField(event.data, "step", WALL_PANEL_CAMERA_STEPS);
+      if (step) stepHomeCamera(step);
     });
 
     source.addEventListener("unavailable", (event) => {
