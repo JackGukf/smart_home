@@ -6833,10 +6833,14 @@ header > .header-right { flex-shrink: 0; }
 
     /* Three readings, not four: humidity is in the charts right below. */
     #homeSensorsPanel .tc-hum, #homeSensorsPanel .tc-out-hum { display: none; }
+    /* Shared columns, not content-sized ones: the indoor caption is long, and
+       an auto column hands it the row. A caption that does not fit ends in an
+       ellipsis rather than running under the next one. */
     #homeSensorsPanel .tc-hero, #homeSensorsPanel .tc-hero.has-co2 {
-      grid-template-columns: auto auto minmax(0, 1fr);
-      grid-column-gap: 14px;
+      grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr);
+      grid-column-gap: 12px;
     }
+    #homeSensorsPanel .tc-hero > * { min-width: 0; }
     #homeSensorsPanel .tc-big { font-size: 28px; }
   }
 
