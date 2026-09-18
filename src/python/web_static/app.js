@@ -3860,9 +3860,9 @@ function renderHomeAlarmCard(payload = latestAlarmData) {
 
   /* data-arm-mode, so the Security view's own handler drives these too. */
   const armButtons = displayState === "disarmed"
-    ? `<button class="alarm-arm" type="button" data-arm-mode="home"><i class="ti ti-home" aria-hidden="true"></i>Arm home</button>
-       <button class="alarm-arm" type="button" data-arm-mode="away"><i class="ti ti-lock" aria-hidden="true"></i>Arm away</button>`
-    : `<button class="alarm-arm" type="button" data-arm-mode="disarmed"><i class="ti ti-lock-open" aria-hidden="true"></i>Disarm</button>`;
+    ? `<button class="alarm-arm" type="button" data-arm-mode="home" title="Arm home"><i class="ti ti-home" aria-hidden="true"></i><span>Arm home</span></button>
+       <button class="alarm-arm" type="button" data-arm-mode="away" title="Arm away"><i class="ti ti-lock" aria-hidden="true"></i><span>Arm away</span></button>`
+    : `<button class="alarm-arm" type="button" data-arm-mode="disarmed" title="Disarm"><i class="ti ti-lock-open" aria-hidden="true"></i><span>Disarm</span></button>`;
 
   body.innerHTML = `
     <div class="alarm-head${displayState === "alarm" ? " alarm-active" : ""}">
@@ -5776,7 +5776,7 @@ function renderHomeTempSensors() {
           <div class="tc-cap">CO₂ · <span class="co2-level co2-${escapeHtml(co2.co2_level.key)}">${escapeHtml(CO2_SHORT[co2.co2_level.key] || co2.co2_level.text)}</span></div>
         </div>` : ""}
         <div class="tc-out">
-          <div class="tc-mid mono">${formatReading(now.outdoor_temperature, 1, "°")}${now.outdoor_humidity != null ? ` · ${formatReading(now.outdoor_humidity, 0, "%")}` : ""}</div>
+          <div class="tc-mid mono">${formatReading(now.outdoor_temperature, 1, "°")}${now.outdoor_humidity != null ? `<span class="tc-out-hum"> · ${formatReading(now.outdoor_humidity, 0, "%")}</span>` : ""}</div>
           <div class="tc-cap">Outdoor · ${escapeHtml(outdoorWhere)}</div>
         </div>
       </div>

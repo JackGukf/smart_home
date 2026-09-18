@@ -6811,3 +6811,39 @@ header > .header-right { flex-shrink: 0; }
 .ir-learn-actions .command { margin-right: 6px; }
 .ir-learn-start { width: 100%; justify-content: center; }
 @media (prefers-reduced-motion: reduce) { .ir-learn.waiting > i { animation: none; } }
+
+/* ── Cards narrower than their design ──
+   The iPad's two-column Home (740-1100px wide) makes each card about 345px.
+   The Weather, Temperatures and Security cards were laid out for the window's
+   width, not their own, and their text ran into itself there. Each now asks
+   how wide it is. Limited to that band: the phone and the wall panel keep
+   the rules they already had. */
+@media (min-width: 740px) and (max-width: 1100px) {
+  #homeWeatherPanel, #homeSensorsPanel { container-type: inline-size; }
+
+  @container (max-width: 440px) {
+    /* The clock and today's weather stay on one line, smaller, above the week. */
+    #homeWeatherPanel .home-weather-body { flex-wrap: nowrap; align-items: center; }
+    #homeWeatherPanel .home-weather-clock { margin-right: 10px; }
+    #homeWeatherPanel .home-weather-time { font-size: 46px; }
+    #homeWeatherPanel .home-weather-date { font-size: 12px; }
+    #homeWeatherPanel .home-weather-icon { font-size: 28px; margin-right: 6px; }
+    #homeWeatherPanel .home-weather-temp { font-size: 30px; }
+    #homeWeatherPanel .home-weather-cond { overflow: hidden; text-overflow: ellipsis; }
+
+    /* Three readings, not four: humidity is in the charts right below. */
+    #homeSensorsPanel .tc-hum, #homeSensorsPanel .tc-out-hum { display: none; }
+    #homeSensorsPanel .tc-hero, #homeSensorsPanel .tc-hero.has-co2 {
+      grid-template-columns: auto auto minmax(0, 1fr);
+      grid-column-gap: 14px;
+    }
+    #homeSensorsPanel .tc-big { font-size: 28px; }
+  }
+
+  /* The arm buttons keep their icons and lose their words. */
+  @container (max-width: 400px) {
+    #homeAlarmBody .alarm-arm span { display: none; }
+    #homeAlarmBody .alarm-arm { padding-left: 10px; padding-right: 10px; }
+    #homeAlarmBody .alarm-arm i { margin-right: 0; }
+  }
+}
