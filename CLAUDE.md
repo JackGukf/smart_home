@@ -35,6 +35,20 @@
 > expander pin 4, cannot be switched off in sleep.
 > Start here: **`docs/handoff-2026-09-14-panel-display.md`**.
 >
+> **Dashboard redesign and house learning (2026-09-16 to 09-18, v0.7.0 build 261).**
+> Home, Security (a picture of the house with live pins), Status (small charts,
+> Today at a glance, House learning) were rebuilt with the owner. New: the Govee
+> H5140 CO2 monitor, Govee cloud fallback for the ambient lights, Tuya IR hubs
+> driven locally (learned buttons become HA buttons over MQTT), Quick actions
+> that report what they did, and the Voice Panel's wall-panel remote now scrolls
+> and steps the Home camera. **`house-memory.service`** keeps every HA event
+> (`~/house-memory/events.db`); **`house-learning.timer`** (03:30 Vancouver)
+> retrains a routine model and logs unusual moments *silently*. The Tuya IoT
+> Core trial has **expired** (cloud calls fail). The hallway wall panel is
+> **1920 × 1080**; the owner's iPad Air is the **13-inch** - and Safari before
+> iPadOS 16 ignores container queries, so iPad layout rules are media queries.
+> Start here: **`docs/handoff-2026-09-18-dashboard-and-learning.md`**.
+>
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
 > *user* unit), exposing 5 devices and commissioned into three fabrics —
 > chip-tool, Home Assistant, and Apple Home. Build or re-commission it with
@@ -278,6 +292,11 @@ Three things that will waste a day if you do not know them:
   the dark-screen bring-up, every verified pin and init step from Waveshare's
   demo, what ESPHome's `mipi_rgb` does differently, the next tests in order, and
   the approved GUI design and decisions
+- `docs/handoff-2026-09-18-dashboard-and-learning.md` — **pick the dashboard up
+  cold**: every view as it now is, the house memory and nightly learning, CO2,
+  the IR hubs and Movie mode, the Voice Panel remote, open items, and the traps
+  (a CSS brace, a deploy racing its restart, container queries on old Safari,
+  the sidebar's `aside` rule)
 - `docs/handoff-2026-09-13-voice-satellite.md` — **pick the voice work up cold**:
   what is built and measured, the one open fault (the wake word never runs), the
   evidence that pins it, the next test, and thirteen traps from getting audio
