@@ -11,6 +11,12 @@ SERVICE_NAMES=(
   "smart-home-dashboard.service"
   "house-memory.service"
 )
+# Scheduled jobs: installed and their timers enabled, but never restarted by a
+# deploy - that would run the job on every commit.
+TIMER_UNITS=(
+  "house-learning.service"
+  "house-learning.timer"
+)
 
 if [[ -z "${USER_HOME}" || ! -d "${USER_HOME}" ]]; then
   echo "ERROR: could not resolve home directory for ${RUN_USER}" >&2
@@ -35,7 +41,11 @@ for service_name in "${SERVICE_NAMES[@]}"; do
   install -m 0644 "${unit_source}" "${unit_target}"
 done
 
+for unit_name in "${TIMER_UNITS[@]}"; do
+  install -m 0644 "${PROJECT_ROOT}/deploy/systemd/user/${unit_name}" "${UNIT_TARGET_DIR}/${unit_name}"
+done
 systemctl --user daemon-reload
+systemctl --user enable --now house-learning.timer
 for service_name in "${SERVICE_NAMES[@]}"; do
   systemctl --user enable "${service_name}"
 done

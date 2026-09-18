@@ -1,0 +1,13 @@
+[Unit]
+Description=Retrain the house routine model every night
+
+[Timer]
+# In the house's time zone, not the board's: the board runs on UTC, where
+# 03:30 would be the middle of the evening. At 03:30 local the previous day
+# is complete and the house is asleep.
+OnCalendar=*-*-* 03:30:00 America/Vancouver
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

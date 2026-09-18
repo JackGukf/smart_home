@@ -396,7 +396,10 @@ class SummaryCache:
             store = self._store()
             if store is None:
                 return {"available": False}
+            from src.python import house_learning  # imports this module; import here, not at the top
             result = {"available": True, **store.summary(tz_name, now)}
+            with store._lock:
+                result["learning"] = house_learning.learning_summary(store._conn, now)
             self._cache = (now, tz_name, result)
             return result
 

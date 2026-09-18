@@ -8756,6 +8756,92 @@ function learnReviewHtml(data) {
     ${items ? `<ul class="learn-list">${items}</ul>` : `<p class="learn-note">Nothing new to review in the last 24 hours.</p>`}`;
 }
 
+/* ── What the nightly run learned (Phase 1) ── */
+const LEARN_ALERT_TEXT = {
+  unusual_time: "Unusual hour",
+  unusually_busy: "Unusually busy",
+  unusually_quiet: "Unusually quiet",
+};
+
+function learnProfileText(config) {
+  if (!config) return "";
+  const profile = config.profile === "workweek" ? "weekdays vs weekends" : "each weekday on its own";
+  return `${profile}, remembers ~${config.half_life_days} days`;
+}
+
+/* The learned week: rows Monday..Sunday, columns the 24 hours, darker where
+   the house is more likely to be active. One hue - it is a single quantity. */
+function learnRoutineHtml(routine) {
+  if (!Array.isArray(routine) || routine.length !== 7) return `<p class="learn-note">No routine yet.</p>`;
+  const rows = routine.map((hours, day) => `
+    <span class="learn-heat-day">${LEARN_WEEKDAYS[day]}</span>
+    <span class="learn-heat-row">${hours.map((p, hour) => `<i style="opacity:${(0.08 + 0.92 * Math.max(0, Math.min(1, p))).toFixed(2)}" title="${LEARN_WEEKDAYS[day]} ${String(hour).padStart(2, "0")}:00 · active ${Math.round(p * 100)}% of the time"></i>`).join("")}</span>`).join("");
+  const axis = [0, 6, 12, 18].map((h) => `<span style="left:${((h / 24) * 100).toFixed(2)}%">${String(h).padStart(2, "0")}</span>`).join("");
+  return `
+    <div class="learn-sub">When the house is usually active</div>
+    <div class="learn-heat" role="img" aria-label="Learned weekly routine">${rows}
+      <span></span><span class="learn-heat-axis">${axis}</span></div>
+    <p class="learn-note">Darker: more likely someone is moving about indoors that hour.</p>`;
+}
+
+function learnSparkSvg(values) {
+  const points = values.map((v, i) => [i, v]).filter(([, v]) => typeof v === "number");
+  if (points.length < 2) return `<p class="learn-note">The trend appears after a few nights.</p>`;
+  const w = 220, h = 44, last = values.length - 1;
+  const lo = Math.min(0, ...points.map(([, v]) => v)), hi = Math.max(0.5, ...points.map(([, v]) => v));
+  const X = (i) => 4 + (i / last) * (w - 8);
+  const Y = (v) => 4 + (1 - (v - lo) / (hi - lo || 1)) * (h - 8);
+  const d = points.map(([i, v], n) => `${n ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  return `<svg class="learn-spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="How much better than a guess, night by night">
+    <path class="learn-spark-line" d="${d}"/></svg>`;
+}
+
+function learnScoreHtml(learning) {
+  const m = learning.metrics || {};
+  const acc = m.house_accuracy, base = m.house_baseline_accuracy, skill = m.skill;
+  const when = learning.last_run ? new Date(learning.last_run * 1000) : null;
+  const stage = learning.status === "learning" ? "Learning"
+    : `Warming up · ${learning.days} of ${learning.ready_days} days`;
+  const pct = (v) => (typeof v === "number" ? `${Math.round(v * 100)}%` : "–");
+  return `
+    <div class="learn-sub">How well it predicts ${learning.promoted ? `<small class="learn-new">new model tonight</small>` : ""}</div>
+    <div class="learn-score"><b class="mono">${pct(acc)}</b><span>of hours predicted right<small>a guess from the average: ${pct(base)}</small></span></div>
+    <p class="learn-note">Across all sensors, <b>${typeof skill === "number" ? `${Math.round(skill * 100)}% better` : "–"}</b> than a guess that ignores the clock, scored on the ${m.test_days || 0} most recent days it had not seen.</p>
+    ${learnSparkSvg((learning.history || []).map((r) => r.skill))}
+    <p class="learn-note">${escapeHtml(stage)}${when ? ` · trained ${escapeHtml(when.toLocaleDateString(undefined, { day: "numeric", month: "short" }))} ${escapeHtml(when.toTimeString().slice(0, 5))}` : ""}<br>${escapeHtml(learnProfileText(learning.config))} · best of ${m.candidates || 0}</p>`;
+}
+
+function learnAlertsHtml(learning) {
+  const alerts = learning.alerts || [];
+  const labels = learning.alert_labels || {};
+  const judged = Object.values(labels).reduce((a, b) => a + b, 0);
+  const precision = judged ? `${Math.round(((labels.unusual || 0) / judged) * 100)}% worth it so far` : "no labels yet";
+  const items = alerts.map((alert) => `
+    <li class="learn-item${alert.label ? " learned" : ""}"${alert.event_id ? ` data-event-id="${alert.event_id}"` : ""}>
+      <span class="learn-item-what"><i class="ti ti-${alert.kind === "unusually_quiet" ? "volume-off" : alert.kind === "unusually_busy" ? "flame" : "clock-exclamation"} learn-alert-icon" aria-hidden="true"></i>
+        <span>${escapeHtml(statusName(alert.name))} · ${escapeHtml(LEARN_ALERT_TEXT[alert.kind] || alert.kind)}<small>${escapeHtml(alert.detail)} · ${escapeHtml(learnAgo(alert.ts))}</small></span></span>
+      ${alert.event_id && !alert.label ? `<span class="learn-item-actions">${LEARN_LABELS.map((l) => `
+        <button type="button" class="learn-label" data-learn-label="${l.label}" title="${l.text}" aria-label="${l.text}"><i class="ti ${l.icon}" aria-hidden="true"></i></button>`).join("")}</span>` : ""}
+    </li>`).join("");
+  return `
+    <div class="learn-sub">Would have flagged <small>silently · ${escapeHtml(precision)}</small></div>
+    ${items ? `<ul class="learn-list">${items}</ul>` : `<p class="learn-note">Nothing unexpected in the last two days.</p>`}`;
+}
+
+function renderLearnedModel(learning) {
+  const host = document.querySelector("#learnModel");
+  if (!host) return;
+  if (!learning || !learning.runs) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  const set = (selector, html) => { const el = host.querySelector(selector); if (el) el.innerHTML = html; };
+  set("#learnRoutine", learnRoutineHtml(learning.routine));
+  set("#learnScore", learnScoreHtml(learning));
+  set("#learnAlerts", learnAlertsHtml(learning));
+}
+
 function renderHouseLearning(data = latestLearning) {
   const card = document.querySelector("#learnCard");
   if (!card) return;
@@ -8773,11 +8859,18 @@ function renderHouseLearning(data = latestLearning) {
     meta.innerHTML = `<i class="learn-dot${running ? " on" : ""}" aria-hidden="true"></i>${running ? "Collecting" : "Collector stopped"}${data.last_ts ? ` · last event ${escapeHtml(learnAgo(data.last_ts))}` : ""}`;
   }
   const labelled = Object.values(data.labels || {}).reduce((a, b) => a + b, 0);
+  const learning = data.learning || {};
   card.querySelectorAll(".learn-step").forEach((step) => {
     const name = step.dataset.step;
-    step.classList.toggle("done", name === "collect" && running);
-    step.classList.toggle("active", name === "label" ? labelled > 0 : name === "learn" ? Boolean(data.ready) : false);
+    step.classList.toggle("done", (name === "collect" && running) || (name === "learn" && learning.status === "learning"));
+    step.classList.toggle("active", name === "label" ? labelled > 0 : name === "learn" ? Boolean(learning.runs) : false);
   });
+  const learnStep = card.querySelector('.learn-step[data-step="learn"] small');
+  if (learnStep) {
+    learnStep.textContent = !learning.runs ? "routines & anomalies"
+      : learning.status === "learning" ? "nightly, 03:30" : `warming up · ${learning.days}/${learning.ready_days} days`;
+  }
+  renderLearnedModel(learning);
   set("#learnStats", learnStatsHtml(data));
   set("#learnReady", learnReadyHtml(data));
   set("#learnReview", learnReviewHtml(data));

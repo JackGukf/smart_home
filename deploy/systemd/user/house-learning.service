@@ -1,0 +1,11 @@
+[Unit]
+Description=House learning - retrain the routine model from the house memory
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/.venv/bin/python -m src.python.house_learning
+# Seconds today, a minute or two with a year of data; bounded regardless.
+TimeoutStartSec=900
+Nice=15
+IOSchedulingClass=idle

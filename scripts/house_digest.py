@@ -34,6 +34,7 @@ from src.python.house_digest import (  # noqa: E402
     gather_facts,
     write_digest,
 )
+from src.python import house_learning, house_memory  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIGEST_PATH = PROJECT_ROOT / "house_digest.json"
@@ -99,6 +100,11 @@ def main() -> int:
                          window_hours=args.window_hours)
     digest = build_digest(facts, endpoint=args.endpoint, model=args.model,
                           timeout=args.timeout, with_prose=args.prose)
+    # What the nightly learning run found, when there has been one. Its own
+    # line, computed from its own scores - never the model's prose.
+    learning = house_learning.digest_note(house_memory.DEFAULT_DB_PATH)
+    if learning:
+        digest["notes"].append(learning)
     write_digest(digest, args.out, args.history)
 
     if args.show:
