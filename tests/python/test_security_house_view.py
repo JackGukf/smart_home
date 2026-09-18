@@ -1,4 +1,4 @@
-"""The Security view drawn as the house.
+"""The Security view drawn as the house: a picture with live pins over it.
 
   * every room on the plan is a real place in this house, and each sensor finds
     its room through Areas rather than a list of entity ids;
@@ -58,7 +58,7 @@ const zones = JSON.parse(process.argv[3]);
 console.log(JSON.stringify({
   rooms: zones.map((z) => zoneRoom(z)),
   plan: HOUSE_ROOMS.map((r) => r.name),
-  boxes: HOUSE_ROOMS.map((r) => [r.x, r.y, r.w, r.h]),
+  pins: HOUSE_ROOMS.map((r) => ({ name: r.name, x: r.x, y: r.y, w: r.w || 0, cover: r.cover || null })),
 }));
 """
 
@@ -101,25 +101,42 @@ def test_each_sensor_finds_its_room(tmp_path: Path) -> None:
     ]
 
 
-def test_every_room_on_the_plan_is_inside_the_picture(tmp_path: Path) -> None:
-    """A box placed off the canvas is invisible with no error to notice."""
+def test_every_pin_and_cover_is_inside_the_picture(tmp_path: Path) -> None:
+    """A pin placed off the picture is invisible with no error to notice."""
     result = _run(tmp_path, [])
 
     assert "Master Bedroom" in result["plan"] and "Garage" in result["plan"]
-    for (x, y, w, h), name in zip(result["boxes"], result["plan"]):
-        assert 0 <= x and x + w <= 100, f"{name} runs off the side"
-        assert 0 <= y and y + h <= 100, f"{name} runs off the bottom"
+    for pin in result["pins"]:
+        assert 0 < pin["x"] - pin["w"] / 2 and pin["x"] + pin["w"] / 2 < 100, f"{pin['name']} runs off the side"
+        assert 0 < pin["y"] < 100, f"{pin['name']} runs off the picture"
+        if pin["cover"]:
+            assert 0 < pin["cover"][0] < 100 and 0 < pin["cover"][1] < 100
 
 
-def test_the_upstairs_rooms_do_not_overlap(tmp_path: Path) -> None:
-    result = _run(tmp_path, [])
-    boxes = {n: b for n, b in zip(result["plan"], result["boxes"])}
-    upstairs = ["Master Bedroom", "North Bedroom", "Hallway", "South Bedroom", "Bathroom"]
+def test_no_two_pins_sit_on_each_other(tmp_path: Path) -> None:
+    pins = _run(tmp_path, [])["pins"]
+    for i, a in enumerate(pins):
+        for b in pins[i + 1:]:
+            apart = abs(a["x"] - b["x"]) > (a["w"] + b["w"]) / 2 or abs(a["y"] - b["y"]) > 4
+            assert apart, f"{a['name']} and {b['name']} overlap"
 
-    for left, right in zip(upstairs, upstairs[1:]):
-        lx, _, lw, _ = boxes[left]
-        rx = boxes[right][0]
-        assert lx + lw <= rx + 0.01, f"{left} overlaps {right}"
+
+def test_the_pictures_bedroom_names_are_covered_with_ours(tmp_path: Path) -> None:
+    """It paints "Bedroom 1-3"; the house has a master, a north and a south bedroom."""
+    pins = {p["name"]: p for p in _run(tmp_path, [])["pins"]}
+    for room in ("Master Bedroom", "North Bedroom", "South Bedroom"):
+        assert pins[room]["cover"], f"{room} needs its name over the painted one"
+        assert pins[room]["w"], f"{room}'s painted icons need covering even with no sensors"
+
+
+def test_the_picture_is_the_one_the_pins_were_measured_on() -> None:
+    from PIL import Image
+
+    js = APP_JS.read_text(encoding="utf-8")
+    picture = PROJECT_ROOT / "src" / "python" / "web_static" / "security-house.jpg"
+    assert 'const HOUSE_PICTURE = "/static/security-house.jpg?v=' in js
+    assert Image.open(picture).size == (1312, 1199), "a new picture means re-measuring every pin"
+    assert picture.stat().st_size < 600_000, "the panel loads this on every visit to the view"
 
 
 def test_arming_and_the_panel_switches_keep_their_handlers() -> None:
@@ -141,3 +158,50 @@ def test_the_view_survives_a_poll_without_moving() -> None:
     assert "let selectedHouseRoom = null;" in js
     body = js[js.index("function renderAlarmSection("):js.index("/* Choosing a room only changes")]
     assert "if (!selectedHouseRoom" in body, "the selection is only re-derived when it has gone"
+
+
+PIN_HARNESS = r"""
+const src = require('fs').readFileSync(process.argv[2], 'utf8');
+const pick = (name) => {
+  const at = src.indexOf(`function ${name}(`);
+  let depth = 0, i = src.indexOf('{', at);
+  for (; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(at, i + 1); }
+  }
+};
+globalThis.escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+globalThis.zoneIsBreached = (z) => z.state === 'on';
+globalThis.zoneIconSVG = () => '<svg></svg>';
+globalThis.selectedHouseRoom = 'Garage';
+eval(pick('houseRoomHtml') + pick('houseLatestZone'));
+const garage = { name: 'Garage', x: 19, y: 50, w: 9.4 };
+const master = { name: 'Master Bedroom', x: 30, y: 15, w: 6.9, cover: [29, 27] };
+const bath = { name: 'Bathroom', x: 58, y: 20, named: true };
+const hall = { name: 'Hallway', x: 50, y: 33, named: true };
+console.log(JSON.stringify({
+  quiet: houseRoomHtml(garage, [{ name: 'Garage camera', state: 'off' }]),
+  hot: houseRoomHtml(garage, [{ name: 'Garage camera', state: 'on' }]),
+  empty: houseRoomHtml(master, []),
+  bare: houseRoomHtml(bath, []),
+  named: houseRoomHtml(hall, [{ name: 'Upstairs', state: 'off' }]),
+  latest: houseLatestZone([{ name: 'a', age_seconds: 300 }, { name: 'b', age_seconds: 20 }, { name: 'c' }]).name,
+}));
+"""
+
+
+def test_a_room_is_a_pin_a_no_sensors_chip_or_nothing(tmp_path: Path) -> None:
+    harness = tmp_path / "pins.js"
+    harness.write_text(PIN_HARNESS, encoding="utf-8")
+    out = subprocess.run(["node", str(harness), str(APP_JS)], capture_output=True, text=True, check=True)
+    r = json.loads(out.stdout)
+
+    assert 'data-house-room="Garage"' in r["quiet"] and "min-width:9.4%" in r["quiet"]
+    assert "selected" in r["quiet"] and "breached" not in r["quiet"]
+    assert "house-pin breached" in r["hot"] and "1 active" in r["hot"]
+    # No sensors, but painted icons and a painted name to cover: our name, and a chip.
+    assert "Master Bedroom</span>" in r["empty"] and "No sensors" in r["empty"]
+    assert "data-house-room" not in r["empty"], "nothing to open in a room without sensors"
+    assert r["bare"] == "", "nothing painted there, nothing to cover"
+    assert 'house-pin-name">Hallway' in r["named"]
+    assert r["latest"] == "b"

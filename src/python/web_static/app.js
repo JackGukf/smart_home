@@ -4031,25 +4031,33 @@ async function saveHomeAlarmSelection(sensors) {
    places, each carrying its own sensors, amber when something is happening.
    Clicking a room lists its sensors beside the drawing.
 
-   The plan is a table of percentages (HOUSE_ROOMS) over one SVG, so moving a
-   room or adding one is a few numbers rather than new markup. Sensors find
+   The house is a picture (a rendered cutaway, security-house.jpg) with live
+   pins laid over it at percentages (HOUSE_ROOMS). The picture cannot change,
+   so what it paints that the house does not have - its sensor icons, its
+   legend, "Bedroom 1" - is covered by what the house does. A new picture
+   means re-measuring the pins, and only that. Sensors find
    their room through Areas; the two exceptions are written down in
    ROOM_OVERRIDES, where Areas cannot say what the house knows. */
 const HOUSE_ROOMS = [
-  { name: "Master Bedroom", x: 13.5, y: 30,   w: 14,   h: 16 },
-  { name: "North Bedroom",  x: 28,   y: 30,   w: 13.5, h: 16 },
-  { name: "Hallway",        x: 42,   y: 30,   w: 10.5, h: 16 },
-  { name: "South Bedroom",  x: 53,   y: 30,   w: 14,   h: 16 },
-  { name: "Bathroom",       x: 67.5, y: 30,   w: 16.5, h: 16 },
-  { name: "Garage",         x: 13.5, y: 52,   w: 14.5, h: 21 },
-  { name: "Office",         x: 28.5, y: 52,   w: 11,   h: 21 },
-  { name: "Living Room",    x: 40,   y: 52,   w: 12.5, h: 21 },
-  { name: "Kitchen",        x: 53,   y: 52,   w: 10.5, h: 21 },
-  { name: "Family Room",    x: 64,   y: 52,   w: 11,   h: 21 },
-  { name: "Utility Room",   x: 75.5, y: 52,   w: 9,    h: 21, label: "Utility" },
-  { name: "Front Door",     x: 31.5, y: 61,   w: 8.5,  h: 13, outdoor: true },
-  { name: "Front Yard",     x: 41,   y: 77,   w: 34,   h: 9,  outdoor: true },
-  { name: "Back Yard",      x: 87,   y: 46,   w: 11,   h: 27, outdoor: true },
+  /* Pins on the picture, in % of it (1312 x 1199 px). Where the picture has
+     painted sensor icons, a pin covers them - w is that row's width, so a
+     one-sensor pin still hides all of it. Where it paints a name that is not
+     ours ("Bedroom 1"), cover puts ours over it. named: the picture has no
+     label there, so the pin carries the room's name. */
+  { name: "Master Bedroom", x: 30.72, y: 15.60, w: 6.9, cover: [29.88, 27.36] },
+  { name: "North Bedroom",  x: 47.10, y: 15.60, w: 6.9, cover: [46.95, 25.69] },
+  { name: "Hallway",        x: 50.30, y: 32.94, named: true },
+  { name: "South Bedroom",  x: 70.43, y: 15.60, w: 6.9, cover: [71.04, 25.69] },
+  { name: "Bathroom",       x: 58.69, y: 20.85, named: true },
+  { name: "Garage",         x: 19.05, y: 49.79, w: 9.4 },
+  { name: "Office",         x: 41.01, y: 63.72, w: 7.1 },
+  { name: "Living Room",    x: 73.32, y: 63.39, w: 9.1 },
+  { name: "Kitchen",        x: 49.85, y: 43.20, w: 9.2 },
+  { name: "Family Room",    x: 70.73, y: 43.95, w: 9.5 },
+  { name: "Utility Room",   x: 35.98, y: 54.21, w: 7.2, label: "Utility" },
+  { name: "Front Door",     x: 55.26, y: 75.48, named: true, outdoor: true },
+  { name: "Front Yard",     x: 42.68, y: 85.90, outdoor: true },
+  { name: "Back Yard",      x: 86.89, y: 21.35, w: 9.5, outdoor: true },
 ];
 
 /* Areas has one "Bedroom" for the whole upstairs. The ecobee sensors name the
@@ -4083,68 +4091,12 @@ function zoneRoom(zone) {
   return areaName;
 }
 
-/* The drawing: walls, roof, rooms, the drive and the garden. Static, so it is
-   built once and the rooms are laid over it. */
-const HOUSE_SVG = `
-  <svg viewBox="0 0 900 660" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-    <defs>
-      <linearGradient id="houseWall" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0" stop-color="#1b2136"/><stop offset="1" stop-color="#141827"/>
-      </linearGradient>
-      <linearGradient id="houseRoof" x1="0" x2="1" y1="0" y2="1">
-        <stop offset="0" stop-color="#3a4166"/><stop offset="1" stop-color="#252a44"/>
-      </linearGradient>
-      <linearGradient id="houseLawn" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0" stop-color="#16251d"/><stop offset="1" stop-color="#0e1a15"/>
-      </linearGradient>
-    </defs>
-
-    <rect x="0" y="490" width="900" height="170" fill="url(#houseLawn)"/>
-    <path d="M0 492 H900" stroke="#1d3329" stroke-width="2"/>
-
-    <g opacity=".85">
-      <path d="M778 300 V492 M896 300 V492" stroke="#22304a" stroke-width="3"/>
-      <path d="M778 320 H896 M778 360 H896 M778 400 H896" stroke="#1b2740" stroke-width="3"/>
-      <circle cx="838" cy="252" r="42" fill="#163a2b"/><circle cx="812" cy="278" r="28" fill="#143326"/>
-      <circle cx="864" cy="276" r="26" fill="#15382a"/><rect x="833" y="288" width="10" height="42" fill="#2a2015"/>
-    </g>
-
-    <rect x="112" y="186" width="653" height="306" rx="5" fill="url(#houseWall)" stroke="#2a2f4a" stroke-width="2.5"/>
-    <path d="M86 190 L438 52 L790 190 Z" fill="url(#houseRoof)" stroke="#2a2f4a" stroke-width="2.5"/>
-    <path d="M438 52 L438 190" stroke="#2a2f4a" stroke-width="1.5" opacity=".5"/>
-    <rect x="600" y="96" width="32" height="60" rx="3" fill="#2f3553" stroke="#252a44" stroke-width="2"/>
-    <circle cx="438" cy="142" r="13" fill="#151a2c" stroke="#2a2f4a" stroke-width="2"/>
-
-    <path d="M114 336 H763" stroke="#2a2f4a" stroke-width="3"/>
-    <path d="M252 196 V330 M378 196 V330 M477 196 V330 M607 196 V330" stroke="#232942" stroke-width="2"/>
-    <path d="M256 344 V488 M360 344 V488 M477 344 V488 M576 344 V488 M679 344 V488" stroke="#232942" stroke-width="2"/>
-
-    <rect x="130" y="386" width="112" height="104" rx="3" fill="#0f1524" stroke="#2a2f4a" stroke-width="2"/>
-    <path d="M130 412 H242 M130 438 H242 M130 464 H242" stroke="#1b2138" stroke-width="2"/>
-
-    <g fill="#0f1524" stroke="#2a2f4a" stroke-width="2">
-      <rect x="146" y="214" width="52" height="40" rx="3"/><rect x="286" y="214" width="46" height="40" rx="3"/>
-      <rect x="510" y="214" width="46" height="40" rx="3"/><rect x="640" y="214" width="46" height="40" rx="3"/>
-      <rect x="392" y="396" width="46" height="52" rx="3"/><rect x="506" y="396" width="40" height="52" rx="3"/>
-      <rect x="604" y="396" width="40" height="52" rx="3"/>
-    </g>
-
-    <rect x="292" y="420" width="42" height="72" rx="3" fill="#1b2136" stroke="#3a4166" stroke-width="2"/>
-    <circle cx="324" cy="458" r="3" fill="#5FC0EA"/>
-
-    <path d="M118 492 H356 L372 660 H96 Z" fill="#161c28"/>
-    <path d="M118 492 H356" stroke="#222b3c" stroke-width="2"/>
-    <g>
-      <rect x="150" y="536" width="168" height="46" rx="16" fill="#28304a" stroke="#333d5e" stroke-width="2"/>
-      <path d="M178 536 q22 -30 62 -30 q40 0 58 30 Z" fill="#2f3959" stroke="#333d5e" stroke-width="2"/>
-      <path d="M186 534 q20 -22 52 -22 q32 0 46 22 Z" fill="#141b2c"/>
-      <circle cx="186" cy="584" r="15" fill="#0f1420" stroke="#39425e" stroke-width="3"/>
-      <circle cx="284" cy="584" r="15" fill="#0f1420" stroke="#39425e" stroke-width="3"/>
-      <rect x="150" y="552" width="10" height="7" rx="3" fill="#f2d98b" opacity=".8"/>
-      <rect x="308" y="552" width="10" height="7" rx="3" fill="#f0837a" opacity=".8"/>
-    </g>
-    <path d="M300 492 L286 560 L352 560 L336 492 Z" fill="#17202e" opacity=".9"/>
-  </svg>`;
+/* The picture of the house. Static; the live state is laid over it. The
+   version is part of the URL so the picture can be cached for good and a new
+   one still reaches every screen. */
+const HOUSE_PICTURE = "/static/security-house.jpg?v=1";
+const HOUSE_PICTURE_HTML = `<img class="house-picture" src="${HOUSE_PICTURE}" width="1312" height="1199"
+  alt="The house, cut open: both floors, the garage, the front yard and the back garden" draggable="false">`;
 
 /* Which room the view is showing on the right. Kept across refreshes so a poll
    does not move it. */
@@ -4165,28 +4117,35 @@ function zonesByRoom(zones) {
 
 function houseRoomHtml(room, zones) {
   const list = zones || [];
-  const hot = list.some(zoneIsBreached);
-  const style = `left:${room.x}%;top:${room.y}%;width:${room.w}%;height:${room.h}%`;
-  const label = escapeHtml(room.label || room.name);
+  const place = `left:${room.x}%;top:${room.y}%${room.w ? `;min-width:${room.w}%` : ""}`;
+  const cover = room.cover
+    ? `<span class="house-label" style="left:${room.cover[0]}%;top:${room.cover[1]}%">${escapeHtml(room.label || room.name)}</span>`
+    : "";
   if (!list.length) {
-    return `<div class="house-room house-room-empty" style="${style}">
-      <span class="house-room-name">${label}</span><span class="house-room-note">no sensors</span></div>`;
+    // Only where the picture paints icons is there anything to cover.
+    return cover + (room.w
+      ? `<span class="house-pin house-pin-empty" style="${place}">No sensors</span>` : "");
   }
-  const newest = Math.min(...list.map((z) => (Number.isFinite(z.age_seconds) ? z.age_seconds : Infinity)));
-  return `
-    <button class="house-room${hot ? " breached" : ""}${selectedHouseRoom === room.name ? " selected" : ""}"
-            type="button" data-house-room="${escapeHtml(room.name)}" style="${style}">
-      <span class="house-room-name">${label}</span>
-      <span class="house-pips">${list.slice(0, 6).map((z) => {
+  const hot = list.some(zoneIsBreached);
+  const title = `${room.name}: ${hot ? `${list.filter(zoneIsBreached).length} active` : `${list.length} sensor${list.length === 1 ? "" : "s"}, all quiet`}`;
+  return cover + `
+    <button class="house-pin${hot ? " breached" : ""}${selectedHouseRoom === room.name ? " selected" : ""}"
+            type="button" data-house-room="${escapeHtml(room.name)}" style="${place}"
+            title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">
+      ${list.slice(0, 5).map((z) => {
         const breached = zoneIsBreached(z);
         const unknown = z.state === "unknown" || z.state === "unavailable";
-        return `<span class="house-pip${breached ? " on" : ""}${unknown ? " off" : ""}"
-                      title="${escapeHtml(z.name)} — ${escapeHtml(zoneStateText(z, breached))}">${zoneIconSVG(z.type, breached)}</span>`;
-      }).join("")}</span>
-      <span class="house-room-note">${hot
-        ? `${list.filter(zoneIsBreached).length} active`
-        : Number.isFinite(newest) ? `quiet · ${zoneAgeLabel(newest)}` : `${list.length} sensor${list.length === 1 ? "" : "s"}`}</span>
+        return `<span class="house-pip${breached ? " on" : ""}${unknown ? " off" : ""}">${zoneIconSVG(z.type, breached)}</span>`;
+      }).join("")}
+      ${room.named ? `<span class="house-pin-name">${escapeHtml(room.label || room.name)}</span>` : ""}
     </button>`;
+}
+
+/* What happened last, anywhere: the newest reading, for the picture's corner. */
+function houseLatestZone(zones) {
+  return zones
+    .filter((z) => Number.isFinite(z.age_seconds))
+    .reduce((newest, z) => (!newest || z.age_seconds < newest.age_seconds ? z : newest), null);
 }
 
 function zoneAgeLabel(seconds) {
@@ -4274,6 +4233,7 @@ function renderAlarmSection(payload = latestAlarmData) {
   if (alarmBadgeEl) alarmBadgeEl.textContent = displayState === "alarm" ? "!" : displayState === "disarmed" ? "–" : "ON";
 
   const detailZones = selectedHouseRoom === "Not placed" ? loose : (rooms.get(selectedHouseRoom) || []);
+  const latest = houseLatestZone(zones);
 
   panel.innerHTML = `
     <div class="house-head${displayState === "alarm" ? " alarm-active" : ""}">
@@ -4288,13 +4248,21 @@ function renderAlarmSection(payload = latestAlarmData) {
     <div class="house-stage">
       <div>
         <div class="house-scene">
-          ${HOUSE_SVG}
+          ${HOUSE_PICTURE_HTML}
+          <div class="house-cover house-cover-status${breached ? " breached" : ""}">
+            <b>${escapeHtml(statusText)}</b>
+            <span>${breached ? `${breached} active now` : `all ${zones.length} normal`}</span>
+            <span class="house-cover-hint">Tap a pin for its sensors</span>
+          </div>
+          <div class="house-cover house-cover-latest">${latest
+            ? `<b>${escapeHtml(shortZoneName(latest.name))}</b><span>${escapeHtml(zoneStateText(latest, zoneIsBreached(latest)))} · ${zoneAgeLabel(latest.age_seconds)}</span>`
+            : "<b>Latest</b><span>Nothing yet</span>"}</div>
           ${HOUSE_ROOMS.map((room) => houseRoomHtml(room, rooms.get(room.name))).join("")}
         </div>
         <div class="house-legend">
           <span><i class="house-swatch"></i>quiet</span>
           <span><i class="house-swatch breached"></i>something active</span>
-          <span>Tap a room for its sensors</span>
+          <span>Tap a pin for its sensors</span>
           ${loose.length ? `<button class="house-loose" type="button" data-house-room="Not placed">${loose.length} not in a room</button>` : ""}
         </div>
       </div>

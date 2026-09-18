@@ -124,16 +124,16 @@ def test_live_refresh_is_debounced_and_reuses_the_normal_refresh() -> None:
 
 
 def test_the_security_view_draws_the_house_and_the_card_draws_chips() -> None:
-    """Two surfaces, two shapes, on purpose: the view is a plan of the house
-    with the rooms as buttons over one drawing, the Home card is columns of
-    chips. The square tile grid both used to share is gone with them."""
+    """Two surfaces, two shapes, on purpose: the view is a picture of the house
+    with a pin on each room, the Home card is columns of chips. The square tile
+    grid both used to share is gone with them."""
     source = APP_JS.read_text(encoding="utf-8")
     css = (PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
 
     assert "const HOUSE_ROOMS = [" in source
-    assert "const HOUSE_SVG = `" in source
+    assert "const HOUSE_PICTURE = " in source and "HOUSE_SVG" not in source
     assert 'data-house-room="' in source
-    assert ".house-scene {" in css and ".house-room {" in css
+    assert ".house-scene {" in css and ".house-pin {" in css and ".house-room {" not in css
     # The superseded tile markup and its rules are gone, not left orphaned.
     assert "zone-tile" not in source and "zone-tile" not in css
     assert "alarmZoneTilesHtml" not in source
@@ -146,7 +146,7 @@ def test_breached_zones_sort_first_and_are_not_marked_by_colour_alone() -> None:
 
     start = source.index("function sortedAlarmZones")
     assert "ab - bb" in source[start:start + 400]          # breached first
-    rule = css[css.index(".house-room.breached {"):]
+    rule = css[css.index(".house-pin.breached {"):]
     rule = rule[:rule.index("}")]
     assert "border-color" in rule and "background" in rule  # not colour alone
     # A zone that never reported must not look identical to a confirmed-closed one.
