@@ -119,8 +119,10 @@ def describe(steps: list[dict[str, Any]], state_of: Callable[[str], dict[str, An
         want = expected_state(step["action"])
         for entity_id in step["entities"]:
             state = state_of(entity_id)
+            # A device that is not there has no name to give: its id, readable.
+            fallback = entity_id.split(".", 1)[-1].replace("_", " ").capitalize()
             device: dict[str, Any] = {"entity_id": entity_id,
-                                      "name": ((state or {}).get("attributes") or {}).get("friendly_name") or entity_id,
+                                      "name": ((state or {}).get("attributes") or {}).get("friendly_name") or fallback,
                                       "state": (state or {}).get("state")}
             if state is None:
                 device["problem"] = "not in Home Assistant"

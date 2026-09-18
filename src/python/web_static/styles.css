@@ -4543,20 +4543,25 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
 .quick-btn.failed { border-color: rgba(248, 113, 113, 0.75); background: rgba(248, 113, 113, 0.1); }
 @media (prefers-reduced-motion: reduce) { .quick-btn.running .quick-ic::after { animation: none; } }
 
-/* What it did, device by device, over the card. It closes itself after a run;
-   the ⓘ list stays until closed. */
-#homeQuickPanel { position: relative; }
+/* What it did, device by device, in a panel over the page - the card itself
+   is too narrow for names on a tablet. It closes itself after a run; the
+   ⓘ list stays until closed. */
 .quick-sheet {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 5;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 60;
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  max-height: 70vh;
+  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
-  padding: 12px 14px;
-  border-radius: inherit;
+  padding: 14px 16px;
+  border-radius: var(--radius);
   background: var(--card);
   border: 1px solid var(--border-hover);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
 }
 .quick-sheet[hidden] { display: none; }
 .quick-sheet-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 6px; }
@@ -4574,19 +4579,20 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
 .quick-sheet-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
 .quick-sheet-list li {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   column-gap: 8px;
-  padding: 4px 0;
+  padding: 6px 0;
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: 13px;
 }
 .quick-sheet-list li:first-child { border-top: 0; }
 .quick-sheet-mark { color: var(--t-text-dim); text-align: center; }
 .quick-sheet-list li.ok .quick-sheet-mark { color: var(--green); }
 .quick-sheet-list li.bad .quick-sheet-mark { color: var(--red); }
 .quick-sheet-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.quick-sheet-detail { font-size: 11px; color: var(--t-text-dim); white-space: nowrap; }
+.quick-sheet-detail { grid-column: 2; font-size: 11.5px; color: var(--t-text-dim); }
+.quick-sheet-detail:empty { display: none; }
 .quick-sheet-list li.bad .quick-sheet-detail { color: var(--red); }
 .quick-sheet-note { margin: 6px 0 0; font-size: 10.5px; color: var(--muted); }
 
