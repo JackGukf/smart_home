@@ -52,6 +52,7 @@ from src.python import bridge_sync
 from src.python.house_digest import read_digest
 from src.python import news_feed
 from src.python import sensor_history
+from src.python import status_overview
 from src.python.automation_author import (
     AuthorError,
     Draft,
@@ -575,6 +576,7 @@ def create_app(
     news_settings_path: Path | None = None,
     news_service: news_feed.NewsService | None = None,
     history_service: sensor_history.SensorHistory | None = None,
+    status_service: status_overview.StatusOverview | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
     app.state.discovery_path = discovery_path
@@ -591,6 +593,7 @@ def create_app(
     app.state.news_settings_path = news_settings_path or DEFAULT_NEWS_SETTINGS_PATH
     app.state.news_service = news_service or news_feed.NewsService()
     app.state.history_service = history_service
+    app.state.status_service = status_service
     # One draft at a time. Ollama serialises requests anyway, so a second
     # concurrent draft would not run sooner - it would just hold a worker
     # thread and a connection for a minute to find that out.
@@ -1206,6 +1209,22 @@ def create_app(
         if digest is None:
             return {"available": False}
         return {"available": True, **digest}
+
+    @app.get("/api/status/overview")
+    async def status_overview_payload() -> dict[str, Any]:
+        """The last day of the house and the board, for the Status view's charts.
+
+        Cached for two minutes on the board, so every screen showing the view
+        costs one history query and one round of service checks.
+        """
+        service = app.state.status_service
+        if service is None:
+            ha_config = _load_home_assistant_config(app.state.config_path)
+            service = status_overview.StatusOverview(
+                ha_config.base_url, lambda: os.getenv(ha_config.token_env)
+            )
+            app.state.status_service = service
+        return await asyncio.to_thread(service.overview)
 
     @app.get("/api/automations/proposals")
     async def list_proposals() -> dict[str, Any]:

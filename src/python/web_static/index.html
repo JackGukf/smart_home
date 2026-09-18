@@ -171,58 +171,107 @@
     <div class="view-panel" data-view-panel="status">
       <div class="section-header">
         <span class="section-title">Status</span>
-        <span class="section-meta">Home overview</span>
+        <span class="section-meta" id="statusUpdated">Last 24 hours</span>
       </div>
 
-      <!-- Morning digest: written at 04:00 by house-digest.timer. The prose is
-           the local model retelling figures Python computed; the figures
-           themselves are one click away, because that is what you check when a
-           sentence looks wrong. -->
-      <div class="panel digest-card" id="digestCard" hidden>
-        <div class="home-panel-head">
-          <span class="panel-title"><i class="ti ti-sun"></i> Morning digest</span>
-          <span class="section-meta" id="digestWhen">–</span>
+      <!-- The strip: one number each, read before anything else. -->
+      <div class="stat-row status-strip">
+        <div class="stat-card">
+          <div class="stat-icon"><i class="ti ti-shield-check"></i></div>
+          <div class="stat-label">Alarm</div>
+          <div class="stat-value" id="statusAlarm">–</div>
+          <div class="stat-trend" id="statusAlarmSub">Security</div>
         </div>
-        <div class="digest-body" id="digestBody"></div>
-        <details class="digest-facts">
-          <summary>The figures it was given</summary>
-          <pre id="digestFacts"></pre>
-        </details>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="ti ti-activity"></i></div>
+          <div class="stat-label">Events, 24 h</div>
+          <div class="stat-value mono" id="statusEvents">–</div>
+          <div class="stat-trend" id="statusEventsSub">Sensors &amp; cameras</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="ti ti-server-2"></i></div>
+          <div class="stat-label">Services</div>
+          <div class="stat-value mono" id="statusServicesCount">–</div>
+          <div class="stat-trend" id="statusServicesSub">On the board</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="ti ti-clock-play"></i></div>
+          <div class="stat-label">Board uptime</div>
+          <div class="stat-value mono" id="statusUptime">–</div>
+          <div class="stat-trend" id="statusUptimeSub">Orange Pi 6 Plus</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="ti ti-temperature"></i></div>
+          <div class="stat-label">Board temp</div>
+          <div class="stat-value mono" id="statusBoardTemp">–</div>
+          <div class="stat-trend" id="statusBoardTempSub">–</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="ti ti-battery-2"></i></div>
+          <div class="stat-label">Batteries low</div>
+          <div class="stat-value mono" id="statusBatteriesLow">–</div>
+          <div class="stat-trend" id="statusBatteriesSub">Below 50%</div>
+        </div>
+        <button class="stat-card stat-card-action" id="openNetworkModal" type="button"
+                aria-haspopup="dialog" title="Show every device with an IP or MAC address">
+          <div class="stat-icon"><i class="ti ti-router"></i></div>
+          <div class="stat-label">Connected</div>
+          <div class="stat-value mono" id="networkCount">–</div>
+          <div class="stat-trend">Wi-Fi &amp; Bluetooth</div>
+        </button>
       </div>
 
-      <!-- STAT ROW -->
-      <div class="stat-row">
-      <div class="stat-card">
-        <div class="stat-icon"><i class="ti ti-thermometer"></i></div>
-        <div class="stat-label">Indoor Temp</div>
-        <div class="stat-value mono" id="indoorTemp">–</div>
-        <div class="stat-trend">Thermostat</div>
+      <!-- A board of small charts: each log gets its own diagram, and each one
+           reads on its own. Drawn by renderStatusOverview from
+           /api/status/overview. -->
+      <div class="status-grid" id="statusGrid">
+        <div class="panel status-chart">
+          <div class="home-panel-head"><span class="panel-title"><i class="ti ti-chart-bar"></i> Activity by hour</span><span class="section-meta" id="statusActivityMeta">–</span></div>
+          <div class="status-chart-body" id="statusActivity"></div>
+        </div>
+        <div class="panel status-chart">
+          <div class="home-panel-head"><span class="panel-title"><i class="ti ti-flame"></i> Busiest sensors</span><span class="section-meta">24 h</span></div>
+          <div class="status-chart-body" id="statusBusiest"></div>
+        </div>
+        <div class="panel status-chart">
+          <div class="home-panel-head"><span class="panel-title"><i class="ti ti-user-scan"></i> Camera sightings</span><span class="section-meta">Person detections</span></div>
+          <div class="status-chart-body" id="statusCameras"></div>
+        </div>
+        <div class="panel status-chart">
+          <div class="home-panel-head"><span class="panel-title"><i class="ti ti-cpu"></i> Board memory</span><span class="section-meta">MB used</span></div>
+          <div class="status-chart-body" id="statusMemory"></div>
+        </div>
+        <div class="panel status-chart">
+          <div class="home-panel-head"><span class="panel-title"><i class="ti ti-temperature"></i> Board temperature</span><span class="section-meta">°C</span></div>
+          <div class="status-chart-body" id="statusTemp"></div>
+        </div>
+        <div class="panel status-chart">
+          <div class="home-panel-head"><span class="panel-title"><i class="ti ti-battery-2"></i> Batteries</span><span class="section-meta" id="statusBatteryMeta">–</span></div>
+          <div class="status-chart-body" id="statusBatteries"></div>
+        </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-icon"><i class="ti ti-cloud-sun"></i></div>
-        <div class="stat-label">Outdoor</div>
-        <div class="stat-value mono" id="outdoorTemp">–</div>
-        <div class="stat-trend" id="statCondition">Weather</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon"><i class="ti ti-toggle-right"></i></div>
-        <div class="stat-label">Devices On</div>
-        <div class="stat-value mono"><span id="onCount">–</span><span class="stat-unit">/<span id="deviceCount">–</span></span></div>
-        <div class="stat-trend">TP-Link switches</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon"><i class="ti ti-camera"></i></div>
-        <div class="stat-label">Cameras</div>
-        <div class="stat-value mono" id="cameraCount">–</div>
-        <div class="stat-trend">Live feeds</div>
-      </div>
-      <button class="stat-card stat-card-action" id="openNetworkModal" type="button"
-              aria-haspopup="dialog" title="Show every device with an IP or MAC address">
-        <div class="stat-icon"><i class="ti ti-router"></i></div>
-        <div class="stat-label">Connected</div>
-        <div class="stat-value mono" id="networkCount">–</div>
-        <div class="stat-trend">Wi-Fi &amp; Bluetooth</div>
-      </button>
+
+      <div class="status-two">
+        <div class="panel status-services">
+          <div class="home-panel-head"><span class="panel-title"><i class="ti ti-server-2"></i> Services</span><span class="section-meta" id="statusServicesMeta">–</span></div>
+          <div class="status-svc" id="statusServices"></div>
+        </div>
+
+        <!-- Morning digest: written at 04:00 by house-digest.timer. The prose is
+             the local model retelling figures Python computed; the figures
+             themselves are one click away, because that is what you check when a
+             sentence looks wrong. -->
+        <div class="panel digest-card" id="digestCard" hidden>
+          <div class="home-panel-head">
+            <span class="panel-title"><i class="ti ti-sun"></i> Morning digest</span>
+            <span class="section-meta" id="digestWhen">–</span>
+          </div>
+          <div class="digest-body" id="digestBody"></div>
+          <details class="digest-facts">
+            <summary>The figures it was given</summary>
+            <pre id="digestFacts"></pre>
+          </details>
+        </div>
       </div>
     </div>
 

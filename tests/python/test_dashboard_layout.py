@@ -23,12 +23,13 @@ def test_stat_cards_are_inside_status_view_only() -> None:
     status_panel = html[status_start:lights_start]
     before_status = html[:status_start]
 
-    assert '<div class="stat-row">' in status_panel
-    assert before_status.count('<div class="stat-row">') == 0
+    assert '<div class="stat-row status-strip">' in status_panel
+    assert before_status.count('class="stat-row') == 0
     # Matched on the class token, not the exact attribute: the Connected card
     # carries a second class, and a literal match would quietly skip it.
+    # Alarm, events, services, uptime, board temperature, batteries, connected.
     stat_cards = re.findall(r'class="[^"]*\bstat-card\b[^"]*"', status_panel)
-    assert len(stat_cards) == 5
+    assert len(stat_cards) == 7
 
 def _sidebar_view_order(html: str) -> list[str]:
     """Views in the sidebar's Views section, in source order.

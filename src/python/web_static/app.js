@@ -1004,8 +1004,8 @@ function renderDevices(devices, cameras, matterDevices = []) {
   const lightDevices = groupMemberData("lights", ["light"]);
   const plugDevices  = groupMemberData("plugs", ["plug"]);
 
-  deviceCount.textContent    = String(devices.length + matterDevices.length);
-  onCount.textContent        = String([...devices, ...matterDevices].filter((d) => d.is_on === true).length);
+  if (deviceCount) deviceCount.textContent = String(devices.length + matterDevices.length);
+  if (onCount) onCount.textContent = String([...devices, ...matterDevices].filter((d) => d.is_on === true).length);
   if (lightCount) lightCount.textContent = String(lightDevices.length);
   if (plugCount) plugCount.textContent = String(plugDevices.length);
   cameraTabCount.textContent = String(cameras.length);
@@ -2457,7 +2457,7 @@ function renderThermostats(payload) {
     const first = thermostats[0];
     if (first.temperature != null) {
       const u = first.temperature_unit?.includes("F") ? "°F" : "°C";
-      indoorTemp.textContent = `${Math.round(first.temperature)}${u}`;
+      if (indoorTemp) indoorTemp.textContent = `${Math.round(first.temperature)}${u}`;
     }
   }
 
@@ -3072,7 +3072,7 @@ function renderCameras(cameras, tuyaDevices = []) {
   const allCameras  = applyCameraOrder([...cameras, ...tuyaCameras]);
   latestCameraById.clear();
   allCameras.forEach((camera) => latestCameraById.set(cameraIdFor(camera), camera));
-  cameraCount.textContent    = String(allCameras.length);
+  if (cameraCount) cameraCount.textContent = String(allCameras.length);
   cameraTabCount.textContent = String(allCameras.length);
 
   if (allCameras.length === 0) {
@@ -7979,6 +7979,7 @@ function activateView(viewName) {
   }
   if (viewName === "status") {
     loadHouseDigest().catch((error) => console.error(error));
+    loadStatusOverview();
   }
   if (viewName === "zigbee") {
     loadZigbeeFrame().catch((error) => console.error(error));
@@ -8452,6 +8453,204 @@ async function loadHouseDigest() {
   if (facts) facts.textContent = digest.facts_text || "";
   card.hidden = false;
 }
+
+/* ── Status: a board of small charts ──
+   Each log gets its own diagram - activity by hour, the busiest sensors,
+   camera sightings, the board's memory and temperature, batteries, services -
+   so every chart reads on its own and the whole view is a glance. The board
+   computes the hourly figures (/api/status/overview, cached two minutes);
+   this only draws them. Colour means kind, and the four kinds were checked
+   for colour-blind separation on the card ground. */
+const STATUS_POLL_MS = 2 * 60_000;
+const STATUS_LOW_BATTERY = 50;
+const STATUS_BUSIEST = 6;
+let latestStatusOverview = null;
+
+/* Device names Home Assistant was given in another language, or that say the
+   model rather than the place. */
+const STATUS_NAME_OVERRIDES = [[/水浸传感器/, "Water sensor"]];
+
+function statusName(name) {
+  let text = String(name || "");
+  STATUS_NAME_OVERRIDES.forEach(([pattern, replacement]) => { text = text.replace(pattern, replacement); });
+  return shortZoneName(text);
+}
+
+function statusHourLabel(iso) {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? "" : String(at.getHours()).padStart(2, "0");
+}
+
+function statusUptime(bootIso, now = Date.now()) {
+  const boot = new Date(bootIso || "").getTime();
+  if (!Number.isFinite(boot) || boot > now) return null;
+  const hours = Math.floor((now - boot) / 3_600_000);
+  const days = Math.floor(hours / 24);
+  return days ? `${days} d ${hours % 24} h` : `${hours} h`;
+}
+
+/* Events per hour as columns, the house's day in one shape. */
+function statusColumnsSvg(totals, hours) {
+  const w = 320, h = 104, slot = (w - 8) / 24;
+  const max = Math.max(1, ...totals);
+  const bars = totals.map((value, i) => {
+    const bh = value ? Math.max(2, (value / max) * (h - 26)) : 2;
+    const label = `${statusHourLabel(hours[i])}:00 · ${value} event${value === 1 ? "" : "s"}`;
+    return `<rect class="st-col${value ? "" : " empty"}" x="${(4 + i * slot).toFixed(1)}" y="${(h - 14 - bh).toFixed(1)}" width="${(slot - 2).toFixed(1)}" height="${bh.toFixed(1)}" rx="2"><title>${label}</title></rect>`;
+  }).join("");
+  const ticks = [0, 6, 12, 18].map((i) =>
+    `<text class="st-axis" x="${(4 + i * slot).toFixed(1)}" y="${h - 2}">${statusHourLabel(hours[i])}</text>`).join("");
+  return `<svg class="st-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Events per hour, last 24 hours">${bars}${ticks}</svg>`;
+}
+
+/* A line over the day; hours without a sample leave a gap rather than a
+   straight line pretending to know what happened. */
+function statusSparklineSvg(values, kind, unit = "", decimals = 0) {
+  const points = values.map((v, i) => [i, v]).filter(([, v]) => typeof v === "number" && Number.isFinite(v));
+  if (!points.length) return `<p class="st-empty">No samples yet.</p>`;
+  const lo = Math.min(...points.map(([, v]) => v));
+  const hi = Math.max(...points.map(([, v]) => v));
+  const pad = (hi - lo) * 0.2 || 1;
+  const w = 300, h = 78, last = values.length - 1 || 1;
+  const X = (i) => 4 + (i / last) * (w - 8);
+  const Y = (v) => 14 + (1 - (v - (lo - pad)) / (hi - lo + 2 * pad)) * (h - 28);
+
+  const segments = [];
+  let run = [];
+  values.forEach((v, i) => {
+    if (typeof v === "number" && Number.isFinite(v)) run.push([i, v]);
+    else if (run.length) { segments.push(run); run = []; }
+  });
+  if (run.length) segments.push(run);
+  const path = (seg) => seg.map(([i, v], n) => `${n ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  const areas = segments.map((seg) =>
+    `<path class="st-area ${kind}" d="${path(seg)} L${X(seg[seg.length - 1][0]).toFixed(1)},${h - 12} L${X(seg[0][0]).toFixed(1)},${h - 12} Z"/>`).join("");
+  const lines = segments.map((seg) => `<path class="st-line ${kind}" d="${path(seg)}"/>`).join("");
+  const [lastI, lastV] = points[points.length - 1];
+  const fmt = (v) => `${v.toFixed(decimals)}${unit}`;
+  return `<svg class="st-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Last 24 hours, now ${fmt(lastV)}">
+    ${areas}${lines}
+    <circle class="st-dot ${kind}" cx="${X(lastI).toFixed(1)}" cy="${Y(lastV).toFixed(1)}" r="3"/>
+    <text class="st-axis" x="${w - 4}" y="10" text-anchor="end">now ${fmt(lastV)}</text>
+    <text class="st-axis" x="4" y="${h - 1}">low ${fmt(lo)} · high ${fmt(hi)}</text>
+  </svg>`;
+}
+
+function statusBarsHtml(rows, max, unit = "") {
+  if (!rows.length) return `<p class="st-empty">Nothing in the last 24 hours.</p>`;
+  const top = Math.max(1, max);
+  return `<div class="st-bars">${rows.map((row) => `
+    <div class="st-bar-row"><span class="st-bar-name" title="${escapeHtml(row.title || row.name)}">${escapeHtml(row.name)}</span>
+      <span class="st-bar"><i class="${row.kind}" style="width:${Math.max(3, Math.min(100, (row.value / top) * 100)).toFixed(1)}%"></i></span>
+      <span class="st-bar-val mono">${row.value}${unit}</span></div>`).join("")}</div>`;
+}
+
+function setStatusText(selector, text, tone) {
+  const el = document.querySelector(selector);
+  if (!el) return;
+  el.textContent = text;
+  if (tone !== undefined) {
+    el.classList.toggle("st-good", tone === "good");
+    el.classList.toggle("st-warn", tone === "warn");
+  }
+}
+
+function renderStatusStrip(data) {
+  const payload = latestAlarmData;
+  const state = payload?.panel?.entity_id ? normalizeAlarmPanelState(payload.panel.state) : alarmState;
+  const zones = payload?.zones || [];
+  const open = alarmBreachedCount(zones);
+  setStatusText("#statusAlarm",
+    state === "disarmed" ? "Disarmed" : state === "home" ? "Home" : state === "away" ? "Away"
+      : state === "arming" ? "Arming" : "ALARM", state === "alarm" ? "warn" : null);
+  setStatusText("#statusAlarmSub", !zones.length ? "Security" : open ? `${open} open` : "all sensors normal");
+
+  if (!data) return;
+  const activity = data.activity || [];
+  setStatusText("#statusEvents", String(data.events_total ?? 0));
+  setStatusText("#statusEventsSub", `${activity.length} sensors & cameras`);
+
+  const services = data.services || [];
+  const down = services.filter((s) => !s.ok);
+  setStatusText("#statusServicesCount", `${services.length - down.length}/${services.length}`, down.length ? "warn" : "good");
+  setStatusText("#statusServicesSub", down.length ? `${down.map((s) => s.name).join(", ")} down` : "all running");
+
+  const board = data.board || {};
+  const uptime = statusUptime(board.boot);
+  setStatusText("#statusUptime", uptime || "–");
+  const boot = new Date(board.boot || "");
+  setStatusText("#statusUptimeSub", Number.isNaN(boot.getTime()) ? "Orange Pi 6 Plus"
+    : `since ${boot.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${boot.toTimeString().slice(0, 5)}`);
+
+  const temps = (board.temp || []).filter((v) => typeof v === "number");
+  setStatusText("#statusBoardTemp", temps.length ? `${Math.round(temps[temps.length - 1])}°C` : "–");
+  setStatusText("#statusBoardTempSub", temps.length ? `peak ${Math.round(Math.max(...temps))}°C` : "No samples");
+
+  const batteries = data.batteries || [];
+  const low = batteries.filter((b) => b.percent < STATUS_LOW_BATTERY);
+  setStatusText("#statusBatteriesLow", String(low.length), low.length ? "warn" : "good");
+  setStatusText("#statusBatteriesSub", batteries.length ? `lowest ${batteries[0].percent}%` : "No battery sensors");
+}
+
+function renderStatusOverview(data = latestStatusOverview) {
+  renderStatusStrip(data);
+  if (!data) return;
+  const set = (selector, html) => { const el = document.querySelector(selector); if (el) el.innerHTML = html; };
+  const hours = data.hours || [];
+  const activity = data.activity || [];
+
+  const totals = hours.map((_, h) => activity.reduce((sum, s) => sum + (s.counts?.[h] || 0), 0));
+  set("#statusActivity", statusColumnsSvg(totals, hours));
+  setStatusText("#statusActivityMeta", `${data.events_total ?? 0} events`);
+
+  const busiest = activity.filter((s) => s.total > 0).slice(0, STATUS_BUSIEST);
+  set("#statusBusiest", statusBarsHtml(
+    busiest.map((s) => ({ name: statusName(s.name), title: s.name, value: s.total, kind: s.kind })),
+    busiest.length ? busiest[0].total : 1));
+
+  const cameras = activity.filter((s) => s.kind === "camera" && s.total > 0);
+  set("#statusCameras", statusBarsHtml(
+    cameras.map((s) => ({ name: statusName(s.name), title: s.name, value: s.total, kind: "camera" })),
+    cameras.length ? cameras[0].total : 1));
+
+  const board = data.board || {};
+  set("#statusMemory", statusSparklineSvg(board.mem || [], "motion", " MB"));
+  set("#statusTemp", statusSparklineSvg(board.temp || [], "camera", "°C"));
+
+  const batteries = data.batteries || [];
+  set("#statusBatteries", statusBarsHtml(
+    batteries.map((b) => ({ name: statusName(b.name), title: b.name, value: b.percent,
+      kind: b.percent < STATUS_LOW_BATTERY ? "low" : "door" })), 100, "%"));
+  const low = batteries.filter((b) => b.percent < STATUS_LOW_BATTERY).length;
+  setStatusText("#statusBatteryMeta", low ? `${low} low` : "all good");
+
+  const services = data.services || [];
+  const down = services.filter((s) => !s.ok).length;
+  set("#statusServices", services.map((s) => `
+    <div class="st-svc${s.ok ? "" : " down"}" title="${escapeHtml(s.unit)} · ${escapeHtml(s.state)}">
+      <i class="st-svc-dot" aria-hidden="true"></i>
+      <span>${escapeHtml(s.name)}<small>${s.scope === "container" ? "container" : s.scope === "system" ? "system unit" : "user unit"}${s.ok ? "" : ` · ${escapeHtml(s.state)}`}</small></span>
+    </div>`).join(""));
+  setStatusText("#statusServicesMeta", down ? `${down} not running` : `${services.length} running`);
+
+  if (data.status === "needs_auth" || data.status === "home_assistant_unavailable") {
+    set("#statusActivity", `<p class="st-empty">Home Assistant is ${data.status === "needs_auth" ? "not connected" : "not answering"}.</p>`);
+  }
+}
+
+async function loadStatusOverview() {
+  try {
+    latestStatusOverview = await requestJson("/api/status/overview");
+  } catch (error) {
+    console.error(error);
+  }
+  renderStatusOverview();
+}
+
+setInterval(() => {
+  if (document.hidden || !document.querySelector('.view-panel.active[data-view-panel="status"]')) return;
+  loadStatusOverview();
+}, STATUS_POLL_MS);
 
 /* ── Automations: the LLM authors, Home Assistant executes ──
    Drafting is slow by nature - a 4B model on eight CPU cores takes tens of
