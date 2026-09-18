@@ -51,6 +51,7 @@ globalThis.areasDoc = {
   },
 };
 eval(constant('ROOM_OVERRIDES') + constant('HOUSE_ROOMS'));
+eval(src.match(/const ZONE_NAME_TRANSLATIONS = [^;]+;/)[0].replace('const ', 'globalThis.'));
 eval(pick('areaSlug') + pick('sensorBaseName') + pick('shortZoneName')
    + pick('cameraZoneRoom') + pick('zoneRoom'));
 globalThis.SENSOR_SUFFIXES = [' Contact', ' Occupancy', ' Motion', ' Smoke', ' Moisture', ' Vibration', ' Person'];

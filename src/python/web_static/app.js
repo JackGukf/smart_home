@@ -3796,12 +3796,18 @@ function isCameraZone(zone) {
   return /_npu_person$/i.test(String(zone.id || "")) || /\bcamera\b/i.test(String(zone.name || ""));
 }
 
+/* Names a device was given in another language. Applied wherever a sensor's
+   name is shown - the Status view had its own copy, and the Security card
+   went on saying 水浸传感器. */
+const ZONE_NAME_TRANSLATIONS = [[/水浸传感器/g, "Water sensor"]];
+
 /* "Door sensor front door" is the device's name, not the place. */
 function shortZoneName(name) {
   /* Each column already says what kind these are, so "Camera" and "Motion
      sensor and TH" are repetition the chip has no room for: what is left is
      the place, which is the part that differs. */
-  const short = String(name || "")
+  const translated = ZONE_NAME_TRANSLATIONS.reduce((text, [pattern, to]) => text.replace(pattern, to), String(name || ""));
+  const short = translated
     .replace(/^door sensor\s+/i, "")
     .replace(/\s*\(NPU\)\s*Person$/i, "")
     .replace(/^fire alarm detector\s+smoke$/i, "Smoke detector")
@@ -3811,7 +3817,7 @@ function shortZoneName(name) {
     .replace(/^motion and th\s+/i, "")
     .replace(/^vibration sensor\s+/i, "")
     .trim();
-  return (short.charAt(0).toUpperCase() + short.slice(1)) || String(name || "");
+  return (short.charAt(0).toUpperCase() + short.slice(1)) || translated;
 }
 
 function zoneStateText(zone, breached) {
@@ -4246,6 +4252,7 @@ function renderAlarmSection(payload = latestAlarmData) {
 
   panel.innerHTML = `
     <div class="house-head${displayState === "alarm" ? " alarm-active" : ""}">
+      <h2 class="house-title">Security</h2>
       <span class="house-shield${breached ? " breached" : ""}"><i class="ti ti-shield-check" aria-hidden="true"></i></span>
       <span class="house-state">
         <b>${escapeHtml(statusText)}</b>
@@ -4269,14 +4276,9 @@ function renderAlarmSection(payload = latestAlarmData) {
             : "<b>Latest</b><span>Nothing yet</span>"}</div>
           ${HOUSE_ROOMS.map((room) => houseRoomHtml(room, rooms.get(room.name))).join("")}
         </div>
-        <div class="house-legend">
-          <span><i class="house-swatch"></i>quiet</span>
-          <span><i class="house-swatch breached"></i>something active</span>
-          <span>Tap a pin for its sensors</span>
-          ${loose.length ? `<button class="house-loose" type="button" data-house-room="Not placed">${loose.length} not in a room</button>` : ""}
-        </div>
       </div>
       <div class="house-side">
+        ${loose.length ? `<button class="house-loose" type="button" data-house-room="Not placed">${loose.length} sensor${loose.length === 1 ? "" : "s"} not in a room</button>` : ""}
         <section class="house-detail" aria-label="The selected room">${houseDetailHtml(selectedHouseRoom, detailZones, controlsHtml)}</section>
         <section class="house-activity" id="houseActivity" aria-label="Recent activity">${houseActivityHtml()}</section>
       </div>
@@ -8819,14 +8821,9 @@ const STATUS_LOW_BATTERY = 50;
 const STATUS_BUSIEST = 6;
 let latestStatusOverview = null;
 
-/* Device names Home Assistant was given in another language, or that say the
-   model rather than the place. */
-const STATUS_NAME_OVERRIDES = [[/水浸传感器/, "Water sensor"]];
-
+/* A sensor's name as the Status view shows it: the place, in English. */
 function statusName(name) {
-  let text = String(name || "");
-  STATUS_NAME_OVERRIDES.forEach(([pattern, replacement]) => { text = text.replace(pattern, replacement); });
-  return shortZoneName(text);
+  return shortZoneName(name);
 }
 
 function statusHourLabel(iso) {

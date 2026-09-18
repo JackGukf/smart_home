@@ -192,13 +192,14 @@ const pick = (name) => {
   throw new Error(`unbalanced ${name}`);
 };
 globalThis.escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-eval(src.match(/const STATUS_NAME_OVERRIDES = [^;]+;/)[0].replace('const ', 'globalThis.'));
+eval(src.match(/const ZONE_NAME_TRANSLATIONS = [^;]+;/)[0].replace('const ', 'globalThis.'));
 eval(pick('shortZoneName') + pick('statusName') + pick('statusUptime') + pick('statusHourLabel')
   + pick('statusSparklineSvg') + pick('statusBarsHtml') + pick('statusColumnsSvg'));
 const hours = Array.from({ length: 24 }, (_, h) => new Date(Date.UTC(2026, 8, 17, 3 + h)).toISOString());
 const spark = statusSparklineSvg([40, 41, null, null, 42, 43], 'camera', '°C');
 console.log(JSON.stringify({
   names: ['水浸传感器', 'Garage Camera (NPU) Person', 'Motion sensor and TH Entry Occupancy'].map(statusName),
+  zone: shortZoneName('水浸传感器 Moisture'),
   uptime: [statusUptime('2026-09-13T03:40:00Z', Date.parse('2026-09-17T23:10:00Z')), statusUptime('2026-09-17T20:00:00Z', Date.parse('2026-09-17T23:10:00Z')), statusUptime('nonsense')],
   lines: (spark.match(/class="st-line/g) || []).length,
   sparkNow: /now 43°C/.test(spark),
@@ -219,6 +220,7 @@ def test_the_charts_draw_gaps_names_and_escape(tmp_path: Path) -> None:
     result = json.loads(out.stdout)
 
     assert result["names"] == ["Water sensor", "Garage", "Entry"]
+    assert result["zone"] == "Water sensor", "the Security and Home cards translate the name too"
     assert result["uptime"] == ["4 d 19 h", "3 h", None]
     assert result["lines"] == 2, "missing hours split the line in two"
     assert result["sparkNow"]

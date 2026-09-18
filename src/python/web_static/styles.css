@@ -4060,6 +4060,16 @@ aside {
   flex-wrap: wrap;
   margin-bottom: 16px;
 }
+/* The title sits in the status line only where there is room for both; below
+   900px the view's own header stays, and the arm buttons keep their own row. */
+.house-title { display: none; margin: 0 4px 0 0; font-size: 15px; font-weight: 600; }
+@media (min-width: 901px) {
+  .view-panel[data-view-panel="alarm"] > .section-header { display: none; }
+  .house-title { display: block; }
+  .house-head { gap: 12px; margin-bottom: 12px; }
+  .house-head .house-shield { width: 38px; height: 38px; border-radius: 11px; font-size: 20px; }
+  .house-head .house-state b { font-size: 17px; }
+}
 
 .house-shield {
   display: grid;
@@ -4099,11 +4109,12 @@ aside {
 
 /* The picture takes the height the screen has left, not the width: on the wall
    panel (1280 x 800) the whole view fits without scrolling. Its column is at
-   most as wide as that height allows; the side column takes the rest. */
+   most as wide as that height allows (176px: the header, the status line and
+   the gaps); the side column takes the rest, and never less than 250px. */
 .house-stage {
-  --house-fit: calc((100vh - 292px) * 1.0942);
+  --house-fit: calc((100vh - 176px) * 1.0942);
   display: grid;
-  grid-template-columns: minmax(0, var(--house-fit)) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, var(--house-fit)) minmax(250px, 1fr);
   gap: 16px;
   align-items: stretch;
 }
@@ -4235,11 +4246,8 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
 .house-pip.on { border-color: rgba(251, 191, 36, 0.7); background: rgba(251, 191, 36, 0.18); }
 .house-pip.off { opacity: 0.4; }
 
-.house-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 10px; font-size: 11.5px; color: var(--t-text-dim); }
-.house-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.house-swatch { width: 12px; height: 12px; border-radius: 4px; border: 1px solid var(--border-hover); background: rgba(255, 255, 255, 0.05); }
-.house-swatch.breached { border-color: rgba(251, 191, 36, 0.5); background: rgba(251, 191, 36, 0.18); }
 .house-loose {
+  align-self: flex-start;
   padding: 3px 10px;
   border-radius: 999px;
   border: 1px dashed var(--border-hover);
