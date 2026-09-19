@@ -1,0 +1,15 @@
+// Let the dashboard stop and start the board's desktop, and nothing else.
+//
+// The dashboard runs as orangepi (smart-home-dashboard.service, a user unit).
+// This allows that user exactly two verbs, start and stop, on exactly one unit,
+// gdm.service. Not enable or disable: the desktop stays on at every restart,
+// and a web page cannot change that. See src/python/board_desktop.py.
+// Installed by scripts/install-desktop-control.sh.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "orangepi" &&
+        action.lookup("unit") == "gdm.service" &&
+        (action.lookup("verb") == "start" || action.lookup("verb") == "stop")) {
+        return polkit.Result.YES;
+    }
+});

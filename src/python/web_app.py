@@ -50,6 +50,7 @@ from src.python.matter_device import (
 )
 from src.python import bridge_sync
 from src.python.house_digest import read_digest
+from src.python import board_desktop
 from src.python import dashboard_cast
 from src.python import energy
 from src.python import panel_scenes
@@ -592,6 +593,12 @@ class CastRequest(BaseModel):
     enabled: bool
 
 
+class DesktopRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    running: bool
+
+
 class NewsSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -683,6 +690,7 @@ def create_app(
     ir_page_path: Path | None = None,
     light_scenes_path: Path | None = None,
     cast_runner: Callable[..., subprocess.CompletedProcess] | None = None,
+    desktop_runner: Callable[..., subprocess.CompletedProcess] | None = None,
     cast_status_path: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Smart Home Orange Pi 6 Plus Dashboard", lifespan=_lifespan)
@@ -705,6 +713,7 @@ def create_app(
     app.state.memory_service = memory_service or house_memory.SummaryCache()
     # systemctl, swapped out in tests so they never touch the real user manager.
     app.state.cast_runner = cast_runner or subprocess.run
+    app.state.desktop_runner = desktop_runner or subprocess.run
     app.state.cast_status_path = cast_status_path
     app.state.cast_switch = None
     app.state.ir_store = tuya_ir.ButtonStore(config_path.parent / "ir_buttons.json")
@@ -1273,6 +1282,24 @@ def create_app(
             if app.state.cast_switch is not None:
                 app.state.cast_switch.refresh(force=True)  # Home Assistant, and the Voice Panel, now
             return _cast_doc()
+
+        return await asyncio.to_thread(apply)
+
+    @app.get("/api/desktop")
+    async def desktop_state() -> dict[str, Any]:
+        """The board's desktop: running or not, and whether a restart brings it back."""
+        return await asyncio.to_thread(board_desktop.state, app.state.desktop_runner)
+
+    @app.put("/api/desktop")
+    async def set_desktop(request: DesktopRequest) -> dict[str, Any]:
+        """Stop or start the desktop until the next restart, which always brings it back."""
+        def apply() -> dict[str, Any]:
+            try:
+                return board_desktop.set_running(request.running, app.state.desktop_runner)
+            except PermissionError as error:
+                raise HTTPException(status_code=503, detail=str(error)) from error
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                raise HTTPException(status_code=502, detail=f"Could not switch the desktop: {error}") from error
 
         return await asyncio.to_thread(apply)
 

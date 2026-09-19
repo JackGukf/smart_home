@@ -8853,6 +8853,12 @@ function activateView(viewName) {
   } else {
     stopCastPolling();
   }
+  if (viewName === "desktop") {
+    loadDesktop().catch((error) => {
+      const status = document.querySelector("#desktopStatus");
+      if (status) status.textContent = `Not available: ${apiErrorDetail(error)}`;
+    });
+  }
   if (viewName === "about") {
     loadAboutInfo();
   }
@@ -10319,7 +10325,7 @@ function setYoutubeCovering(on) {
 /* An app's page keeps its launcher lit in the sidebar. */
 const PAGE_PARENTS = {
   discovery: "discover", zigbee: "discover", bluetooth: "discover",
-  theme: "settings", startup: "settings", news: "settings", cast: "settings", nightlights: "settings", about: "settings", homecards: "settings",
+  theme: "settings", startup: "settings", news: "settings", cast: "settings", desktop: "settings", nightlights: "settings", about: "settings", homecards: "settings",
   youtube: "media", music: "media",
   ir: "devices",
 };
@@ -10343,6 +10349,10 @@ async function renderSettingsApps() {
   } catch {}
   try {
     setSub("#settingsCastSub", castSummary(castDoc || await requestJson("/api/cast")));
+  } catch {}
+  try {
+    const desktop = await requestJson("/api/desktop");
+    setSub("#settingsDesktopSub", desktop.running ? "On" : "Off until restart");
   } catch {}
   try {
     const night = await requestJson("/api/night-lights");
@@ -10434,6 +10444,58 @@ async function loadCast() {
       castDoc = await requestJson("/api/cast").catch(() => castDoc);
     }
     renderCast();
+  });
+})();
+
+/* ── Desktop ──
+   The board's GNOME desktop. Always on after a restart (a way in when things
+   are wrong); the switch stops or starts it until the next one. */
+let desktopDoc = null;
+
+function renderDesktop() {
+  const input = document.querySelector("#desktopRunning");
+  if (!input || !desktopDoc) return;
+  input.checked = Boolean(desktopDoc.running);
+  const boot = document.querySelector("#desktopBoot");
+  if (boot) boot.textContent = desktopDoc.on_at_boot ? "On" : `Off (${desktopDoc.boot_target})`;
+  const memory = document.querySelector("#desktopMemory");
+  if (memory && desktopDoc.mem_available_mb != null) {
+    memory.textContent = `${(desktopDoc.mem_available_mb / 1024).toFixed(1)} GB`;
+  }
+}
+
+async function loadDesktop() {
+  desktopDoc = await requestJson("/api/desktop");
+  renderDesktop();
+}
+
+(function initDesktop() {
+  const input = document.querySelector("#desktopRunning");
+  if (!input) return;
+  input.addEventListener("change", async () => {
+    const status = document.querySelector("#desktopStatus");
+    const running = input.checked;
+    if (!running && !confirm("Stop the board's desktop until the next restart?\nAnyone using a monitor on the board is logged out.")) {
+      input.checked = true;
+      return;
+    }
+    input.disabled = true;
+    if (status) status.textContent = running ? "Starting the desktop…" : "Stopping the desktop…";
+    try {
+      desktopDoc = await requestJson("/api/desktop", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ running }),
+      });
+      if (status) status.textContent = running
+        ? "Running. A monitor on the board shows it now."
+        : "Stopped. It comes back at the next restart, or with this switch.";
+    } catch (error) {
+      if (status) status.textContent = `Not switched: ${apiErrorDetail(error)}`;
+      desktopDoc = await requestJson("/api/desktop").catch(() => desktopDoc);
+    }
+    input.disabled = false;
+    renderDesktop();
   });
 })();
 

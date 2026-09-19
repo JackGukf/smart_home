@@ -46,7 +46,7 @@ sed -i -E "s#(app\.js\?v=)[^\"']*#\1build${BUILD_NUMBER}#" "${INDEX_FILE}"
 sed -i -E "s#(styles\.css\?v=)[^\"']*#\1build${BUILD_NUMBER}#" "${INDEX_FILE}"
 
 echo "==> Deploying dashboard to ${PI_TARGET}..."
-ssh "${PI_TARGET}" "mkdir -p ${REMOTE_PATH}/src/python ${REMOTE_PATH}/src/python/web_static ${REMOTE_PATH}/deploy/systemd/user ${REMOTE_PATH}/scripts"
+ssh "${PI_TARGET}" "mkdir -p ${REMOTE_PATH}/src/python ${REMOTE_PATH}/src/python/web_static ${REMOTE_PATH}/deploy/systemd/user ${REMOTE_PATH}/deploy/polkit ${REMOTE_PATH}/scripts"
 
 rsync --checksum -av \
     "${PROJECT_ROOT}/src/python/"*.py \
@@ -73,6 +73,11 @@ rsync --checksum -av \
     "${PROJECT_ROOT}/deploy/systemd/" \
     "${PI_TARGET}:${REMOTE_PATH}/deploy/systemd/"
 
+# The polkit rule behind Settings -> Desktop; installed by scripts/install-desktop-control.sh.
+rsync --checksum -av \
+    "${PROJECT_ROOT}/deploy/polkit/" \
+    "${PI_TARGET}:${REMOTE_PATH}/deploy/polkit/"
+
 rsync --checksum -av \
     "${PROJECT_ROOT}/scripts/run-dashboard.sh" \
     "${PROJECT_ROOT}/scripts/run-go2rtc.sh" \
@@ -88,6 +93,7 @@ rsync --checksum -av \
     "${PROJECT_ROOT}/scripts/setup-ha-ollama.py" \
     "${PROJECT_ROOT}/scripts/check-assist-routing.py" \
     "${PROJECT_ROOT}/scripts/setup-ha-powerlync.py" \
+    "${PROJECT_ROOT}/scripts/install-desktop-control.sh" \
     "${PI_TARGET}:${REMOTE_PATH}/scripts/"
 
 # The dashboard reads the TP-Link device list from the project root on every

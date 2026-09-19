@@ -937,6 +937,11 @@
           <span class="app-tile-name">Night lights</span>
           <span class="app-tile-sub" id="settingsNightSub">Family room</span>
         </button>
+        <button type="button" class="app-tile" data-goto-view="desktop" style="--app-a:#0ea5e9;--app-b:#1e3a8a">
+          <span class="app-tile-icon"><i class="ti ti-device-desktop" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Desktop</span>
+          <span class="app-tile-sub" id="settingsDesktopSub">Board desktop</span>
+        </button>
         <button type="button" class="app-tile" data-goto-view="about" style="--app-a:#64748b;--app-b:#94a3b8">
           <span class="app-tile-icon"><i class="ti ti-info-circle" aria-hidden="true"></i></span>
           <span class="app-tile-name">About</span>
@@ -1106,6 +1111,31 @@
         </div>
       </div>
       <p class="settings-status" id="castStatus" aria-live="polite"></p>
+    </div>
+
+    <!-- ── DESKTOP ──
+         The board's own GNOME desktop (gdm.service). On after every restart, for
+         when something is wrong; this stops it until the next one (board_desktop.py). -->
+    <div class="view-panel" data-view-panel="desktop">
+      <div class="section-header">
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Desktop</span></span>
+        <span class="section-meta">The board's own desktop, for a monitor plugged into it</span>
+      </div>
+      <div class="settings-group" id="desktopSettings">
+        <div class="settings-row">
+          <div class="settings-label"><strong>Desktop running</strong><small>Turn off to free memory until the next restart. Nothing the house needs runs in it</small></div>
+          <label class="settings-switch"><input type="checkbox" id="desktopRunning"><span></span><span class="sr-only">Desktop running</span></label>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>After a restart</strong><small>Always on, so a monitor on the board shows a desktop when something is wrong</small></div>
+          <span class="settings-value" id="desktopBoot">—</span>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Memory available</strong><small>On the whole board. The desktop holds about 0.8 GB</small></div>
+          <span class="settings-value" id="desktopMemory">—</span>
+        </div>
+      </div>
+      <p class="settings-status" id="desktopStatus" aria-live="polite"></p>
     </div>
 
     <!-- ── NIGHT LIGHTS ──
