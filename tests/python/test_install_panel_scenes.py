@@ -1,3 +1,4 @@
+import json
 """The Voice Panel's scenes: what they switch, and that they match the panel."""
 
 import importlib.util
@@ -39,7 +40,8 @@ def _switched(steps):
 
 
 def test_movie_mode_is_the_owners_decision():
-    """The live Movie mode as of 2026-09-18, plus the two IKEA cabinet LEDs."""
+    """The live Movie mode as of 2026-09-18: the IKEA cabinet LEDs and the cabinet
+    LED plug instead of the IR cabinet light, which was never learned."""
     steps = scenes.scripts()["movie_mode"]["sequence"]
     assert set(_switched(steps)) == {
         ("switch.turn_on", "switch.0xa4c1380c14c64266_switch1"),   # projector
@@ -50,7 +52,7 @@ def test_movie_mode_is_the_owners_decision():
         ("light.turn_off", "light.family_room_led"),
         ("light.turn_off", "light.0x286847fffe5eb711"),            # IKEA cabinet LED upper
         ("light.turn_off", "light.0x64028ffffe64de32"),            # IKEA cabinet LED lower
-        ("button.press", "button.smart_ir_cabinet_cabinet_light_off"),
+        ("switch.turn_off", "switch.family_room_cabinet_led"),        # TP-Link plug, cabinet LED
     }
 
 
@@ -61,9 +63,9 @@ def test_movie_mode_turns_the_room_dark_after_the_projector_is_on():
     assert all(s.get("action") != "switch.turn_on" for s in steps[delay + 1:])
 
 
-def test_the_unlearned_ir_step_cannot_stop_the_script():
-    last = scenes.scripts()["movie_mode"]["sequence"][-1]
-    assert last["action"] == "button.press" and last["continue_on_error"] is True
+def test_the_ir_cabinet_light_is_gone():
+    body = json.dumps(scenes.scripts()["movie_mode"])
+    assert "smart_ir_cabinet" not in body and "button.press" not in body
 
 
 def test_dry_run_writes_nothing(monkeypatch, capsys):

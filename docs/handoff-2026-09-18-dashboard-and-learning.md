@@ -106,7 +106,12 @@ docker run --rm --name esph-upload -v "$PWD/configs/esphome:/config" -v "$PWD/co
 
 ## Open items (need the owner, or time)
 
-1. **Learn the cabinet light's button:** Devices → IR remotes → Smart IR Cabinet →
+1. ~~**Learn the cabinet light's button:**~~ **Obsolete (2026-09-18, later):** the
+   cabinet's LED is now on a TP-Link HS103 plug (`switch.family_room_cabinet_led`,
+   192.168.0.142), and Movie mode switches that plus the two IKEA TRADFRI cabinet
+   drivers off; the IR step is gone (`scripts/install-panel-scenes.py`). Kept below
+   for the Tuya note.
+   Was: **Learn the cabinet light's button:** Devices → IR remotes → Smart IR Cabinet →
    Learn a button, press the remote's off button at the hub, name it exactly
    **"Cabinet light off"**. Movie mode's last step presses it; until then that
    step is skipped (the Quick action list says "not in Home Assistant").

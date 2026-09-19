@@ -1,5 +1,5 @@
 {
-  "count": 8,
+  "count": 9,
   "switches": [
     {
       "alias": "Kitchen light switch",
@@ -9,6 +9,15 @@
       "mac": "10:27:F5:77:2D:04",
       "model": "HS220",
       "name": "Kitchen light switch"
+    },
+    {
+      "alias": "Family room cabinet LED",
+      "device_type": "DeviceType.Plug",
+      "host": "192.168.0.142",
+      "is_on": true,
+      "mac": "60:A4:B7:E2:EE:B3",
+      "model": "HS103",
+      "name": "Family room cabinet LED"
     },
     {
       "alias": "Master bedroom light",

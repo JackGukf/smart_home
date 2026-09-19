@@ -8,7 +8,7 @@ and is changed in one place (docs/design/voice-panel-screens.html, Decisions).
     All lights on / off   the six lights on the panel's Home page
     Movie mode            projector, Fire TV and Z906 on (family room IR remote);
                           the family room and kitchen lights, the family room LED,
-                          both IKEA cabinet LEDs and the IR cabinet light off
+                          both IKEA cabinet LEDs and the cabinet LED plug off
 
 This file is the source of Movie mode: --apply replaces what is in Home
 Assistant with what is here, so a change made only in Home Assistant's UI is
@@ -67,6 +67,10 @@ MOVIE_OFF_IF_ON = [
 # 2026-09-18). Zigbee entity ids that start with a digit: fine in a target,
 # never write them as states.light.0x... in a template.
 CABINET_LEDS = ["light.0x286847fffe5eb711", "light.0x64028ffffe64de32"]
+# The cabinet's LED strip, on a TP-Link HS103 plug (192.168.0.142, added
+# 2026-09-18). It replaced the IR "Smart IR Cabinet" light, whose off button
+# was never learned.
+CABINET_PLUG = "switch.family_room_cabinet_led"
 
 
 def scripts() -> dict[str, dict]:
@@ -89,7 +93,7 @@ def scripts() -> dict[str, dict]:
             "mode": "single",
             "description": ("Projector, Fire TV and the Z906 on through the family room IR remote; "
                             "then the family room and kitchen lights, the family room LED, both "
-                            "cabinet LEDs and the cabinet light off."),
+                            "IKEA cabinet LEDs and the cabinet LED plug off."),
             "sequence": [
                 *({"alias": f"{name} on (IR remote family room)", "action": "switch.turn_on",
                    "target": {"entity_id": entity}} for entity, name in MOVIE_ON_IR),
@@ -102,11 +106,8 @@ def scripts() -> dict[str, dict]:
                  "target": {"entity_id": "light.family_room_led"}},
                 {"alias": "Cabinet LEDs off (IKEA upper and lower)", "action": "light.turn_off",
                  "target": {"entity_id": CABINET_LEDS}},
-                # Not learned yet (docs/handoff-2026-09-18-dashboard-and-learning.md,
-                # open item 1): until it is, this step fails and the script goes on.
-                {"alias": "Cabinet light off (Smart IR Cabinet)", "action": "button.press",
-                 "continue_on_error": True,
-                 "target": {"entity_id": "button.smart_ir_cabinet_cabinet_light_off"}},
+                {"alias": "Cabinet LED plug off (Family room cabinet LED)", "action": "switch.turn_off",
+                 "target": {"entity_id": CABINET_PLUG}},
             ],
         },
     }
