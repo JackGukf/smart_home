@@ -449,6 +449,51 @@ cd ~/smart_home_AI && set -a && . ./.env && set +a
 python3 scripts/discover-govee-ble.py
 ```
 
+## Memory, logs and the desktop (2026-09-19)
+
+Measured with 16 GB installed (15.6 GB visible to Linux), about 9.1 GB in use:
+
+| What | How much | Notes |
+| --- | --- | --- |
+| **NPU driver reserve** | **4.0 GB** | `aipu.ko` takes 4 x 1 GiB of DMA memory at load time on a 16 GB board (`/usr/src/aipu-5.11.0/armchina-npu/aipu_mm.c:926`: 6 x 1 GiB above 16 GB, 4 on 16 GB, 1 on 4-8 GB), used or not. YOLOv8n needs a sliver of one. `vmallocinfo` shows it as four 1 GiB `dma_common_pages_remap` entries. |
+| Processes | ~4.2 GB | npu-detector 1.2, Home Assistant 0.9, the GNOME desktop ~0.8, Whisper + Piper 0.6, dashboard, go2rtc, Zigbee, Matter |
+| GPU (Mali) | 0.1 GB | not the culprit: GNOME maps 1 GB of `/dev/mali0` but only ~111 MB is backed |
+
+Shrinking the NPU reserve to 1 GiB (the driver's own 4-8 GB path) would free
+3 GB. There are no kernel headers on the board, so the options are a one-byte
+patch of `aipu.ko` (offset `0x7984`, `mov w23,#4` -> `#1`; module signing and
+modversions are off) or rebuilding the module against the Orange Pi kernel
+source. Not done yet; a kernel package update would replace the module anyway.
+
+**The desktop** stays the boot default (`graphical.target`, GDM autologin), for
+when something is wrong and a monitor goes on the board. Settings -> Desktop on
+the dashboard stops or starts it until the next restart (~0.8 GB). One polkit
+rule allows `orangepi` to start and stop `gdm.service` and nothing else:
+`sudo scripts/install-desktop-control.sh` (installed 2026-09-19). The house
+services do not need the desktop - the account lingers.
+
+**Logs are on the NVMe since 2026-09-19.** The image mounted `/var/log` as a
+50 MB RAM disk (`orangepi-ramlog`), written back only on a clean shutdown, and
+`orangepi-truncate-logs` (cron, every 15 min) vacuumed the journal to 5 MB -
+about 25 minutes of history, and nothing at all after a crash or hard reset.
+Now `ENABLED=false` in `/etc/default/orangepi-ramlog` (backup `.bak-2026-09-19`),
+the unit disabled, and `/etc/systemd/journald.conf.d/50-smart-home.conf` caps
+the journal at 1 GB. To go back: restore the backup, `systemctl enable
+orangepi-ramlog`, reboot.
+
+**The kernel log fills with `arm-smmu-v3 ... event 0x07`** from stream `0xc100`
+(the NVMe, `0000:c1:00.0`). It is a known CIX Sky1 firmware bug - the ACPI IORT
+stream table covers too few Stream ID bits
+([orangepi-xunlong/linux-orangepi#129](https://github.com/orangepi-xunlong/linux-orangepi/issues/129)).
+On some boards it becomes an interrupt storm (~130/s) that freezes the network;
+here it is about 1/s (264,731 in 6.7 days), so it is noise, and with the journal
+on disk it no longer erases anything. The community workaround clears EVTQEN in
+SMMU CR0 at boot ([BredOS/smmu-evtq-fix](https://github.com/BredOS/smmu-evtq-fix)),
+which also hides real SMMU faults - not applied. Worth revisiting if the board
+ever freezes with the network gone. The drive itself is healthy: WD_BLACK SN750
+SE 500 GB, firmware 711130WD, 0 media errors, 0% used, HMB 64 MB enabled
+(`nvme-cli` is installed).
+
 ## Local AI (Ollama)
 
 The board also runs Ollama as a system service with `qwen3:4b` installed

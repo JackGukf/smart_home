@@ -77,6 +77,13 @@
 >   counts, and the traps that do not announce themselves.
 > - Why it was rebuilt, and the reset investigation: `docs/handoff-2026-09-03-recovery.md`.
 >
+> **Memory and logs (2026-09-19):** the NPU driver holds 4 GB of DMA memory from
+> boot (4 x 1 GiB, sized by RAM, used or not); the desktop stays on at boot and
+> Settings -> Desktop stops it until the next restart; **logs are on the NVMe
+> now** (orangepi-ramlog off, journal capped at 1 GB) - before, 25 minutes of
+> history and none after a crash. The `arm-smmu-v3 event 0x07` flood is a known
+> CIX firmware bug. See `docs/setup-orangepi6.md`, "Memory, logs and the desktop".
+>
 > **Never set `RuntimeWatchdogSec` on this board.** Its SBSA watchdog has a fixed
 > 10 s timeout that cannot be raised, so a 60 s setting resets the board every
 > ~80 s with no kernel panic. That is the prime suspect for the 2026-09-02 reset
