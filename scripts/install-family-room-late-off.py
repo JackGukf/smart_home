@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Install the family room's late-night lights-off automation in Home Assistant.
+"""Install the family room's accent-light automations in Home Assistant:
+lights on with motion in the dark, and off late at night when nobody is there.
 
 After 11:30 PM (until 6 AM), when the kitchen/family room occupancy sensor has
 seen nobody for 10 minutes and any of the family room's accent lights is on,
@@ -9,7 +10,13 @@ all of them go off:
     Cabinet LEDs (IKEA, 2)         light.0x286847fffe5eb711, light.0x64028ffffe64de32
     Cabinet LED plug (TP-Link)     switch.family_room_cabinet_led
 
-Motion never turns anything on - the owner's choice (2026-09-18).
+Motion turning them on is the second automation (added 2026-09-18, later):
+whenever it is dark (the sun below the horizon), occupancy turns on whichever
+of the four are off - turn_on leaves one that is already on as it is, a dimmed
+IKEA driver included. Not for 3 hours after Movie mode runs, so moving about
+during a film does not light the room. Between the Night lights time and 6 AM
+the off rule then puts them out again 10 minutes after the room empties; from
+6 AM to sunrise nothing turns them off.
 
 The 11:30 PM is not in the automation: it reads input_datetime.family_room_lights_off_after,
 a time helper the dashboard sets (Settings -> Night lights), so changing it
@@ -42,6 +49,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 AUTOMATION_ID = "family_room_lights_off_late"
+ON_AUTOMATION_ID = "family_room_lights_on_motion"
+MOVIE_MODE = "script.movie_mode"
+MOVIE_QUIET_HOURS = 3
 OCCUPANCY = "binary_sensor.0xa4c138d00106c90d_presence"  # Motion and TH Kitchen and Family Room
 LIGHTS = ["light.family_room_led", "light.0x286847fffe5eb711", "light.0x64028ffffe64de32"]
 SWITCHES = ["switch.family_room_cabinet_led"]
@@ -79,6 +89,36 @@ def automation() -> dict:
             {"action": "switch.turn_off", "target": {"entity_id": SWITCHES}},
         ],
     }
+
+
+def motion_on_automation() -> dict:
+    return {
+        "id": ON_AUTOMATION_ID,
+        "alias": "Family room lights on with motion, in the dark",
+        "description": ("When the kitchen and family room occupancy sensor sees someone and the sun is "
+                        "down, turn on the family room LED, both IKEA cabinet LEDs and the cabinet LED "
+                        f"plug - not within {MOVIE_QUIET_HOURS} hours of Movie mode. Installed by "
+                        "scripts/install-family-room-late-off.py."),
+        "mode": "single",
+        "triggers": [{"trigger": "state", "entity_id": OCCUPANCY, "from": "off", "to": "on"}],
+        "conditions": [
+            {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"},
+            {"condition": "state", "entity_id": LIGHTS + SWITCHES, "match": "any", "state": "off"},
+            # Movie mode's last run, from the script's own attribute: no flag to
+            # forget to clear, and none when it has never run.
+            {"condition": "template", "value_template": (
+                f"{{% set last = state_attr('{MOVIE_MODE}', 'last_triggered') %}}"
+                f"{{{{ last is none or now() - last > timedelta(hours={MOVIE_QUIET_HOURS}) }}}}")},
+        ],
+        "actions": [
+            {"action": "light.turn_on", "target": {"entity_id": LIGHTS}},
+            {"action": "switch.turn_on", "target": {"entity_id": SWITCHES}},
+        ],
+    }
+
+
+def automations() -> list[dict]:
+    return [automation(), motion_on_automation()]
 
 
 def ensure_helper(base_url: str, token: str) -> str:
@@ -126,7 +166,7 @@ def load_dotenv(path: Path) -> None:
 
 def install(base_url: str, token: str, body: dict) -> None:
     request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/api/config/automation/config/{AUTOMATION_ID}",
+        f"{base_url.rstrip('/')}/api/config/automation/config/{body['id']}",
         data=json.dumps(body).encode("utf-8"),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
@@ -142,8 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base-url", default=os.getenv("HOME_ASSISTANT_BASE_URL", "http://127.0.0.1:8123"))
     args = ap.parse_args(argv)
 
-    body = automation()
-    print(json.dumps(body, indent=2))
+    bodies = automations()
+    print(json.dumps(bodies, indent=2))
     if not args.apply:
         print("\nNothing was written. Re-run with --apply.")
         return 0
@@ -153,14 +193,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         print(f"start time: {ensure_helper(args.base_url.rstrip('/'), token)} ({AFTER})")
-        install(args.base_url, token, body)
+        for body in bodies:
+            install(args.base_url, token, body)
+            print(f"installed automation {body['id']} (Home Assistant validated it and reloaded automations)")
     except urllib.error.HTTPError as exc:
         print(f"REFUSED {exc.code}: {exc.read().decode('utf-8', 'replace')[:400]}", file=sys.stderr)
         return 1
     except OSError as exc:
         print(f"could not reach Home Assistant at {args.base_url}: {exc}", file=sys.stderr)
         return 1
-    print(f"\ninstalled automation.{AUTOMATION_ID} (Home Assistant validated it and reloaded automations)")
     return 0
 
 

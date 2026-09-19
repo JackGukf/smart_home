@@ -89,3 +89,34 @@ def test_only_a_time_of_day_is_taken(tmp_path, monkeypatch):
     for bad in ("24:00", "7:5", "23:30:00", "noon", "23:30; rm"):
         assert client.put("/api/night-lights", json={"after": bad}).status_code == 422
     assert calls == []
+
+
+
+# ── On with motion, in the dark ─────────────────────────────────────────────
+
+def test_motion_turns_on_whichever_are_off_and_nothing_else():
+    body = late_off.motion_on_automation()
+    switched = {e for a in body["actions"] for e in a["target"]["entity_id"]}
+    assert switched == FOUR
+    assert all(a["action"].endswith("turn_on") for a in body["actions"])
+    assert body["triggers"] == [{"trigger": "state", "entity_id": late_off.OCCUPANCY, "from": "off", "to": "on"}]
+
+
+def test_only_in_the_dark_and_only_if_something_is_off():
+    conditions = late_off.motion_on_automation()["conditions"]
+    assert {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"} in conditions
+    any_off = next(c for c in conditions if c.get("match") == "any")
+    assert set(any_off["entity_id"]) == FOUR and any_off["state"] == "off"
+
+
+def test_not_for_three_hours_after_movie_mode():
+    [template] = [c for c in late_off.motion_on_automation()["conditions"] if c["condition"] == "template"]
+    text = template["value_template"]
+    assert "state_attr('script.movie_mode', 'last_triggered')" in text
+    assert "timedelta(hours=3)" in text and "last is none" in text
+    # A template, so the digit-leading Zigbee ids must not be in it.
+    assert "0x" not in text
+
+
+def test_both_automations_are_installed():
+    assert [a["id"] for a in late_off.automations()] == ["family_room_lights_off_late", "family_room_lights_on_motion"]
