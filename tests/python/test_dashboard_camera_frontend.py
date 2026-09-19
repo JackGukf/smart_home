@@ -199,8 +199,8 @@ def test_music_is_an_app_under_media() -> None:
     assert 'id="btDeviceList"' in music
     assert 'class="page-back" data-goto-view="media"' in music
     assert 'data-view="media"' in html
-    # Bluetooth is a page now, not a modal.
-    assert 'data-view="bluetooth"' in html
+    # Bluetooth is a page now, not a modal - an app under Media and Discovery.
+    assert 'data-goto-view="bluetooth"' in html
     assert 'id="btModal"' not in html
     assert 'id="btTiles"' in html
 

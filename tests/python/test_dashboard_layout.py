@@ -38,16 +38,18 @@ def _sidebar_view_order(html: str) -> list[str]:
     a literal '<li class="room-item"' match would silently skip them.
     """
     views_start = html.index('<div class="sidebar-section">Views</div>')
-    # Discovery is its own section between Views and System; scan only the Views <ul>.
-    discovery_start = html.index('<div class="sidebar-section">Discovery</div>')
-    views_markup = html[views_start:discovery_start]
+    # Scan only the Views <ul>, which ends where System starts.
+    system_start = html.index('<div class="sidebar-section">System</div>')
+    views_markup = html[views_start:system_start]
     return re.findall(r'<li[^>]*\bclass="[^"]*\broom-item\b[^"]*"[^>]*\bdata-view="([^"]+)"', views_markup)
 
 
-def test_status_view_is_last_view_item() -> None:
+def test_status_is_the_last_view_before_discovery() -> None:
+    """Discovery - adding a device - is the rarest thing done here, so it
+    follows the views used day to day (since 2026-09-19)."""
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    assert _sidebar_view_order(html)[-1] == "status"
+    assert _sidebar_view_order(html)[-2:] == ["status", "discover"]
 
 
 def test_sidebar_view_order_helper_sees_multi_class_items() -> None:
@@ -56,7 +58,7 @@ def test_sidebar_view_order_helper_sees_multi_class_items() -> None:
         '<div class="sidebar-section">Views</div>'
         '<li class="room-item" data-view="home">Home</li>'
         '<li class="room-item device-group-item" data-view="lights">Lights</li>'
-        '<div class="sidebar-section">Discovery</div>'
+        '<div class="sidebar-section">System</div>'
     )
 
     assert _sidebar_view_order(markup) == ["home", "lights"]

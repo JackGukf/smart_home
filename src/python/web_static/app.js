@@ -7561,7 +7561,7 @@ const HOME_CARD_LAYOUT_KEY = "home_card_layout";
    Climate frozen at y4/h8 from an older table, so when Weather shrank to two
    rows the freed row just sat there as a gap. */
 const HOME_CARD_LAYOUT_VERSION_KEY = "home_card_layout_version";
-const HOME_CARD_LAYOUT_VERSION = "2026-09-17-no-home-heading";
+const HOME_CARD_LAYOUT_VERSION = "2026-09-19-energy";
 const HOME_GRID_COLS = 12;
 /* Fallback row height, used only where the grid has no measurable height yet
    (first paint) or is stacked into a flex column on a phone. Above 1101px the
@@ -7571,15 +7571,15 @@ const HOME_GRID_ROW = 40;
 const HOME_GRID_ROWS = 20;
 const HOME_GRID_GAP = 16;
 
-/* Three columns of four on the grid:
+/* Three columns of four on the grid - the owner's layout of 2026-09-19:
 
-     Weather        Camera    Areas
-     Climate        Alarm
-     Temperatures
+     Weather | Climate  Quick      Areas
+     Energy  | Camera              Areas
+     Temps   | Camera              Security
 
-   Alarm sits directly under Camera, matching the phone order in index.html:
-   a camera view and "is anything open" answer the same question, so they are
-   read together.
+   Weather, Climate and Quick actions share a short top row; Areas runs down
+   the right half-way. Energy fills the gap under Weather that the short top
+   row leaves; Camera takes the middle below Climate and Quick actions.
 
    Every column totals exactly HOME_GRID_ROWS, and that is the whole point:
    with 1fr rows the three columns then end flush with each other and with the
@@ -7587,43 +7587,34 @@ const HOME_GRID_GAP = 16;
    and change another in the same column to match, or that column stops lining
    up - the totals are the invariant, not the individual numbers.
 
-     left    6 + 5 + 9  = 20     Weather, (Climate | Quick actions), Temperatures
-     middle 11 + 9      = 20     Camera, Alarm
-     right  20          = 20     Areas
+     left    4 + 6 + 10 = 20     Weather, Energy, Temperatures
+     middle  4 + 16     = 20     (Climate | Quick actions), Camera
+     right  10 + 10     = 20     Areas, Security
 
-   Two rows of that are load-bearing across columns, not just within one.
-   Weather plus Climate spans rows 1-11, which is exactly Camera, so the left
-   and middle columns break at the same place; Temperatures and Alarm then both
-   run 12-20 and line up across the view. Move one and its opposite number has
-   to move with it.
+   Two rows are shared across columns. The top row (1-4) is Weather, Climate
+   and Quick actions together, so Energy and Camera both start at row 5. And
+   Temperatures and Security both run 11-20, so the bottom edge lines up across
+   the view. Move one and its opposite number has to move with it.
 
-   Weather is six rows since 2026-09-17, when it took over the clock and the
-   date and grew a 7-day strip: about 260px on the wall panel, comfortably
-   what the clock, today and the week need. The rows came from Climate (the ecobee dial scales itself) and
-   Temperatures (the sensor grid scrolls). It still scales with its own height
-   through a container query - see "#homeWeatherPanel" in styles.css - dropping
-   the week first and the date second on a short window.
-
-   The previous table totalled 20 / 15 / 12, which on the 1920x1080 wall panel
-   meant the left column ran 220px past the bottom of the screen while Areas
-   stopped 228px short of it. Camera took most of the freed space because it is
-   the card that uses it; Weather gave up two rows it was not using.
+   Weather is four rows here, about 180px on the 1920x1080 wall panel: the
+   clock and today fit, and its container query drops the 7-day strip first,
+   which is the owner's picture.
 
    Only applies to a browser with no saved layout - an existing one is left
    alone, and Reset Layout is what adopts this. A browser that already has a
    layout still gets a card it has never seen, because cardLayoutOf() falls
    back to this table for any card the saved layout has no entry for; what it
-   will not do is move a card the user has already placed. */
+   will not do is move a card the user has already placed. The version above
+   is what makes every screen that never moved a card pick this up. */
 const DEFAULT_HOME_LAYOUT = {
-  weather:     { x: 1, y: 1,  w: 4, h: 6 },
-  /* Climate keeps its dial and its height and gives up half its width, so the
-     buttons pressed most often sit beside it rather than a scroll away. */
-  climate:     { x: 1, y: 7,  w: 2, h: 5 },
-  quick:       { x: 3, y: 7,  w: 2, h: 5 },
-  tempsensors: { x: 1, y: 12, w: 4, h: 9 },
-  camera:      { x: 5, y: 1,  w: 4, h: 11 },
-  alarm:       { x: 5, y: 12, w: 4, h: 9 },
-  areas:       { x: 9, y: 1,  w: 4, h: 20 },
+  weather:     { x: 1, y: 1,  w: 4, h: 4 },
+  climate:     { x: 5, y: 1,  w: 2, h: 4 },
+  quick:       { x: 7, y: 1,  w: 2, h: 4 },
+  areas:       { x: 9, y: 1,  w: 4, h: 10 },
+  energy:      { x: 1, y: 5,  w: 4, h: 6 },
+  camera:      { x: 5, y: 5,  w: 4, h: 16 },
+  tempsensors: { x: 1, y: 11, w: 4, h: 10 },
+  alarm:       { x: 9, y: 11, w: 4, h: 10 },
 };
 
 function loadHomeLayout() {
@@ -8797,6 +8788,9 @@ function activateView(viewName) {
   if (viewName !== "youtube") stopYoutube();
   if (viewName === "news") {
     loadNewsSettings().catch((error) => console.error(error));
+  }
+  if (viewName === "energy") {
+    loadEnergy().catch((error) => console.error(error));
   }
   if (viewName === "nightlights") {
     loadNightLights().catch((error) => {
@@ -10274,6 +10268,7 @@ function setYoutubeCovering(on) {
    setting stands, so the page answers most questions without opening one. */
 /* An app's page keeps its launcher lit in the sidebar. */
 const PAGE_PARENTS = {
+  discovery: "discover", zigbee: "discover", bluetooth: "discover",
   theme: "settings", startup: "settings", news: "settings", cast: "settings", nightlights: "settings", about: "settings", homecards: "settings",
   youtube: "media", music: "media",
   ir: "devices",
@@ -10391,6 +10386,147 @@ async function loadCast() {
     renderCast();
   });
 })();
+
+/* ── Energy ──
+   Electricity (BC Hydro, live from the PowerLync) and natural gas (FortisBC,
+   daily), for the Home card and the Energy view. /api/energy is sample data
+   until the monitor is paired; the payload says so and both places show it. */
+const ENERGY_REFRESH_MS = 15000;
+const ENERGY_STATE_TEXT = { base: "Near base load", busy: "Appliances on", high: "High use" };
+let latestEnergy = null;
+
+function energyMoney(value) {
+  return `$${Number(value).toFixed(2)}`;
+}
+
+/* An area chart in a stretched viewBox: marks only - labels live in HTML
+   below it, so they are never squashed with the drawing. */
+function energyAreaSvg(values, { compare = null, height = 60 } = {}) {
+  const series = values.filter((v) => Number.isFinite(v));
+  if (series.length < 2) return "";
+  const w = 300, top = 3, bottom = height - 2;
+  const hi = Math.max(...series, ...(compare || []), 0.1) * 1.12;
+  const count = compare ? Math.max(compare.length, series.length) : series.length;
+  const x = (i) => (i / (count - 1)) * w;
+  const y = (v) => bottom - (v / hi) * (bottom - top);
+  const path = (list) => list.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const line = path(series);
+  const last = series.length - 1;
+  return `<svg class="energy-chart" viewBox="0 0 ${w} ${height}" preserveAspectRatio="none" style="height:${height}px" aria-hidden="true">
+    <path class="energy-fill" d="${line}L${x(last).toFixed(1)},${bottom}L0,${bottom}Z"/>
+    ${compare ? `<path class="energy-usual" d="${path(compare)}"/>` : ""}
+    <path class="energy-line" d="${line}"/>
+    <circle class="energy-dot" cx="${x(last).toFixed(1)}" cy="${y(series[last]).toFixed(1)}" r="2.6"/>
+  </svg>`;
+}
+
+function energyBarsSvg(values, { kind = "electric", height = 150 } = {}) {
+  if (!values.length) return "";
+  const w = 300, bottom = height - 1;
+  const hi = Math.max(...values, 0.01) * 1.1;
+  const bw = w / values.length;
+  const bars = values.map((v, i) => {
+    const h = Math.max(1, (v / hi) * (bottom - 2));
+    return `<rect class="energy-bar ${kind}${i === values.length - 1 ? " latest" : ""}" x="${(i * bw + bw * 0.14).toFixed(2)}" y="${(bottom - h).toFixed(1)}" width="${(bw * 0.72).toFixed(2)}" height="${h.toFixed(1)}" rx="1.5"/>`;
+  }).join("");
+  return `<svg class="energy-chart" viewBox="0 0 ${w} ${height}" preserveAspectRatio="none" style="height:${height}px" aria-hidden="true">${bars}</svg>`;
+}
+
+function energyDateLabel(iso) {
+  const [y, m, d] = String(iso).split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function energyAxis(days) {
+  if (!days.length) return "";
+  const picks = [0, Math.round((days.length - 1) / 3), Math.round((days.length - 1) * 2 / 3), days.length - 1];
+  return `<div class="energy-axis">${picks.map((i) => `<span>${escapeHtml(energyDateLabel(days[i].date))}</span>`).join("")}</div>`;
+}
+
+function renderHomeEnergy() {
+  const body = document.querySelector("#homeEnergyBody");
+  if (!body || !latestEnergy) return;
+  const e = latestEnergy.electricity;
+  const g = latestEnergy.gas;
+  const sample = document.querySelector("#homeEnergySample");
+  if (sample) sample.hidden = !latestEnergy.sample;
+  body.innerHTML = `
+    <div class="energy-now">
+      <span class="energy-kw mono">${Number(e.kw_now).toFixed(2)}</span>
+      <span class="energy-unit">kW now</span>
+      <span class="energy-state ${escapeHtml(e.state)}">${escapeHtml(ENERGY_STATE_TEXT[e.state] || "")}</span>
+    </div>
+    <div class="energy-spark">${energyAreaSvg(e.last_hour_kw, { height: 56 })}</div>
+    <div class="energy-facts">
+      <span>Last 24 h <b class="mono">${Number(e.last_24h_kwh).toFixed(1)} kWh</b></span>
+      <span>≈ <b class="mono">${energyMoney(e.last_24h_kwh * e.rate)}</b></span>
+      <span>Gas <b class="mono">${Number(g.yesterday_gj).toFixed(2)} GJ</b> yesterday</span>
+    </div>`;
+}
+
+function energyColumnHtml({ name, provider, headline, unit, headlineNote, pill, days, values, digits, rate, kind }) {
+  const total = values.reduce((a, b) => a + b, 0);
+  return `
+    <div class="panel energy-column">
+      <div class="home-panel-head">
+        <span class="panel-title"><i class="ti ${kind === "gas" ? "ti-flame" : "ti-bolt"}"></i> ${escapeHtml(name)}</span>
+        <span class="section-meta">${escapeHtml(provider)}</span>
+      </div>
+      <div class="energy-headline">
+        <span class="energy-kw mono">${headline}</span><span class="energy-unit">${escapeHtml(unit)} ${escapeHtml(headlineNote)}</span>
+        <span class="energy-state ${kind === "gas" ? "gas" : "base"}">${escapeHtml(pill)}</span>
+      </div>
+      ${energyBarsSvg(values, { kind })}
+      ${energyAxis(days)}
+      <div class="energy-rows">
+        <div><span>Last ${days.length} days</span><b class="mono">${total.toFixed(digits)} ${escapeHtml(unit)} · ${energyMoney(total * rate)}</b></div>
+        <div><span>Daily average</span><b class="mono">${(total / Math.max(1, values.length)).toFixed(digits + 1)} ${escapeHtml(unit)}</b></div>
+        <div><span>Same month last year</span><b>No history yet</b></div>
+      </div>
+    </div>`;
+}
+
+function renderEnergyView() {
+  const columns = document.querySelector("#energyColumns");
+  if (!columns || !latestEnergy) return;
+  const e = latestEnergy.electricity;
+  const g = latestEnergy.gas;
+  const note = document.querySelector("#energySampleNote");
+  if (note) note.hidden = !latestEnergy.sample;
+  columns.innerHTML = energyColumnHtml({
+    name: "Electricity", provider: e.provider, kind: "electric", unit: "kWh",
+    headline: Number(e.last_24h_kwh).toFixed(1), headlineNote: "in the last 24 h", pill: `${Number(e.kw_now).toFixed(2)} kW now`,
+    days: e.days, values: e.days.map((d) => d.kwh), digits: 0, rate: e.rate,
+  }) + energyColumnHtml({
+    name: "Natural gas", provider: g.provider, kind: "gas", unit: "GJ",
+    headline: Number(g.yesterday_gj).toFixed(2), headlineNote: "yesterday", pill: "Read daily",
+    days: g.days, values: g.days.map((d) => d.gj), digits: 2, rate: g.rate,
+  });
+  const today = document.querySelector("#energyToday");
+  if (today) {
+    today.innerHTML = `
+      <div class="home-panel-head">
+        <span class="panel-title"><i class="ti ti-chart-area-line"></i> Electricity, last 24 hours</span>
+        <span class="section-meta">dashed line: a usual day</span>
+      </div>
+      ${energyAreaSvg(e.last_24h_hourly_kwh, { compare: e.usual_24h_hourly_kwh, height: 120 })}
+      <div class="energy-axis">${[0, 6, 12, 18, 24].map((h) => `<span>${String((e.last_24h_start_hour + h) % 24).padStart(2, "0")}h</span>`).join("")}</div>`;
+  }
+}
+
+async function loadEnergy() {
+  latestEnergy = await requestJson("/api/energy");
+  renderHomeEnergy();
+  renderEnergyView();
+}
+
+/* Refresh while the Home card or the Energy view is on screen, and not otherwise. */
+setInterval(() => {
+  if (document.hidden) return;
+  const active = document.querySelector(".view-panel.active")?.dataset.viewPanel;
+  if (active === "home" || active === "energy") loadEnergy().catch(() => {});
+}, ENERGY_REFRESH_MS);
+loadEnergy().catch((error) => console.error(error));
 
 /* ── Night lights ──
    The start time of the family room's late-night lights-off, kept in Home

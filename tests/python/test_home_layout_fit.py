@@ -244,20 +244,16 @@ def test_the_weather_card_gets_the_height_it_cannot_compress_below() -> None:
 # Camera does, and Temperatures has to sit exactly where Security sits.
 
 
-def test_weather_and_climate_together_match_camera() -> None:
+def test_the_top_row_is_one_band_and_energy_and_camera_start_under_it() -> None:
+    """Weather, Climate and Quick actions share the top rows (2026-09-19), so
+    Energy under Weather and Camera under Climate begin on the same row."""
     layout = _default_layout()
-    weather, climate, camera = layout["weather"], layout["climate"], layout["camera"]
+    top = [layout[n] for n in ("weather", "climate", "quick")]
 
-    assert weather["y"] == camera["y"] == 1, "all three start at the top"
-    assert climate["y"] + climate["h"] == camera["y"] + camera["h"], (
-        "Weather + Climate must end exactly where Camera ends, or the left and "
-        "middle columns break at different heights"
-    )
-    assert weather["h"] + climate["h"] == camera["h"], (
-        "2 + 9 == 11. The gap between Weather and Climate is not a row - Camera "
-        "spanning 11 rows already contains the ten gaps between them, so the "
-        "pixel heights come out equal: 74 + 16 + 389 == 479"
-    )
+    assert {c["y"] for c in top} == {1} and len({c["h"] for c in top}) == 1, \
+        "Weather, Climate and Quick actions must be one band"
+    band_end = top[0]["y"] + top[0]["h"]
+    assert layout["energy"]["y"] == layout["camera"]["y"] == band_end
 
 
 def test_temperatures_and_security_occupy_the_same_rows() -> None:
@@ -290,14 +286,13 @@ def test_weather_scales_with_its_own_height_rather_than_clipping() -> None:
 
 
 def test_weather_keeps_enough_rows_to_render_in_both_layouts() -> None:
-    """The clock, today and the week need about 210px on the wall panel.
-
-    Six of twenty rows gives them that with room to spare. The two
-    layouts size it independently - fourteen rows on a small screen is a
-    coarser scale than twenty - so neither number can be derived from the other.
-    """
-    assert _default_layout()["weather"]["h"] == 6
-    assert _two_column_layout()["weather"]["h"] == 5
+    """The clock and today need about 150px; the week strip goes first below
+    that (its container query), which is the owner's 2026-09-19 layout: a
+    short Weather beside Climate and Quick actions. Four of twenty rows on the
+    wall panel, and four of fourteen on a small screen, where the weather
+    icon's floor is (see the test above)."""
+    assert _default_layout()["weather"]["h"] == 4
+    assert _two_column_layout()["weather"]["h"] == 4
 
 
 def test_a_stored_cell_cannot_outlive_the_table_it_was_resolved_against() -> None:

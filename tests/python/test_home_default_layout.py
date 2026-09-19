@@ -28,7 +28,7 @@ STYLES = PROJECT_ROOT / "src" / "python" / "web_static" / "styles.css"
 # DEFAULT_HOME_LAYOUT, where Alarm is still in the left column, so the two
 # orders differ on purpose.
 PHONE_ORDER = [
-    "weather", "camera", "alarm", "climate", "quick", "tempsensors", "areas",
+    "weather", "camera", "alarm", "climate", "quick", "energy", "tempsensors", "areas",
 ]
 
 # Grid columns are 4 wide, so these are the three column starts. Climate and
@@ -62,19 +62,29 @@ def test_phone_order_is_markup_order() -> None:
 def test_desktop_columns_hold_the_intended_cards() -> None:
     cells = _defaults()
 
-    assert [n for n, c in cells.items() if _column(c) == LEFT] == ["weather", "climate", "quick", "tempsensors"]
-    assert [n for n, c in cells.items() if _column(c) == MIDDLE] == ["camera", "alarm"]
-    assert [n for n, c in cells.items() if _column(c) == RIGHT] == ["areas"]
+    # The owner's layout of 2026-09-19.
+    assert [n for n, c in cells.items() if _column(c) == LEFT] == ["weather", "energy", "tempsensors"]
+    assert [n for n, c in cells.items() if _column(c) == MIDDLE] == ["climate", "quick", "camera"]
+    assert [n for n, c in cells.items() if _column(c) == RIGHT] == ["areas", "alarm"]
 
 
-def test_alarm_sits_directly_under_camera_on_the_desktop_grid() -> None:
-    """The same pairing the phone order makes, held here too: a camera view and
-    "is anything open" answer the same question."""
+def test_security_sits_directly_under_areas_on_the_desktop_grid() -> None:
+    """Since 2026-09-19 Security shares the right column with Areas: the rooms
+    and whether any of them is open are read together."""
     cells = _defaults()
-    camera, alarm = cells["camera"], cells["alarm"]
+    areas, alarm = cells["areas"], cells["alarm"]
 
-    assert alarm["x"] == camera["x"], "alarm is not in the camera's column"
-    assert alarm["y"] == camera["y"] + camera["h"], "alarm does not start where camera ends"
+    assert alarm["x"] == areas["x"], "Security is not in the Areas column"
+    assert alarm["y"] == areas["y"] + areas["h"], "Security does not start where Areas ends"
+
+
+def test_energy_fills_the_gap_under_weather() -> None:
+    cells = _defaults()
+    weather, energy, temps = cells["weather"], cells["energy"], cells["tempsensors"]
+
+    assert energy["x"] == weather["x"] and energy["w"] == weather["w"]
+    assert energy["y"] == weather["y"] + weather["h"], "Energy does not start where Weather ends"
+    assert temps["y"] == energy["y"] + energy["h"], "Temperatures does not start where Energy ends"
 
 
 def test_no_two_cards_overlap_and_none_runs_off_the_grid() -> None:

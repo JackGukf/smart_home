@@ -40,8 +40,10 @@ def test_no_device_group_children_in_the_sidebar() -> None:
     the Devices overview tiles instead. Their panels must still exist."""
     html = INDEX_HTML.read_text(encoding="utf-8")
     views_start = html.index('<div class="sidebar-section">Views</div>')
-    discovery_start = html.index('<div class="sidebar-section">Discovery</div>')
-    views = html[views_start:discovery_start]
+    # Views end where System starts: Discovery is one entry in Views since
+    # 2026-09-19, not a section of its own.
+    system_start = html.index('<div class="sidebar-section">System</div>')
+    views = html[views_start:system_start]
 
     assert "device-group-item" not in views
     for view in DEVICE_CHILD_VIEWS:
@@ -52,23 +54,29 @@ def test_no_device_group_children_in_the_sidebar() -> None:
 def test_sidebar_is_exactly_the_top_level_views() -> None:
     html = INDEX_HTML.read_text(encoding="utf-8")
     views_start = html.index('<div class="sidebar-section">Views</div>')
-    discovery_start = html.index('<div class="sidebar-section">Discovery</div>')
-    views = html[views_start:discovery_start]
+    # Views end where System starts: Discovery is one entry in Views since
+    # 2026-09-19, not a section of its own.
+    system_start = html.index('<div class="sidebar-section">System</div>')
+    views = html[views_start:system_start]
 
     found = re.findall(r'<li[^>]*\bdata-view="([^"]+)"', views)
     # Media sits between Alarm and Status: it is a place things are
     # played, not a system readout, so it belongs above the diagnostics.
     # Automations sits last before Status for the same reason - it is
     # somewhere you go to make something, not to read a gauge.
-    assert found == ["home", "cameras", "devices", "homeassistant", "alarm",
-                     "media", "automations", "status"]
+    # Energy sits beside Cameras - both are things the house shows you - and
+    # Discovery comes last: adding a device is the rarest thing done here.
+    assert found == ["home", "cameras", "energy", "devices", "homeassistant", "alarm",
+                     "media", "automations", "status", "discover"]
 
 
 def test_top_level_views_are_untouched() -> None:
     html = INDEX_HTML.read_text(encoding="utf-8")
     views_start = html.index('<div class="sidebar-section">Views</div>')
-    discovery_start = html.index('<div class="sidebar-section">Discovery</div>')
-    views = html[views_start:discovery_start]
+    # Views end where System starts: Discovery is one entry in Views since
+    # 2026-09-19, not a section of its own.
+    system_start = html.index('<div class="sidebar-section">System</div>')
+    views = html[views_start:system_start]
 
     for view in ["home", "cameras", "homeassistant", "alarm", "status"]:
         item = re.search(rf'<li[^>]*\bdata-view="{view}"', views)

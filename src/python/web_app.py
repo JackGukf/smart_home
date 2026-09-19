@@ -51,6 +51,7 @@ from src.python.matter_device import (
 from src.python import bridge_sync
 from src.python.house_digest import read_digest
 from src.python import dashboard_cast
+from src.python import energy
 from src.python import panel_scenes
 from src.python import news_feed
 from src.python import sensor_history
@@ -1460,6 +1461,12 @@ def create_app(
         } for hub in hubs]
         return {"hubs": tuya + zigbee, "home_assistant": app.state.ir_bridge is not None,
                 "page": await asyncio.to_thread(_load_ir_page, app.state.ir_page_path)}
+
+    @app.get("/api/energy")
+    async def energy_now() -> dict[str, Any]:
+        """Electricity and gas for the Energy card and view. Sample data until
+        the PowerLync is paired - the payload says so, and the page shows it."""
+        return await asyncio.to_thread(energy.snapshot)
 
     @app.get("/api/light-scenes")
     async def light_scenes_get() -> dict[str, Any]:

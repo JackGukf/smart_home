@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build281">
+  <link rel="stylesheet" href="/static/styles.css?v=build283">
 </head>
 <body>
 
@@ -87,6 +87,10 @@
         Cameras
         <span class="room-badge" id="cameraTabCount">–</span>
       </li>
+      <li class="room-item" data-view="energy" title="Electricity and natural gas">
+        <span class="room-icon"><i class="ti ti-bolt"></i></span>
+        Energy
+      </li>
       <li class="room-item" id="devicesGroupToggle" data-view="devices">
         <span class="room-icon"><i class="ti ti-devices"></i></span>
         Devices
@@ -114,21 +118,11 @@
         <span class="room-icon"><i class="ti ti-dashboard"></i></span>
         Status
       </li>
-    </ul>
-
-    <div class="sidebar-section">Discovery</div>
-    <ul class="room-list">
-      <li class="room-item" data-view="discovery">
-        <span class="room-icon"><i class="ti ti-antenna"></i></span>
-        Add Matter
-      </li>
-      <li class="room-item" data-view="zigbee" title="Pair and manage Zigbee sensors">
-        <span class="room-icon"><i class="ti ti-router"></i></span>
-        Add Zigbee
-      </li>
-      <li class="room-item" data-view="bluetooth" title="Scan and connect Bluetooth speakers">
-        <span class="room-icon"><i class="ti ti-bluetooth"></i></span>
-        Bluetooth
+      <!-- Add Matter, Add Zigbee and Bluetooth are apps inside Discovery: adding
+           a device is occasional, and three entries for it crowded the list. -->
+      <li class="room-item" data-view="discover" title="Add Matter, Zigbee and Bluetooth devices">
+        <span class="room-icon"><i class="ti ti-radar"></i></span>
+        Discovery
       </li>
     </ul>
 
@@ -644,6 +638,22 @@
             </div>
             <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
           </div>
+          <!-- Energy: live electricity from the PowerLync, the last 24 hours and gas.
+               Sample data until the monitor is paired - the card says so. -->
+          <div class="panel home-panel home-card" id="homeEnergyPanel" data-home-card="energy">
+            <div class="home-panel-head">
+              <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
+              <span class="panel-title"><i class="ti ti-bolt"></i> Energy</span>
+              <span class="energy-sample" id="homeEnergySample" hidden>Sample data</span>
+              <button class="home-gear-btn" data-goto-view="energy" type="button" title="Open Energy">
+                <i class="ti ti-arrow-up-right"></i>
+              </button>
+            </div>
+            <div class="home-energy-body" id="homeEnergyBody">
+              <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+            </div>
+            <span class="home-card-resize" title="Drag to resize · double-click to reset"><i class="ti ti-arrow-down-right"></i></span>
+          </div>
           <div class="panel home-panel home-card" id="homeSensorsPanel" data-home-card="tempsensors">
             <div class="home-panel-head">
               <span class="home-card-grip" title="Drag to rearrange"><i class="ti ti-grip-vertical"></i></span>
@@ -697,6 +707,48 @@
     </div>
 
     <!-- ── CAMERAS VIEW ── -->
+    <!-- ── ENERGY VIEW ──
+         Electricity (BC Hydro, live from the PowerLync) and natural gas
+         (FortisBC, daily), side by side. Sample data until the monitor is paired. -->
+    <div class="view-panel" data-view-panel="energy">
+      <div class="section-header">
+        <span class="section-title">Energy</span>
+        <span class="section-meta" id="energyMeta">Last 30 days</span>
+      </div>
+      <p class="energy-sample-note" id="energySampleNote" hidden>Sample data: the BC Hydro PowerLync is not connected yet, so these figures are invented. They are replaced by real readings once it is paired.</p>
+      <div class="energy-columns" id="energyColumns">
+        <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
+      </div>
+      <div class="panel energy-today" id="energyToday"></div>
+    </div>
+
+    <!-- ── DISCOVERY ──
+         Adding a device: three apps, the shape Settings has. Each opens its own
+         page, which comes back here. -->
+    <div class="view-panel" data-view-panel="discover">
+      <div class="section-header">
+        <span class="section-title">Discovery</span>
+        <span class="section-meta">Add a new device</span>
+      </div>
+      <div class="app-grid">
+        <button type="button" class="app-tile" data-goto-view="discovery" style="--app-a:#a78bfa;--app-b:#6247cf">
+          <span class="app-tile-icon"><i class="ti ti-antenna" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Add Matter</span>
+          <span class="app-tile-sub">Pair a Matter device</span>
+        </button>
+        <button type="button" class="app-tile" data-goto-view="zigbee" style="--app-a:#34d399;--app-b:#0f7a5a">
+          <span class="app-tile-icon"><i class="ti ti-router" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Add Zigbee</span>
+          <span class="app-tile-sub">Pair Zigbee sensors</span>
+        </button>
+        <button type="button" class="app-tile" data-goto-view="bluetooth" style="--app-a:#60a5fa;--app-b:#1e4fb8">
+          <span class="app-tile-icon"><i class="ti ti-bluetooth" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Bluetooth</span>
+          <span class="app-tile-sub">Speakers</span>
+        </button>
+      </div>
+    </div>
+
     <div class="view-panel" data-view-panel="cameras">
       <div class="section-header">
         <span class="section-title">Cameras</span>
@@ -794,7 +846,7 @@
          Every known device is a tile: tap it to connect or disconnect. -->
     <div class="view-panel" data-view-panel="bluetooth">
       <div class="section-header">
-        <span class="section-title">Bluetooth</span>
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="discover" title="Back to Discovery"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Discovery</button><span class="section-title">Bluetooth</span></span>
         <span class="section-meta" id="btMeta">Speakers near the board</span>
       </div>
       <div class="app-grid" id="btTiles">
@@ -1110,7 +1162,7 @@
     <!-- ── ZIGBEE VIEW ── -->
     <div class="view-panel" data-view-panel="zigbee">
       <div class="section-header ha-panel-header">
-        <span class="section-title">Zigbee</span>
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="discover" title="Back to Discovery"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Discovery</button><span class="section-title">Zigbee</span></span>
         <div class="ha-panel-actions">
           <span class="section-meta" id="zigbeeMeta">Zigbee2MQTT</span>
           <a class="command" id="zigbeeOpen" href="#" target="_blank" rel="noreferrer">
@@ -1145,7 +1197,7 @@
     <!-- ── DISCOVERY VIEW ── -->
     <div class="view-panel" data-view-panel="discovery">
       <div class="section-header">
-        <span class="section-title">Add Matter</span>
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="discover" title="Back to Discovery"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Discovery</button><span class="section-title">Add Matter</span></span>
         <span class="section-meta">Pair new Matter and Zigbee devices</span>
       </div>
       <div class="app-grid">
@@ -1452,6 +1504,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build281"></script>
+<script src="/static/app.js?v=build283"></script>
 </body>
 </html>

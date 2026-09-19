@@ -3520,10 +3520,11 @@ aside {
      "#homeWeatherPanel"), so it cannot usefully go shorter. The rows come from
      Climate and Temperatures because both degrade gracefully - the ecobee dial
      scales itself to its card, and the sensor grid scrolls. */
-  #homeOverview > .home-layout > [data-home-card="weather"]     { grid-column: 1 / span 6  !important; grid-row: 1 / span 5  !important; }
-  #homeOverview > .home-layout > [data-home-card="climate"]     { grid-column: 1 / span 3  !important; grid-row: 6 / span 4  !important; }
-  #homeOverview > .home-layout > [data-home-card="quick"]       { grid-column: 4 / span 3  !important; grid-row: 6 / span 4  !important; }
-  #homeOverview > .home-layout > [data-home-card="tempsensors"] { grid-column: 1 / span 6  !important; grid-row: 10 / span 5 !important; }
+  #homeOverview > .home-layout > [data-home-card="weather"]     { grid-column: 1 / span 6  !important; grid-row: 1 / span 4  !important; }
+  #homeOverview > .home-layout > [data-home-card="climate"]     { grid-column: 1 / span 3  !important; grid-row: 5 / span 3  !important; }
+  #homeOverview > .home-layout > [data-home-card="quick"]       { grid-column: 4 / span 3  !important; grid-row: 5 / span 3  !important; }
+  #homeOverview > .home-layout > [data-home-card="energy"]      { grid-column: 1 / span 6  !important; grid-row: 8 / span 3  !important; }
+  #homeOverview > .home-layout > [data-home-card="tempsensors"] { grid-column: 1 / span 6  !important; grid-row: 11 / span 4 !important; }
   /* Four columns of sensors do not fit 261px of card, so they stack here. */
   #homeAlarmBody .alarm-kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
@@ -6994,4 +6995,47 @@ header > .header-right { flex-shrink: 0; }
   /* Two columns of sensor kinds, as on the two-column Home: one column in a
      short card leaves each kind its heading and half a chip. */
   #homeAlarmBody .alarm-kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+
+/* ── Energy: the Home card and the Energy view ──
+   Grid gaps, not flex gaps: the wall panel's older Safari ignores the latter. */
+.energy-sample, .energy-sample-note {
+  color: var(--amber);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+.energy-sample {
+  margin-left: auto; margin-right: 6px; padding: 1px 8px; border-radius: 999px;
+  font-family: var(--mono); font-size: 10.5px; white-space: nowrap;
+}
+.energy-sample-note { margin: 0 0 14px; padding: 8px 12px; border-radius: 10px; font-size: 12.5px; }
+.home-energy-body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-gap: 6px; min-height: 0; flex: 1; }
+.energy-now, .energy-headline { display: flex; align-items: baseline; flex-wrap: nowrap; }
+.energy-now > * + *, .energy-headline > * + * { margin-left: 8px; }
+.energy-kw { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; color: var(--t-text); }
+.energy-unit { font-size: 12px; color: var(--t-text-dim); }
+.energy-state { margin-left: auto !important; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 2px 8px; align-self: center; }
+.energy-state.base { color: var(--green); background: rgba(52, 211, 153, 0.12); }
+.energy-state.busy { color: var(--amber); background: rgba(251, 191, 36, 0.12); }
+.energy-state.high { color: var(--orange); background: rgba(251, 146, 60, 0.14); }
+.energy-state.gas { color: var(--cyan); background: rgba(34, 211, 238, 0.12); }
+.energy-spark { min-height: 0; display: flex; align-items: flex-end; }
+.energy-chart { display: block; width: 100%; }
+.energy-fill { fill: rgba(251, 191, 36, 0.18); }
+.energy-line { fill: none; stroke: var(--amber); stroke-width: 1.8; vector-effect: non-scaling-stroke; }
+.energy-usual { fill: none; stroke: var(--t-text-dim); stroke-width: 1.2; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.energy-dot { fill: var(--amber); }
+.energy-facts { display: flex; justify-content: space-between; flex-wrap: wrap; font-size: 11.5px; color: var(--t-text-dim); }
+.energy-facts b, .energy-rows b { color: var(--t-text); font-weight: 600; }
+.energy-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-gap: 16px; margin-bottom: 16px; }
+.energy-column { display: grid; grid-gap: 10px; align-content: start; }
+.energy-bar.electric { fill: var(--amber); opacity: 0.5; }
+.energy-bar.gas { fill: var(--cyan); opacity: 0.5; }
+.energy-bar.latest { opacity: 1; }
+.energy-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; color: var(--t-text-dim); margin-top: -4px; }
+.energy-rows { display: grid; grid-gap: 6px; font-size: 12.5px; color: var(--t-text-dim); }
+.energy-rows > div { display: flex; justify-content: space-between; }
+.energy-today { display: grid; grid-gap: 8px; }
+@media (max-width: 739px) {
+  .energy-columns { grid-template-columns: minmax(0, 1fr); }
 }

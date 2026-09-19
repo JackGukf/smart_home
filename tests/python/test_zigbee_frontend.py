@@ -67,9 +67,9 @@ def test_secret_without_a_frontend_token_is_not_advertised(tmp_path: Path) -> No
 
 
 def test_zigbee_view_is_wired_into_the_dashboard() -> None:
-    """The sidebar entry, the panel it opens, and the frame it fills."""
+    """The Discovery app that opens it, the panel, and the frame it fills."""
     index = (STATIC / "index.html").read_text(encoding="utf-8")
-    assert 'data-view="zigbee"' in index
+    assert 'data-goto-view="zigbee"' in index
     assert 'data-view-panel="zigbee"' in index
     assert 'id="zigbeeFrame"' in index
 
