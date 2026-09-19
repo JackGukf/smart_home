@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Install the family room's accent-light automations in Home Assistant:
-lights on with motion in the dark, and off late at night when nobody is there.
+lights on with motion, and off late at night when nobody is there.
 
 After 11:30 PM (until 6 AM), when the kitchen/family room occupancy sensor has
 seen nobody for 10 minutes and any of the family room's accent lights is on,
@@ -11,14 +11,17 @@ all of them go off:
     Cabinet LED plug (TP-Link)     switch.family_room_cabinet_led
 
 Motion turning them on is the second automation (added 2026-09-18, later):
-whenever it is dark (the sun below the horizon), occupancy turns on whichever
-of the four are off - and only those: each gets its own "if it is off" check,
+at any time of day, occupancy turns on whichever of the four are off. It used
+to wait for the sun to set; on 2026-09-19 the owner walked into a dim room at
+9:54 AM and nothing happened, and chose: these are ambient lights, on with
+motion whatever the light level, and nothing turns them off in the daytime.
+Only those that are off - and only those: each gets its own "if it is off" check,
 because turn_on sent to a light that is already on makes the IKEA drivers
 re-apply their level, a visible flash every time the sensor fires. The owner's
 rule for every automation that turns a light on (2026-09-18). Not for 3 hours after Movie mode runs, so moving about
 during a film does not light the room. Between the Night lights time and 6 AM
 the off rule then puts them out again 10 minutes after the room empties; from
-6 AM to sunrise nothing turns them off.
+6 AM until then nothing turns them off, by the owner's choice.
 
 The 11:30 PM is not in the automation: it reads input_datetime.family_room_lights_off_after,
 a time helper the dashboard sets (Settings -> Night lights), so changing it
@@ -107,15 +110,14 @@ def turn_on_if_off(entity_id: str) -> dict:
 def motion_on_automation() -> dict:
     return {
         "id": ON_AUTOMATION_ID,
-        "alias": "Family room lights on with motion, in the dark",
-        "description": ("When the kitchen and family room occupancy sensor sees someone and the sun is "
-                        "down, turn on the family room LED, both IKEA cabinet LEDs and the cabinet LED "
+        "alias": "Family room lights on with motion",
+        "description": ("When the kitchen and family room occupancy sensor sees someone, at any "
+                        "time of day, turn on the family room LED, both IKEA cabinet LEDs and the cabinet LED "
                         f"plug - not within {MOVIE_QUIET_HOURS} hours of Movie mode. Installed by "
                         "scripts/install-family-room-late-off.py."),
         "mode": "single",
         "triggers": [{"trigger": "state", "entity_id": OCCUPANCY, "from": "off", "to": "on"}],
         "conditions": [
-            {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"},
             {"condition": "state", "entity_id": LIGHTS + SWITCHES, "match": "any", "state": "off"},
             # Movie mode's last run, from the script's own attribute: no flag to
             # forget to clear, and none when it has never run.

@@ -53,7 +53,7 @@
 > The dashboard casts to the TV's LLANO-S450 dongle (Settings → Cast to TV, off
 > by default; `switch.tv_cast` and a TV cast remote on the Voice Panel). Two IKEA
 > cabinet drivers and a TP-Link cabinet plug joined Movie mode; the family room
-> accent lights turn on with motion in the dark and off late at night (start
+> accent lights turn on with motion (any time of day) and off late at night (start
 > time in Settings → Night lights). **Anything that turns lights on sends "on"
 > only to lights that are off** - the owner's rule. All lights on/off follow
 > Manage, on the dashboard and the Voice Panel. Home has the owner's layout with

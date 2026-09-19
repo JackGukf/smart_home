@@ -92,7 +92,7 @@ def test_only_a_time_of_day_is_taken(tmp_path, monkeypatch):
 
 
 
-# ── On with motion, in the dark ─────────────────────────────────────────────
+# ── On with motion, at any time of day ──────────────────────────────────────
 
 def test_motion_turns_on_only_the_ones_that_are_off():
     """turn_on to a light already on makes the IKEA drivers flash: each light
@@ -110,9 +110,11 @@ def test_motion_turns_on_only_the_ones_that_are_off():
     assert body["triggers"] == [{"trigger": "state", "entity_id": late_off.OCCUPANCY, "from": "off", "to": "on"}]
 
 
-def test_only_in_the_dark_and_only_if_something_is_off():
+def test_at_any_time_of_day_and_only_if_something_is_off():
+    """Ambient lights: the owner wants them on with motion whatever the light
+    (2026-09-19, a dim room at 9:54 AM stayed dark behind a sun condition)."""
     conditions = late_off.motion_on_automation()["conditions"]
-    assert {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"} in conditions
+    assert "sun.sun" not in str(conditions) and "illuminance" not in str(conditions)
     any_off = next(c for c in conditions if c.get("match") == "any")
     assert set(any_off["entity_id"]) == FOUR and any_off["state"] == "off"
 

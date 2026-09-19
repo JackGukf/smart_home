@@ -48,7 +48,8 @@ Start with **Open items**, then **Traps**.
     `binary_sensor.0xa4c138d00106c90d_presence` has seen nobody for 10 min, the
     four accent lights go off. Three triggers (occupancy off 10 min, the start
     time, any of the four on 10 min).
-  - `family_room_lights_on_motion`: sun below the horizon, occupancy on →
+  - `family_room_lights_on_motion`: occupancy on, **at any time of day** (the
+    sun condition was dropped 2026-09-19 at the owner's request) →
     each of the four turned on **only if it is off**; not within 3 h of Movie
     mode (its `last_triggered`).
   - The start time is **`input_datetime.family_room_lights_off_after`** (23:30),
@@ -118,8 +119,8 @@ Start with **Open items**, then **Traps**.
    by itself. Gas: see `docs/energy-monitoring.md`.
 2. **Test-run Movie mode** once (never run since the IR pauses and the plug).
 3. **First night of the automations** - check the logbook in the morning.
-4. **6 AM to sunrise:** motion turns the accent lights on and nothing turns them
-   off. Extend the off rule to sunrise if that matters.
+4. **Daytime:** motion turns the accent lights on at any hour and nothing turns
+   them off until the Night lights time - the owner's choice (2026-09-19).
 5. **Tuya IoT Core** (iot.tuya.com → Cloud → IoT Core): renewing it would let the
    three Wi-Fi IR hubs import their Smart Life codes.
 6. **Voice Panel All lights** follow Manage only after a Manage change; a device
