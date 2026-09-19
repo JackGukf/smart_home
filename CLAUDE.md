@@ -303,7 +303,8 @@ Three things that will waste a day if you do not know them:
   working on a board whose microphone and speaker share one I2S bus
 - `docs/dashboard-cast.md` — **Cast to TV**: the dashboard as live video on the
   LLANO-S450 dongle over DLNA, switched in Settings and off by default (off costs
-  nothing); what the dongle cannot do, and why Chromium hangs in a user unit
+  nothing); `switch.tv_cast` in Home Assistant and the Voice Panel's TV cast
+  remote; what the dongle cannot do, and why Chromium hangs in a user unit
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
 

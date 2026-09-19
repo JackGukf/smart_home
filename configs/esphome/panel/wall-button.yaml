@@ -1,7 +1,8 @@
-# A button on the Wall panel page that sends one command to the hallway wall
-# panel: a Home Assistant event with one field, which the dashboard checks
-# against its own list and forwards to the wall panel's browser only
-# (web_app.py, _WALL_PANEL_FRAMES). Included with vars:
+# A button on a remote page (Wall panel, TV cast) that sends one command to that
+# screen: a Home Assistant event with one field, which the dashboard checks
+# against its own list and forwards to that screen's browser only
+# (web_app.py, _REMOTE_FRAMES). Included with vars:
+#   remote         wall or tv: the page's ids (${remote}_toast)
 #   key            a unique id stem
 #   text           the label (LVGL symbols allowed)
 #   event          the Home Assistant event (must start with "esphome.")
@@ -9,7 +10,7 @@
 #   toast          what the page's message line says afterwards
 #   x, y, width
 obj:
-  id: wall_${key}_btn
+  id: ${remote}_${key}_btn
   x: ${x}
   y: ${y}
   width: ${width}
@@ -29,7 +30,7 @@ obj:
         data:
           ${field}: ${value}
     - lvgl.label.update:
-        id: wall_toast
+        id: ${remote}_toast
         text: "${toast}"
   widgets:
     - label:

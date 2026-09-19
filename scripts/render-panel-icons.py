@@ -173,6 +173,7 @@ APP_TILES = {
     "wifi": ("#4FD1C0", "#1E8C80"),
     "schedule": ("#E88BC4", "#B24A8A"),
     "about": ("#A7B1BF", "#5E6A7B"),
+    "cast": ("#2DD4BF", "#0E7490"),  # the dashboard's Cast to TV tile
 }
 
 
@@ -257,6 +258,18 @@ def app_icon(name: str, size: int = 92) -> None:
         d.ellipse([*p(4, 4), *p(20, 20)], outline=white, width=w)
         d.ellipse([*p(10.8, 6.8), *p(13.2, 9.2)], fill=white)
         d.line([p(12, 11), p(12, 17)], fill=white, width=w)
+    elif name == "cast":
+        # Tabler's cast: a screen open at its lower left, where the signal starts.
+        d.line([p(3, 8), p(3, 7)], fill=white, width=w)
+        d.arc([*p(3, 4), *p(9, 10)], 180, 270, fill=white, width=w)
+        d.line([p(6, 4), p(18, 4)], fill=white, width=w)
+        d.arc([*p(15, 4), *p(21, 10)], 270, 360, fill=white, width=w)
+        d.line([p(21, 7), p(21, 16)], fill=white, width=w)
+        d.arc([*p(15, 13), *p(21, 19)], 0, 90, fill=white, width=w)
+        d.line([p(18, 19), p(15, 19)], fill=white, width=w)
+        d.arc([*p(-5, 11), *p(11, 27)], 270, 360, fill=white, width=w)
+        d.arc([*p(-1, 15), *p(7, 23)], 270, 360, fill=white, width=w)
+        d.ellipse([*p(1.8, 17.8), *p(4.2, 20.2)], fill=white)
     finish(img, size, f"app_{name}.png")
 
 

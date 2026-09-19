@@ -50,6 +50,26 @@ optional, in `.env`: `DASHBOARD_CAST_RENDERER` (name to match, default
 `LLANO-S450`), `DASHBOARD_CAST_FPS` (4), `DASHBOARD_CAST_PORT` (8765),
 `DASHBOARD_CAST_URL` (Home), `DASHBOARD_CAST_TZ` (`America/Vancouver`).
 
+## From Home Assistant and the Voice Panel
+
+The dashboard publishes the switch to Home Assistant as **`switch.tv_cast`**
+("TV cast") over MQTT discovery (`dashboard_cast.MQTTSwitch`), with attributes
+`status` and `text` ("Casting to LLANO-S450 289CB541"). The dashboard hosts it,
+not the cast service, because the service is not running while casting is off -
+which is when somebody wants to switch it on. State is re-read every 10 s.
+
+The **Voice Panel's TV cast app** (launcher, beside Wall panel) has the switch and
+the same remote as the Wall panel page: six views, scroll, and step the Home
+camera with its name. It fires its own events - `esphome.tv_cast_show_view`
+{view}, `esphome.tv_cast_scroll` {direction}, `esphome.tv_cast_camera` {step} -
+which the dashboard checks against the wall panel's fixed lists and forwards only
+to the cast's browser: the cast opens `/?screen=tv`, and a stream asking for
+`?screen=tv` gets the TV's events **only from loopback**, i.e. from the board
+itself; a phone asking is still just a phone. The cast reports its camera to
+`POST /api/tv-cast/camera` (loopback only), which sets `sensor.tv_cast_camera`.
+The two remotes are separate: stepping the TV's camera leaves the wall panel's
+alone (checked 2026-09-18).
+
 ## What the dongle can and cannot do
 
 Measured 2026-09-18 against its firmware (Actions-Micro, Cast build 1.36):

@@ -104,7 +104,7 @@ def _client(tmp_path: Path, monkeypatch, client_host: str, calls: list) -> TestC
     }), encoding="utf-8")
     monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
 
-    async def fake_stream(config, token, before_notify=None, follow_wall_panel=False):
+    async def fake_stream(config, token, before_notify=None, follow_wall_panel=False, follow_tv_cast=False):
         calls.append(follow_wall_panel)
         yield "event: ready\ndata: {}\n\n"
 
@@ -131,3 +131,70 @@ def test_a_logged_in_pc_does_not_follow_view_requests(tmp_path, monkeypatch) -> 
         assert response.status_code == 200
         "".join(response.iter_text())
     assert calls == [False]
+
+
+
+# --- the TV cast's remote ----------------------------------------------------
+
+def _tv_client(tmp_path: Path, monkeypatch, client_host: str, calls: list) -> TestClient:
+    cfg = tmp_path / "devices.local.yaml"
+    cfg.write_text(yaml.dump({
+        "home_assistant": {"base_url": "http://127.0.0.1:8123"},
+        "dashboard_auth": {"username": "user", "password": "pass", "trusted_hosts": [KIOSK]},
+    }), encoding="utf-8")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+
+    async def fake_stream(config, token, before_notify=None, follow_wall_panel=False, follow_tv_cast=False):
+        calls.append((follow_wall_panel, follow_tv_cast))
+        yield "event: ready\ndata: {}\n\n"
+
+    monkeypatch.setattr(web_app, "_home_assistant_event_stream", fake_stream)
+    app = web_app.create_app(config_path=cfg, check_camera_ports=False)
+    client = TestClient(app, follow_redirects=False, client=(client_host, 40000))
+    from src.python import dashboard_cast
+    client.cookies.set("session", dashboard_cast.session_cookie(cfg))
+    return client
+
+
+def test_the_casts_browser_follows_the_tv_remote(tmp_path, monkeypatch) -> None:
+    calls: list = []
+    client = _tv_client(tmp_path, monkeypatch, "127.0.0.1", calls)
+    with client.stream("GET", "/api/events/stream?screen=tv") as response:
+        "".join(response.iter_text())
+    assert calls == [(False, True)]
+
+
+def test_a_phone_asking_to_be_the_tv_is_not(tmp_path, monkeypatch) -> None:
+    calls: list = []
+    client = _tv_client(tmp_path, monkeypatch, "192.168.0.50", calls)
+    with client.stream("GET", "/api/events/stream?screen=tv") as response:
+        "".join(response.iter_text())
+    assert calls == [(False, False)]
+
+
+def test_the_board_without_screen_tv_follows_nothing(tmp_path, monkeypatch) -> None:
+    calls: list = []
+    client = _tv_client(tmp_path, monkeypatch, "127.0.0.1", calls)
+    with client.stream("GET", "/api/events/stream") as response:
+        "".join(response.iter_text())
+    assert calls == [(False, False)]
+
+
+def test_only_the_board_can_name_the_tvs_camera(tmp_path, monkeypatch) -> None:
+    posted: list = []
+    monkeypatch.setattr(web_app, "_home_assistant_post", lambda config, token, path, body: posted.append((path, body)))
+    phone = _tv_client(tmp_path, monkeypatch, "192.168.0.50", [])
+    assert phone.post("/api/tv-cast/camera", json={"name": "Garage camera"}).json() == {"status": "ignored"}
+    assert posted == []
+
+    board = _tv_client(tmp_path, monkeypatch, "127.0.0.1", [])
+    assert board.post("/api/tv-cast/camera", json={"name": "Front  door camera"}).json()["name"] == "Front door camera"
+    assert posted[0][0] == "/api/states/sensor.tv_cast_camera"
+
+
+def test_the_tvs_events_become_the_same_frames_as_the_wall_panels() -> None:
+    assert web_app._TV_CAST_FRAMES[web_app.TV_CAST_VIEW_EVENT]({"view": "cameras"}) == \
+        web_app._WALL_PANEL_FRAMES[web_app.WALL_PANEL_VIEW_EVENT]({"view": "cameras"})
+    assert web_app._TV_CAST_FRAMES[web_app.TV_CAST_VIEW_EVENT]({"view": "settings"}) is None
+    assert web_app._TV_CAST_FRAMES[web_app.TV_CAST_SCROLL_EVENT]({"direction": "sideways"}) is None
+    assert set(web_app._TV_CAST_FRAMES).isdisjoint(web_app._WALL_PANEL_FRAMES)

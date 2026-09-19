@@ -197,11 +197,14 @@ async def _lifespan(app: FastAPI):
     recorder = asyncio.create_task(_motion_log_recorder(app))
     environment = asyncio.create_task(_environment_poller(app))
     bridge = await asyncio.to_thread(_start_ir_bridge, app)
+    cast_switch = await asyncio.to_thread(_start_cast_switch, app)
     try:
         yield
     finally:
         if bridge is not None:
             await asyncio.to_thread(bridge.stop)
+        if cast_switch is not None:
+            await asyncio.to_thread(cast_switch.stop)
         for task in (recorder, environment):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -331,6 +334,14 @@ def _parse_trusted_hosts(values: Any) -> list[Any]:
                 text,
             )
     return networks
+
+
+def _is_loopback(host: str | None) -> bool:
+    """A request from this board itself."""
+    try:
+        return host is not None and ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _host_is_trusted(host: str | None, networks: list[Any]) -> bool:
@@ -644,6 +655,7 @@ def create_app(
     # systemctl, swapped out in tests so they never touch the real user manager.
     app.state.cast_runner = cast_runner or subprocess.run
     app.state.cast_status_path = cast_status_path
+    app.state.cast_switch = None
     app.state.ir_store = tuya_ir.ButtonStore(config_path.parent / "ir_buttons.json")
     app.state.ir_bridge = None
     app.state.ir_hub_loader = lambda: tuya_ir.load_hubs(app.state.config_path)
@@ -1178,6 +1190,8 @@ def create_app(
                 dashboard_cast.set_enabled(request.enabled, app.state.cast_runner)
             except (RuntimeError, OSError, subprocess.SubprocessError) as error:
                 raise HTTPException(status_code=502, detail=f"Could not switch casting: {error}") from error
+            if app.state.cast_switch is not None:
+                app.state.cast_switch.refresh(force=True)  # Home Assistant, and the Voice Panel, now
             return _cast_doc()
 
         return await asyncio.to_thread(apply)
@@ -1203,8 +1217,13 @@ def create_app(
         """
         ha_config = _load_home_assistant_config(app.state.config_path)
         token = os.getenv(ha_config.token_env)
-        # Only the wall panel (a trusted host) follows "show this view" requests.
-        wall_panel = _host_is_trusted(request.client.host if request.client else None, _trusted_hosts)
+        # Only the wall panel (a trusted host) follows "show this view" requests,
+        # and only the cast to the TV follows the TV's. The cast's browser runs
+        # on the board itself, so it is the one that can ask from loopback; a
+        # phone asking for ?screen=tv is still just a phone.
+        peer = request.client.host if request.client else None
+        wall_panel = _host_is_trusted(peer, _trusted_hosts)
+        tv_cast = not wall_panel and request.query_params.get("screen") == "tv" and _is_loopback(peer)
 
         async def body() -> AsyncIterator[str]:
             if not token:
@@ -1214,7 +1233,8 @@ def create_app(
                 return await _fresh_device_cache(app, since)
 
             async for frame in _home_assistant_event_stream(ha_config, token, fresh_switches,
-                                                            follow_wall_panel=wall_panel):
+                                                            follow_wall_panel=wall_panel,
+                                                            follow_tv_cast=tv_cast):
                 yield frame
 
         return StreamingResponse(
@@ -1406,6 +1426,25 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
         await asyncio.to_thread(_ir_republish)
         return {"deleted": button_id}
+
+    @app.post("/api/tv-cast/camera")
+    async def tv_cast_camera(request: Request, report: WallPanelCameraReport) -> dict[str, Any]:
+        """The cast to the TV says which camera its Home card shows, for the Voice
+        Panel's TV remote. Only the cast's own browser, on this board, is heard."""
+        if not _is_loopback(request.client.host if request.client else None):
+            return {"status": "ignored"}
+        ha_config = _load_home_assistant_config(app.state.config_path)
+        token = os.getenv(ha_config.token_env)
+        if not token:
+            return {"status": "needs_auth"}
+        name = " ".join(report.name.split())[:60] or "No camera"
+        try:
+            await asyncio.to_thread(_home_assistant_post, ha_config, token, f"/api/states/{TV_CAST_CAMERA_ENTITY}",
+                                    {"state": name, "attributes": {"friendly_name": "TV cast camera",
+                                                                   "icon": "mdi:cctv"}})
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Home Assistant did not take the camera name") from error
+        return {"status": "ok", "name": name}
 
     @app.post("/api/wall-panel/camera")
     async def wall_panel_camera(request: Request, report: WallPanelCameraReport) -> dict[str, Any]:
@@ -3814,6 +3853,25 @@ def _poll_environment_once(app: FastAPI) -> dict[str, Any]:
     return payload
 
 
+def _start_cast_switch(app: FastAPI) -> "dashboard_cast.MQTTSwitch | None":
+    """Offer Cast to TV to Home Assistant as switch.tv_cast, on a board that has it."""
+    try:
+        if not dashboard_cast.unit_state(app.state.cast_runner)["installed"]:
+            return None
+        payload = yaml.safe_load(app.state.config_path.read_text(encoding="utf-8")) or {}
+        broker = payload.get("mqtt") or {}
+        user, password = tuya_ir.mqtt_credentials(app.state.zigbee_secret_path)
+        switch = dashboard_cast.MQTTSwitch(
+            str(broker.get("broker_host") or "127.0.0.1"), int(broker.get("broker_port") or 1883),
+            user, password, run=app.state.cast_runner, status_file=app.state.cast_status_path)
+        switch.start()
+        app.state.cast_switch = switch
+        return switch
+    except Exception as error:  # noqa: BLE001 - an extra; the dashboard starts regardless
+        _matter_log.info("TV cast switch not offered to Home Assistant: %s", error)
+        return None
+
+
 def _start_ir_bridge(app: FastAPI) -> "tuya_ir.MQTTBridge | None":
     """Offer learned IR buttons to Home Assistant, when there is an IR hub."""
     try:
@@ -5098,6 +5156,13 @@ WALL_PANEL_CAMERA_STEPS = frozenset({"next", "prev"})
 # Where the wall panel says which camera its Home card shows, so the Voice
 # Panel's remote can name it. Set through the states API by the dashboard.
 WALL_PANEL_CAMERA_ENTITY = "sensor.wall_panel_camera"
+# The same remote for the TV the dashboard is cast to (Voice Panel, TV cast):
+# its own events, forwarded only to the cast's browser, checked against the
+# same fixed lists.
+TV_CAST_VIEW_EVENT = "esphome.tv_cast_show_view"
+TV_CAST_SCROLL_EVENT = "esphome.tv_cast_scroll"
+TV_CAST_CAMERA_EVENT = "esphome.tv_cast_camera"
+TV_CAST_CAMERA_ENTITY = "sensor.tv_cast_camera"
 # Proxies and browsers drop an idle event stream. A comment frame is not an
 # event, so it costs the client nothing but keeps the socket alive.
 _EVENT_KEEPALIVE_SECONDS = 20.0
@@ -5107,6 +5172,7 @@ async def _home_assistant_event_stream(
     config: HomeAssistantConfig, token: str,
     before_notify: "Callable[[float], Awaitable[bool]] | None" = None,
     follow_wall_panel: bool = False,
+    follow_tv_cast: bool = False,
 ) -> "AsyncIterator[str]":
     """Yield SSE frames as Home Assistant reports state changes.
 
@@ -5141,17 +5207,19 @@ async def _home_assistant_event_stream(
                     return
                 await ws.send_json({"id": 1, "type": "subscribe_events", "event_type": "state_changed"})
                 await ws.receive_json()  # subscription result
-                if follow_wall_panel:
-                    # Their results arrive as non-event messages, which the
-                    # coalescer skips like any other.
-                    for number, event_type in enumerate(_WALL_PANEL_FRAMES, start=2):
-                        await ws.send_json({"id": number, "type": "subscribe_events",
-                                            "event_type": event_type})
+                remote = _WALL_PANEL_FRAMES if follow_wall_panel else _TV_CAST_FRAMES if follow_tv_cast else {}
+                # Their results arrive as non-event messages, which the
+                # coalescer skips like any other.
+                for number, event_type in enumerate(remote, start=2):
+                    await ws.send_json({"id": number, "type": "subscribe_events",
+                                        "event_type": event_type})
                 yield 'event: ready\ndata: {}\n\n'
+                # The page learns which remote screen it is, so only it reports
+                # which camera it shows.
                 if follow_wall_panel:
-                    # The page learns it is the wall panel, so only it reports
-                    # which camera it shows.
                     yield 'event: wall_panel\ndata: {}\n\n'
+                elif follow_tv_cast:
+                    yield 'event: tv_cast\ndata: {}\n\n'
 
                 async def receive(timeout: float) -> dict[str, Any]:
                     return await asyncio.wait_for(ws.receive_json(), timeout=timeout)
@@ -5192,6 +5260,14 @@ _WALL_PANEL_FRAMES: dict[str, Callable[[dict[str, Any]], str | None]] = {
     WALL_PANEL_SCROLL_EVENT: _wall_scroll_frame,
     WALL_PANEL_CAMERA_EVENT: _wall_camera_frame,
 }
+# The TV's: the same frames, so the page handles both remotes with one code path.
+_TV_CAST_FRAMES: dict[str, Callable[[dict[str, Any]], str | None]] = {
+    TV_CAST_VIEW_EVENT: _wall_panel_frame,
+    TV_CAST_SCROLL_EVENT: _wall_scroll_frame,
+    TV_CAST_CAMERA_EVENT: _wall_camera_frame,
+}
+# A stream subscribes to one remote's events only, so one table serves both.
+_REMOTE_FRAMES = {**_WALL_PANEL_FRAMES, **_TV_CAST_FRAMES}
 
 
 def _changed_frame(entity_id: str) -> str:
@@ -5233,7 +5309,7 @@ async def _coalesced_changes(
             if message.get("type") != "event":
                 continue
             event = message.get("event") or {}
-            framer = _WALL_PANEL_FRAMES.get(str(event.get("event_type") or ""))
+            framer = _REMOTE_FRAMES.get(str(event.get("event_type") or ""))
             if framer is not None:
                 # A deliberate request, not a state change: sent at once, and it
                 # neither waits for nor disturbs a coalescing window.

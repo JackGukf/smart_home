@@ -38,6 +38,7 @@ import signal
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -116,6 +117,164 @@ def read_status(path: Path | None = None) -> dict[str, Any] | None:
         return json.loads((path or status_path()).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+STATE_WORDS = {
+    "waiting": "Looking for the TV",
+    "busy": "TV busy with something else",
+    "casting": "Casting",
+    "paused": "Stopped for now",
+}
+
+
+def status_text(doc: dict[str, Any]) -> str:
+    """One line for a person: what casting is doing. The dashboard's Settings
+    page words it the same way (app.js, renderCast)."""
+    if not doc.get("installed", True):
+        return "Not installed on the board"
+    if not doc.get("enabled"):
+        return "Off"
+    if not doc.get("running"):
+        return "Switched on, but not running"
+    status = doc.get("status")
+    if not status:
+        return "Starting"
+    text = STATE_WORDS.get(status.get("state"), status.get("state", ""))
+    if status.get("state") == "casting":
+        text += f" to {status.get('renderer')}"
+    if status.get("detail") and status.get("state") != "casting":
+        text += f": {status['detail']}"
+    return text
+
+
+# ── Home Assistant: switch.tv_cast, through MQTT discovery ──────────────────
+# So anything that talks to Home Assistant - the Voice Panel, a script, a voice
+# command - flips the same switch as Settings -> Cast to TV. The dashboard runs
+# this, not the cast service: the service is not running while casting is off,
+# which is exactly when somebody wants to switch it on.
+
+MQTT_ROOT = "smart_home_ai/cast"
+DISCOVERY_TOPIC = "homeassistant/switch/smart_home_ai/tv_cast/config"
+MQTT_POLL_S = 10
+
+
+def discovery_payload() -> dict[str, Any]:
+    """`switch.tv_cast`, named "TV cast" - the device's name, as a one-entity device."""
+    return {
+        "name": None,
+        "unique_id": "smart_home_ai_tv_cast",
+        "default_entity_id": "switch.tv_cast",
+        "command_topic": f"{MQTT_ROOT}/set",
+        "state_topic": f"{MQTT_ROOT}/state",
+        "json_attributes_topic": f"{MQTT_ROOT}/attributes",
+        "availability_topic": f"{MQTT_ROOT}/availability",
+        "payload_on": "ON",
+        "payload_off": "OFF",
+        "icon": "mdi:cast",
+        "device": {
+            "identifiers": ["smart_home_ai_tv_cast"],
+            "name": "TV cast",
+            "manufacturer": "smart_home_AI",
+            "model": "Dashboard cast to the LLANO-S450 (dashboard-cast.service)",
+        },
+    }
+
+
+class MQTTSwitch:
+    """Publishes casting's state to Home Assistant and switches it on command.
+
+    Discovery and state are retained, so Home Assistant has them after its own
+    restart. The state is re-read every MQTT_POLL_S: the service changes what it
+    is doing by itself (the TV goes off), and the switch can be flipped from the
+    dashboard too.
+    """
+
+    def __init__(self, host: str, port: int, username: str | None, password: str | None,
+                 run: Runner = subprocess.run, status_file: Path | None = None,
+                 client_factory: Callable[[], Any] | None = None):
+        self._run = run
+        self._status_file = status_file
+        self._last: tuple[str, str] | None = None
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._client = (client_factory or self._paho)()
+        if username:
+            self._client.username_pw_set(username, password)
+        self._client.will_set(f"{MQTT_ROOT}/availability", "offline", retain=True)
+        self._client.on_connect = self._on_connect
+        self._client.on_message = self._on_message
+        self._host, self._port = host, port
+
+    @staticmethod
+    def _paho():
+        import paho.mqtt.client as mqtt
+        return mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="smart-home-ai-cast")
+
+    def start(self) -> None:
+        self._client.connect_async(self._host, self._port, keepalive=60)
+        self._client.loop_start()
+        threading.Thread(target=self._poll, name="tv-cast-mqtt", daemon=True).start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self._client.publish(f"{MQTT_ROOT}/availability", "offline", retain=True)
+            self._client.loop_stop()
+            self._client.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def refresh(self, force: bool = False) -> None:
+        """Publish the state now, if it changed (or always, when forced)."""
+        state = unit_state(self._run)
+        doc = {**state, "status": read_status(self._status_file) if state["running"] else None}
+        payload = "ON" if doc["enabled"] else "OFF"
+        attributes = json.dumps({"status": (doc["status"] or {}).get("state", "off" if payload == "OFF" else "starting"),
+                                 "text": status_text(doc)})
+        with self._lock:
+            if not force and self._last == (payload, attributes):
+                return
+            self._last = (payload, attributes)
+        self._client.publish(f"{MQTT_ROOT}/attributes", attributes, retain=True)
+        self._client.publish(f"{MQTT_ROOT}/state", payload, retain=True)
+
+    def _poll(self) -> None:
+        while not self._stop.wait(MQTT_POLL_S):
+            try:
+                self.refresh()
+            except Exception as error:  # noqa: BLE001 - a bad poll must not end the thread
+                LOG.info("TV cast state not published: %s", error)
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties=None) -> None:
+        client.subscribe(f"{MQTT_ROOT}/set")
+        client.subscribe("homeassistant/status")
+        client.publish(DISCOVERY_TOPIC, json.dumps(discovery_payload()), retain=True)
+        client.publish(f"{MQTT_ROOT}/availability", "online", retain=True)
+        self._refresh_later(force=True)
+
+    def _on_message(self, client, userdata, message) -> None:
+        if message.topic == "homeassistant/status":
+            if message.payload == b"online":
+                client.publish(DISCOVERY_TOPIC, json.dumps(discovery_payload()), retain=True)
+                self._refresh_later(force=True)
+            return
+        if message.topic != f"{MQTT_ROOT}/set" or message.payload not in (b"ON", b"OFF"):
+            return
+        self._refresh_later(switch_to=message.payload == b"ON")
+
+    def _refresh_later(self, force: bool = False, switch_to: bool | None = None) -> None:
+        """Off paho's network thread: systemctl takes a second or two."""
+        def work() -> None:
+            try:
+                if switch_to is not None:
+                    set_enabled(switch_to, self._run)
+                    LOG.info("TV cast switched %s from Home Assistant", "on" if switch_to else "off")
+                self.refresh(force=True if switch_to is not None else force)
+            except Exception as error:  # noqa: BLE001
+                LOG.warning("TV cast switch failed: %s", error)
+                self.refresh(force=True)  # put Home Assistant's switch back to the truth
+
+        threading.Thread(target=work, daemon=True).start()
 
 
 # ── DLNA: finding the renderer and talking to it ────────────────────────────
@@ -307,7 +466,8 @@ class Settings:
     renderer: str = "LLANO-S450"
     fps: int = 4
     port: int = 8765
-    url: str = "http://127.0.0.1:8000/"
+    # ?screen=tv: the page asks for the TV remote's events (Voice Panel, TV cast).
+    url: str = "http://127.0.0.1:8000/?screen=tv"
     devtools_port: int = 9333
     config_path: Path = DEFAULT_CONFIG_PATH
     # The page's clock and "3 min ago" follow the browser's zone. The board runs

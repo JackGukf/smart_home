@@ -286,7 +286,8 @@ const latestCameraById  = new Map();
    long before the remote's own section of this file. */
 const WALL_PANEL_SCROLLS = new Set(["up", "down", "top"]);
 const WALL_PANEL_CAMERA_STEPS = new Set(["next", "prev"]);
-let isWallPanel = false;
+let isWallPanel = false;   /* a screen the Voice Panel remotes: the wall panel or the TV */
+let remoteCameraPath = "/api/wall-panel/camera";
 let reportedWallCamera = null;
 const lastDoorbellEventById = new Map();
 let manualLightCommandRevision = 0;
@@ -11228,7 +11229,7 @@ function reportWallPanelCamera(force = false) {
   const name = camera?.name || (shownHomeCameraId ? String(shownHomeCameraId) : "No camera");
   if (!force && name === reportedWallCamera) return;
   reportedWallCamera = name;
-  requestJson("/api/wall-panel/camera", {
+  requestJson(remoteCameraPath, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -11245,7 +11246,11 @@ function connectLiveUpdates() {
      throw during page load - including against an EventSource that exists but
      is not a real one. */
   try {
-    const source = new EventSource("/api/events/stream");
+    /* The cast to the TV opens the dashboard with ?screen=tv and asks for the
+       TV remote's stream; the server grants that only to a browser on the
+       board itself (dashboard_cast.py). */
+    const tv = new URLSearchParams(location.search).get("screen") === "tv";
+    const source = new EventSource(tv ? "/api/events/stream?screen=tv" : "/api/events/stream");
     if (!source || typeof source.addEventListener !== "function") return;
 
     source.addEventListener("changed", scheduleLiveRefresh);
@@ -11258,6 +11263,11 @@ function connectLiveUpdates() {
     });
     source.addEventListener("wall_panel", () => {
       isWallPanel = true;
+      reportWallPanelCamera(true);
+    });
+    source.addEventListener("tv_cast", () => {
+      isWallPanel = true;
+      remoteCameraPath = "/api/tv-cast/camera";
       reportWallPanelCamera(true);
     });
     source.addEventListener("wall_scroll", (event) => {

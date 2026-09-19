@@ -1,16 +1,20 @@
-# One view on the Wall panel page (design: .card.view-card). Tapping it asks the
-# hallway wall panel to show that dashboard view. Included with vars:
+# One view on a remote page - Wall panel, or TV cast (design: .card.view-card).
+# Tapping it asks that screen to show that dashboard view. Included with vars:
+#   remote  wall or tv: names its ids (${remote}_view, ${remote}_refresh,
+#           ${remote}_toast, ${remote}_<key>_view_card)
+#   event   esphome.wall_panel_show_view or esphome.tv_cast_show_view
+#   screen  what the toast calls that screen
 #   key     the dashboard's view name (home, cameras, alarm, devices, climate, status)
 #   title   what the card says
 #   icon    an LVGL symbol
 #   x, y
 #
-# The request is a Home Assistant event, esphome.wall_panel_show_view, which the
-# dashboard forwards only to the wall panel's own browser. An event goes out over
+# The request is a Home Assistant event, which the dashboard forwards only to
+# that screen's own browser. An event goes out over
 # the API connection the panel already has, so unlike an HTTP request it never
 # holds up the panel's main loop.
 obj:
-  id: ${key}_view_card
+  id: ${remote}_${key}_view_card
   x: ${x}
   y: ${y}
   width: 209
@@ -26,16 +30,16 @@ obj:
     bg_opa: 90%
   on_click:
     - homeassistant.event:
-        event: esphome.wall_panel_show_view
+        event: ${event}
         data:
           view: ${key}
     - globals.set:
-        id: wall_view
+        id: ${remote}_view
         value: '"${key}"'
-    - script.execute: wall_refresh
+    - script.execute: ${remote}_refresh
     - lvgl.label.update:
-        id: wall_toast
-        text: "Hallway wall panel: ${title}"
+        id: ${remote}_toast
+        text: "${screen}: ${title}"
   # One line: the view's icon and name, and "Showing" on the one the wall panel is on.
   # Shorter than it was (96px) so the page has room for scrolling and the
   # Home camera below the six views.
@@ -53,7 +57,7 @@ obj:
         text_font: montserrat_16
         text_color: 0xF2F5F8
     - label:
-        id: ${key}_view_sub
+        id: ${remote}_${key}_view_sub
         x: 110
         y: 22
         width: 86

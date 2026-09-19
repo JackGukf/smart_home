@@ -88,7 +88,8 @@ def test_live_updates_are_additive_to_the_poll() -> None:
 
     assert "/* Auto-refresh every 60 s */" in source
     assert "}, 60_000);" in source
-    assert 'new EventSource("/api/events/stream")' in source
+    # Every screen opens the stream; the TV cast asks for its remote's too.
+    assert 'new EventSource(tv ? "/api/events/stream?screen=tv" : "/api/events/stream")' in source
 
 
 def test_live_updates_never_break_page_load() -> None:
