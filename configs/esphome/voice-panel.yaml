@@ -2135,10 +2135,10 @@ lvgl:
             widgets:
             - !include
               file: panel/card-scene.yaml
-              vars: {key: all_on, script: script.panel_all_lights_on, title: "ALL LIGHTS ON", sub: "6 lights", art: bulb_on, toast: "All 6 lights on", y: 76}
+              vars: {key: all_on, script: script.panel_all_lights_on, title: "ALL LIGHTS ON", sub: "Every light and LED strip", art: bulb_on, toast: "All lights on", y: 76}
             - !include
               file: panel/card-scene.yaml
-              vars: {key: all_off, script: script.panel_all_lights_off, title: "ALL LIGHTS OFF", sub: "6 lights", art: bulb_off, toast: "All 6 lights off", y: 189}
+              vars: {key: all_off, script: script.panel_all_lights_off, title: "ALL LIGHTS OFF", sub: "Every light and LED strip", art: bulb_off, toast: "All lights off", y: 189}
             - !include
               file: panel/card-scene.yaml
               vars: {key: movie, script: script.movie_mode, title: "MOVIE MODE", sub: "Projector, Fire TV, Z906 on; family room lights off", art: movie, toast: "Movie mode: projector on, family room dark", y: 302}

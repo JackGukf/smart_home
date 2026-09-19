@@ -73,6 +73,7 @@ Thumbs.db
 home_assistant_known_entities.json
 dashboard_areas.json
 dashboard_ir_page.json
+dashboard_light_scenes.json
 # device_id -> Matter endpoint. Per-install, and hand-editing it renames every
 # accessory as far as a paired controller is concerned.
 bridge_endpoints.json

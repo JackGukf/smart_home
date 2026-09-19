@@ -1,7 +1,7 @@
-import json
 """The Voice Panel's scenes: what they switch, and that they match the panel."""
 
 import importlib.util
+import json
 import re
 from pathlib import Path
 
@@ -19,18 +19,34 @@ def panel_card_entities() -> set[str]:
                           text))
 
 
-def test_all_lights_scenes_switch_exactly_the_panel_lights():
+def test_the_panel_list_is_still_the_panels_home_cards():
     assert len(scenes.LIGHTS) == len(set(scenes.LIGHTS)) == 6
     assert set(scenes.LIGHTS) == panel_card_entities()
-    body = scenes.scripts()
-    # On only to the ones that are off (a light already on can flash).
-    on_steps = body["panel_all_lights_on"]["sequence"]
+
+
+def test_all_lights_switch_every_light_and_led_strip_but_not_stick_s3():
+    devices = scenes.SCENE_DEVICES
+    assert len(devices) == len(set(devices)) == 10
+    assert "light.stick_s3" not in devices   # a virtual light (2026-09-19)
+    for added in ("light.family_room_led", "switch.family_room_cabinet_led", "switch.living_room_cabinet_led",
+                  "light.0x286847fffe5eb711", "light.0x64028ffffe64de32"):
+        assert added in devices
+
+
+def test_all_lights_on_turns_each_on_only_if_it_is_off_through_its_own_domain():
+    on_steps = scenes.scripts()["panel_all_lights_on"]["sequence"]
     assert [step["if"] for step in on_steps] == [
-        [{"condition": "state", "entity_id": e, "state": "off"}] for e in scenes.LIGHTS]
-    assert [step["then"] for step in on_steps] == [
-        [{"action": "light.turn_on", "target": {"entity_id": e}}] for e in scenes.LIGHTS]
-    assert body["panel_all_lights_off"]["sequence"] == [
-        {"action": "light.turn_off", "target": {"entity_id": scenes.LIGHTS}}]
+        [{"condition": "state", "entity_id": e, "state": "off"}] for e in scenes.SCENE_DEVICES]
+    assert [step["then"][0]["action"] for step in on_steps] == [
+        f"{e.split('.')[0]}.turn_on" for e in scenes.SCENE_DEVICES]
+
+
+def test_all_lights_off_reaches_every_device_through_its_own_domain():
+    off_steps = scenes.scripts()["panel_all_lights_off"]["sequence"]
+    assert off_steps == [
+        {"action": "light.turn_off", "target": {"entity_id": [e for e in scenes.SCENE_DEVICES if e.startswith("light.")]}},
+        {"action": "switch.turn_off", "target": {"entity_id": [e for e in scenes.SCENE_DEVICES if e.startswith("switch.")]}},
+    ]
 
 
 def _switched(steps):

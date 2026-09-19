@@ -176,3 +176,75 @@ def test_all_lights_on_skips_lights_that_are_already_on() -> None:
     assert 'command === "on" ? allCards.filter((card) => card.classList.contains("on")) : []' in scene
     assert "lightCards = allCards.filter((card) => !alreadyOn.includes(card))" in scene
     assert '"already on"' in scene and ".concat(skippedRows)" in scene
+
+
+# ── Which devices All lights on / off switch ────────────────────────────────
+
+import json as _json
+import shutil as _shutil
+import subprocess as _subprocess
+
+import pytest as _pytest
+import yaml as _yaml
+from fastapi.testclient import TestClient as _TestClient
+
+from src.python import web_app as _web_app
+
+
+def _pick(source: str, name: str) -> str:
+    start = source.index(f"function {name}(")
+    depth, i = 0, source.index("{", start)
+    for i in range(i, len(source)):
+        depth += {"{": 1, "}": -1}.get(source[i], 0)
+        if depth == 0:
+            return source[start:i + 1]
+    raise AssertionError(name)
+
+
+def test_the_scene_is_the_lights_group_plus_and_minus_the_saved_list(tmp_path) -> None:
+    """Plugs powering LED strips are added, Stick S3 taken out, and nothing
+    outside the list - the Theme page's demo cards were switched before."""
+    if not _shutil.which("node"):
+        _pytest.skip("node is not installed")
+    source = APP_JS.read_text(encoding="utf-8")
+    script = f"""
+const findDeviceGroup = () => ({{ devices: [{{ key: 'dev:192.168.0.61' }}, {{ key: 'dev:matter:1' }},
+                                           {{ key: 'dev:ha:light.0x64028ffffe64de32' }}] }});
+let lightScenesDoc = {{ include: ['dev:192.168.0.142', 'dev:192.168.0.165'], exclude: ['dev:matter:1'] }};
+{_pick(source, "sceneLightHosts")}
+console.log(JSON.stringify(sceneLightHosts().sort()));
+"""
+    path = tmp_path / "t.js"
+    path.write_text(script, encoding="utf-8")
+    hosts = _json.loads(_subprocess.run(["node", str(path)], capture_output=True, text=True, check=True).stdout)
+
+    assert hosts == ["192.168.0.142", "192.168.0.165", "192.168.0.61", "ha:light.0x64028ffffe64de32"]
+
+
+def test_scene_cards_are_one_per_device_and_never_the_theme_demo() -> None:
+    source = APP_JS.read_text(encoding="utf-8")
+    cards = _pick(source, "sceneLightCards")
+    assert 'querySelectorAll(\'.device-card[data-category="light_switch"]\')' not in cards
+    assert ':not([data-view-panel="theme"])' in cards and "document.querySelector(" in cards
+
+
+def _client(tmp_path):
+    cfg = tmp_path / "devices.local.yaml"
+    cfg.write_text(_yaml.dump({}), encoding="utf-8")
+    app = _web_app.create_app(config_path=cfg, check_camera_ports=False,
+                              light_scenes_path=tmp_path / "light_scenes.json")
+    return _TestClient(app)
+
+
+def test_the_saved_list_round_trips_and_is_validated(tmp_path) -> None:
+    client = _client(tmp_path)
+    assert client.get("/api/light-scenes").json() == {"include": [], "exclude": []}
+
+    saved = client.put("/api/light-scenes", json={"include": ["dev:192.168.0.165", "dev:192.168.0.142"],
+                                                  "exclude": ["dev:matter:1"]}).json()
+    assert saved == {"include": ["dev:192.168.0.142", "dev:192.168.0.165"], "exclude": ["dev:matter:1"]}
+    assert client.get("/api/light-scenes").json() == saved
+
+    assert client.put("/api/light-scenes", json={"include": ["192.168.0.142"]}).status_code == 400
+    assert client.put("/api/light-scenes", json={"include": ["dev:a b"]}).status_code == 400
+    assert client.put("/api/light-scenes", json={"include": ["dev:x"], "exclude": ["dev:x"]}).status_code == 400

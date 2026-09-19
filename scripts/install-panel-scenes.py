@@ -5,7 +5,8 @@ Scenes live in Home Assistant, not on the panel, so the same Movie mode runs
 from a tap on the panel, from "Okay Nabu, movie mode" and from the dashboard,
 and is changed in one place (docs/design/voice-panel-screens.html, Decisions).
 
-    All lights on / off   the six lights on the panel's Home page
+    All lights on / off   every light and LED strip (SCENE_DEVICES), as the
+                          dashboard's All lights on / off
     Movie mode            projector, Fire TV and Z906 on (family room IR remote);
                           the family room and kitchen lights, the family room LED,
                           both IKEA cabinet LEDs and the cabinet LED plug off
@@ -49,6 +50,23 @@ LIGHTS = [
     "light.stick_s3",
 ]
 
+# What All lights on / off switch - the same set as the dashboard's Quick
+# actions (its Lights group, plus the plugs powering LED strips, less Stick S3,
+# a virtual light; 2026-09-19). Not the panel's Home cards: those are what the
+# panel shows, this is what "all lights" means.
+SCENE_DEVICES = [
+    "light.kitchen_light_switch",
+    "light.bedroom_master_bedroom_light",
+    "light.family_room_switch",
+    "light.living_room_living_room_switch_2",
+    "light.bedroom_north_bedroom_light_switch",
+    "light.0x286847fffe5eb711",           # IKEA cabinet LED upper
+    "light.0x64028ffffe64de32",           # IKEA cabinet LED lower
+    "light.family_room_led",
+    "switch.family_room_cabinet_led",     # TP-Link plug, LED strip
+    "switch.living_room_cabinet_led",     # TP-Link plug, LED strip
+]
+
 # The family room IR remote's learned switches (a Zigbee IR blaster).
 IR_REMOTE = "switch.0xa4c1380c14c64266"
 MOVIE_ON_IR = [
@@ -86,6 +104,10 @@ def ir_on_with_pauses() -> list[dict]:
     return steps
 
 
+def _domain(entity_id: str) -> str:
+    return entity_id.split(".", 1)[0]
+
+
 def scripts() -> dict[str, dict]:
     return {
         "panel_all_lights_on": {
@@ -97,14 +119,16 @@ def scripts() -> dict[str, dict]:
             # that turns lights on (2026-09-18).
             "sequence": [{"alias": f"{entity} on, if off",
                           "if": [{"condition": "state", "entity_id": entity, "state": "off"}],
-                          "then": [{"action": "light.turn_on", "target": {"entity_id": entity}}]}
-                         for entity in LIGHTS],
+                          "then": [{"action": f"{_domain(entity)}.turn_on", "target": {"entity_id": entity}}]}
+                         for entity in SCENE_DEVICES],
         },
         "panel_all_lights_off": {
             "alias": "All lights off",
             "icon": "mdi:lightbulb-group-off",
             "mode": "single",
-            "sequence": [{"action": "light.turn_off", "target": {"entity_id": LIGHTS}}],
+            "sequence": [{"action": f"{domain}.turn_off",
+                          "target": {"entity_id": [e for e in SCENE_DEVICES if _domain(e) == domain]}}
+                         for domain in ("light", "switch")],
         },
         "movie_mode": {
             "alias": "Movie mode",

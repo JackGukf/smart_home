@@ -105,6 +105,11 @@ DEFAULT_DEVICE_GROUPS_PATH = PROJECT_ROOT / "dashboard_device_groups.json"
 # are senders, not devices with a state, so they stay out of areas and groups.
 DEFAULT_IR_PAGE_PATH = PROJECT_ROOT / "dashboard_ir_page.json"
 IR_PAGE_DEFAULT = {"name": "IR remotes", "icon": "device-remote", "color": "pink", "hidden": []}
+# What "All lights on / off" switches, beyond the Lights group: devices added to
+# it (the plugs that power LED strips) and taken out of it (Stick S3, a virtual
+# light). Keys are the Home view's device keys, "dev:<host>".
+DEFAULT_LIGHT_SCENES_PATH = PROJECT_ROOT / "dashboard_light_scenes.json"
+_DEVICE_KEY = re.compile(r"^dev:[A-Za-z0-9:._-]{1,96}$")
 # One JSON object per line, appended. A log is append-only and read newest-first,
 # which is exactly what JSONL is good at, and it survives a restart -- which
 # matters because deploy-dashboard.sh restarts this service on every deploy, so
@@ -544,6 +549,13 @@ class SensorHistoryRequest(BaseModel):
     hours: int = 24
 
 
+class LightScenesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    include: list[str] = Field(default_factory=list, max_length=64)
+    exclude: list[str] = Field(default_factory=list, max_length=64)
+
+
 class IRPageUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -653,6 +665,7 @@ def create_app(
     status_service: status_overview.StatusOverview | None = None,
     memory_service: house_memory.SummaryCache | None = None,
     ir_page_path: Path | None = None,
+    light_scenes_path: Path | None = None,
     cast_runner: Callable[..., subprocess.CompletedProcess] | None = None,
     cast_status_path: Path | None = None,
 ) -> FastAPI:
@@ -679,6 +692,7 @@ def create_app(
     app.state.cast_switch = None
     app.state.ir_store = tuya_ir.ButtonStore(config_path.parent / "ir_buttons.json")
     app.state.ir_page_path = ir_page_path or DEFAULT_IR_PAGE_PATH
+    app.state.light_scenes_path = light_scenes_path or DEFAULT_LIGHT_SCENES_PATH
     app.state.ir_bridge = None
     app.state.ir_hub_loader = lambda: tuya_ir.load_hubs(app.state.config_path)
     # One draft at a time. Ollama serialises requests anyway, so a second
@@ -1432,6 +1446,22 @@ def create_app(
         } for hub in hubs]
         return {"hubs": tuya + zigbee, "home_assistant": app.state.ir_bridge is not None,
                 "page": await asyncio.to_thread(_load_ir_page, app.state.ir_page_path)}
+
+    @app.get("/api/light-scenes")
+    async def light_scenes_get() -> dict[str, Any]:
+        """What All lights on / off adds to the Lights group, and takes out of it."""
+        return await asyncio.to_thread(_load_light_scenes, app.state.light_scenes_path)
+
+    @app.put("/api/light-scenes")
+    async def light_scenes_put(update: LightScenesUpdate) -> dict[str, Any]:
+        keys = update.include + update.exclude
+        if any(not _DEVICE_KEY.match(k) for k in keys):
+            raise HTTPException(status_code=400, detail="Unknown device key")
+        if set(update.include) & set(update.exclude):
+            raise HTTPException(status_code=400, detail="A device cannot be both added and removed")
+        doc = {"include": sorted(set(update.include)), "exclude": sorted(set(update.exclude))}
+        await asyncio.to_thread(_save_ir_page, app.state.light_scenes_path, doc)
+        return doc
 
     @app.put("/api/ir/page")
     async def ir_page_update(update: IRPageUpdate) -> dict[str, Any]:
@@ -3992,6 +4022,14 @@ def _zigbee_ir_remotes(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for remote in remotes.values():
         remote["buttons"].sort(key=lambda b: int(b["id"].removeprefix("switch")))
     return list(remotes.values())
+
+
+def _load_light_scenes(path: Path) -> dict[str, Any]:
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    return {k: [str(x) for x in saved.get(k) or [] if _DEVICE_KEY.match(str(x))] for k in ("include", "exclude")}
 
 
 def _load_ir_page(path: Path) -> dict[str, Any]:

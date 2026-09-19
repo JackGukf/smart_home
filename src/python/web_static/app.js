@@ -5850,8 +5850,37 @@ function hideQuickSheet() {
 }
 
 /* The light switches a scene sets: the same cards the scene itself uses. */
+/* What "All lights on / off" switches: the Lights group (Lights -> Manage),
+   plus the devices added to it for the scenes (the plugs powering LED strips),
+   minus the ones taken out (Stick S3, a virtual light) - saved on the board.
+   One card per device. It used to take every light card on the page, which
+   counted a light shown in two views twice and switched the two demo cards in
+   Settings -> Theme, reporting them "turned off". */
+let lightScenesDoc = { include: [], exclude: [] };
+
+async function loadLightScenes() {
+  try {
+    lightScenesDoc = await requestJson("/api/light-scenes");
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function sceneLightHosts() {
+  const group = findDeviceGroup("lights");
+  const keys = new Set((group?.devices || []).map((device) => device.key));
+  (lightScenesDoc.include || []).forEach((key) => keys.add(key));
+  (lightScenesDoc.exclude || []).forEach((key) => keys.delete(key));
+  return [...keys].filter((key) => key.startsWith("dev:")).map((key) => key.slice(4));
+}
+
 function sceneLightCards() {
-  return Array.from(document.querySelectorAll('.device-card[data-category="light_switch"]'));
+  const cards = [];
+  for (const host of sceneLightHosts()) {
+    const card = document.querySelector(`.view-panel:not([data-view-panel="theme"]) .device-card[data-host="${CSS.escape(host)}"]`);
+    if (card) cards.push(card);
+  }
+  return cards;
 }
 
 function lightCardName(card) {
@@ -10383,6 +10412,7 @@ if (homeAssistantBack) {
    Every light switch on or off. Reports each switch that did not answer, so
    a Quick action can say so rather than leave you guessing. */
 async function runLightScene(command, btn) {
+  await loadLightScenes();
   const allCards = sceneLightCards();
   const empty = { rows: [], ok: 0, failed: 0 };
   if (allCards.length === 0) return empty;
