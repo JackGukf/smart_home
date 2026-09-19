@@ -10383,9 +10383,17 @@ if (homeAssistantBack) {
    Every light switch on or off. Reports each switch that did not answer, so
    a Quick action can say so rather than leave you guessing. */
 async function runLightScene(command, btn) {
-  const lightCards = sceneLightCards();
+  const allCards = sceneLightCards();
   const empty = { rows: [], ok: 0, failed: 0 };
-  if (lightCards.length === 0) return empty;
+  if (allCards.length === 0) return empty;
+  /* "On" goes only to lights that are off. Sent to a light already on, some
+     re-apply their level and flash - the IKEA cabinet drivers do - and the
+     owner's rule is that nothing that turns lights on does that (2026-09-18).
+     "Off" still goes to every light: that is the resync a scene is for. */
+  const alreadyOn = command === "on" ? allCards.filter((card) => card.classList.contains("on")) : [];
+  const lightCards = allCards.filter((card) => !alreadyOn.includes(card));
+  const skippedRows = alreadyOn.map((card) => ({ name: lightCardName(card), detail: "already on", ok: true }));
+  if (lightCards.length === 0) return { rows: skippedRows, ok: skippedRows.length, failed: 0 };
   const sceneStartRevision = manualLightCommandRevision;
   const sceneHosts = new Set(lightCards.map((card) => String(card.dataset.host || "")).filter((host) => host !== ""));
   const names = lightCards.map(lightCardName);
@@ -10416,7 +10424,7 @@ async function runLightScene(command, btn) {
     name: names[i],
     detail: result.status === "fulfilled" ? `turned ${command}` : "did not respond",
     ok: result.status === "fulfilled",
-  }));
+  })).concat(skippedRows);
   return { rows, ok: rows.filter((r) => r.ok).length, failed: rows.filter((r) => !r.ok).length };
 }
 

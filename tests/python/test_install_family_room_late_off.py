@@ -94,11 +94,19 @@ def test_only_a_time_of_day_is_taken(tmp_path, monkeypatch):
 
 # ── On with motion, in the dark ─────────────────────────────────────────────
 
-def test_motion_turns_on_whichever_are_off_and_nothing_else():
+def test_motion_turns_on_only_the_ones_that_are_off():
+    """turn_on to a light already on makes the IKEA drivers flash: each light
+    is checked on its own and switched only when it is off."""
     body = late_off.motion_on_automation()
-    switched = {e for a in body["actions"] for e in a["target"]["entity_id"]}
+    switched = set()
+    for step in body["actions"]:
+        [check] = step["if"]
+        [action] = step["then"]
+        assert check == {"condition": "state", "entity_id": check["entity_id"], "state": "off"}
+        assert action["target"]["entity_id"] == check["entity_id"]
+        assert action["action"] == check["entity_id"].split(".")[0] + ".turn_on"
+        switched.add(check["entity_id"])
     assert switched == FOUR
-    assert all(a["action"].endswith("turn_on") for a in body["actions"])
     assert body["triggers"] == [{"trigger": "state", "entity_id": late_off.OCCUPANCY, "from": "off", "to": "on"}]
 
 
@@ -120,3 +128,16 @@ def test_not_for_three_hours_after_movie_mode():
 
 def test_both_automations_are_installed():
     assert [a["id"] for a in late_off.automations()] == ["family_room_lights_off_late", "family_room_lights_on_motion"]
+
+
+
+def test_no_automation_here_sends_on_without_checking_first():
+    """The owner's rule for every automation that turns a light on."""
+    def bare_turn_ons(steps):
+        for step in steps:
+            if "then" in step:
+                continue  # guarded by its own "if it is off"
+            if str(step.get("action", "")).endswith("turn_on"):
+                yield step
+    for automation in late_off.automations():
+        assert list(bare_turn_ons(automation["actions"])) == [], automation["id"]

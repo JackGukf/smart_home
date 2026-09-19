@@ -12,8 +12,10 @@ all of them go off:
 
 Motion turning them on is the second automation (added 2026-09-18, later):
 whenever it is dark (the sun below the horizon), occupancy turns on whichever
-of the four are off - turn_on leaves one that is already on as it is, a dimmed
-IKEA driver included. Not for 3 hours after Movie mode runs, so moving about
+of the four are off - and only those: each gets its own "if it is off" check,
+because turn_on sent to a light that is already on makes the IKEA drivers
+re-apply their level, a visible flash every time the sensor fires. The owner's
+rule for every automation that turns a light on (2026-09-18). Not for 3 hours after Movie mode runs, so moving about
 during a film does not light the room. Between the Night lights time and 6 AM
 the off rule then puts them out again 10 minutes after the room empties; from
 6 AM to sunrise nothing turns them off.
@@ -91,6 +93,17 @@ def automation() -> dict:
     }
 
 
+def turn_on_if_off(entity_id: str) -> dict:
+    """Turn one light or switch on only when it is off. Never send "on" to a
+    light that is already on: some re-apply their level and flash."""
+    domain = entity_id.split(".", 1)[0]
+    return {
+        "alias": f"{entity_id} on, if off",
+        "if": [{"condition": "state", "entity_id": entity_id, "state": "off"}],
+        "then": [{"action": f"{domain}.turn_on", "target": {"entity_id": entity_id}}],
+    }
+
+
 def motion_on_automation() -> dict:
     return {
         "id": ON_AUTOMATION_ID,
@@ -110,10 +123,7 @@ def motion_on_automation() -> dict:
                 f"{{% set last = state_attr('{MOVIE_MODE}', 'last_triggered') %}}"
                 f"{{{{ last is none or now() - last > timedelta(hours={MOVIE_QUIET_HOURS}) }}}}")},
         ],
-        "actions": [
-            {"action": "light.turn_on", "target": {"entity_id": LIGHTS}},
-            {"action": "switch.turn_on", "target": {"entity_id": SWITCHES}},
-        ],
+        "actions": [turn_on_if_off(entity) for entity in LIGHTS + SWITCHES],
     }
 
 

@@ -23,8 +23,12 @@ def test_all_lights_scenes_switch_exactly_the_panel_lights():
     assert len(scenes.LIGHTS) == len(set(scenes.LIGHTS)) == 6
     assert set(scenes.LIGHTS) == panel_card_entities()
     body = scenes.scripts()
-    assert body["panel_all_lights_on"]["sequence"] == [
-        {"action": "light.turn_on", "target": {"entity_id": scenes.LIGHTS}}]
+    # On only to the ones that are off (a light already on can flash).
+    on_steps = body["panel_all_lights_on"]["sequence"]
+    assert [step["if"] for step in on_steps] == [
+        [{"condition": "state", "entity_id": e, "state": "off"}] for e in scenes.LIGHTS]
+    assert [step["then"] for step in on_steps] == [
+        [{"action": "light.turn_on", "target": {"entity_id": e}}] for e in scenes.LIGHTS]
     assert body["panel_all_lights_off"]["sequence"] == [
         {"action": "light.turn_off", "target": {"entity_id": scenes.LIGHTS}}]
 

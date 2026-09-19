@@ -163,3 +163,16 @@ def test_the_home_view_controls_moved_to_settings() -> None:
     assert "homeViewMenu" not in html and "homeViewMenu" not in source
 
 
+
+
+
+def test_all_lights_on_skips_lights_that_are_already_on() -> None:
+    """Sent to a light already on, the IKEA drivers flash; the owner's rule is
+    that nothing that turns lights on does that. Off still goes to every light."""
+    source = APP_JS.read_text(encoding="utf-8")
+    scene = source[source.index("async function runLightScene"):]
+    scene = scene[:scene.index("\n}\n")]
+
+    assert 'command === "on" ? allCards.filter((card) => card.classList.contains("on")) : []' in scene
+    assert "lightCards = allCards.filter((card) => !alreadyOn.includes(card))" in scene
+    assert '"already on"' in scene and ".concat(skippedRows)" in scene

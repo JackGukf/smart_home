@@ -92,7 +92,13 @@ def scripts() -> dict[str, dict]:
             "alias": "All lights on",
             "icon": "mdi:lightbulb-group",
             "mode": "single",
-            "sequence": [{"action": "light.turn_on", "target": {"entity_id": LIGHTS}}],
+            # Each only if it is off: "on" to a light already on makes some
+            # re-apply their level and flash - the owner's rule for anything
+            # that turns lights on (2026-09-18).
+            "sequence": [{"alias": f"{entity} on, if off",
+                          "if": [{"condition": "state", "entity_id": entity, "state": "off"}],
+                          "then": [{"action": "light.turn_on", "target": {"entity_id": entity}}]}
+                         for entity in LIGHTS],
         },
         "panel_all_lights_off": {
             "alias": "All lights off",
@@ -132,7 +138,8 @@ def describe_step(step: dict) -> str:
         return f"wait {step['delay'].get('seconds', 0)} s"
     if "if" in step:
         inner = step["then"][0]
-        return f"if {step['if'][0]['entity_id']} is on: {describe_step(inner)}"
+        condition = step["if"][0]
+        return f"if {condition['entity_id']} is {condition['state']}: {describe_step(inner)}"
     targets = step["target"]["entity_id"]
     targets = targets if isinstance(targets, list) else [targets]
     return f"{step['action']}: {', '.join(targets)}"
