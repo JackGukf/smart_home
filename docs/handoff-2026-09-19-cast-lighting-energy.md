@@ -113,8 +113,9 @@ Start with **Open items**, then **Traps**.
   automations and three scripts (all reinstallable from `scripts/`).
 
 ## Open items
-1. **PowerLync:** pair it, then replace `energy.snapshot()` with real readings
-   (keep the payload shape; drop `"sample"`). Gas stays daily at best.
+1. **PowerLync:** done in code since the same day - pair it with
+   `scripts/setup-ha-powerlync.py --code … --apply` and the dashboard goes live
+   by itself. Gas: see `docs/energy-monitoring.md`.
 2. **Test-run Movie mode** once (never run since the IR pauses and the plug).
 3. **First night of the automations** - check the logbook in the morning.
 4. **6 AM to sunrise:** motion turns the accent lights on and nothing turns them

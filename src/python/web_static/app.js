@@ -10439,14 +10439,20 @@ async function loadCast() {
 
 /* ── Energy ──
    Electricity (BC Hydro, live from the PowerLync) and natural gas (FortisBC,
-   daily), for the Home card and the Energy view. /api/energy is sample data
-   until the monitor is paired; the payload says so and both places show it. */
+   daily), for the Home card and the Energy view. Each section of /api/energy
+   says whether it is sample data - electricity until the PowerLync is paired,
+   gas for now - and both places show which. A newly paired meter has little
+   history, so lists can be short or hold nulls: draw what there is. */
 const ENERGY_REFRESH_MS = 15000;
-const ENERGY_STATE_TEXT = { base: "Near base load", busy: "Appliances on", high: "High use" };
+const ENERGY_STATE_TEXT = { base: "Near base load", busy: "Appliances on", high: "High use", unknown: "No reading" };
 let latestEnergy = null;
 
 function energyMoney(value) {
   return `$${Number(value).toFixed(2)}`;
+}
+
+function energyFixed(value, digits) {
+  return value === null || value === undefined || !Number.isFinite(Number(value)) ? "–" : Number(value).toFixed(digits);
 }
 
 /* An area chart in a stretched viewBox: marks only - labels live in HTML
@@ -10499,10 +10505,10 @@ function renderHomeEnergy() {
   const e = latestEnergy.electricity;
   const g = latestEnergy.gas;
   const sample = document.querySelector("#homeEnergySample");
-  if (sample) sample.hidden = !latestEnergy.sample;
+  if (sample) sample.hidden = !e.sample;
   body.innerHTML = `
     <div class="energy-now">
-      <span class="energy-kw mono">${Number(e.kw_now).toFixed(2)}</span>
+      <span class="energy-kw mono">${energyFixed(e.kw_now, 2)}</span>
       <span class="energy-unit">kW now</span>
       <span class="energy-state ${escapeHtml(e.state)}">${escapeHtml(ENERGY_STATE_TEXT[e.state] || "")}</span>
     </div>
@@ -10510,7 +10516,7 @@ function renderHomeEnergy() {
     <div class="energy-facts">
       <span>Last 24 h <b class="mono">${Number(e.last_24h_kwh).toFixed(1)} kWh</b></span>
       <span>≈ <b class="mono">${energyMoney(e.last_24h_kwh * e.rate)}</b></span>
-      <span>Gas <b class="mono">${Number(g.yesterday_gj).toFixed(2)} GJ</b> yesterday</span>
+      <span>Gas <b class="mono">${energyFixed(g.yesterday_gj, 2)} GJ</b> yesterday${g.sample && !e.sample ? " (sample)" : ""}</span>
     </div>`;
 }
 
@@ -10529,7 +10535,7 @@ function energyColumnHtml({ name, provider, headline, unit, headlineNote, pill, 
       ${energyBarsSvg(values, { kind })}
       ${energyAxis(days)}
       <div class="energy-rows">
-        <div><span>Last ${days.length} days</span><b class="mono">${total.toFixed(digits)} ${escapeHtml(unit)} · ${energyMoney(total * rate)}</b></div>
+        <div><span>${days.length ? `Last ${days.length} day${days.length === 1 ? "" : "s"}` : "No whole day yet"}</span><b class="mono">${total.toFixed(digits)} ${escapeHtml(unit)} · ${energyMoney(total * rate)}</b></div>
         <div><span>Daily average</span><b class="mono">${(total / Math.max(1, values.length)).toFixed(digits + 1)} ${escapeHtml(unit)}</b></div>
         <div><span>Same month last year</span><b>No history yet</b></div>
       </div>
@@ -10542,14 +10548,19 @@ function renderEnergyView() {
   const e = latestEnergy.electricity;
   const g = latestEnergy.gas;
   const note = document.querySelector("#energySampleNote");
-  if (note) note.hidden = !latestEnergy.sample;
+  if (note) {
+    note.hidden = !e.sample && !g.sample;
+    note.textContent = e.sample
+      ? "Sample data: the BC Hydro PowerLync is not connected yet, so these figures are invented. They are replaced by real readings once it is paired."
+      : "Electricity is live from the PowerLync. Gas is sample data: the FortisBC meter reports only to FortisBC.";
+  }
   columns.innerHTML = energyColumnHtml({
     name: "Electricity", provider: e.provider, kind: "electric", unit: "kWh",
-    headline: Number(e.last_24h_kwh).toFixed(1), headlineNote: "in the last 24 h", pill: `${Number(e.kw_now).toFixed(2)} kW now`,
+    headline: energyFixed(e.last_24h_kwh, 1), headlineNote: "in the last 24 h", pill: `${energyFixed(e.kw_now, 2)} kW now`,
     days: e.days, values: e.days.map((d) => d.kwh), digits: 0, rate: e.rate,
   }) + energyColumnHtml({
     name: "Natural gas", provider: g.provider, kind: "gas", unit: "GJ",
-    headline: Number(g.yesterday_gj).toFixed(2), headlineNote: "yesterday", pill: "Read daily",
+    headline: energyFixed(g.yesterday_gj, 2), headlineNote: "yesterday", pill: g.sample ? "Sample" : "Read daily",
     days: g.days, values: g.days.map((d) => d.gj), digits: 2, rate: g.rate,
   });
   const today = document.querySelector("#energyToday");
@@ -10557,7 +10568,7 @@ function renderEnergyView() {
     today.innerHTML = `
       <div class="home-panel-head">
         <span class="panel-title"><i class="ti ti-chart-area-line"></i> Electricity, last 24 hours</span>
-        <span class="section-meta">dashed line: a usual day</span>
+        <span class="section-meta">${e.usual_24h_hourly_kwh ? "dashed line: a usual day" : "a usual day after three days of readings"}</span>
       </div>
       ${energyAreaSvg(e.last_24h_hourly_kwh, { compare: e.usual_24h_hourly_kwh, height: 120 })}
       <div class="energy-axis">${[0, 6, 12, 18, 24].map((h) => `<span>${String((e.last_24h_start_hour + h) % 24).padStart(2, "0")}h</span>`).join("")}</div>`;

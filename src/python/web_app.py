@@ -677,6 +677,7 @@ def create_app(
     news_settings_path: Path | None = None,
     news_service: news_feed.NewsService | None = None,
     history_service: sensor_history.SensorHistory | None = None,
+    energy_source: energy.LiveEnergy | None = None,
     status_service: status_overview.StatusOverview | None = None,
     memory_service: house_memory.SummaryCache | None = None,
     ir_page_path: Path | None = None,
@@ -699,6 +700,7 @@ def create_app(
     app.state.news_settings_path = news_settings_path or DEFAULT_NEWS_SETTINGS_PATH
     app.state.news_service = news_service or news_feed.NewsService()
     app.state.history_service = history_service
+    app.state.energy_source = energy_source
     app.state.status_service = status_service
     app.state.memory_service = memory_service or house_memory.SummaryCache()
     # systemctl, swapped out in tests so they never touch the real user manager.
@@ -1464,9 +1466,18 @@ def create_app(
 
     @app.get("/api/energy")
     async def energy_now() -> dict[str, Any]:
-        """Electricity and gas for the Energy card and view. Sample data until
-        the PowerLync is paired - the payload says so, and the page shows it."""
-        return await asyncio.to_thread(energy.snapshot)
+        """Electricity and gas for the Energy card and view. Electricity is live
+        once the PowerLync's sensors appear in Home Assistant, and sample data
+        until then; each section says which, and the page shows it."""
+        source = app.state.energy_source
+        if source is None:
+            ha_config = _load_home_assistant_config(app.state.config_path)
+            source = energy.LiveEnergy(ha_config.base_url, lambda: os.getenv(ha_config.token_env))
+            app.state.energy_source = source
+        try:
+            return await asyncio.to_thread(source.snapshot)
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Home Assistant energy readings are unavailable") from error
 
     @app.get("/api/light-scenes")
     async def light_scenes_get() -> dict[str, Any]:

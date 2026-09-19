@@ -61,6 +61,12 @@
 > paired. Discovery is one sidebar entry with three apps.
 > Start here: **`docs/handoff-2026-09-19-cast-lighting-energy.md`**.
 >
+> **Energy, ready for the PowerLync (2026-09-19).** `/api/energy` switches to
+> live electricity by itself once the PowerLync's sensors appear in Home
+> Assistant; pairing is one command, `scripts/setup-ha-powerlync.py --code …
+> --apply`. Gas cannot be read locally (FortisBC's FlexNet meter); options and
+> the energy "AI mode" plan are in **`docs/energy-monitoring.md`**.
+>
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
 > *user* unit), exposing 5 devices and commissioned into three fabrics —
 > chip-tool, Home Assistant, and Apple Home. Build or re-commission it with
@@ -317,6 +323,10 @@ Three things that will waste a day if you do not know them:
   what is built and measured, the one open fault (the wake word never runs), the
   evidence that pins it, the next test, and thirteen traps from getting audio
   working on a board whose microphone and speaker share one I2S bus
+- `docs/energy-monitoring.md` — **electricity and gas**: the PowerLync read
+  locally over HomeKit and how to connect it, why the FortisBC gas meter cannot
+  be read from the house and the three ways that could work, and the plan for
+  an energy "AI mode" once live readings exist
 - `docs/dashboard-cast.md` — **Cast to TV**: the dashboard as live video on the
   LLANO-S450 dongle over DLNA, switched in Settings and off by default (off costs
   nothing); `switch.tv_cast` in Home Assistant and the Voice Panel's TV cast
