@@ -4466,6 +4466,24 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
   .cam-last-rest { display: none; }
 }
 
+/* The wall panel's tall Camera card: three cameras and "last person" as a 2x2
+   grid of big tiles (cameraCardHasRoomForGrid decides). */
+.cam-strip.roomy { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cam-strip.roomy .cam-thumb-name { font-size: 12px; left: 8px; bottom: 6px; }
+.cam-last-tile {
+  aspect-ratio: 16 / 9;
+  margin-top: 0;
+  padding: 10px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  border: 1px dashed var(--t-card-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.cam-last-tile .cam-last-label { margin: 0 0 6px; }
+.cam-last-tile .cam-last-rest { margin: 6px 0 0; white-space: normal; }
+
 /* ── Quick actions card ──
    Four buttons beside Climate, each half the column's width. Square-ish tiles
    so the labels fit on one line at 261px wide. */

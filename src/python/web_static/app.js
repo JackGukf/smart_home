@@ -286,6 +286,9 @@ const latestCameraById  = new Map();
    long before the remote's own section of this file. */
 const WALL_PANEL_SCROLLS = new Set(["up", "down", "top"]);
 const WALL_PANEL_CAMERA_STEPS = new Set(["next", "prev"]);
+/* The Camera card's 2x2 grid mode (cameraCardHasRoomForGrid). Up here because
+   renderHomeCameraExtra reads it during start-up. */
+let homeCameraRoomy = false;
 let isWallPanel = false;   /* a screen the Voice Panel remotes: the wall panel or the TV */
 let remoteCameraPath = "/api/wall-panel/camera";
 let reportedWallCamera = null;
@@ -6571,7 +6574,11 @@ function renderHomeCameraExtra() {
   const shown = shownHomeCameraId;
   const sightings = cameraSightings();
   const minutesById = new Map(sightings.map((s) => [cameraIdFor(s.camera), s.minutes]));
-  const others = cameras.filter((camera) => cameraIdFor(camera) !== shown).slice(0, CAMERA_STRIP_SIZE);
+  const allOthers = cameras.filter((camera) => cameraIdFor(camera) !== shown);
+  /* Roomy (the wall panel's tall card): three cameras and "last person" as a
+     2x2 grid of big tiles, instead of a strip of small ones over a gap. */
+  const roomy = homeCameraRoomy && allOthers.length >= 3;
+  const others = allOthers.slice(0, roomy ? 3 : CAMERA_STRIP_SIZE);
   if (!others.length) { renderHtml(host, ""); return; }
 
   const strip = others.map((camera) => {
@@ -6598,9 +6605,50 @@ function renderHomeCameraExtra() {
          `${escapeHtml(s.camera.name || "")} ${agoLabel(s.minutes)}`).join(", ")}</span>` : ""}`
     : `<span class="cam-last-label">No outdoor camera has reported a person yet</span>`;
 
-  renderHtml(host, `<div class="cam-strip" style="grid-template-columns:repeat(${others.length}, minmax(0, 1fr))">${strip}</div>`
-    + `<div class="cam-last">${line}</div>`);
+  if (roomy) {
+    renderHtml(host, `<div class="cam-strip roomy">${strip}<div class="cam-last cam-last-tile">${line}</div></div>`);
+  } else {
+    renderHtml(host, `<div class="cam-strip" style="grid-template-columns:repeat(${others.length}, minmax(0, 1fr))">${strip}</div>`
+      + `<div class="cam-last">${line}</div>`);
+  }
+  /* Ask again once this has drawn: the card's size alone never changes when
+     the picture first arrives, so a resize observer only ever measured the
+     "Loading" placeholder. Unchanged, this does nothing. */
+  requestAnimationFrame(updateCameraGridMode);
 }
+
+/* Does the Camera card have room for the 2x2 grid? On the wall panel the card
+   is much taller than a 16:9 picture plus a strip, and the difference showed
+   as a ~175px gap; on a PC or a phone it is not, and the strip stays.
+
+   Measured as the space the picture and the extras share - the body grows and
+   shrinks against the extras - so switching layouts does not change the answer
+   and cannot make it flip back and forth. */
+const CAMERA_GRID_GAP = 8;
+const CAMERA_EXTRA_MARGIN = 10;
+
+function cameraCardHasRoomForGrid() {
+  const body = document.querySelector("#homeCameraBody");
+  const extra = document.querySelector("#homeCameraExtra");
+  if (!body || !extra || !body.clientHeight || !extra.clientWidth) return false;
+  const content = Array.from(body.children).reduce((sum, child) => sum + child.offsetHeight, 0);
+  const shared = body.clientHeight + extra.offsetHeight + CAMERA_EXTRA_MARGIN;
+  const tile = (extra.clientWidth - CAMERA_GRID_GAP) / 2 * 9 / 16;
+  return content + CAMERA_EXTRA_MARGIN + 2 * tile + CAMERA_GRID_GAP <= shared;
+}
+
+function updateCameraGridMode() {
+  const roomy = cameraCardHasRoomForGrid();
+  if (roomy === homeCameraRoomy) return;
+  homeCameraRoomy = roomy;
+  renderHomeCameraExtra();
+}
+
+(function watchCameraCard() {
+  const panel = document.querySelector("#homeCameraPanel");
+  if (!panel || typeof ResizeObserver !== "function") return;
+  new ResizeObserver(() => requestAnimationFrame(updateCameraGridMode)).observe(panel);
+})();
 
 /* Fresh thumbnails without rebuilding the strip: only the src changes, so the
    picture never blinks back to a placeholder. */
