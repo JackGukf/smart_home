@@ -37,6 +37,13 @@ import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+from src.python import panel_scenes  # noqa: E402
+
+# What the dashboard last set All lights to switch (Manage on its All lights
+# sheets). When present it wins over SCENE_DEVICES below, so running this does
+# not undo a choice made on the dashboard.
+DASHBOARD_LIGHT_SCENES = PROJECT_ROOT / "dashboard_light_scenes.json"
 
 # The panel's Home page cards, in the same entities it binds to
 # (configs/esphome/voice-panel.yaml). tests/python/test_install_panel_scenes.py
@@ -50,9 +57,9 @@ LIGHTS = [
     "light.stick_s3",
 ]
 
-# What All lights on / off switch - the same set as the dashboard's Quick
-# actions (its Lights group, plus the plugs powering LED strips, less Stick S3,
-# a virtual light; 2026-09-19). Not the panel's Home cards: those are what the
+# What All lights on / off switch until the dashboard has synced a list of its
+# own: its Lights group, plus the plugs powering LED strips, less Stick S3, a
+# virtual light (2026-09-19). Not the panel's Home cards: those are what the
 # panel shows, this is what "all lights" means.
 SCENE_DEVICES = [
     "light.kitchen_light_switch",
@@ -104,32 +111,17 @@ def ir_on_with_pauses() -> list[dict]:
     return steps
 
 
-def _domain(entity_id: str) -> str:
-    return entity_id.split(".", 1)[0]
+def scene_devices(path: Path | None = None) -> list[str]:
+    try:
+        synced = json.loads((path or DASHBOARD_LIGHT_SCENES).read_text(encoding="utf-8")).get("entities") or []
+    except (OSError, ValueError):
+        synced = []
+    return [str(e) for e in synced] or SCENE_DEVICES
 
 
 def scripts() -> dict[str, dict]:
     return {
-        "panel_all_lights_on": {
-            "alias": "All lights on",
-            "icon": "mdi:lightbulb-group",
-            "mode": "single",
-            # Each only if it is off: "on" to a light already on makes some
-            # re-apply their level and flash - the owner's rule for anything
-            # that turns lights on (2026-09-18).
-            "sequence": [{"alias": f"{entity} on, if off",
-                          "if": [{"condition": "state", "entity_id": entity, "state": "off"}],
-                          "then": [{"action": f"{_domain(entity)}.turn_on", "target": {"entity_id": entity}}]}
-                         for entity in SCENE_DEVICES],
-        },
-        "panel_all_lights_off": {
-            "alias": "All lights off",
-            "icon": "mdi:lightbulb-group-off",
-            "mode": "single",
-            "sequence": [{"action": f"{domain}.turn_off",
-                          "target": {"entity_id": [e for e in SCENE_DEVICES if _domain(e) == domain]}}
-                         for domain in ("light", "switch")],
-        },
+        **panel_scenes.all_lights_scripts(scene_devices()),
         "movie_mode": {
             "alias": "Movie mode",
             "icon": "mdi:movie-open",

@@ -10,6 +10,8 @@ SPEC = importlib.util.spec_from_file_location("install_panel_scenes",
                                               ROOT / "scripts/install-panel-scenes.py")
 scenes = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(scenes)
+# Never the board's own synced list, if one happens to be in this checkout.
+scenes.DASHBOARD_LIGHT_SCENES = ROOT / "tests" / "no-such-light-scenes.json"
 
 
 def panel_card_entities() -> set[str]:
@@ -104,3 +106,13 @@ def test_dry_run_writes_nothing(monkeypatch, capsys):
     monkeypatch.setattr(scenes, "install", refuse)
     assert scenes.main([]) == 0
     assert "Nothing was written" in capsys.readouterr().out
+
+
+
+def test_the_installer_follows_what_the_dashboard_last_synced(tmp_path):
+    """Running the installer must not undo a choice made in Manage."""
+    synced = tmp_path / "dashboard_light_scenes.json"
+    synced.write_text(json.dumps({"include": [], "exclude": [], "entities": ["light.kitchen_light_switch",
+                                                                           "switch.office_switch"]}))
+    assert scenes.scene_devices(synced) == ["light.kitchen_light_switch", "switch.office_switch"]
+    assert scenes.scene_devices(tmp_path / "missing.json") == scenes.SCENE_DEVICES

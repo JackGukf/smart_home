@@ -1367,6 +1367,7 @@ async function loadIRHubs() {
    with the page's remotes in it instead of devices. */
 function openIRManage() {
   manageDevicesGroupId = null;
+  lightSceneManageKey = null;
   const title = document.querySelector("#manageDevicesTitle");
   if (title) title.textContent = `Manage — ${irPage.name || "IR remotes"}`;
   setManageHint(MANAGE_IR_HINT);
@@ -5061,6 +5062,7 @@ function openManageDevicesModal(groupId) {
   const group = findDeviceGroup(groupId);
   if (!group) return;
   manageDevicesGroupId = groupId;
+  lightSceneManageKey = null;
   const title = document.querySelector("#manageDevicesTitle");
   if (title) title.textContent = `Manage Devices — ${group.name}`;
   setManageHint(MANAGE_GROUP_HINT);
@@ -5122,6 +5124,8 @@ async function toggleManageDevice(checkbox) {
   }
   await loadDeviceGroups();
   renderManageDevicesList();
+  // All lights follow the Lights group, and the Voice Panel follows All lights.
+  if (manageDevicesGroupId === "lights") syncVoicePanelLights();
   /* The tiles are counted from the overrides just reloaded, so redraw them now
      rather than waiting on loadDevices() - that refetches every device and the
      count would otherwise sit stale for the length of a full poll. */
@@ -5888,6 +5892,7 @@ function lightsGroupKeys() {
 }
 
 async function openLightSceneManage(quickKey) {
+  /* A stale key from a sheet opened earlier must not relabel another dialog. */
   await loadLightScenes();
   lightSceneManageKey = quickKey;
   manageDevicesGroupId = null;
@@ -5915,6 +5920,29 @@ function renderLightSceneManageList() {
       <input class="scene-manage-check" type="checkbox" data-scene-key="${escapeHtml(item.key)}"
              ${inScene.has(item.key) ? "checked" : ""} aria-label="${escapeHtml(item.name)} in All lights on and off">
     </div>`).join("");
+}
+
+/* The Voice Panel's All lights cards and "Okay Nabu, all lights off" run Home
+   Assistant scripts. After a change here the page sends what All lights now
+   covers, and the dashboard rewrites those scripts to match (panel_scenes.py).
+   Only after a change someone made: a page still loading its devices must not
+   shrink the Voice Panel's list. */
+async function syncVoicePanelLights() {
+  const names = new Map(collectHomeInventory().map((item) => [item.key, item.name]));
+  const devices = sceneLightHosts().map((host) => ({ host, name: names.get(`dev:${host}`) || host }));
+  let text;
+  try {
+    const result = await requestJson("/api/light-scenes/sync", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ devices }),
+    });
+    text = `Voice Panel follows: ${result.entities.length} device${result.entities.length === 1 ? "" : "s"}.`;
+    if (result.unmatched.length) text += ` Not in Home Assistant, so not on the Voice Panel: ${result.unmatched.join(", ")}.`;
+  } catch (error) {
+    text = `Voice Panel not updated: ${apiErrorDetail(error)}`;
+  }
+  const hint = document.querySelector("#manageDevicesHint");
+  if (hint && lightSceneManageKey) hint.textContent = `${MANAGE_SCENE_HINT} ${text}`;
+  logActivity(text, /not updated|Not in/.test(text) ? "warn" : undefined);
 }
 
 /* The saved lists after one tick: only what differs from the Lights group is
@@ -5948,6 +5976,7 @@ document.addEventListener("change", async (event) => {
     return;
   }
   renderLightSceneManageList();
+  syncVoicePanelLights();
   const sheet = document.querySelector("#quickSheet");
   if (lightSceneManageKey && sheet && !sheet.hidden) quickInfo(lightSceneManageKey).catch(console.error);
 });

@@ -51,6 +51,7 @@ from src.python.matter_device import (
 from src.python import bridge_sync
 from src.python.house_digest import read_digest
 from src.python import dashboard_cast
+from src.python import panel_scenes
 from src.python import news_feed
 from src.python import sensor_history
 from src.python import status_overview
@@ -554,6 +555,19 @@ class LightScenesUpdate(BaseModel):
 
     include: list[str] = Field(default_factory=list, max_length=64)
     exclude: list[str] = Field(default_factory=list, max_length=64)
+
+
+class SceneDevice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    host: str = Field(max_length=128)
+    name: str = Field(default="", max_length=120)
+
+
+class LightScenesSync(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    devices: list[SceneDevice] = Field(max_length=64)
 
 
 class IRPageUpdate(BaseModel):
@@ -1459,9 +1473,18 @@ def create_app(
             raise HTTPException(status_code=400, detail="Unknown device key")
         if set(update.include) & set(update.exclude):
             raise HTTPException(status_code=400, detail="A device cannot be both added and removed")
-        doc = {"include": sorted(set(update.include)), "exclude": sorted(set(update.exclude))}
+        doc = await asyncio.to_thread(_load_light_scenes, app.state.light_scenes_path)
+        doc.update(include=sorted(set(update.include)), exclude=sorted(set(update.exclude)))
         await asyncio.to_thread(_save_ir_page, app.state.light_scenes_path, doc)
         return doc
+
+    @app.post("/api/light-scenes/sync")
+    async def light_scenes_sync(request: LightScenesSync) -> dict[str, Any]:
+        """Make Home Assistant's All lights scripts (Voice Panel, voice) switch
+        the devices the dashboard's All lights switch. The page sends what it
+        resolved after a Manage change; the scripts are rewritten only when the
+        entities differ, and never to nothing."""
+        return await asyncio.to_thread(_sync_light_scene_scripts, app, [d.model_dump() for d in request.devices])
 
     @app.put("/api/ir/page")
     async def ir_page_update(update: IRPageUpdate) -> dict[str, Any]:
@@ -4029,7 +4052,44 @@ def _load_light_scenes(path: Path) -> dict[str, Any]:
         saved = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         saved = {}
-    return {k: [str(x) for x in saved.get(k) or [] if _DEVICE_KEY.match(str(x))] for k in ("include", "exclude")}
+    doc = {k: [str(x) for x in saved.get(k) or [] if _DEVICE_KEY.match(str(x))] for k in ("include", "exclude")}
+    # What Home Assistant's All lights scripts were last set to switch.
+    doc["entities"] = [str(x) for x in saved.get("entities") or [] if re.fullmatch(r"(light|switch)\.[a-z0-9_]+", str(x))]
+    return doc
+
+
+def _sync_light_scene_scripts(app: FastAPI, devices: list[dict[str, Any]]) -> dict[str, Any]:
+    ha_config = _load_home_assistant_config(app.state.config_path)
+    token = os.getenv(ha_config.token_env)
+    if not token:
+        raise HTTPException(status_code=503, detail="No Home Assistant token")
+    macs = {}
+    try:
+        for switch in json.loads(Path(app.state.discovery_path).read_text(encoding="utf-8")).get("switches", []):
+            macs[str(switch.get("host"))] = switch.get("mac")
+    except (OSError, ValueError):
+        pass
+    for device in devices:
+        device["mac"] = macs.get(device["host"])
+    try:
+        known = {str(e.get("entity_id")) for e in _home_assistant_get(ha_config, token, "/api/states")}
+        rows = _home_assistant_post(ha_config, token, "/api/template", {"template": panel_scenes.ENTITY_TEMPLATE})
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=502, detail="Home Assistant did not answer") from error
+    entities, unmatched = panel_scenes.match_entities(devices, rows or [], known)
+    if not entities:
+        raise HTTPException(status_code=409, detail="None of these devices is in Home Assistant; the scripts were left as they are")
+    doc = _load_light_scenes(app.state.light_scenes_path)
+    changed = entities != doc["entities"]
+    if changed:
+        try:
+            for script_id, body in panel_scenes.all_lights_scripts(entities).items():
+                _home_assistant_post(ha_config, token, f"/api/config/script/config/{script_id}", body)
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Home Assistant did not take the scripts") from error
+        doc["entities"] = entities
+        _save_ir_page(app.state.light_scenes_path, doc)
+    return {"entities": entities, "unmatched": unmatched, "changed": changed}
 
 
 def _load_ir_page(path: Path) -> dict[str, Any]:

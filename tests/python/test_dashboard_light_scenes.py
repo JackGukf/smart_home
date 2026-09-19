@@ -238,11 +238,11 @@ def _client(tmp_path):
 
 def test_the_saved_list_round_trips_and_is_validated(tmp_path) -> None:
     client = _client(tmp_path)
-    assert client.get("/api/light-scenes").json() == {"include": [], "exclude": []}
+    assert client.get("/api/light-scenes").json() == {"include": [], "exclude": [], "entities": []}
 
     saved = client.put("/api/light-scenes", json={"include": ["dev:192.168.0.165", "dev:192.168.0.142"],
                                                   "exclude": ["dev:matter:1"]}).json()
-    assert saved == {"include": ["dev:192.168.0.142", "dev:192.168.0.165"], "exclude": ["dev:matter:1"]}
+    assert saved == {"include": ["dev:192.168.0.142", "dev:192.168.0.165"], "exclude": ["dev:matter:1"], "entities": []}
     assert client.get("/api/light-scenes").json() == saved
 
     assert client.put("/api/light-scenes", json={"include": ["192.168.0.142"]}).status_code == 400
