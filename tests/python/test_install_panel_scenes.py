@@ -58,9 +58,18 @@ def test_movie_mode_is_the_owners_decision():
 
 def test_movie_mode_turns_the_room_dark_after_the_projector_is_on():
     steps = scenes.scripts()["movie_mode"]["sequence"]
-    delay = next(i for i, s in enumerate(steps) if "delay" in s)
-    assert all(s.get("action") == "switch.turn_on" for s in steps[:delay])
-    assert all(s.get("action") != "switch.turn_on" for s in steps[delay + 1:])
+    last_on = max(i for i, s in enumerate(steps) if s.get("action") == "switch.turn_on")
+    assert "delay" in steps[last_on + 1]
+    assert all(s.get("action") != "switch.turn_on" for s in steps[last_on + 1:])
+
+
+def test_the_ir_codes_go_out_one_at_a_time():
+    """Projector, Fire TV and Z906 share one IR blaster: a pause between each."""
+    steps = scenes.scripts()["movie_mode"]["sequence"]
+    kinds = ["on" if s.get("action") == "switch.turn_on" else "wait" if "delay" in s else "other"
+             for s in steps[:6]]
+    assert kinds == ["on", "wait", "on", "wait", "on", "wait"]
+    assert steps[1]["delay"]["seconds"] >= 1
 
 
 def test_the_ir_cabinet_light_is_gone():

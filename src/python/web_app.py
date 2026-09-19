@@ -100,6 +100,11 @@ DEFAULT_AREAS = [
     {"id": "utility-room", "name": "Utility Room", "icon": "tools"},
 ]
 DEFAULT_DEVICE_GROUPS_PATH = PROJECT_ROOT / "dashboard_device_groups.json"
+# The IR remotes page's own settings - its name, icon and colour, and which
+# remotes it hides (Manage / Edit on that page). Not a device group: its remotes
+# are senders, not devices with a state, so they stay out of areas and groups.
+DEFAULT_IR_PAGE_PATH = PROJECT_ROOT / "dashboard_ir_page.json"
+IR_PAGE_DEFAULT = {"name": "IR remotes", "icon": "device-remote", "color": "pink", "hidden": []}
 # One JSON object per line, appended. A log is append-only and read newest-first,
 # which is exactly what JSONL is good at, and it survives a restart -- which
 # matters because deploy-dashboard.sh restarts this service on every deploy, so
@@ -539,6 +544,21 @@ class SensorHistoryRequest(BaseModel):
     hours: int = 24
 
 
+class IRPageUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=40)
+    icon: str | None = None
+    color: str | None = None
+    hidden: list[str] | None = Field(default=None, max_length=64)
+
+
+class NightLightsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    after: str = Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+
+
 class CastRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -632,6 +652,7 @@ def create_app(
     history_service: sensor_history.SensorHistory | None = None,
     status_service: status_overview.StatusOverview | None = None,
     memory_service: house_memory.SummaryCache | None = None,
+    ir_page_path: Path | None = None,
     cast_runner: Callable[..., subprocess.CompletedProcess] | None = None,
     cast_status_path: Path | None = None,
 ) -> FastAPI:
@@ -657,6 +678,7 @@ def create_app(
     app.state.cast_status_path = cast_status_path
     app.state.cast_switch = None
     app.state.ir_store = tuya_ir.ButtonStore(config_path.parent / "ir_buttons.json")
+    app.state.ir_page_path = ir_page_path or DEFAULT_IR_PAGE_PATH
     app.state.ir_bridge = None
     app.state.ir_hub_loader = lambda: tuya_ir.load_hubs(app.state.config_path)
     # One draft at a time. Ollama serialises requests anyway, so a second
@@ -1175,6 +1197,33 @@ def create_app(
         status = dashboard_cast.read_status(app.state.cast_status_path) if state["running"] else None
         return {**state, "status": status}
 
+    @app.get("/api/night-lights")
+    async def night_lights() -> dict[str, Any]:
+        """When the family room's late-night lights-off starts (scripts/install-family-room-late-off.py)."""
+        ha_config = _load_home_assistant_config(app.state.config_path)
+        token = os.getenv(ha_config.token_env)
+        if not token:
+            raise HTTPException(status_code=503, detail="No Home Assistant token")
+        try:
+            state = await asyncio.to_thread(_home_assistant_get, ha_config, token, f"/api/states/{NIGHT_LIGHTS_AFTER_ENTITY}")
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Home Assistant did not answer") from error
+        return {"after": str(state.get("state", ""))[:5], "until": NIGHT_LIGHTS_UNTIL, "entity": NIGHT_LIGHTS_AFTER_ENTITY}
+
+    @app.put("/api/night-lights")
+    async def set_night_lights(request: NightLightsRequest) -> dict[str, Any]:
+        """Move the start time. The automation reads the helper, so this takes effect tonight."""
+        ha_config = _load_home_assistant_config(app.state.config_path)
+        token = os.getenv(ha_config.token_env)
+        if not token:
+            raise HTTPException(status_code=503, detail="No Home Assistant token")
+        try:
+            await asyncio.to_thread(_home_assistant_post, ha_config, token, "/api/services/input_datetime/set_datetime",
+                                    {"entity_id": NIGHT_LIGHTS_AFTER_ENTITY, "time": f"{request.after}:00"})
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Home Assistant did not take the time") from error
+        return {"after": request.after, "until": NIGHT_LIGHTS_UNTIL, "entity": NIGHT_LIGHTS_AFTER_ENTITY}
+
     @app.get("/api/cast")
     async def cast_state() -> dict[str, Any]:
         """Cast to TV: whether it is switched on, and what it is doing."""
@@ -1363,13 +1412,68 @@ def create_app(
         if app.state.ir_bridge is not None:
             app.state.ir_bridge.publish_all()
 
+    def _zigbee_ir_from_home_assistant() -> list[dict[str, Any]]:
+        ha_config = _load_home_assistant_config(app.state.config_path)
+        token = os.getenv(ha_config.token_env)
+        if not token:
+            return []
+        try:
+            return _zigbee_ir_remotes(_home_assistant_get(ha_config, token, "/api/states"))
+        except (OSError, ValueError):
+            return []  # Home Assistant down: the Tuya hubs still show
+
     @app.get("/api/ir/hubs")
     async def ir_hubs() -> dict[str, Any]:
-        hubs = await asyncio.to_thread(app.state.ir_hub_loader)
-        return {"hubs": [{
-            "id": hub.id, "name": hub.name, "host": hub.host,
+        hubs, zigbee = await asyncio.gather(asyncio.to_thread(app.state.ir_hub_loader),
+                                            asyncio.to_thread(_zigbee_ir_from_home_assistant))
+        tuya = [{
+            "id": hub.id, "kind": "tuya", "name": hub.name, "host": hub.host,
             "buttons": [{**b, "entity_id": tuya_ir.entity_id(hub, b["id"])} for b in app.state.ir_store.buttons(hub.id)],
-        } for hub in hubs], "home_assistant": app.state.ir_bridge is not None}
+        } for hub in hubs]
+        return {"hubs": tuya + zigbee, "home_assistant": app.state.ir_bridge is not None,
+                "page": await asyncio.to_thread(_load_ir_page, app.state.ir_page_path)}
+
+    @app.put("/api/ir/page")
+    async def ir_page_update(update: IRPageUpdate) -> dict[str, Any]:
+        """Edit (name, icon, colour) and Manage (which remotes show) on the IR remotes page."""
+        doc = await asyncio.to_thread(_load_ir_page, app.state.ir_page_path)
+        if update.name is not None:
+            name = " ".join(update.name.split())
+            if not name:
+                raise HTTPException(status_code=400, detail="Name cannot be empty")
+            doc["name"] = name
+        if update.icon is not None:
+            doc["icon"] = _validated_icon(update.icon)
+        if update.color is not None:
+            doc["color"] = _validated_color(update.color)
+        if update.hidden is not None:
+            if any(not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", h) for h in update.hidden):
+                raise HTTPException(status_code=400, detail="Unknown remote id")
+            doc["hidden"] = sorted(set(update.hidden))
+        await asyncio.to_thread(_save_ir_page, app.state.ir_page_path, doc)
+        return doc
+
+    @app.post("/api/ir/zigbee/{hub_id}/buttons/{button_id}/{action}")
+    async def ir_zigbee_send(hub_id: str, button_id: str, action: str) -> dict[str, Any]:
+        """Send a Zigbee IR remote's learned code: its channel's On or Off code,
+        through Home Assistant. Only a channel found on a remote just now is sent."""
+        if action not in ("on", "off"):
+            raise HTTPException(status_code=404, detail="Unknown action")
+        remotes = await asyncio.to_thread(_zigbee_ir_from_home_assistant)
+        remote = next((r for r in remotes if r["id"] == hub_id), None)
+        button = next((b for b in (remote or {}).get("buttons", []) if b["id"] == button_id), None)
+        if button is None:
+            raise HTTPException(status_code=404, detail="No such IR button")
+        if not button[action]:
+            raise HTTPException(status_code=409, detail=f"The {action} code of {button['name']} is not learned")
+        ha_config = _load_home_assistant_config(app.state.config_path)
+        token = os.getenv(ha_config.token_env)
+        try:
+            await asyncio.to_thread(_home_assistant_post, ha_config, token, f"/api/services/switch/turn_{action}",
+                                    {"entity_id": button["entity_id"]})
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Home Assistant did not send it") from error
+        return {"status": "sent", "button": button["name"], "action": action}
 
     @app.post("/api/ir/hubs/{hub_id}/learn")
     async def ir_learn(hub_id: str) -> dict[str, Any]:
@@ -3853,6 +3957,59 @@ def _poll_environment_once(app: FastAPI) -> dict[str, Any]:
     return payload
 
 
+# A Zigbee IR remote (the HOBEIAN ZG-IR01 in the family room): Zigbee2MQTT gives
+# each of its channels a switch, whose On and Off each send a learned code, and a
+# select per code saying whether it is learned ("registered"). What marks the
+# device as an IR remote is its "learn IR code" button.
+_ZIGBEE_IR_SWITCH = re.compile(r"^switch\.(0x[0-9a-f]{16})_switch([1-9])$")
+
+
+def _zigbee_ir_remotes(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id = {str(e.get("entity_id")): e for e in states}
+    remotes: dict[str, dict[str, Any]] = {}
+    for entity_id, entity in sorted(by_id.items()):
+        match = _ZIGBEE_IR_SWITCH.match(entity_id)
+        if not match:
+            continue
+        ieee, channel = match.groups()
+        learn = by_id.get(f"button.{ieee}_switch_learn_ir_code")
+        if learn is None:
+            continue
+        remote_name = str((learn.get("attributes") or {}).get("friendly_name") or "")
+        remote_name = re.sub(r"\s*learn ir code$", "", remote_name, flags=re.I).strip() or "IR remote"
+        learned = {code: (by_id.get(f"select.{ieee}_switch{channel}_{code}") or {}).get("state") == "registered"
+                   for code in ("on", "off")}
+        name = str((entity.get("attributes") or {}).get("friendly_name") or f"Switch{channel}")
+        if name.lower().startswith(remote_name.lower() + " "):
+            name = name[len(remote_name) + 1:]
+        remote = remotes.setdefault(ieee, {"id": f"zigbee-{ieee}", "kind": "zigbee", "name": remote_name,
+                                           "host": "Zigbee", "buttons": [], "unlearned": 0})
+        if learned["on"] or learned["off"]:
+            remote["buttons"].append({"id": f"switch{channel}", "name": name, "entity_id": entity_id,
+                                      "on": learned["on"], "off": learned["off"], "state": entity.get("state")})
+        else:
+            remote["unlearned"] += 1
+    for remote in remotes.values():
+        remote["buttons"].sort(key=lambda b: int(b["id"].removeprefix("switch")))
+    return list(remotes.values())
+
+
+def _load_ir_page(path: Path) -> dict[str, Any]:
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    doc = {**IR_PAGE_DEFAULT, **{k: v for k, v in saved.items() if k in IR_PAGE_DEFAULT}}
+    doc["hidden"] = [str(h) for h in doc.get("hidden") or []]
+    return doc
+
+
+def _save_ir_page(path: Path, doc: dict[str, Any]) -> None:
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    temp.replace(path)
+
+
 def _start_cast_switch(app: FastAPI) -> "dashboard_cast.MQTTSwitch | None":
     """Offer Cast to TV to Home Assistant as switch.tv_cast, on a board that has it."""
     try:
@@ -5144,6 +5301,11 @@ _EVENT_REFRESH_DOMAINS = frozenset({"light", "switch"})
 # Home Assistant event (its names must start with "esphome."); only the event
 # streams of trusted hosts - the wall panel - subscribe to it, so a phone or the
 # PC never changes view on its own.
+# The family room's late-night lights-off (scripts/install-family-room-late-off.py):
+# its start time is this helper, set from Settings -> Night lights.
+NIGHT_LIGHTS_AFTER_ENTITY = "input_datetime.family_room_lights_off_after"
+NIGHT_LIGHTS_UNTIL = "06:00"
+
 WALL_PANEL_VIEW_EVENT = "esphome.wall_panel_show_view"
 WALL_PANEL_VIEWS = frozenset({"home", "cameras", "alarm", "devices", "climate", "status"})
 # The same remote also scrolls the wall panel's screen and steps the Home

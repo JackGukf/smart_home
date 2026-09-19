@@ -73,6 +73,19 @@ CABINET_LEDS = ["light.0x286847fffe5eb711", "light.0x64028ffffe64de32"]
 CABINET_PLUG = "switch.family_room_cabinet_led"
 
 
+IR_PAUSE_S = 1
+
+
+def ir_on_with_pauses() -> list[dict]:
+    steps: list[dict] = []
+    for entity, name in MOVIE_ON_IR:
+        if steps:
+            steps.append({"delay": {"seconds": IR_PAUSE_S}})
+        steps.append({"alias": f"{name} on (IR remote family room)", "action": "switch.turn_on",
+                      "target": {"entity_id": entity}})
+    return steps
+
+
 def scripts() -> dict[str, dict]:
     return {
         "panel_all_lights_on": {
@@ -95,8 +108,9 @@ def scripts() -> dict[str, dict]:
                             "then the family room and kitchen lights, the family room LED, both "
                             "IKEA cabinet LEDs and the cabinet LED plug off."),
             "sequence": [
-                *({"alias": f"{name} on (IR remote family room)", "action": "switch.turn_on",
-                   "target": {"entity_id": entity}} for entity, name in MOVIE_ON_IR),
+                # One IR blaster sends all three: a pause between them, or a code
+                # sent while the last is still going out can be lost.
+                *ir_on_with_pauses(),
                 {"delay": {"seconds": 2}},
                 *({"alias": f"{name} off, if on",
                    "if": [{"condition": "state", "entity_id": entity, "state": "on"}],

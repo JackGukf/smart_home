@@ -466,8 +466,10 @@ function renderDevicesOverview() {
      (device-group-tile-accent), then the name, how many, and a summary. */
   /* IR remotes is not a device group - its hubs are senders, not devices with
      a state - so its tile follows the groups' rather than being one of them. */
+  const irIcon = GROUP_ICON_PATTERN.test(String(irPage.icon || "")) ? irPage.icon : "device-remote";
   const irTile = latestIRHubs.length
-    ? [{ view: "ir", label: "IR remotes", icon: "ti-device-remote", count: latestIRHubs.length, summary: irSummary() }]
+    ? [{ view: "ir", label: irPage.name || "IR remotes", icon: `ti-${irIcon}`, count: visibleIRHubs().length,
+         summary: irSummary(), color: GROUP_COLOR_VARS[irPage.color] || GROUP_COLOR_VARS.pink }]
     : [];
   grid.innerHTML = [...deviceGroupTileData(), ...irTile].map((tile) => `
     <button type="button" class="app-tile device-group-tile" data-goto-view="${escapeHtml(tile.view)}"${tile.color ? ` style="--group-color:${tile.color}"` : ""}>
@@ -1232,6 +1234,21 @@ async function loadHumidifiers() {
    not something to depend on. Each learned button is also a button entity in
    Home Assistant, so a script can press it. */
 let latestIRHubs = [];
+/* The page's own settings: name, icon, colour, hidden remotes (Manage / Edit). */
+const IR_PAGE_ID = "ir";
+const MANAGE_GROUP_HINT = "Tick a device to include it in this group. Devices matched by the group's rule are ticked automatically; your changes are stored as exceptions.";
+const MANAGE_IR_HINT = "Tick a remote to show it on this page. A hidden remote keeps working - Movie mode and Home Assistant still use it.";
+
+function setManageHint(text) {
+  const hint = document.querySelector("#manageDevicesHint");
+  if (hint) hint.textContent = text;
+}
+let irPage = { name: "IR remotes", icon: "device-remote", color: "pink", hidden: [] };
+
+function visibleIRHubs() {
+  const hidden = new Set(irPage.hidden || []);
+  return latestIRHubs.filter((hub) => !hidden.has(hub.id));
+}
 const irLearning = new Map();   // hub id -> { phase, code, error }
 const irMessages = new Map();   // hub id -> the last thing that went wrong
 
@@ -1244,7 +1261,7 @@ function irMessage(hubId, text) {
 const IR_LEARN_SECONDS = 20;
 
 function irSummary() {
-  const buttons = latestIRHubs.reduce((sum, hub) => sum + hub.buttons.length, 0);
+  const buttons = visibleIRHubs().reduce((sum, hub) => sum + hub.buttons.length, 0);
   return `${buttons} button${buttons === 1 ? "" : "s"} learned`;
 }
 
@@ -1254,7 +1271,36 @@ function irNameSuggestions(hub) {
   return [...base, "Power", "On", "Off"].slice(0, 5);
 }
 
+/* A Zigbee IR remote: its channels were learned in Zigbee2MQTT, each with an
+   On and an Off code, sent through Home Assistant. Learning stays there. */
+function zigbeeIRCard(hub) {
+  const rows = hub.buttons.map((b) => {
+    const send = (action) => `<button type="button" class="ir-press ir-zigbee-send"
+        data-ir-zigbee="${escapeHtml(hub.id)}" data-ir-channel="${escapeHtml(b.id)}" data-ir-action="${action}"
+        ${b[action] ? "" : "disabled"} title="${b[action] ? `Send ${action}` : `The ${action} code is not learned`}">
+        <i class="ti ti-player-play" aria-hidden="true"></i><span>${action === "on" ? "On" : "Off"}</span></button>`;
+    return `<div class="ir-button ir-zigbee-row">
+      <span class="ir-zigbee-name">${escapeHtml(b.name)}</span>
+      ${send("on")}${send("off")}
+      <code class="ir-entity" title="In Home Assistant">${escapeHtml(b.entity_id)}</code>
+    </div>`;
+  }).join("");
+  const problem = irMessages.get(hub.id);
+  const unlearned = hub.unlearned
+    ? `<p class="ir-note">${hub.unlearned} channel${hub.unlearned === 1 ? "" : "s"} not learned. Learn in Zigbee2MQTT.</p>` : "";
+  return `<article class="ir-card" data-ir-card="${escapeHtml(hub.id)}">
+    <div class="ir-card-head">
+      <span class="ir-card-icon"><i class="ti ti-device-remote" aria-hidden="true"></i></span>
+      <span><h3>${escapeHtml(hub.name)}</h3><small>Zigbee IR remote · ${hub.buttons.length} learned</small></span>
+    </div>
+    ${hub.buttons.length ? `<div class="ir-buttons">${rows}</div>` : `<p class="ir-note">No buttons learned yet.</p>`}
+    ${problem ? `<p class="ir-note warn">${escapeHtml(problem)}</p>` : ""}
+    ${unlearned}
+  </article>`;
+}
+
 function irHubCard(hub) {
+  if (hub.kind === "zigbee") return zigbeeIRCard(hub);
   const learning = irLearning.get(hub.id) || { phase: "idle" };
   const buttons = hub.buttons.map((b) => `
     <div class="ir-button">
@@ -1297,19 +1343,76 @@ function irHubCard(hub) {
 }
 
 function renderIRHubs() {
+  const title = document.querySelector("#irPageTitle");
+  if (title) title.textContent = irPage.name || "IR remotes";
   const grid = document.querySelector("#irGrid");
   if (!grid) return;
-  grid.innerHTML = latestIRHubs.length
-    ? latestIRHubs.map(irHubCard).join("")
-    : `<div class="empty">No Tuya IR hubs with a local key are configured.</div>`;
+  const hubs = visibleIRHubs();
+  grid.innerHTML = hubs.length
+    ? hubs.map(irHubCard).join("")
+    : latestIRHubs.length
+      ? `<div class="empty">Every remote is hidden. Manage shows them again.</div>`
+      : `<div class="empty">No IR remotes: no Tuya IR hub with a local key, and no Zigbee IR remote in Home Assistant.</div>`;
 }
 
 async function loadIRHubs() {
   const payload = await requestJson("/api/ir/hubs");
   latestIRHubs = payload.hubs || [];
+  if (payload.page) irPage = payload.page;
   renderIRHubs();
   renderDevicesOverview();
 }
+
+/* Manage: which remotes the page shows. The Manage dialog of the device groups,
+   with the page's remotes in it instead of devices. */
+function openIRManage() {
+  manageDevicesGroupId = null;
+  const title = document.querySelector("#manageDevicesTitle");
+  if (title) title.textContent = `Manage — ${irPage.name || "IR remotes"}`;
+  setManageHint(MANAGE_IR_HINT);
+  renderIRManageList();
+  const modal = document.querySelector("#manageDevicesModal");
+  if (modal) modal.hidden = false;
+}
+
+function renderIRManageList() {
+  const list = document.querySelector("#manageDevicesList");
+  if (!list) return;
+  const hidden = new Set(irPage.hidden || []);
+  list.innerHTML = latestIRHubs.map((hub) => `
+    <div class="assign-device-row">
+      <span class="assign-device-icon"><i class="ti ti-device-remote"></i></span>
+      <span class="assign-device-name">${escapeHtml(hub.name)}</span>
+      <span class="manage-device-why">${hub.kind === "zigbee" ? "Zigbee" : "Tuya"}</span>
+      <input class="ir-manage-check" type="checkbox" data-ir-manage-hub="${escapeHtml(hub.id)}"
+             ${hidden.has(hub.id) ? "" : "checked"} aria-label="Show ${escapeHtml(hub.name)}">
+    </div>`).join("");
+}
+
+async function saveIRPage(update) {
+  irPage = await requestJson("/api/ir/page", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(update),
+  });
+  renderIRHubs();
+  renderDevicesOverview();
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-ir-manage]")) openIRManage();
+});
+
+document.addEventListener("change", async (event) => {
+  const box = event.target.closest(".ir-manage-check");
+  if (!box) return;
+  const hidden = new Set(irPage.hidden || []);
+  if (box.checked) hidden.delete(box.dataset.irManageHub); else hidden.add(box.dataset.irManageHub);
+  try {
+    await saveIRPage({ hidden: [...hidden] });
+  } catch (error) {
+    box.checked = !box.checked;   // the save failed: show what is really saved
+    logActivity(`IR remotes not saved: ${apiErrorDetail(error)}`, "warn");
+  }
+});
 
 async function irLearn(hubId) {
   irLearning.set(hubId, { phase: "waiting" });
@@ -1354,6 +1457,23 @@ document.addEventListener("click", async (event) => {
       form?.querySelector(".ir-learn-ok")?.replaceChildren(document.createTextNode(`Test failed: ${apiErrorDetail(error)}`));
     }
     test.disabled = false;
+    return;
+  }
+
+  const zigbee = event.target.closest("[data-ir-zigbee]");
+  if (zigbee) {
+    const { irZigbee: hubId, irChannel: channel, irAction: action } = zigbee.dataset;
+    zigbee.classList.add("sending");
+    try {
+      await requestJson(`/api/ir/zigbee/${encodeURIComponent(hubId)}/buttons/${encodeURIComponent(channel)}/${encodeURIComponent(action)}`, { method: "POST" });
+      irMessages.delete(hubId);
+      zigbee.classList.remove("sending");
+      zigbee.classList.add("sent");
+      setTimeout(() => zigbee.classList.remove("sent"), 900);
+    } catch (error) {
+      zigbee.classList.remove("sending");
+      irMessage(hubId, apiErrorDetail(error));
+    }
     return;
   }
 
@@ -4943,6 +5063,7 @@ function openManageDevicesModal(groupId) {
   manageDevicesGroupId = groupId;
   const title = document.querySelector("#manageDevicesTitle");
   if (title) title.textContent = `Manage Devices — ${group.name}`;
+  setManageHint(MANAGE_GROUP_HINT);
   renderManageDevicesList();
   const modal = document.querySelector("#manageDevicesModal");
   if (modal) modal.hidden = false;
@@ -5043,7 +5164,11 @@ function renderGroupColorPicker() {
 }
 
 function openGroupModal(groupId) {
-  const group = groupId ? findDeviceGroup(groupId) : null;
+  /* The IR remotes page is not a device group, but Edit works the same: name,
+     icon and colour, saved to the page's own settings. */
+  const group = groupId === IR_PAGE_ID
+    ? { id: IR_PAGE_ID, name: irPage.name, icon: irPage.icon, color: irPage.color }
+    : groupId ? findDeviceGroup(groupId) : null;
   groupModalEditingId = group ? group.id : null;
   groupModalIcon = group ? group.icon : "device-desktop";
   groupModalColor = group ? group.color : "slate";
@@ -5055,7 +5180,7 @@ function openGroupModal(groupId) {
   const save = document.querySelector("#groupSave");
   if (save) save.textContent = group ? "Save" : "Create Group";
   const del = document.querySelector("#groupDelete");
-  if (del) del.hidden = !group;
+  if (del) del.hidden = !group || group.id === IR_PAGE_ID;   /* the page cannot be deleted */
   const error = document.querySelector("#groupModalError");
   if (error) error.hidden = true;
 
@@ -5080,6 +5205,16 @@ function showGroupModalError(message) {
 async function submitGroupModal() {
   const name = (document.querySelector("#groupNameInput")?.value || "").trim();
   const payload = { name, icon: groupModalIcon, color: groupModalColor };
+  if (groupModalEditingId === IR_PAGE_ID) {
+    try {
+      await saveIRPage(payload);
+    } catch (error) {
+      showGroupModalError(apiErrorDetail(error));
+      return;
+    }
+    closeGroupModal();
+    return;
+  }
   try {
     if (groupModalEditingId) {
       await requestJson(`/api/device-groups/${encodeURIComponent(groupModalEditingId)}`, {
@@ -8496,6 +8631,12 @@ function activateView(viewName) {
   if (viewName === "news") {
     loadNewsSettings().catch((error) => console.error(error));
   }
+  if (viewName === "nightlights") {
+    loadNightLights().catch((error) => {
+      const status = document.querySelector("#nightLightsStatus");
+      if (status) status.textContent = `Not available: ${apiErrorDetail(error)}`;
+    });
+  }
   if (viewName === "cast") {
     loadCast().catch((error) => console.error(error));
   } else {
@@ -8537,7 +8678,10 @@ function activateView(viewName) {
   /* DEVICE_GROUP_VIEWS is built from the persisted groups, so the synthetic
      Unassigned bucket is never in it. Keying only off that list left it with no
      back button and no rendered panel. */
-  if (DEVICE_GROUP_VIEWS.includes(viewName) || isDynamicGroup) {
+  if (viewName === "ir") {
+    /* Not a device group, but reached from the Devices overview like one. */
+    setDevicesBackVisible(arrivedFromDevices);
+  } else if (DEVICE_GROUP_VIEWS.includes(viewName) || isDynamicGroup) {
     setDevicesBackVisible(arrivedFromDevices);
     if (!document.querySelector(`[data-view-panel="${CSS.escape(viewName)}"] .device-grid, [data-view-panel="${CSS.escape(viewName)}"] .ambient-grid`)) {
       renderDynamicGroupPanel(viewName);
@@ -9970,7 +10114,7 @@ function setYoutubeCovering(on) {
    setting stands, so the page answers most questions without opening one. */
 /* An app's page keeps its launcher lit in the sidebar. */
 const PAGE_PARENTS = {
-  theme: "settings", startup: "settings", news: "settings", cast: "settings", about: "settings", homecards: "settings",
+  theme: "settings", startup: "settings", news: "settings", cast: "settings", nightlights: "settings", about: "settings", homecards: "settings",
   youtube: "media", music: "media",
   ir: "devices",
 };
@@ -9994,6 +10138,10 @@ async function renderSettingsApps() {
   } catch {}
   try {
     setSub("#settingsCastSub", castSummary(castDoc || await requestJson("/api/cast")));
+  } catch {}
+  try {
+    const night = await requestJson("/api/night-lights");
+    setSub("#settingsNightSub", `Off after ${formatClock(night.after)}`);
   } catch {}
   try {
     const response = await fetch(`/static/build_info.json?ts=${Date.now()}`, { cache: "no-store" });
@@ -10081,6 +10229,43 @@ async function loadCast() {
       castDoc = await requestJson("/api/cast").catch(() => castDoc);
     }
     renderCast();
+  });
+})();
+
+/* ── Night lights ──
+   The start time of the family room's late-night lights-off, kept in Home
+   Assistant (input_datetime) so the automation reads it every night. */
+function formatClock(hhmm) {
+  const [h, m] = String(hhmm || "").split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm || "";
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+
+async function loadNightLights() {
+  const doc = await requestJson("/api/night-lights");
+  const input = document.querySelector("#nightLightsAfter");
+  if (input && doc.after) input.value = doc.after;
+  const status = document.querySelector("#nightLightsStatus");
+  if (status) status.textContent = `Now: off after ${formatClock(doc.after)}, until ${formatClock(doc.until)}.`;
+}
+
+(function initNightLights() {
+  const input = document.querySelector("#nightLightsAfter");
+  if (!input) return;
+  input.addEventListener("change", async () => {
+    const status = document.querySelector("#nightLightsStatus");
+    if (!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(input.value)) return;
+    if (status) status.textContent = "Saving…";
+    try {
+      const doc = await requestJson("/api/night-lights", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ after: input.value }),
+      });
+      if (status) status.textContent = `Saved: off after ${formatClock(doc.after)}, from tonight.`;
+    } catch (error) {
+      if (status) status.textContent = `Not saved: ${apiErrorDetail(error)}`;
+    }
   });
 })();
 

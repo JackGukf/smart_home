@@ -2141,7 +2141,7 @@ lvgl:
               vars: {key: all_off, script: script.panel_all_lights_off, title: "ALL LIGHTS OFF", sub: "6 lights", art: bulb_off, toast: "All 6 lights off", y: 189}
             - !include
               file: panel/card-scene.yaml
-              vars: {key: movie, script: script.movie_mode, title: "MOVIE MODE", sub: "Living room switch 2 and cabinet LED off, ambient light on", art: movie, toast: "Movie mode: living room dark, ambient light on", y: 302}
+              vars: {key: movie, script: script.movie_mode, title: "MOVIE MODE", sub: "Projector, Fire TV, Z906 on; family room lights off", art: movie, toast: "Movie mode: projector on, family room dark", y: 302}
             - label:
                 id: scene_toast
                 x: 28

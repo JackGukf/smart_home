@@ -790,6 +790,10 @@ globalThis.latestDeviceGroups = [
   { id: 'lights', name: 'Lights', icon: 'bulb', color: 'amber', kinds: ['light'] },
 ];
 globalThis.latestDeviceGroupOverrides = {};
+// The IR remotes page shares this modal for Edit (app.js, IR_PAGE_ID).
+globalThis.IR_PAGE_ID = 'ir';
+globalThis.irPage = { name: 'IR remotes', icon: 'device-remote', color: 'pink', hidden: [] };
+globalThis.saveIRPage = async (update) => { globalThis.irPageSaved = update; };
 
 // Minimal DOM stub for every element openGroupModal/submitGroupModal touch.
 // The icon/colour picker elements need a no-op querySelectorAll because
@@ -1354,3 +1358,32 @@ activateView('cameras');
 console.log(JSON.stringify({ backVisible }));
 """
     assert _run_node(script, tmp_path)["backVisible"] is False
+
+
+def test_edit_on_the_ir_remotes_page_saves_the_page_not_a_group(tmp_path: Path) -> None:
+    """IR remotes is not a device group: Edit there must save the page's own
+    settings and must never PATCH or POST /api/device-groups, nor offer Delete."""
+    script = f"""
+{RESOLVE_JS}
+{GROUP_MODAL_JS}
+const calls = [];
+globalThis.requestJson = async (url, options) => {{ calls.push(url); return {{}}; }};
+globalThis.loadDeviceGroups = async () => {{}};
+globalThis.loadDevices = () => Promise.resolve();
+
+openGroupModal('ir');
+const opened = {{ title: groupModalEls['#groupModalTitle'].textContent,
+                  name: groupModalEls['#groupNameInput'].value,
+                  deleteHidden: groupModalEls['#groupDelete'].hidden }};
+groupModalEls['#groupNameInput'].value = 'Remotes';
+submitGroupModal().then(() => {{
+  console.log(JSON.stringify({{ calls, opened, saved: globalThis.irPageSaved,
+                                closed: groupModalEls['#groupModal'].hidden }}));
+}});
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["opened"] == {"title": "Edit IR remotes", "name": "IR remotes", "deleteHidden": True}
+    assert result["calls"] == []
+    assert result["saved"] == {"name": "Remotes", "icon": "device-remote", "color": "pink"}
+    assert result["closed"] is True

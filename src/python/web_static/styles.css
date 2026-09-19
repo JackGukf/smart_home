@@ -1678,6 +1678,20 @@ aside {
 
 .startup-view-select option { color: #1b1b1f; background: #f4f4f6; }
 
+/* Night lights' start time: the startup select's look, for a time input. */
+.settings-time {
+  flex-shrink: 0;
+  min-width: 120px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  color-scheme: dark;
+}
+
 .activity-item { display: flex; align-items: center; gap: 10px; }
 
 .activity-dot {
@@ -6882,6 +6896,16 @@ header > .header-right { flex-shrink: 0; }
 .ir-press:hover { border-color: var(--pink); }
 .ir-press.sending { opacity: 0.6; }
 .ir-press.sent { border-color: var(--green); background: rgba(52, 211, 153, 0.12); }
+/* A Zigbee remote's channel: its name, then its learned On and Off codes. A
+   full row each, since a channel is two buttons. grid-gap, not gap: the wall
+   panel's older Safari. */
+.ir-zigbee-row { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-gap: 6px 8px; align-items: center; }
+.ir-zigbee-row .ir-zigbee-name, .ir-zigbee-row .ir-entity { grid-column: 1 / -1; }
+.ir-zigbee-row .ir-entity { margin-top: -2px; }
+.ir-zigbee-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--text); }
+.ir-zigbee-row .ir-press { min-height: 40px; justify-content: center; }
+.ir-press:disabled { opacity: 0.35; cursor: not-allowed; }
+.ir-press:disabled:hover { border-color: var(--border-hover); }
 .ir-delete {
   position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; padding: 0;
   border-radius: 50%; border: 1px solid var(--border-hover); background: var(--card);

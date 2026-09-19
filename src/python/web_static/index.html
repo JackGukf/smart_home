@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.9.0/dist/tabler-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=build267">
+  <link rel="stylesheet" href="/static/styles.css?v=build270">
 </head>
 <body>
 
@@ -461,12 +461,18 @@
          entity in Home Assistant, so scripts such as Movie mode can press it. -->
     <div class="view-panel" data-view-panel="ir">
       <div class="section-header">
-        <span class="section-title">IR remotes</span>
+        <span class="section-title" id="irPageTitle">IR remotes</span>
         <div class="section-actions">
           <button class="command device-back-btn" type="button" data-back-to-devices hidden>
             <i class="ti ti-arrow-left" aria-hidden="true"></i> Devices
           </button>
-          <span class="section-meta">Tuya IR hubs · local control</span>
+          <button class="command" type="button" data-ir-manage>
+            <i class="ti ti-list-check" aria-hidden="true"></i> Manage
+          </button>
+          <button class="command" type="button" data-edit-group="ir">
+            <i class="ti ti-pencil" aria-hidden="true"></i> Edit
+          </button>
+          <span class="section-meta">Tuya and Zigbee IR remotes</span>
         </div>
       </div>
       <div class="ir-grid" id="irGrid">
@@ -874,6 +880,11 @@
           <span class="app-tile-name">Cast to TV</span>
           <span class="app-tile-sub" id="settingsCastSub">Off</span>
         </button>
+        <button type="button" class="app-tile" data-goto-view="nightlights" style="--app-a:#6366f1;--app-b:#312e81">
+          <span class="app-tile-icon"><i class="ti ti-moon-stars" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Night lights</span>
+          <span class="app-tile-sub" id="settingsNightSub">Family room</span>
+        </button>
         <button type="button" class="app-tile" data-goto-view="about" style="--app-a:#64748b;--app-b:#94a3b8">
           <span class="app-tile-icon"><i class="ti ti-info-circle" aria-hidden="true"></i></span>
           <span class="app-tile-name">About</span>
@@ -1043,6 +1054,23 @@
         </div>
       </div>
       <p class="settings-status" id="castStatus" aria-live="polite"></p>
+    </div>
+
+    <!-- ── NIGHT LIGHTS ──
+         When the family room's late-night lights-off starts: a Home Assistant
+         time helper the automation reads (scripts/install-family-room-late-off.py). -->
+    <div class="view-panel" data-view-panel="nightlights">
+      <div class="section-header">
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">Night lights</span></span>
+        <span class="section-meta">Family room · saved in Home Assistant</span>
+      </div>
+      <div class="settings-group" id="nightLightsSettings">
+        <div class="settings-row">
+          <div class="settings-label"><strong>Turn off after</strong><small>From this time until 6 AM, when the kitchen and family room sensor has seen nobody for 10 minutes, the family room LED, both cabinet LEDs and the cabinet LED plug go off</small></div>
+          <input type="time" class="settings-time" id="nightLightsAfter" step="300" value="23:30">
+        </div>
+      </div>
+      <p class="settings-status" id="nightLightsStatus" aria-live="polite"></p>
     </div>
 
     <!-- ── ABOUT VIEW ── -->
@@ -1273,7 +1301,7 @@
         <i class="ti ti-x"></i>
       </button>
     </div>
-    <p class="assign-modal-hint">Tick a device to include it in this group. Devices matched by the group's rule are ticked automatically; your changes are stored as exceptions.</p>
+    <p class="assign-modal-hint" id="manageDevicesHint">Tick a device to include it in this group. Devices matched by the group's rule are ticked automatically; your changes are stored as exceptions.</p>
     <div class="assign-device-list" id="manageDevicesList"></div>
     <div class="modal-actions">
       <button class="btn-primary" id="manageDevicesDone" type="button">Done</button>
@@ -1420,6 +1448,6 @@
   </div>
   <div class="weather-dropdown-forecast" id="weatherForecast"></div>
 </div>
-<script src="/static/app.js?v=build267"></script>
+<script src="/static/app.js?v=build270"></script>
 </body>
 </html>
