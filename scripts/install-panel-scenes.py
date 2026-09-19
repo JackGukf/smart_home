@@ -6,8 +6,14 @@ from a tap on the panel, from "Okay Nabu, movie mode" and from the dashboard,
 and is changed in one place (docs/design/voice-panel-screens.html, Decisions).
 
     All lights on / off   the six lights on the panel's Home page
-    Movie mode            Living room switch 2 and cabinet LED off,
-                          Living room ambient light on
+    Movie mode            projector, Fire TV and Z906 on (family room IR remote);
+                          the family room and kitchen lights, the family room LED,
+                          both IKEA cabinet LEDs and the IR cabinet light off
+
+This file is the source of Movie mode: --apply replaces what is in Home
+Assistant with what is here, so a change made only in Home Assistant's UI is
+lost on the next run. (Until 2026-09-18 this held an older Movie mode than the
+live one, and running it would have rolled the live one back.)
 
 Written through Home Assistant's config API, like install-living-room-lighting.py:
 the same validator the UI uses runs first and scripts are reloaded, so a bad
@@ -43,9 +49,24 @@ LIGHTS = [
     "light.stick_s3",
 ]
 
-MOVIE_OFF_LIGHTS = ["light.living_room_living_room_switch_2"]
-MOVIE_OFF_SWITCHES = ["switch.living_room_cabinet_led"]
-MOVIE_ON_LIGHTS = ["light.h6076"]  # Living room ambient light (Govee)
+# The family room IR remote's learned switches (a Zigbee IR blaster).
+IR_REMOTE = "switch.0xa4c1380c14c64266"
+MOVIE_ON_IR = [
+    (f"{IR_REMOTE}_switch1", "Projector"),
+    (f"{IR_REMOTE}_switch2", "Fire TV Stick"),
+    (f"{IR_REMOTE}_switch3", "Logitech Z906"),
+]
+# Switched off only if on: a TP-Link switch's "off" to an off switch is a wasted
+# round trip that can time out. The TP-Link entities, not the Matter bridge's
+# "_2" copies.
+MOVIE_OFF_IF_ON = [
+    ("light.family_room_switch", "Family room switch"),
+    ("light.kitchen_light_switch", "Kitchen light switch"),
+]
+# The two IKEA TRADFRI LED drivers in the family room cabinet (Zigbee, added
+# 2026-09-18). Zigbee entity ids that start with a digit: fine in a target,
+# never write them as states.light.0x... in a template.
+CABINET_LEDS = ["light.0x286847fffe5eb711", "light.0x64028ffffe64de32"]
 
 
 def scripts() -> dict[str, dict]:
@@ -66,13 +87,40 @@ def scripts() -> dict[str, dict]:
             "alias": "Movie mode",
             "icon": "mdi:movie-open",
             "mode": "single",
+            "description": ("Projector, Fire TV and the Z906 on through the family room IR remote; "
+                            "then the family room and kitchen lights, the family room LED, both "
+                            "cabinet LEDs and the cabinet light off."),
             "sequence": [
-                {"action": "light.turn_off", "target": {"entity_id": MOVIE_OFF_LIGHTS}},
-                {"action": "switch.turn_off", "target": {"entity_id": MOVIE_OFF_SWITCHES}},
-                {"action": "light.turn_on", "target": {"entity_id": MOVIE_ON_LIGHTS}},
+                *({"alias": f"{name} on (IR remote family room)", "action": "switch.turn_on",
+                   "target": {"entity_id": entity}} for entity, name in MOVIE_ON_IR),
+                {"delay": {"seconds": 2}},
+                *({"alias": f"{name} off, if on",
+                   "if": [{"condition": "state", "entity_id": entity, "state": "on"}],
+                   "then": [{"action": "light.turn_off", "target": {"entity_id": entity}}]}
+                  for entity, name in MOVIE_OFF_IF_ON),
+                {"alias": "Family room LED off", "action": "light.turn_off",
+                 "target": {"entity_id": "light.family_room_led"}},
+                {"alias": "Cabinet LEDs off (IKEA upper and lower)", "action": "light.turn_off",
+                 "target": {"entity_id": CABINET_LEDS}},
+                # Not learned yet (docs/handoff-2026-09-18-dashboard-and-learning.md,
+                # open item 1): until it is, this step fails and the script goes on.
+                {"alias": "Cabinet light off (Smart IR Cabinet)", "action": "button.press",
+                 "continue_on_error": True,
+                 "target": {"entity_id": "button.smart_ir_cabinet_cabinet_light_off"}},
             ],
         },
     }
+
+
+def describe_step(step: dict) -> str:
+    if "delay" in step:
+        return f"wait {step['delay'].get('seconds', 0)} s"
+    if "if" in step:
+        inner = step["then"][0]
+        return f"if {step['if'][0]['entity_id']} is on: {describe_step(inner)}"
+    targets = step["target"]["entity_id"]
+    targets = targets if isinstance(targets, list) else [targets]
+    return f"{step['action']}: {', '.join(targets)}"
 
 
 def load_dotenv(path: Path) -> None:
@@ -114,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     for script_id, body in scripts().items():
         print(f"\nscript.{script_id}  ({body['alias']})")
         for step in body["sequence"]:
-            print(f"    {step['action']}: {', '.join(step['target']['entity_id'])}")
+            print(f"    {describe_step(step)}")
         if not args.apply:
             continue
         try:
