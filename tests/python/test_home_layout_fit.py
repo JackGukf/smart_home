@@ -288,10 +288,11 @@ def test_weather_scales_with_its_own_height_rather_than_clipping() -> None:
 def test_weather_keeps_enough_rows_to_render_in_both_layouts() -> None:
     """The clock and today need about 150px; the week strip goes first below
     that (its container query), which is the owner's 2026-09-19 layout: a
-    short Weather beside Climate and Quick actions. Four of twenty rows on the
-    wall panel, and four of fourteen on a small screen, where the weather
-    icon's floor is (see the test above)."""
-    assert _default_layout()["weather"]["h"] == 4
+    short Weather beside Climate and Quick actions. Five of twenty rows on the
+    wall panel - five, so Quick actions beside it shows all four of its
+    buttons - and four of fourteen on a small screen, where the weather icon's
+    floor is (see the test above)."""
+    assert _default_layout()["weather"]["h"] == 5
     assert _two_column_layout()["weather"]["h"] == 4
 
 
@@ -360,3 +361,9 @@ def test_hiding_the_overview_actually_hides_it() -> None:
     assert guard < rule, "the guard must come before the display rule"
     assert rule - guard < 400, "the guard drifted away from the rule it guards"
     assert "display: none" in css[guard:rule]
+
+
+def test_quick_actions_is_tall_enough_for_all_four_buttons() -> None:
+    """At four rows only All lights on / off showed on the wall panel; Movie
+    mode and Good night needed a scroll (2026-09-19)."""
+    assert _default_layout()["quick"]["h"] >= 5

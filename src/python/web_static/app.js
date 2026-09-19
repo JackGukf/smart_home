@@ -7561,7 +7561,7 @@ const HOME_CARD_LAYOUT_KEY = "home_card_layout";
    Climate frozen at y4/h8 from an older table, so when Weather shrank to two
    rows the freed row just sat there as a gap. */
 const HOME_CARD_LAYOUT_VERSION_KEY = "home_card_layout_version";
-const HOME_CARD_LAYOUT_VERSION = "2026-09-19-energy";
+const HOME_CARD_LAYOUT_VERSION = "2026-09-19-energy-2";
 const HOME_GRID_COLS = 12;
 /* Fallback row height, used only where the grid has no measurable height yet
    (first paint) or is stacked into a flex column on a phone. Above 1101px the
@@ -7587,16 +7587,18 @@ const HOME_GRID_GAP = 16;
    and change another in the same column to match, or that column stops lining
    up - the totals are the invariant, not the individual numbers.
 
-     left    4 + 6 + 10 = 20     Weather, Energy, Temperatures
-     middle  4 + 16     = 20     (Climate | Quick actions), Camera
+     left    5 + 5 + 10 = 20     Weather, Energy, Temperatures
+     middle  5 + 15     = 20     (Climate | Quick actions), Camera
      right  10 + 10     = 20     Areas, Security
 
-   Two rows are shared across columns. The top row (1-4) is Weather, Climate
-   and Quick actions together, so Energy and Camera both start at row 5. And
+   Two rows are shared across columns. The top row (1-5) is Weather, Climate
+   and Quick actions together, so Energy and Camera both start at row 6. Five
+   rows, not four: at four, Quick actions showed only its first two buttons and
+   Movie mode and Good night needed a scroll (2026-09-19). And
    Temperatures and Security both run 11-20, so the bottom edge lines up across
    the view. Move one and its opposite number has to move with it.
 
-   Weather is four rows here, about 180px on the 1920x1080 wall panel: the
+   Weather is five rows here, about 220px on the 1920x1080 wall panel: the
    clock and today fit, and its container query drops the 7-day strip first,
    which is the owner's picture.
 
@@ -7607,12 +7609,12 @@ const HOME_GRID_GAP = 16;
    will not do is move a card the user has already placed. The version above
    is what makes every screen that never moved a card pick this up. */
 const DEFAULT_HOME_LAYOUT = {
-  weather:     { x: 1, y: 1,  w: 4, h: 4 },
-  climate:     { x: 5, y: 1,  w: 2, h: 4 },
-  quick:       { x: 7, y: 1,  w: 2, h: 4 },
+  weather:     { x: 1, y: 1,  w: 4, h: 5 },
+  climate:     { x: 5, y: 1,  w: 2, h: 5 },
+  quick:       { x: 7, y: 1,  w: 2, h: 5 },
   areas:       { x: 9, y: 1,  w: 4, h: 10 },
-  energy:      { x: 1, y: 5,  w: 4, h: 6 },
-  camera:      { x: 5, y: 5,  w: 4, h: 16 },
+  energy:      { x: 1, y: 6,  w: 4, h: 5 },
+  camera:      { x: 5, y: 6,  w: 4, h: 15 },
   tempsensors: { x: 1, y: 11, w: 4, h: 10 },
   alarm:       { x: 9, y: 11, w: 4, h: 10 },
 };
