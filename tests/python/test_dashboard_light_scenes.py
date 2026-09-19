@@ -248,3 +248,35 @@ def test_the_saved_list_round_trips_and_is_validated(tmp_path) -> None:
     assert client.put("/api/light-scenes", json={"include": ["192.168.0.142"]}).status_code == 400
     assert client.put("/api/light-scenes", json={"include": ["dev:a b"]}).status_code == 400
     assert client.put("/api/light-scenes", json={"include": ["dev:x"], "exclude": ["dev:x"]}).status_code == 400
+
+
+def test_manage_keeps_only_what_differs_from_the_lights_group(tmp_path) -> None:
+    if not _shutil.which("node"):
+        _pytest.skip("node is not installed")
+    source = APP_JS.read_text(encoding="utf-8")
+    script = f"""
+{_pick(source, "nextLightScenes")}
+const doc = {{ include: ['dev:192.168.0.142'], exclude: ['dev:matter:1'] }};
+console.log(JSON.stringify({{
+  untickGroupMember: nextLightScenes(doc, 'dev:192.168.0.61', true, false),
+  retickGroupMember: nextLightScenes(doc, 'dev:matter:1', true, true),
+  tickPlug: nextLightScenes(doc, 'dev:192.168.0.165', false, true),
+  untickPlug: nextLightScenes(doc, 'dev:192.168.0.142', false, false),
+}}));
+"""
+    path = tmp_path / "t.js"
+    path.write_text(script, encoding="utf-8")
+    r = _json.loads(_subprocess.run(["node", str(path)], capture_output=True, text=True, check=True).stdout)
+
+    assert r["untickGroupMember"] == {"include": ["dev:192.168.0.142"], "exclude": ["dev:192.168.0.61", "dev:matter:1"]}
+    assert r["retickGroupMember"] == {"include": ["dev:192.168.0.142"], "exclude": []}
+    assert r["tickPlug"] == {"include": ["dev:192.168.0.142", "dev:192.168.0.165"], "exclude": ["dev:matter:1"]}
+    assert r["untickPlug"] == {"include": [], "exclude": ["dev:matter:1"]}
+
+
+def test_the_all_lights_sheets_have_manage() -> None:
+    source = APP_JS.read_text(encoding="utf-8")
+    info = source[source.index("async function quickInfo"):]
+    info = info[:info.index("if (button.quick")]
+    assert "manage: key" in info
+    assert 'data-light-scene-manage="${escapeHtml(manage)}"' in source

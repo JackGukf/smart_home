@@ -5817,12 +5817,14 @@ function setQuickState(button, state) {
 }
 
 /* rows: { name, detail, ok: true | false | null } */
-function quickSheetHtml({ title, status, tone, rows, note }) {
+function quickSheetHtml({ title, status, tone, rows, note, manage }) {
   const mark = (ok) => ok === true ? '<i class="ti ti-check" aria-hidden="true"></i>'
     : ok === false ? '<i class="ti ti-x" aria-hidden="true"></i>' : '<i class="ti ti-point" aria-hidden="true"></i>';
   return `
     <div class="quick-sheet-head">
       <span><b>${escapeHtml(title)}</b><small class="${tone || ""}">${escapeHtml(status)}</small></span>
+      ${manage ? `<button class="quick-sheet-manage" type="button" data-light-scene-manage="${escapeHtml(manage)}">
+        <i class="ti ti-list-check" aria-hidden="true"></i> Manage</button>` : ""}
       <button class="quick-sheet-close" type="button" data-quick-sheet-close aria-label="Close"><i class="ti ti-x" aria-hidden="true"></i></button>
     </div>
     <ul class="quick-sheet-list">${rows.map((row) => `
@@ -5874,6 +5876,82 @@ function sceneLightHosts() {
   return [...keys].filter((key) => key.startsWith("dev:")).map((key) => key.slice(4));
 }
 
+/* Manage, from the All lights on / off sheet: which devices the scenes switch.
+   Every light and plug is offered; a Lights-group device unticked goes on the
+   "exclude" list, anything else ticked on "include". The Manage dialog of the
+   device groups, with its own rows. */
+const MANAGE_SCENE_HINT = "Tick what All lights on and All lights off switch. The Lights group is in by default; plugs that power a light can be added.";
+let lightSceneManageKey = null;
+
+function lightsGroupKeys() {
+  return new Set((findDeviceGroup("lights")?.devices || []).map((device) => device.key));
+}
+
+async function openLightSceneManage(quickKey) {
+  await loadLightScenes();
+  lightSceneManageKey = quickKey;
+  manageDevicesGroupId = null;
+  const title = document.querySelector("#manageDevicesTitle");
+  if (title) title.textContent = "Manage — All lights on / off";
+  setManageHint(MANAGE_SCENE_HINT);
+  renderLightSceneManageList();
+  const modal = document.querySelector("#manageDevicesModal");
+  if (modal) modal.hidden = false;
+}
+
+function renderLightSceneManageList() {
+  const list = document.querySelector("#manageDevicesList");
+  if (!list) return;
+  const inScene = new Set(sceneLightHosts().map((host) => `dev:${host}`));
+  const inGroup = lightsGroupKeys();
+  const items = collectHomeInventory()
+    .filter((item) => (item.kind === "light" || item.kind === "plug") && item.key.startsWith("dev:"))
+    .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind.localeCompare(b.kind)));
+  list.innerHTML = items.map((item) => `
+    <div class="assign-device-row">
+      <span class="assign-device-icon"><i class="ti ${AREA_KIND_ICONS[item.kind] || "ti-cpu"}"></i></span>
+      <span class="assign-device-name">${escapeHtml(item.name)}</span>
+      <span class="manage-device-why">${inGroup.has(item.key) ? "Lights" : item.kind === "plug" ? "Plug" : ""}</span>
+      <input class="scene-manage-check" type="checkbox" data-scene-key="${escapeHtml(item.key)}"
+             ${inScene.has(item.key) ? "checked" : ""} aria-label="${escapeHtml(item.name)} in All lights on and off">
+    </div>`).join("");
+}
+
+/* The saved lists after one tick: only what differs from the Lights group is
+   kept - an unticked group member is excluded, a ticked outsider included. */
+function nextLightScenes(doc, key, inLightsGroup, ticked) {
+  const include = new Set(doc.include || []);
+  const exclude = new Set(doc.exclude || []);
+  include.delete(key);
+  exclude.delete(key);
+  if (inLightsGroup && !ticked) exclude.add(key);
+  if (!inLightsGroup && ticked) include.add(key);
+  return { include: [...include].sort(), exclude: [...exclude].sort() };
+}
+
+document.addEventListener("click", (event) => {
+  const open = event.target.closest("[data-light-scene-manage]");
+  if (open) openLightSceneManage(open.dataset.lightSceneManage).catch(console.error);
+});
+
+document.addEventListener("change", async (event) => {
+  const box = event.target.closest(".scene-manage-check");
+  if (!box) return;
+  const next = nextLightScenes(lightScenesDoc, box.dataset.sceneKey, lightsGroupKeys().has(box.dataset.sceneKey), box.checked);
+  try {
+    lightScenesDoc = await requestJson("/api/light-scenes", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
+    });
+  } catch (error) {
+    box.checked = !box.checked;   // not saved: show what is
+    logActivity(`All lights not saved: ${apiErrorDetail(error)}`, "warn");
+    return;
+  }
+  renderLightSceneManageList();
+  const sheet = document.querySelector("#quickSheet");
+  if (lightSceneManageKey && sheet && !sheet.hidden) quickInfo(lightSceneManageKey).catch(console.error);
+});
+
 function sceneLightCards() {
   const cards = [];
   for (const host of sceneLightHosts()) {
@@ -5920,8 +5998,10 @@ async function quickInfo(key) {
   const button = quickActionButtons().find((b) => b.key === key);
   if (!button) return;
   if (button.scene) {
+    await loadLightScenes();
     const cards = sceneLightCards();
-    showQuickSheet({ title: label, status: `${cards.length} light switch${cards.length === 1 ? "" : "es"}`, tone: "",
+    showQuickSheet({ title: label, status: `${cards.length} light${cards.length === 1 ? "" : "s"} and LED strips`, tone: "",
+      manage: key,
       rows: cards.map((card) => ({ name: lightCardName(card), detail: `turns ${button.scene} · now ${card.classList.contains("on") ? "on" : "off"}`, ok: null })) }, { stay: true });
     return;
   }
