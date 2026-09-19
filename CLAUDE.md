@@ -49,6 +49,18 @@
 > iPadOS 16 ignores container queries, so iPad layout rules are media queries.
 > Start here: **`docs/handoff-2026-09-18-dashboard-and-learning.md`**.
 >
+> **Cast to TV, family room lighting, All lights and Energy (2026-09-19, build 286).**
+> The dashboard casts to the TV's LLANO-S450 dongle (Settings → Cast to TV, off
+> by default; `switch.tv_cast` and a TV cast remote on the Voice Panel). Two IKEA
+> cabinet drivers and a TP-Link cabinet plug joined Movie mode; the family room
+> accent lights turn on with motion in the dark and off late at night (start
+> time in Settings → Night lights). **Anything that turns lights on sends "on"
+> only to lights that are off** - the owner's rule. All lights on/off follow
+> Manage, on the dashboard and the Voice Panel. Home has the owner's layout with
+> an Energy card; the Energy view runs on **sample data** until the PowerLync is
+> paired. Discovery is one sidebar entry with three apps.
+> Start here: **`docs/handoff-2026-09-19-cast-lighting-energy.md`**.
+>
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
 > *user* unit), exposing 5 devices and commissioned into three fabrics —
 > chip-tool, Home Assistant, and Apple Home. Build or re-commission it with
@@ -297,6 +309,10 @@ Three things that will waste a day if you do not know them:
   the IR hubs and Movie mode, the Voice Panel remote, open items, and the traps
   (a CSS brace, a deploy racing its restart, container queries on old Safari,
   the sidebar's `aside` rule)
+- `docs/handoff-2026-09-19-cast-lighting-energy.md` — **pick up this session
+  cold**: cast to the TV and its Voice Panel remote, the family room lights and
+  automations, All lights following Manage, the IR remotes page, the Energy card
+  and view (sample data), Discovery as apps, and what lives only on the board
 - `docs/handoff-2026-09-13-voice-satellite.md` — **pick the voice work up cold**:
   what is built and measured, the one open fault (the wake word never runs), the
   evidence that pins it, the next test, and thirteen traps from getting audio

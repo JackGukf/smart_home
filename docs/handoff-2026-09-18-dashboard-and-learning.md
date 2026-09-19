@@ -7,6 +7,11 @@ Air. Dashboard **v0.7.0, build 261**; everything is pushed (`main` at
 
 Start with **Open items**, then **Traps** - several cost an hour each.
 
+> **Continued in `docs/handoff-2026-09-19-cast-lighting-energy.md`** - cast to
+> the TV, the family room lights, All lights, the IR remotes page, Energy and a
+> new Home layout. Open item 1 below (learn the cabinet light's IR button) is
+> obsolete: a TP-Link plug replaced it.
+
 ## What exists now
 
 ### Home view
