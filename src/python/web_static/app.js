@@ -8425,9 +8425,15 @@ function deviceHostKey(device) {
   return String(device.id ?? "");
 }
 
+/* Once a read agrees, the command is held a little longer still. Some devices
+   report their *previous* state just after acting on a command - the IKEA
+   drivers sent ON, OFF, OFF, ON for one "on" (2026-09-18) - and a read that
+   lands on the stale report flipped the card back after it had agreed. */
+const PENDING_SETTLE_MS = 3000;
+
 function notePendingCommand(host, patch) {
   if (!host) return;
-  pendingCommands.set(String(host), { patch, until: Date.now() + PENDING_COMMAND_MS });
+  pendingCommands.set(String(host), { patch, until: Date.now() + PENDING_COMMAND_MS, confirmedAt: null });
 }
 
 /* Re-assert anything a command asked for that the server has not caught up
@@ -8443,8 +8449,11 @@ function applyPendingCommands() {
       const pending = pendingCommands.get(deviceHostKey(device));
       if (!pending) continue;
       if (Object.entries(pending.patch).every(([key, value]) => device[key] === value)) {
-        // The server agrees now, so stop overriding it.
-        pendingCommands.delete(deviceHostKey(device));
+        // The server agrees. Keep holding for the settle window, then let go.
+        if (pending.confirmedAt == null) {
+          pending.confirmedAt = now;
+          pending.until = Math.min(pending.until, now + PENDING_SETTLE_MS);
+        }
         continue;
       }
       Object.assign(device, pending.patch);
@@ -8526,17 +8535,37 @@ async function refreshDeviceSource(host) {
   apiStatus.textContent = "Online";
 }
 
+/* Where a light's command goes, by the prefix its card's host carries. Every
+   path that switches lights goes through these two: the light scenes (All
+   lights on/off, Good night) had their own copy that knew Matter but not Home
+   Assistant, so every "ha:" light - the IKEA cabinet drivers, the north
+   bedroom light - failed there with a 404 while the same card's own switch
+   worked. */
+function lightCommandRequest(host, command) {
+  const h = String(host);
+  if (h.startsWith("matter:")) {
+    return requestJson(`/api/matter/devices/${h.slice(7)}/commands/${command}`, { method: "POST" });
+  }
+  if (h.startsWith("ha:")) {
+    return requestJson(`/api/home-assistant/entities/${encodeURIComponent(h.slice(3))}/commands/${command}`, { method: "POST" });
+  }
+  return requestJson("/api/devices/" + h + "/commands/" + command, { method: "POST" });
+}
+
+function lightBrightnessRequest(host, level) {
+  const h = String(host);
+  if (h.startsWith("matter:")) {
+    return requestJson(`/api/matter/devices/${h.slice(7)}/commands/brightness?brightness=${level}`, { method: "POST" });
+  }
+  const path = h.startsWith("ha:")
+    ? `/api/home-assistant/entities/${encodeURIComponent(h.slice(3))}/brightness`
+    : "/api/devices/" + encodeURIComponent(h) + "/brightness";
+  return requestJson(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ level }) });
+}
+
 async function sendCommand(host, command, options = {}) {
   apiStatus.textContent = "Sending";
-  if (host.startsWith("matter:")) {
-    const nodeId = host.slice(7);
-    await requestJson(`/api/matter/devices/${nodeId}/commands/${command}`, { method: "POST" });
-  } else if (host.startsWith("ha:")) {
-    const entityId = host.slice(3);
-    await requestJson(`/api/home-assistant/entities/${encodeURIComponent(entityId)}/commands/${command}`, { method: "POST" });
-  } else {
-    await requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
-  }
+  await lightCommandRequest(host, command);
   logActivity("Switch " + host.split(".").pop() + " turned " + command);
   if (command === "on" || command === "off") {
     patchLocalDeviceState(host, { is_on: command === "on" });
@@ -8746,16 +8775,9 @@ function manualOverridesSince(sceneHosts, sceneStartRevision) {
 async function reapplyManualLightOverrides(sceneHosts, sceneStartRevision) {
   const overrides = manualOverridesSince(sceneHosts, sceneStartRevision);
   if (overrides.length === 0) return false;
-  await Promise.allSettled(overrides.map((override) => {
-    if (override.type === "brightness") {
-      return requestJson("/api/devices/" + encodeURIComponent(override.host) + "/brightness", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ level: override.level }),
-      });
-    }
-    return requestJson("/api/devices/" + override.host + "/commands/" + override.command, { method: "POST" });
-  }));
+  await Promise.allSettled(overrides.map((override) => (override.type === "brightness"
+    ? lightBrightnessRequest(override.host, override.level)
+    : lightCommandRequest(override.host, override.command))));
   logActivity("Light scene: manual override restored");
   return true;
 }
@@ -10374,14 +10396,13 @@ async function runLightScene(command, btn) {
   let results = [];
   try {
     results = await Promise.allSettled(
+      /* All at once, and settled one by one: a light that fails does not stop
+         the others - it is reported on its own row. */
       lightCards.map((card) => {
         const host = card.dataset.host;
         if (host === undefined || host === null || String(host) === "") return Promise.resolve();
-        if (host.startsWith("matter:")) {
-          const nodeId = host.slice(7);
-          return requestJson(`/api/matter/devices/${nodeId}/commands/${command}`, { method: "POST" });
-        }
-        return requestJson("/api/devices/" + host + "/commands/" + command, { method: "POST" });
+        notePendingCommand(host, { is_on: command === "on" });
+        return lightCommandRequest(host, command);
       })
     );
     logActivity(command === "on" ? "Light scene: all on" : "Light scene: all off");

@@ -42,6 +42,7 @@ globalThis.latestSwitchDevices = [];
 globalThis.latestMatterDevices = [];
 globalThis.latestTuyaDevices = [];
 const PENDING_COMMAND_MS = 12000;
+const PENDING_SETTLE_MS = 3000;
 const pendingCommands = new Map();
 eval(pick('deviceHostKey') + pick('notePendingCommand') + pick('applyPendingCommands')
    + pick('rememberBrightness') + pick('recalledBrightness'));
@@ -84,8 +85,47 @@ console.log(JSON.stringify({ afterStaleRead, afterTruth, held: pendingCommands.s
 
     assert result["afterStaleRead"] is True, "the stale read flipped the card back"
     assert result["afterTruth"] is True
-    # Confirmed, so nothing is being overridden any more.
-    assert result["held"] == 0
+    # Confirmed, but still held for the settle window (see the next test).
+    assert result["held"] == 1
+
+
+def test_a_stale_report_after_agreeing_does_not_flip_the_card_back(tmp_path: Path) -> None:
+    """The IKEA drivers, 2026-09-18: one "on" came back ON, OFF, OFF, ON - the
+    device reports its previous state just after acting. Letting go at the
+    first agreement showed the stale OFF; the settle window holds through it,
+    and then lets go so a real change afterwards is shown."""
+    script = SETUP + """
+const host = 'ha:light.0x64028ffffe64de32';
+notePendingCommand(host, { is_on: true });
+const shown = [];
+for (const reported of [true, false, false, true]) {
+  latestSwitchDevices = [{ host, is_on: reported }];
+  applyPendingCommands();
+  shown.push(latestSwitchDevices[0].is_on);
+}
+// The settle window closes; a genuine change after that is believed.
+pendingCommands.get(host).until = Date.now() - 1;
+latestSwitchDevices = [{ host, is_on: false }];
+applyPendingCommands();
+console.log(JSON.stringify({ shown, afterSettle: latestSwitchDevices[0].is_on, held: pendingCommands.size }));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert result["shown"] == [True, True, True, True], "the card blinked"
+    assert result["afterSettle"] is False and result["held"] == 0
+
+
+def test_agreeing_shortens_the_hold_to_the_settle_window(tmp_path: Path) -> None:
+    script = SETUP + """
+notePendingCommand('192.168.0.51', { is_on: true });
+latestSwitchDevices = [{ host: '192.168.0.51', is_on: true }];
+applyPendingCommands();
+const left = pendingCommands.get('192.168.0.51').until - Date.now();
+console.log(JSON.stringify({ left }));
+"""
+    result = _run_node(script, tmp_path)
+
+    assert 2000 < result["left"] <= 3000
 
 
 def test_the_hold_expires_so_a_failed_switch_settles_on_the_truth(tmp_path: Path) -> None:

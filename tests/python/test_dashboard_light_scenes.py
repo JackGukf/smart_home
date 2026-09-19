@@ -48,8 +48,27 @@ def test_light_scene_respects_manual_dim_overrides() -> None:
 
     assert 'recordManualLightOverride(host, { type: "brightness", level });' in source
     assert 'override.type === "brightness"' in source
-    assert '"/api/devices/" + encodeURIComponent(override.host) + "/brightness"' in source
-    assert 'JSON.stringify({ level: override.level })' in source
+    # Restored through the same routing as a card's own dial, so a Home
+    # Assistant or Matter light is restored where it lives.
+    assert "lightBrightnessRequest(override.host, override.level)" in source
+    assert "lightCommandRequest(override.host, override.command)" in source
+
+
+def test_light_scenes_send_every_kind_of_light_to_its_own_api() -> None:
+    """All lights off failed for every Home Assistant light (the IKEA drivers):
+    the scene sent them to the TP-Link endpoint, which answered 404."""
+    source = APP_JS.read_text(encoding="utf-8")
+    scene = source[source.index("async function runLightScene"):]
+    scene = scene[:scene.index("\n}\n")]
+    helper = source[source.index("function lightCommandRequest"):]
+    helper = helper[:helper.index("\n}\n")]
+
+    assert "lightCommandRequest(host, command)" in scene
+    assert "/api/devices/" not in scene and "/api/matter/" not in scene
+    assert 'h.startsWith("ha:")' in helper and "/api/home-assistant/entities/" in helper
+    assert 'h.startsWith("matter:")' in helper
+    # All at once, each settled on its own: one failure does not stop the rest.
+    assert "Promise.allSettled" in scene
 
 
 def test_light_scene_buttons_have_fancy_styles() -> None:
