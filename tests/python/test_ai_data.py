@@ -1,0 +1,149 @@
+"""AI data: what the models learn from - bills, meter readings, exports.
+
+Nothing is imported on sight: a file is parsed, what was found is shown, and it
+becomes rows only when asked. These tests hold that line, and the arithmetic
+that turns two meter readings into a measured amount of gas.
+"""
+from __future__ import annotations
+
+import json
+from datetime import date, datetime
+
+import pytest
+
+from src.python import ai_data
+
+
+@pytest.fixture()
+def db(tmp_path):
+    return ai_data.connect(tmp_path / "gas.db")
+
+
+BILL_TEXT = """
+FortisBC Energy Inc.
+Billing period  2026-01-05  to  2026-02-04
+Natural gas used            8.42 GJ
+Delivery charge             $31.10
+Total amount due            $102.77
+"""
+
+
+def test_a_bill_is_read_for_the_few_things_every_bill_has():
+    parsed = ai_data.parse_bill_text(BILL_TEXT)
+    assert parsed.kind == "bill" and parsed.status == "parsed"
+    assert parsed.found["gj"] == 8.42 and parsed.found["cost"] == 102.77
+    assert parsed.found["period_start"] == "2026-01-05" and parsed.found["period_end"] == "2026-02-04"
+    assert parsed.found["days"] == 30
+
+
+def test_a_bill_that_does_not_read_cleanly_waits_for_a_person():
+    assert ai_data.parse_bill_text("a page with no numbers on it").status == "needs_review"
+    # A period nobody bills over is a misread, not a two-year bill.
+    wrong = ai_data.parse_bill_text("2024-01-01 to 2026-02-04 total 9.1 GJ")
+    assert wrong.status == "needs_review"
+
+
+def test_dates_are_read_in_the_three_shapes_bills_use():
+    assert date(2026, 2, 4) in ai_data.find_dates("Feb 4, 2026")
+    assert date(2026, 2, 4) in ai_data.find_dates("2/4/2026")
+    assert date(2026, 2, 4) in ai_data.find_dates("2026-02-04")
+
+
+def test_a_csv_has_its_columns_detected_not_configured():
+    parsed = ai_data.parse_csv_text("Date,Usage (GJ),Cost\n2026-01-31,8.42,102.77\n2026-02-28,7.10,91.02\n")
+    assert parsed.kind == "usage" and parsed.status == "parsed"
+    assert parsed.found["count"] == 2 and parsed.found["rows"][0] == {"date": "2026-01-31", "value": 8.42}
+
+    readings = ai_data.parse_csv_text("day,meter reading ft3\n2026-09-01,4100\n2026-09-02,4118\n")
+    assert readings.kind == "readings" and readings.found["unit"] == "ft3"
+
+    assert ai_data.parse_csv_text("a,b\n1,2\n").status == "needs_review"
+
+
+def test_a_file_is_stored_parsed_and_not_imported(db, tmp_path):
+    doc = ai_data.add_file(db, tmp_path / "files", "fortisbc-2026-02.csv",
+                           b"Date,Usage (GJ)\n2026-01-31,8.42\n2026-02-28,7.10\n")
+    assert doc["status"] == "parsed" and doc["kind"] == "usage"
+    assert not db.execute("SELECT * FROM bills").fetchall()      # parsed, not imported
+
+    result = ai_data.import_file(db, doc["id"])
+    assert result["added"] == 2 and result["file"]["status"] == "imported"
+    assert len(db.execute("SELECT * FROM bills").fetchall()) == 2
+    # Importing again adds nothing: a bill must not double because someone clicked twice.
+    assert ai_data.import_file(db, doc["id"])["added"] == 0
+
+
+def test_the_same_file_twice_is_refused(db, tmp_path):
+    ai_data.add_file(db, tmp_path / "files", "bill.csv", b"Date,GJ\n2026-01-31,8.42\n2026-02-28,7.1\n")
+    with pytest.raises(ai_data.DuplicateFile):
+        ai_data.add_file(db, tmp_path / "files", "bill-copy.csv", b"Date,GJ\n2026-01-31,8.42\n2026-02-28,7.1\n")
+
+
+def test_uploads_are_bounded_and_of_known_kinds(db, tmp_path):
+    with pytest.raises(ValueError, match="not a kind"):
+        ai_data.add_file(db, tmp_path / "files", "photo.jpg", b"\xff\xd8\xff")
+    with pytest.raises(ValueError, match="larger than"):
+        ai_data.add_file(db, tmp_path / "files", "huge.csv", b"x" * (ai_data.MAX_UPLOAD_BYTES + 1))
+
+
+def test_two_readings_measure_exactly_what_was_burned(db):
+    ai_data.add_reading(db, datetime(2026, 9, 18, 20, 0), cubic_feet=4100)
+    ai_data.add_reading(db, datetime(2026, 9, 19, 20, 0), cubic_feet=4118)
+    [interval] = ai_data.intervals(db)
+    assert interval["cubic_feet"] == 18 and interval["hours"] == 24
+    assert interval["gj"] == pytest.approx(18 * ai_data.DEFAULT_GJ_PER_CUBIC_FOOT, abs=1e-5)
+
+
+def test_a_meter_that_goes_backwards_is_dropped_not_counted(db):
+    ai_data.add_reading(db, datetime(2026, 9, 18, 20, 0), cubic_feet=4100)
+    ai_data.add_reading(db, datetime(2026, 9, 19, 20, 0), cubic_feet=40)     # misread, or a new meter
+    ai_data.add_reading(db, datetime(2026, 9, 20, 20, 0), cubic_feet=58)
+    assert [i["cubic_feet"] for i in ai_data.intervals(db)] == [18]
+
+
+def test_the_conversion_comes_from_a_bill_once_the_readings_cover_one(db):
+    assert ai_data.derived_gj_per_cubic_foot(db) is None          # nothing to say yet
+    db.execute("INSERT INTO bills (period_start, period_end, gj) VALUES ('2026-09-01','2026-09-11',11.0)")
+    for day in range(1, 12):
+        ai_data.add_reading(db, datetime(2026, 9, day, 0, 0), cubic_feet=1000 * day)
+    db.commit()
+    # 10,000 cubic feet over the period billed at 11 GJ.
+    assert ai_data.derived_gj_per_cubic_foot(db) == pytest.approx(0.0011, abs=1e-5)
+
+
+def test_inventory_says_what_the_house_has(db, tmp_path):
+    ai_data.add_reading(db, datetime(2026, 9, 18, 20, 0), cubic_feet=4100)
+    ai_data.add_reading(db, datetime(2026, 9, 19, 20, 0), cubic_feet=4118)
+    ai_data.record_runtime(db, [{"day": "2026-09-19", "furnace_hours": 2.5, "outdoor_mean_c": 6.0}], "ecobee")
+    doc = ai_data.inventory(db)
+    assert doc["readings"]["count"] == 2 and doc["readings"]["intervals"] == 1
+    assert doc["runtime"]["days"] == 1 and doc["runtime"]["hours"] == 2.5
+    assert doc["bills"]["count"] == 0
+    assert doc["gj_per_cubic_foot_measured"] is False
+
+
+def test_runtime_can_be_recovered_from_the_house_memory(tmp_path, db):
+    """The fallback when Ecobee's own history is not available: Home Assistant
+    reports hvac_action when it changes, so heating is the time until the next
+    state, and a day nobody called for heat is a real zero."""
+    import sqlite3
+    from datetime import timedelta
+
+    events = tmp_path / "events.db"
+    memory = sqlite3.connect(events)
+    memory.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, ts REAL, entity_id TEXT, attrs TEXT)")
+    start = datetime(2026, 11, 2, 6, 0)
+    rows = [(start, "heating"), (start + timedelta(hours=2), "idle"),
+            (start + timedelta(hours=8), "heating"), (start + timedelta(hours=9, minutes=30), "idle"),
+            (start + timedelta(days=1), "idle")]
+    for when, action in rows:
+        memory.execute("INSERT INTO events (ts, entity_id, attrs) VALUES (?, 'climate.my_ecobee', ?)",
+                       (when.timestamp(), json.dumps({"hvac_action": action})))
+    memory.commit()
+    memory.close()
+
+    days = ai_data.runtime_from_house_memory(events)
+    by_day = {d["day"]: d["furnace_hours"] for d in days}
+    assert by_day["2026-11-02"] == pytest.approx(3.5)     # 2 h + 1.5 h
+    assert by_day["2026-11-03"] == 0.0                    # watched, never heated
+    assert ai_data.record_runtime(db, days, "house-memory") == len(days)

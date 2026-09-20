@@ -29,7 +29,7 @@ import hashlib
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
@@ -50,9 +50,11 @@ from src.python.matter_device import (
 )
 from src.python import bridge_sync
 from src.python.house_digest import read_digest
+from src.python import ai_data
 from src.python import board_desktop
 from src.python import dashboard_cast
 from src.python import energy
+from src.python import gas_model
 from src.python import panel_scenes
 from src.python import news_feed
 from src.python import sensor_history
@@ -137,6 +139,8 @@ DEFAULT_PROPOSALS_PATH = PROJECT_ROOT / "automation-proposals"
 DEFAULT_DIGEST_PATH = PROJECT_ROOT / "house_digest.json"
 # Written nightly by energy-forecast.service, from its own venv.
 DEFAULT_ENERGY_FORECAST_PATH = PROJECT_ROOT / "energy_forecast.json"
+# Bills, meter readings and furnace runtime - the AI data page (src/python/ai_data.py).
+DEFAULT_AI_DATA_DIR = PROJECT_ROOT / "ai-data"
 # What the news line in the header shows. On the board rather than in each browser, so
 # switching news off on a phone switches it off on the wall panel too.
 DEFAULT_NEWS_SETTINGS_PATH = PROJECT_ROOT / "dashboard_news.json"
@@ -601,6 +605,17 @@ class DesktopRequest(BaseModel):
     running: bool
 
 
+class GasReadingRequest(BaseModel):
+    """One reading off the gas meter. The dial counts cubic feet; bills are in GJ."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    at: str | None = None                 # ISO; now when the page does not say
+    cubic_feet: float | None = Field(default=None, ge=0, le=99_999_999)
+    gj: float | None = Field(default=None, ge=0, le=10_000)
+    note: str | None = Field(default=None, max_length=200)
+
+
 class NewsSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -688,6 +703,7 @@ def create_app(
     history_service: sensor_history.SensorHistory | None = None,
     energy_source: energy.LiveEnergy | None = None,
     energy_forecast_path: Path | None = None,
+    ai_data_dir: Path | None = None,
     status_service: status_overview.StatusOverview | None = None,
     memory_service: house_memory.SummaryCache | None = None,
     ir_page_path: Path | None = None,
@@ -713,6 +729,7 @@ def create_app(
     app.state.history_service = history_service
     app.state.energy_source = energy_source
     app.state.energy_forecast_path = energy_forecast_path or DEFAULT_ENERGY_FORECAST_PATH
+    app.state.ai_data_dir = Path(ai_data_dir or DEFAULT_AI_DATA_DIR)
     app.state.status_service = status_service
     app.state.memory_service = memory_service or house_memory.SummaryCache()
     # systemctl, swapped out in tests so they never touch the real user manager.
@@ -1306,6 +1323,83 @@ def create_app(
                 raise HTTPException(status_code=502, detail=f"Could not switch the desktop: {error}") from error
 
         return await asyncio.to_thread(apply)
+
+    # ── AI data: what the models learn from (src/python/ai_data.py) ──
+    #
+    # Uploads are parsed and shown, never imported on sight: a bill whose
+    # numbers were read wrongly is worse than one that was not read at all.
+
+    def _ai_db():
+        return ai_data.connect(app.state.ai_data_dir / "gas.db")
+
+    def _ai_data_doc() -> dict[str, Any]:
+        db = _ai_db()
+        try:
+            return {"inventory": ai_data.inventory(db), "files": ai_data.files(db),
+                    "readings": ai_data.readings(db, 30), "gas": gas_model.report(db)}
+        finally:
+            db.close()
+
+    @app.get("/api/ai-data")
+    async def ai_data_state() -> dict[str, Any]:
+        """Everything the AI data page shows: what is here, and what the gas model made of it."""
+        return await asyncio.to_thread(_ai_data_doc)
+
+    @app.post("/api/ai-data/files")
+    async def ai_data_upload(file: UploadFile = File(...)) -> dict[str, Any]:
+        """Take a bill or an export, store it, and say what was read from it."""
+        content = await file.read(ai_data.MAX_UPLOAD_BYTES + 1)
+
+        def store() -> dict[str, Any]:
+            db = _ai_db()
+            try:
+                return ai_data.add_file(db, app.state.ai_data_dir / "files", file.filename or "upload", content)
+            finally:
+                db.close()
+
+        try:
+            return {"file": await asyncio.to_thread(store)}
+        except ai_data.DuplicateFile as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/ai-data/files/{file_id}/import")
+    async def ai_data_import(file_id: int) -> dict[str, Any]:
+        """Turn a parsed file into rows the model can use. Idempotent."""
+        def run() -> dict[str, Any]:
+            db = _ai_db()
+            try:
+                return ai_data.import_file(db, file_id)
+            finally:
+                db.close()
+
+        try:
+            return await asyncio.to_thread(run)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="no such file") from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/ai-data/readings")
+    async def ai_data_reading(request: GasReadingRequest) -> dict[str, Any]:
+        """A meter reading, typed in by a person: the ground truth for gas."""
+        try:
+            at = datetime.fromisoformat(request.at) if request.at else datetime.now()
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail="that is not a time") from error
+
+        def store() -> dict[str, Any]:
+            db = _ai_db()
+            try:
+                return ai_data.add_reading(db, at, request.cubic_feet, request.gj, request.note)
+            finally:
+                db.close()
+
+        try:
+            return await asyncio.to_thread(store)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/api/motion/log")
     async def motion_log(limit: int = MOTION_LOG_DEFAULT_LIMIT) -> dict[str, Any]:

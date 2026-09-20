@@ -109,9 +109,9 @@
         <span class="room-icon"><i class="ti ti-device-speaker"></i></span>
         Media
       </li>
-      <li class="room-item" data-view="automations">
-        <span class="room-icon"><i class="ti ti-wand"></i></span>
-        Automations
+      <li class="room-item" data-view="ai">
+        <span class="room-icon"><i class="ti ti-sparkles"></i></span>
+        AI
         <span class="room-badge" id="proposalCount">–</span>
       </li>
       <li class="room-item" data-view="status">
@@ -859,9 +859,31 @@
          is checked against the real house before it is ever shown, and it is
          a file on disk until the Install button is pressed - nothing here
          reaches Home Assistant on its own. -->
+    <!-- ── AI ──
+         A launcher, the same shape as Settings and Discovery: Automations as it
+         always was, and AI data - what the models learn from. -->
+    <div class="view-panel" data-view-panel="ai">
+      <div class="section-header">
+        <span class="section-title">AI</span>
+        <span class="section-meta">Local models on this board</span>
+      </div>
+      <div class="app-grid">
+        <button type="button" class="app-tile" data-goto-view="automations" style="--app-a:#a78bfa;--app-b:#7c3aed">
+          <span class="app-tile-icon"><i class="ti ti-wand" aria-hidden="true"></i></span>
+          <span class="app-tile-name">Automations</span>
+          <span class="app-tile-sub" id="aiAutomationsSub">Draft &amp; install rules</span>
+        </button>
+        <button type="button" class="app-tile" data-goto-view="aidata" style="--app-a:#22d3ee;--app-b:#0e7490">
+          <span class="app-tile-icon"><i class="ti ti-database-import" aria-hidden="true"></i></span>
+          <span class="app-tile-name">AI data</span>
+          <span class="app-tile-sub" id="aiDataSub">Bills, readings, models</span>
+        </button>
+      </div>
+    </div>
+
     <div class="view-panel" data-view-panel="automations">
       <div class="section-header">
-        <span class="section-title">Automations</span>
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="ai" title="Back to AI"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>AI</button><span class="section-title">Automations</span></span>
         <span class="section-meta">Drafted locally, installed by you</span>
       </div>
 
@@ -884,6 +906,67 @@
       </div>
       <div id="automationProposals">
         <div class="home-empty">Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── AI DATA ──
+         Bills, meter readings and furnace runtime, and what the gas model made
+         of them (src/python/ai_data.py, gas_model.py). Uploads are parsed and
+         shown; nothing becomes a row until it is imported. -->
+    <div class="view-panel" data-view-panel="aidata">
+      <div class="section-header">
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="ai" title="Back to AI"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>AI</button><span class="section-title">AI data</span></span>
+        <span class="section-meta">Stays on this board</span>
+      </div>
+
+      <div class="panel">
+        <div class="home-panel-head">
+          <span class="panel-title"><i class="ti ti-upload"></i> Add data</span>
+          <span class="section-meta">FortisBC bill (PDF) · usage export (CSV) · meter readings (CSV)</span>
+        </div>
+        <label class="ai-drop" id="aiDrop">
+          <input type="file" id="aiFileInput" accept=".pdf,.csv,.txt" multiple hidden>
+          <b>Drop files here</b> or choose · up to 10 MB each
+          <small>Read on the board. Nothing is uploaded anywhere.</small>
+        </label>
+        <p class="settings-status" id="aiUploadStatus" aria-live="polite"></p>
+      </div>
+
+      <div class="ai-two">
+        <div class="panel">
+          <div class="home-panel-head">
+            <span class="panel-title"><i class="ti ti-pencil"></i> Meter reading</span>
+            <span class="section-meta">the truth the model is corrected by</span>
+          </div>
+          <div class="ai-field">
+            <input type="datetime-local" id="aiReadingAt">
+            <input type="number" id="aiReadingValue" step="0.1" min="0" placeholder="reading, ft³">
+            <button class="btn-primary" id="aiReadingAdd" type="button">Add</button>
+          </div>
+          <div class="ai-rows" id="aiReadings"></div>
+        </div>
+        <div class="panel">
+          <div class="home-panel-head">
+            <span class="panel-title"><i class="ti ti-folders"></i> What the house has</span>
+          </div>
+          <div class="ai-rows" id="aiInventory"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="home-panel-head">
+          <span class="panel-title"><i class="ti ti-file-text"></i> Files</span>
+          <span class="section-meta">decoded here; import when the numbers look right</span>
+        </div>
+        <div id="aiFiles"><div class="home-empty">Nothing yet</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="home-panel-head">
+          <span class="panel-title"><i class="ti ti-brain"></i> Gas from furnace runtime</span>
+          <span class="section-meta" id="aiGasFitted"></span>
+        </div>
+        <div id="aiGasModel"></div>
       </div>
     </div>
 

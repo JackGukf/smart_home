@@ -404,3 +404,15 @@ def test_energy_forecast_runs_nightly_from_its_own_venv() -> None:
     assert "Type=oneshot" in service and "Nice=15" in service
     assert "OnCalendar=*-*-* 03:45:00 America/Vancouver" in timer
     assert "Persistent=true" in timer and "WantedBy=timers.target" in timer
+
+
+def test_ecobee_runtime_is_fetched_every_morning_before_the_forecast() -> None:
+    """Furnace runtime is what the gas model is built on. Three days each time,
+    so a morning the board was off is filled in by the next one; the runtime
+    table is keyed by day, so re-fetching rewrites rather than doubles."""
+    service = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "ecobee-runtime.service").read_text(encoding="utf-8")
+    timer = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "ecobee-runtime.timer").read_text(encoding="utf-8")
+
+    assert "ExecStart=/home/orangepi/smart_home_AI/.venv/bin/python -m src.python.ecobee_runtime --fetch --days 3" in service
+    assert "Type=oneshot" in service and "WorkingDirectory=/home/orangepi/smart_home_AI" in service
+    assert "OnCalendar=*-*-* 03:20:00 America/Vancouver" in timer and "Persistent=true" in timer

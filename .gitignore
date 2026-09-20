@@ -113,3 +113,6 @@ configs/esphome/.esphome/
 configs/esphome/*.bin
 # Learned IR codes, per hub - device data kept on the board.
 configs/ir_buttons.json
+
+# Bills, meter readings, the gas database and the ecobee refresh token.
+ai-data/

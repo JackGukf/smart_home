@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI View Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #0a0b12; --surface: #10111c; --card: #161826; --card-2: #1c1e2e;
+  --border: #1f2238; --accent: #4f8ef7; --accent-dim: rgba(79,142,247,0.14);
+  --green: #34d399; --amber: #fbbf24; --red: #f87171; --orange: #fb923c;
+  --cyan: #22d3ee; --purple: #a78bfa; --text: #dde3f0; --muted: #6b7290;
+  --font: 'Inter', system-ui, sans-serif; --mono: 'JetBrains Mono', monospace;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); line-height: 1.5; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 40px 16px 80px; }
+h1 { font-size: 26px; margin: 0 0 6px; }
+h2 { font-size: 17px; margin: 40px 0 4px; }
+.lede, .note { color: var(--muted); font-size: 14px; }
+.note { margin: 6px 0 14px; }
+.screen { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin: 14px 0 6px; }
+.section-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+.section-title { font-size: 18px; font-weight: 600; }
+.section-meta { color: var(--muted); font-size: 12.5px; }
+.back { color: var(--accent); font-size: 13px; }
+.app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+.app-tile { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 12px; text-align: center; position: relative; overflow: hidden; }
+.app-tile::before { content: ""; position: absolute; inset: 0; background: linear-gradient(135deg, var(--a), var(--b)); opacity: 0.12; }
+.app-icon { font-size: 26px; position: relative; }
+.app-name { font-weight: 600; margin-top: 8px; position: relative; }
+.app-sub { color: var(--muted); font-size: 12px; position: relative; }
+.panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+.panel-title { font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.drop { border: 1.5px dashed var(--border); border-radius: var(--radius); padding: 26px; text-align: center; color: var(--muted); background: var(--card-2); }
+.drop b { color: var(--text); }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.row:last-child { border-bottom: 0; }
+.mono { font-family: var(--mono); }
+.pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+.ok { color: var(--green); border-color: rgba(52,211,153,0.4); background: rgba(52,211,153,0.1); }
+.warn { color: var(--amber); border-color: rgba(251,191,36,0.4); background: rgba(251,191,36,0.1); }
+.info { color: var(--accent); border-color: rgba(79,142,247,0.4); background: var(--accent-dim); }
+.dim { color: var(--muted); }
+.btn { background: var(--accent); color: #fff; border: 0; border-radius: 9px; padding: 7px 14px; font-size: 13px; font-weight: 500; font-family: inherit; }
+.btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.field { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 8px; }
+input, select, textarea { background: var(--card-2); border: 1px solid var(--border); color: var(--text); border-radius: 9px; padding: 8px 10px; font-family: inherit; font-size: 13.5px; width: 100%; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.annot { border-left: 2px solid var(--accent); background: var(--accent-dim); padding: 10px 14px; border-radius: 0 9px 9px 0; font-size: 13.5px; margin: 10px 0 24px; }
+.annot b { color: var(--accent); }
+.big { font-size: 24px; font-weight: 600; }
+.chart { height: 90px; width: 100%; }
+ul { padding-left: 18px; font-size: 14px; color: var(--muted); }
+li { margin: 5px 0; }
+li b { color: var(--text); font-weight: 500; }
+@media (max-width: 720px) { .two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Dashboard: “Automations” becomes “AI”</h1>
+<p class="lede">Design preview, revision 1 — 2026-09-19. Nothing is built yet. The sidebar entry
+becomes a launcher with two apps, the way Settings and Discovery already work.</p>
+
+<h2>1 · Sidebar → AI (launcher)</h2>
+<div class="screen">
+  <div class="section-header"><span class="section-title">AI</span><span class="section-meta">Local models on this board</span></div>
+  <div class="app-grid">
+    <div class="app-tile" style="--a:#a78bfa;--b:#7c3aed">
+      <div class="app-icon">🪄</div><div class="app-name">Automations</div><div class="app-sub">Draft &amp; install rules · 2 proposals</div>
+    </div>
+    <div class="app-tile" style="--a:#22d3ee;--b:#0e7490">
+      <div class="app-icon">📥</div><div class="app-name">AI data</div><div class="app-sub">Bills, readings, models · gas fitted</div>
+    </div>
+  </div>
+</div>
+<div class="annot"><b>Unchanged:</b> the sidebar badge still counts automation proposals, and every
+existing page keeps working — Automations just moves one click deeper, with a “‹ AI” back button.</div>
+
+<h2>2 · AI → Automations (today’s page, moved)</h2>
+<div class="screen">
+  <div class="section-header"><span class="section-title"><span class="back">‹ AI</span> &nbsp;Automations</span><span class="section-meta">Drafted locally, installed by you</span></div>
+  <div class="panel">
+    <div class="panel-title"><span>🪄 Describe a rule</span><span class="section-meta">Qwen3-4B, on this board</span></div>
+    <div class="field"><textarea rows="2">turn off the office switch every night at 11pm</textarea><button class="btn">Draft</button></div>
+  </div>
+  <div class="section-header"><span class="section-title" style="font-size:15px">Proposals</span><span class="section-meta">Nothing here is running yet</span></div>
+  <div class="panel"><div class="row"><span>Office switch off at 23:00</span><span><span class="pill info">draft</span> <button class="btn ghost">Install</button></span></div></div>
+</div>
+<div class="annot"><b>No change in behaviour.</b> Same composer, same proposals, same install path through
+Home Assistant’s config API.</div>
+
+<h2>3 · AI → AI data (new)</h2>
+<div class="screen">
+  <div class="section-header"><span class="section-title"><span class="back">‹ AI</span> &nbsp;AI data</span><span class="section-meta">What the models learn from</span></div>
+
+  <div class="panel">
+    <div class="panel-title"><span>📥 Add data</span><span class="section-meta">PDF, CSV, photo of a meter</span></div>
+    <div class="drop"><b>Drop files here</b> or choose · FortisBC bill (PDF) · usage export (CSV) · anything tabular<br>
+      <span style="font-size:12px">Stored on the board in <span class="mono">~/smart_home_AI/ai-data/</span>. Never uploaded anywhere.</span></div>
+  </div>
+
+  <div class="two">
+    <div class="panel">
+      <div class="panel-title"><span>✍️ Meter reading</span><span class="section-meta">manual</span></div>
+      <div class="field"><input value="2026-09-19 20:15"><span></span></div>
+      <div class="field"><input placeholder="reading, e.g. 004213 ft³"><button class="btn">Add</button></div>
+      <div class="row dim" style="margin-top:10px"><span>Last</span><span class="mono">004 198 ft³ · yesterday 20:05</span></div>
+      <div class="row dim"><span>Since then</span><span class="mono">15 ft³ ≈ 0.016 GJ</span></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title"><span>🗂️ What the house has</span></div>
+      <div class="row"><span>FortisBC bills</span><span><span class="mono">24 months</span> <span class="pill ok">parsed</span></span></div>
+      <div class="row"><span>Daily readings</span><span><span class="mono">31</span> <span class="pill ok">since 19 Aug</span></span></div>
+      <div class="row"><span>Furnace runtime</span><span><span class="mono">0 h</span> <span class="pill warn">no heating yet</span></span></div>
+      <div class="row"><span>Outdoor temperature</span><span><span class="mono">30 days</span> <span class="pill ok">hourly</span></span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title"><span>📄 Files</span><span class="section-meta">decoded on the board, nothing leaves it</span></div>
+    <table>
+      <tr><th>File</th><th>Kind</th><th>What was read</th><th>Status</th></tr>
+      <tr><td class="mono">fortisbc-2026-08.pdf</td><td>bill</td><td>1 period · 4.81 GJ · $78.42 · 31 days</td><td><span class="pill ok">imported</span></td></tr>
+      <tr><td class="mono">usage-2024-2026.csv</td><td>usage export</td><td>24 monthly rows · GJ</td><td><span class="pill ok">imported</span></td></tr>
+      <tr><td class="mono">readings-aug.csv</td><td>meter readings</td><td>31 rows · ft³</td><td><span class="pill ok">imported</span></td></tr>
+      <tr><td class="mono">scan-2026-07.pdf</td><td>bill</td><td>—</td><td><span class="pill warn">needs a look</span></td></tr>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title"><span>🧠 Models</span><span class="section-meta">fitted nightly at 03:45</span></div>
+    <div class="row"><span><b>Gas from furnace runtime</b><br><span class="dim" style="font-size:12px">Ecobee runtime + outdoor temperature → GJ, corrected by your readings</span></span>
+      <span style="text-align:right"><span class="pill warn">waiting for heating season</span><br><span class="dim mono" style="font-size:11.5px">fits when the furnace first runs</span></span></div>
+    <div class="row"><span><b>Electricity, next 24 h</b><br><span class="dim" style="font-size:12px">seasonal median · LightGBM · Chronos-2, whichever wins</span></span>
+      <span style="text-align:right"><span class="pill warn">waiting for PowerLync</span></span></div>
+    <div class="row"><span><b>House routine</b><br><span class="dim" style="font-size:12px">house-learning, nightly since 16 Sep</span></span>
+      <span style="text-align:right"><span class="pill ok">fitted 03:31</span></span></div>
+  </div>
+</div>
+<div class="annot"><b>Every row says what it is waiting for.</b> A model that cannot be fitted yet says so
+rather than showing a number it cannot stand behind.</div>
+
+<h2>4 · AI data → Gas model (once the furnace has run)</h2>
+<div class="screen">
+  <div class="section-header"><span class="section-title"><span class="back">‹ AI data</span> &nbsp;Gas from furnace runtime</span><span class="section-meta">fitted on 38 days · 12 readings</span></div>
+  <div class="two">
+    <div class="panel">
+      <div class="panel-title"><span>Yesterday</span></div>
+      <div class="big mono">0.42 GJ</div>
+      <div class="dim" style="font-size:12.5px">± 0.05 · 3 h 10 m of furnace · 6.4 °C outside</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title"><span>The fit</span></div>
+      <div class="row"><span>Always on (water heater, cooking)</span><span class="mono">0.11 GJ/day</span></div>
+      <div class="row"><span>Furnace</span><span class="mono">0.098 GJ per hour on</span></div>
+      <div class="row"><span>Agreement with your readings</span><span class="mono">±6%</span></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><span>Estimated vs. read</span><span class="section-meta">your meter readings are the truth; the line is the model</span></div>
+    <svg class="chart" viewBox="0 0 600 90" preserveAspectRatio="none">
+      <polyline fill="none" stroke="#4f8ef7" stroke-width="2" points="0,70 50,64 100,52 150,58 200,40 250,34 300,44 350,28 400,22 450,30 500,18 550,24 600,20"/>
+      <g fill="#34d399">
+        <circle cx="50" cy="66" r="3.5"/><circle cx="150" cy="55" r="3.5"/><circle cx="250" cy="37" r="3.5"/>
+        <circle cx="350" cy="31" r="3.5"/><circle cx="450" cy="26" r="3.5"/><circle cx="550" cy="27" r="3.5"/>
+      </g>
+    </svg>
+    <div class="dim" style="font-size:12px">Each reading you enter re-fits the model that night and tightens it.</div>
+  </div>
+</div>
+
+<h2>How the data gets decoded</h2>
+<ul>
+  <li><b>FortisBC bill (PDF)</b> → text extraction on the board, then the billing period, GJ, cost and
+    meter readings. Every parsed field is shown before it is imported; anything unsure is marked
+    <span class="pill warn">needs a look</span> rather than guessed.</li>
+  <li><b>CSV</b> → columns detected (date, usage, unit), previewed as a table, imported on your confirmation.</li>
+  <li><b>Manual reading</b> → one number and a timestamp; the difference from the previous reading
+    becomes a measured consumption over that exact interval.</li>
+  <li><b>Everything lands in one small database</b> on the board (<span class="mono">ai-data/gas.db</span>),
+    which is what the nightly fit reads. Original files are kept beside it.</li>
+</ul>
+
+<h2>Decisions to confirm before building</h2>
+<ul>
+  <li><b>Name</b>: sidebar “AI”, tiles “Automations” and “AI data”. Alternatives: “Intelligence”, “Models”.</li>
+  <li><b>Upload limits</b>: PDF and CSV, 10 MB a file, authenticated users only (same login as the dashboard).</li>
+  <li><b>Unit for readings</b>: the meter counts ft³; bills are in GJ. Both are kept, converted for display.</li>
+  <li><b>Where the fit runs</b>: nightly, in the forecast venv, beside the electricity forecast.</li>
+</ul>
+
+</div>
+</body>
+</html>

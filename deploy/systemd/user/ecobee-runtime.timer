@@ -1,0 +1,12 @@
+[Unit]
+Description=Fetch yesterday's furnace runtime from Ecobee every morning
+
+[Timer]
+# Before the forecast (03:45) and the digest (04:00), in the house's time zone.
+# Until `--authorize` has been run there are no tokens and the job says so.
+OnCalendar=*-*-* 03:20:00 America/Vancouver
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

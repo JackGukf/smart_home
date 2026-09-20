@@ -27,3 +27,6 @@ aiohttp
 # Learned IR buttons (Tuya IR hubs, driven locally) are offered to Home
 # Assistant through MQTT discovery, so its scripts - Movie mode - can press them.
 paho-mqtt>=2.0,<3.0
+# FortisBC bills arrive as PDFs; the AI data page reads the period, the
+# gigajoules and the total out of them (src/python/ai_data.py).
+pypdf

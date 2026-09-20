@@ -1,0 +1,13 @@
+[Unit]
+Description=Ecobee furnace runtime - yesterday's heating, for the gas model
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/orangepi/smart_home_AI
+Environment=PYTHONPATH=/home/orangepi/smart_home_AI
+# Three days, not one: a day the board was off still gets filled in, and the
+# runtime table is keyed by day so re-fetching rewrites rather than doubles.
+ExecStart=/home/orangepi/smart_home_AI/.venv/bin/python -m src.python.ecobee_runtime --fetch --days 3
+TimeoutStartSec=600
+Nice=15
+IOSchedulingClass=idle

@@ -8868,6 +8868,12 @@ function activateView(viewName) {
   if (viewName === "automations") {
     loadAutomationProposals().catch((error) => console.error(error));
   }
+  if (viewName === "aidata") {
+    loadAiData().catch((error) => {
+      const status = document.querySelector("#aiUploadStatus");
+      if (status) status.textContent = `Not available: ${apiErrorDetail(error)}`;
+    });
+  }
   if (viewName === "status") {
     loadHouseDigest().catch((error) => console.error(error));
     loadStatusOverview();
@@ -10326,6 +10332,7 @@ function setYoutubeCovering(on) {
 const PAGE_PARENTS = {
   discovery: "discover", zigbee: "discover", bluetooth: "discover",
   theme: "settings", startup: "settings", news: "settings", cast: "settings", desktop: "settings", nightlights: "settings", about: "settings", homecards: "settings",
+  automations: "ai", aidata: "ai",
   youtube: "media", music: "media",
   ir: "devices",
 };
@@ -10444,6 +10451,176 @@ async function loadCast() {
       castDoc = await requestJson("/api/cast").catch(() => castDoc);
     }
     renderCast();
+  });
+})();
+
+/* ── AI data ──
+   Bills, meter readings and furnace runtime, and the gas model fitted on them.
+   Gas cannot be read from the house, so it is inferred from how long the
+   furnace burned and corrected by readings typed in here; every panel says
+   what it is waiting for rather than showing a number it cannot stand behind. */
+let aiDataDoc = null;
+
+const GAS_STATUS = {
+  fitted: ["ok", "fitted"],
+  waiting_for_heating: ["warn", "waiting for heating season"],
+  not_enough_data: ["warn", "not enough data yet"],
+};
+
+function aiRow(label, value, hint) {
+  return `<div class="ai-row"><span>${escapeHtml(label)}${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</span>` +
+         `<b class="mono">${escapeHtml(String(value))}</b></div>`;
+}
+
+function renderAiInventory(inv) {
+  const box = document.querySelector("#aiInventory");
+  if (!box) return;
+  const span = (a, b) => (a && b ? `${String(a).slice(0, 10)} → ${String(b).slice(0, 10)}` : "none yet");
+  box.innerHTML =
+    aiRow("FortisBC bills", `${inv.bills.count} · ${inv.bills.gj} GJ`, span(inv.bills.first, inv.bills.last)) +
+    aiRow("Meter readings", `${inv.readings.count} · ${inv.readings.intervals} measured stretches`,
+          span(inv.readings.first, inv.readings.last)) +
+    aiRow("Furnace runtime", `${inv.runtime.days} days · ${inv.runtime.hours} h`, span(inv.runtime.first, inv.runtime.last)) +
+    aiRow("GJ per ft³", inv.gj_per_cubic_foot,
+          inv.gj_per_cubic_foot_measured ? "measured from your bills" : "standard value until a bill covers your readings");
+}
+
+function renderAiReadings(readings) {
+  const box = document.querySelector("#aiReadings");
+  if (!box) return;
+  if (!readings.length) {
+    box.innerHTML = `<div class="home-empty">No readings yet. One a day is plenty; each one sharpens the model.</div>`;
+    return;
+  }
+  box.innerHTML = readings.slice(0, 6).map((r) =>
+    aiRow(String(r.at).replace("T", " ").slice(0, 16),
+          `${r.cubic_feet != null ? `${r.cubic_feet} ft³` : `${r.gj} GJ`}`,
+          r.source === "manual" ? "" : "from a file")).join("");
+}
+
+function renderAiFiles(files) {
+  const box = document.querySelector("#aiFiles");
+  if (!box) return;
+  if (!files.length) {
+    box.innerHTML = `<div class="home-empty">Nothing yet</div>`;
+    return;
+  }
+  const said = (f) => {
+    const found = f.found || {};
+    if (f.kind === "bill" && found.gj) return `${found.gj} GJ · ${found.cost != null ? `$${found.cost}` : "no total found"} · ${found.days ?? "?"} days`;
+    if (found.count) return `${found.count} rows · ${found.unit || ""}`;
+    return found.reason || "nothing could be read";
+  };
+  box.innerHTML = files.map((f) => {
+    const cls = f.status === "imported" ? "ok" : f.status === "parsed" ? "info" : "warn";
+    const canImport = f.status === "parsed";
+    return `<div class="ai-file">
+      <span class="ai-file-name mono">${escapeHtml(f.name)}</span>
+      <span class="ai-file-kind">${escapeHtml(f.kind)}</span>
+      <span class="ai-file-found">${escapeHtml(said(f))}</span>
+      <span class="pill ${cls}">${escapeHtml(f.status.replace("_", " "))}</span>
+      ${canImport ? `<button class="btn-primary ai-import" data-file="${f.id}" type="button">Import</button>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function renderAiGas(gas) {
+  const box = document.querySelector("#aiGasModel");
+  const fitted = document.querySelector("#aiGasFitted");
+  if (!box) return;
+  const m = gas.model;
+  const [cls, words] = GAS_STATUS[m.status] || ["warn", m.status];
+  if (fitted) fitted.innerHTML = `<span class="pill ${cls}">${escapeHtml(words)}</span>`;
+  const rows = [];
+  if (m.base_gj_per_day != null) rows.push(aiRow("Always on", `${m.base_gj_per_day.toFixed(3)} GJ/day`, "water heater, cooking, dryer"));
+  if (m.gj_per_furnace_hour != null) rows.push(aiRow("Furnace", `${m.gj_per_furnace_hour.toFixed(3)} GJ/hour`, "while it is burning"));
+  if (m.error_percent != null) rows.push(aiRow("Agreement with what was measured", `±${m.error_percent}%`,
+    `${m.observations} stretches · ${Object.entries(m.sources || {}).map(([k, v]) => `${v} ${k}${v === 1 ? "" : "s"}`).join(", ")}`));
+  if (gas.yesterday_gj != null) rows.push(aiRow("Yesterday", `${gas.yesterday_gj} GJ`, "estimated"));
+  box.innerHTML = (m.note ? `<p class="settings-status">${escapeHtml(m.note)}</p>` : "") +
+    (rows.length ? rows.join("") : `<div class="home-empty">Add a bill or a few meter readings, and the model fits itself tonight.</div>`);
+}
+
+async function loadAiData() {
+  aiDataDoc = await requestJson("/api/ai-data");
+  renderAiInventory(aiDataDoc.inventory);
+  renderAiReadings(aiDataDoc.readings || []);
+  renderAiFiles(aiDataDoc.files || []);
+  renderAiGas(aiDataDoc.gas || { model: { status: "not_enough_data" } });
+  const sub = document.querySelector("#aiDataSub");
+  if (sub) {
+    const inv = aiDataDoc.inventory;
+    sub.textContent = `${inv.bills.count} bills · ${inv.readings.count} readings`;
+  }
+}
+
+async function uploadAiFiles(files) {
+  const status = document.querySelector("#aiUploadStatus");
+  for (const file of files) {
+    if (status) status.textContent = `Reading ${file.name}…`;
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const doc = await requestJson("/api/ai-data/files", { method: "POST", body });
+      if (status) status.textContent = `${file.name}: ${doc.file.status === "needs_review" ? "needs a look" : "read"}`;
+    } catch (error) {
+      if (status) status.textContent = `${file.name}: ${apiErrorDetail(error)}`;
+    }
+  }
+  await loadAiData();
+}
+
+(function initAiData() {
+  const input = document.querySelector("#aiFileInput");
+  const drop = document.querySelector("#aiDrop");
+  if (!input || !drop) return;
+  drop.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => { if (input.files?.length) uploadAiFiles([...input.files]); input.value = ""; });
+  ["dragover", "dragenter"].forEach((name) => drop.addEventListener(name, (event) => {
+    event.preventDefault();
+    drop.classList.add("over");
+  }));
+  ["dragleave", "drop"].forEach((name) => drop.addEventListener(name, () => drop.classList.remove("over")));
+  drop.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const files = [...(event.dataTransfer?.files || [])];
+    if (files.length) uploadAiFiles(files);
+  });
+
+  document.querySelector("#aiFiles")?.addEventListener("click", async (event) => {
+    const button = event.target.closest(".ai-import");
+    if (!button) return;
+    button.disabled = true;
+    const status = document.querySelector("#aiUploadStatus");
+    try {
+      const doc = await requestJson(`/api/ai-data/files/${button.dataset.file}/import`, { method: "POST" });
+      if (status) status.textContent = `Imported ${doc.added} row${doc.added === 1 ? "" : "s"}.`;
+    } catch (error) {
+      if (status) status.textContent = `Not imported: ${apiErrorDetail(error)}`;
+    }
+    await loadAiData();
+  });
+
+  document.querySelector("#aiReadingAdd")?.addEventListener("click", async () => {
+    const at = document.querySelector("#aiReadingAt")?.value;
+    const value = Number(document.querySelector("#aiReadingValue")?.value);
+    const status = document.querySelector("#aiUploadStatus");
+    if (!Number.isFinite(value) || value <= 0) {
+      if (status) status.textContent = "Type the number on the meter first.";
+      return;
+    }
+    try {
+      await requestJson("/api/ai-data/readings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ at: at || null, cubic_feet: value }),
+      });
+      document.querySelector("#aiReadingValue").value = "";
+      if (status) status.textContent = "Reading added.";
+      await loadAiData();
+    } catch (error) {
+      if (status) status.textContent = `Not added: ${apiErrorDetail(error)}`;
+    }
   });
 })();
 
