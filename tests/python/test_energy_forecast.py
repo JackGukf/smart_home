@@ -116,3 +116,37 @@ def test_lightgbm_beats_a_flat_line_when_it_is_installed():
     actual = [v for _, v in series[-24:]]
     flat = [series[-25][1]] * 24
     assert ef.mae(actual, predicted) < ef.mae(actual, flat)
+
+
+def test_gaps_are_filled_and_long_ones_cut_the_history():
+    """Home Assistant's statistics skip hours. Chronos-2 refuses a series whose
+    frequency it cannot infer and LightGBM's 168-hour lag falls off the end, so
+    a gappy series is regularised before any model sees it."""
+    base = datetime(2026, 9, 1, 0)
+    series = [(base + timedelta(hours=h), float(h)) for h in range(10)]
+    holed = series[:4] + series[6:]                       # two hours missing
+    filled = ef.regularize(holed)
+    assert [w for w, _ in filled] == [w for w, _ in series]
+    assert filled[4][1] == pytest.approx(4.0) and filled[5][1] == pytest.approx(5.0)  # interpolated
+
+    # A gap of more than six hours is not bridged: only the newer run is kept.
+    split = series[:3] + [(base + timedelta(hours=20 + h), 100.0 + h) for h in range(5)]
+    kept = ef.regularize(split)
+    assert len(kept) == 5 and kept[0][0] == base + timedelta(hours=20)
+    assert ef.regularize([]) == []
+
+
+def test_a_gappy_series_still_gets_scored():
+    series = house_series()
+    gappy = [p for i, p in enumerate(series) if i % 37]     # drop an hour here and there
+    scores = ef.evaluate(gappy, ["seasonal median"], folds=3)
+    assert scores[0].error is None and scores[0].folds == 3
+
+
+@pytest.mark.skipif(not ef.available_models()["lightgbm"], reason="lightgbm not installed here")
+def test_lightgbm_trains_on_less_than_a_week():
+    """Its longest lag is a week, but a lag past the start of history is NaN and
+    LightGBM handles that - otherwise it could never train in the first week."""
+    short = house_series(hours=100)
+    predicted = ef.LightGBM().fit(short).predict(short, 24)
+    assert len(predicted) == 24 and all(math.isfinite(v) for v in predicted)

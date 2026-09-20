@@ -58,6 +58,40 @@ def smape(actual: Sequence[float], predicted: Sequence[float]) -> float:
     return 100 * total / len(actual)
 
 
+# ── the hourly grid ──
+#
+# Home Assistant's statistics skip hours: a sensor that reported nothing, a
+# restart, a battery change. Gaps break the models in different ways - Chronos-2
+# refuses a series whose frequency it cannot infer, and LightGBM's lag 168 walks
+# off the end of a short run - so every series is put on a continuous hourly
+# grid before anything sees it.
+
+MAX_GAP_HOURS = 6  # longer than this is not a gap, it is a different stretch of history
+
+
+def regularize(series: Series, max_gap: int = MAX_GAP_HOURS) -> Series:
+    """One point per hour, oldest first: short gaps interpolated, and anything
+    before a long gap dropped rather than bridged with invention."""
+    if not series:
+        return []
+    points = sorted(series, key=lambda p: p[0])
+    start = points[0][0]
+    for (before, _), (after, _) in zip(points, points[1:]):
+        if (after - before).total_seconds() > max_gap * 3600:
+            start = after            # keep only the run after the last long gap
+    run = [(when, value) for when, value in points if when >= start]
+    out: Series = [run[0]]
+    for when, value in run[1:]:
+        previous_when, previous_value = out[-1]
+        missing = int((when - previous_when).total_seconds() // 3600) - 1
+        for step in range(1, missing + 1):
+            share = step / (missing + 1)
+            out.append((previous_when + timedelta(hours=step),
+                        previous_value + (value - previous_value) * share))
+        out.append((when, value))
+    return out
+
+
 # ── models ──
 #
 # A model is fit on a series and asked for the next `horizon` values. Keeping
@@ -142,7 +176,11 @@ class LightGBM:
 
         values = [v for _, v in series]
         rows, targets = [], []
-        for i in range(max(LAGS), len(series)):
+        # From the first day, not the first week: a lag that reaches past the
+        # start of the history is NaN, and LightGBM handles missing values
+        # natively. Waiting for lag 168 to be real would refuse to train on
+        # anything younger than a week - which is exactly the first week.
+        for i in range(min(max(LAGS), 24), len(series)):
             rows.append(_features(values[:i], series[i][0]))
             targets.append(values[i])
         if not rows:
@@ -285,6 +323,7 @@ def backtest(series: Series, factory: ModelFactory, horizon: int = HORIZON,
 def evaluate(series: Series, models: Iterable[str] | None = None, horizon: int = HORIZON,
              folds: int = 5) -> list[Score]:
     """Backtest each model and score it against the baseline (its "skill")."""
+    series = regularize(series)
     have = available_models()
     names = [n for n in (models or MODELS) if have.get(n)]
     if "seasonal median" not in names:
@@ -336,6 +375,7 @@ class Forecast:
 def forecast(series: Series, statistic_id: str, unit: str, horizon: int = HORIZON,
              folds: int = 5, models: Iterable[str] | None = None) -> Forecast:
     """Score the models on this house, use the winner, and keep the scorecard."""
+    series = regularize(series)
     scores = evaluate(series, models, horizon, folds)
     chosen = pick(scores)
     values = MODELS[chosen]().fit(series).predict(series, horizon)
@@ -369,7 +409,7 @@ def load_series(base_url: str, token: str, statistic_id: str, days: int = 30,
         if value is None:
             continue
         series.append((energy._local(row["start"]), float(value)))
-    return sorted(series, key=lambda p: p[0]), kind
+    return regularize(series), kind
 
 
 def electricity_statistic_id(base_url: str, token: str) -> str | None:

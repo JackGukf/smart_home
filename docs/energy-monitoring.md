@@ -174,6 +174,41 @@ seconds a night, 5.6 GB of venv and 456 MB of model weights on disk.
       PYTHONPATH=. ~/forecast-venv/bin/python -m src.python.energy_forecast \
           --evaluate --statistic-id sensor.my_ecobee_current_temperature --kind mean
 
+### Which sensors it can run on
+
+Only what Home Assistant keeps **long-term statistics** for, which on this
+board is 57 sensors with 4+ days of history. `--kind mean` for a reading
+(degrees, ppm, lux, a count), `--kind change` for a meter (kWh in that hour).
+`--days` is how much history to pull; it uses what exists.
+
+Measured 2026-09-19, five folds each, and the point is that **the winner
+depends on the series**:
+
+| Series | Hours | Best | Skill over baseline | Would use |
+| --- | --- | --- | --- | --- |
+| `sensor.my_ecobee_current_temperature` | 719 | chronos-2 | +73% | chronos-2 |
+| `sensor.my_ecobee_current_humidity` | 719 | seasonal median | chronos -2%, lgbm -10% | seasonal median |
+| `sensor.0xa4c138d00106c90d_illuminance` (kitchen/family room) | 385 | seasonal median | chronos -5%, lgbm -17% | seasonal median |
+| `sensor.office_camera_npu_person_count` | 277 | lightgbm | +2.3% (under the 3% margin) | seasonal median |
+
+Smooth and strongly autocorrelated (a thermostat) is where the big model earns
+its keep. Spiky or near-random at the hour scale (sunlight through a window,
+whether somebody is in the office) is where **nothing beats the house's own
+routine**, and the job says so rather than dressing it up. Electricity will sit
+between the two, nearer the spiky end.
+
+Two traps this turned up, both fixed:
+
+- **Statistics skip hours** - a restart, a battery change, a sensor that said
+  nothing. Chronos-2 refuses a series whose frequency it cannot infer and
+  LightGBM's 168-hour lag walks off the end, so `regularize()` puts every
+  series on a continuous hourly grid first: gaps up to 6 h interpolated, and
+  anything before a longer gap dropped rather than bridged with invention.
+- **LightGBM trains from the first day, not the first week.** A lag that
+  reaches past the start of history is NaN, which LightGBM handles natively;
+  waiting for lag 168 to be real would refuse to train during the first week -
+  exactly the week after the PowerLync arrives.
+
 Nothing here drives a device. The house rule stands: Python computes, rules
 execute, and no model sits in a trigger path.
 
