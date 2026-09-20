@@ -434,10 +434,16 @@ def gas_from_records(db_path, now: datetime | None = None) -> dict[str, Any] | N
         return None
     try:
         rows = [dict(r) for r in db.execute(
-            "SELECT period_start, period_end, gj, cost, avg_temp_c FROM bills ORDER BY period_start")]
+            "SELECT id, period_start, period_end, gj, cost, avg_temp_c FROM bills ORDER BY period_start")]
         if not rows:
             return None
         model = gas_model.fit(db, now)
+        # A bill whose period another bill already covers is the same gas twice.
+        # Its money is still real, so it counts towards the price per GJ below,
+        # but it must not become a bar of its own.
+        duplicates = {clash["other"]["id"] for clash in ai_data.overlapping_bills(db)}
+        costed_rows = rows
+        rows = [r for r in rows if r["id"] not in duplicates]
         periods = [{
             "start": r["period_start"], "end": r["period_end"],
             "date": r["period_end"],           # the chart labels by the day a period ended
@@ -446,7 +452,7 @@ def gas_from_records(db_path, now: datetime | None = None) -> dict[str, Any] | N
             "avg_temp_c": r["avg_temp_c"],
             "cost": r["cost"],
         } for r in rows][-GAS_PERIODS_SHOWN:]
-        costed = [(p["cost"], p["gj"]) for p in periods if p["cost"] and p["gj"]]
+        costed = [(r["cost"], r["gj"]) for r in costed_rows if r["cost"] and r["gj"]]
         rate = round(sum(c for c, _ in costed) / sum(g for _, g in costed), 2) if costed else GAS_RATE
         last = periods[-1]
         return {
@@ -460,6 +466,7 @@ def gas_from_records(db_path, now: datetime | None = None) -> dict[str, Any] | N
             "same_period_last_year": _same_period_last_year(periods, last),
             "rate": rate,
             "rate_measured": bool(costed),
+            "duplicates_ignored": len(duplicates),
             "model": model.as_dict(),
             # Daily figures only where the model's own input is known for the day.
             "days": [d for d in gas_model.daily_estimates(db, model, 30, now.date()) if d["gj"] is not None],

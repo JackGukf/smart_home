@@ -390,3 +390,23 @@ def test_the_view_draws_bills_and_names_what_fitted_them():
     assert "Same period last year" in js and "Hot water & cooking" in js
     # The sample path is still there for a house with no bills uploaded.
     assert "g.sample ? energyColumnHtml({" in js
+
+
+def test_a_duplicated_period_is_not_a_bar_but_its_money_still_counts(tmp_path):
+    """The owner's invoice PDFs cover days the yearly export already covers.
+    Drawing both would show the same gas twice; but the PDF is where the
+    dollars are, so the price per GJ still comes from it."""
+    from src.python import ai_data
+
+    path = _with_bills(tmp_path)
+    db = ai_data.connect(path)
+    db.execute("INSERT INTO bills (period_start, period_end, gj, cost) VALUES "
+               "('2026-06-18','2026-08-12',1.9,31.82)")
+    db.commit()
+    db.close()
+
+    doc = energy.gas_from_records(path, now=datetime(2026, 9, 19))
+    assert doc["duplicates_ignored"] == 1
+    assert all(p["end"] != "2026-08-12" for p in doc["periods"]), "the duplicate is not drawn"
+    assert doc["last_period_gj"] == 0.9
+    assert doc["rate_measured"] is True and doc["rate"] == pytest.approx(31.82 / 1.9, abs=0.01)
