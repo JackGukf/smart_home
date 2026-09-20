@@ -1,0 +1,15 @@
+[Unit]
+Description=Energy forecast - score the models on this house and forecast the next 24 hours
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/orangepi/smart_home_AI
+Environment=PYTHONPATH=/home/orangepi/smart_home_AI
+# Its own venv: LightGBM, torch and Chronos-2 are large and are not wanted in
+# the dashboard's environment. The dashboard only reads the JSON this writes.
+ExecStart=/home/orangepi/forecast-venv/bin/python -m src.python.energy_forecast
+# Seconds with the baseline and LightGBM; Chronos-2 adds a few, plus the first
+# run's model download. Bounded either way.
+TimeoutStartSec=1800
+Nice=15
+IOSchedulingClass=idle

@@ -298,29 +298,7 @@ class LiveEnergy:
             return json.loads(response.read())
 
     def _ws_statistics(self, statistic_id: str, start: datetime, end: datetime, period: str) -> list[dict[str, Any]]:
-        return asyncio.run(self._ws_statistics_async(statistic_id, start, end, period))
-
-    async def _ws_statistics_async(self, statistic_id: str, start: datetime, end: datetime,
-                                   period: str) -> list[dict[str, Any]]:
-        import aiohttp
-
-        url = self._base_url.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
-        timeout = aiohttp.ClientTimeout(total=FETCH_TIMEOUT_S)
-        async with aiohttp.ClientSession(timeout=timeout) as session, session.ws_connect(url) as ws:
-            await ws.receive_json()  # auth_required
-            await ws.send_json({"type": "auth", "access_token": self._token()})
-            if (await ws.receive_json()).get("type") != "auth_ok":
-                raise OSError("Home Assistant refused the token")
-            await ws.send_json({
-                "id": 1, "type": "recorder/statistics_during_period",
-                "start_time": start.astimezone().isoformat(), "end_time": end.astimezone().isoformat(),
-                "statistic_ids": [statistic_id], "period": period,
-                "types": ["change"], "units": {"energy": "kWh"},
-            })
-            reply = await ws.receive_json()
-            if not reply.get("success"):
-                raise OSError(f"statistics query failed: {reply.get('error')}")
-            return list((reply.get("result") or {}).get(statistic_id) or [])
+        return fetch_statistics(self._base_url, self._token() or "", statistic_id, start, end, period)
 
     def _cached(self, key: str, max_age: float, fetch: Callable[[], Any]) -> Any:
         now = self._clock()
@@ -376,3 +354,58 @@ class LiveEnergy:
             "electricity": build_live_electricity(now, state, history, hourly, daily),
             "gas": _sample_gas(days),
         }
+
+
+def fetch_statistics(base_url: str, token: str, statistic_id: str, start: datetime, end: datetime,
+                     period: str = "hour", types: tuple[str, ...] = ("change",)) -> list[dict[str, Any]]:
+    """Home Assistant's long-term statistics, which REST does not serve.
+
+    They survive the recorder's purge, so this is the only way to ask about
+    anything older than ten days - the Energy view's 30 days, and the history
+    the forecast models train on (src/python/energy_forecast.py)."""
+    return asyncio.run(fetch_statistics_async(base_url, token, statistic_id, start, end, period, types))
+
+
+async def fetch_statistics_async(base_url: str, token: str, statistic_id: str, start: datetime,
+                                 end: datetime, period: str = "hour",
+                                 types: tuple[str, ...] = ("change",)) -> list[dict[str, Any]]:
+    import aiohttp
+
+    url = base_url.rstrip("/").replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    timeout = aiohttp.ClientTimeout(total=FETCH_TIMEOUT_S)
+    async with aiohttp.ClientSession(timeout=timeout) as session, session.ws_connect(url) as ws:
+        await ws.receive_json()  # auth_required
+        await ws.send_json({"type": "auth", "access_token": token})
+        if (await ws.receive_json()).get("type") != "auth_ok":
+            raise OSError("Home Assistant refused the token")
+        await ws.send_json({
+            "id": 1, "type": "recorder/statistics_during_period",
+            "start_time": start.astimezone().isoformat(), "end_time": end.astimezone().isoformat(),
+            "statistic_ids": [statistic_id], "period": period,
+            "types": list(types), "units": {"energy": "kWh"},
+        })
+        reply = await ws.receive_json()
+        if not reply.get("success"):
+            raise OSError(f"statistics query failed: {reply.get('error')}")
+        return list((reply.get("result") or {}).get(statistic_id) or [])
+
+
+FORECAST_MAX_AGE_HOURS = 36  # a nightly file older than this is stale, so say nothing
+
+
+def read_forecast(path, now: datetime | None = None) -> dict[str, Any] | None:
+    """Last night's forecast (src/python/energy_forecast.py), if it is recent.
+
+    The forecast job runs in its own venv on its own timer and may not have run
+    at all - no file, or a file from before the PowerLync was paired, is simply
+    nothing to show."""
+    from pathlib import Path as _Path
+
+    try:
+        doc = json.loads(_Path(path).read_text(encoding="utf-8"))
+        at = datetime.fromisoformat(str(doc["at"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if (now or datetime.now()) - at > timedelta(hours=FORECAST_MAX_AGE_HOURS):
+        return None
+    return doc

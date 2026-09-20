@@ -1,0 +1,13 @@
+[Unit]
+Description=Forecast the house's electricity every night
+
+[Timer]
+# After house-learning (03:30) and before the digest reads the day (04:00), in
+# the house's time zone - the board runs on UTC. Until the PowerLync is paired
+# the job finds no electricity statistic and exits saying so.
+OnCalendar=*-*-* 03:45:00 America/Vancouver
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

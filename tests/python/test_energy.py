@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import tarfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -281,3 +282,43 @@ def test_setup_takes_only_the_component_from_the_archive(monkeypatch):
 
     monkeypatch.setattr(setup, "urlopen", lambda url, timeout: Response(buf.getvalue()))
     assert sorted(setup.fetch_component()) == sorted(setup.COMPONENT_FILES)
+
+
+# ── Last night's forecast on the Energy view ──
+
+def test_a_forecast_is_shown_only_while_it_is_fresh(tmp_path):
+    path = tmp_path / "energy_forecast.json"
+    doc = {"model": "lightgbm", "at": datetime(2026, 10, 2, 3, 45).isoformat(),
+           "next_24h_total": 19.4, "hourly": [{"at": "2026-10-02T04:00:00", "value": 0.8}],
+           "scores": [{"model": "lightgbm", "mae": 0.08, "skill": 0.12}]}
+    path.write_text(json.dumps(doc), encoding="utf-8")
+
+    assert energy.read_forecast(path, datetime(2026, 10, 2, 9))["model"] == "lightgbm"
+    # The job runs nightly; a file from two days ago means it stopped running.
+    assert energy.read_forecast(path, datetime(2026, 10, 4, 9)) is None
+    assert energy.read_forecast(tmp_path / "nope.json", datetime(2026, 10, 2, 9)) is None
+    path.write_text("not json", encoding="utf-8")
+    assert energy.read_forecast(path, datetime(2026, 10, 2, 9)) is None
+
+
+def test_the_endpoint_carries_the_forecast(tmp_path):
+    cfg = tmp_path / "devices.local.yaml"
+    cfg.write_text(yaml.dump({}), encoding="utf-8")
+    path = tmp_path / "energy_forecast.json"
+    path.write_text(json.dumps({"model": "chronos-2", "at": datetime.now().isoformat(),
+                                "next_24h_total": 21.0, "hourly": [{"at": "x", "value": 1}],
+                                "scores": []}), encoding="utf-8")
+    client = TestClient(web_app.create_app(config_path=cfg, check_camera_ports=False,
+                                           energy_forecast_path=path))
+    assert client.get("/api/energy").json()["forecast"]["model"] == "chronos-2"
+
+    empty = TestClient(web_app.create_app(config_path=cfg, check_camera_ports=False,
+                                          energy_forecast_path=tmp_path / "missing.json"))
+    assert empty.get("/api/energy").json()["forecast"] is None   # nothing to show, and that is fine
+
+
+def test_the_view_names_the_model_that_wrote_the_forecast():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "function energyForecastHtml" in js and "Next 24 hours" in js
+    assert "escapeHtml(forecast.model)" in js          # the model is named on screen
+    assert "energyForecastHtml(latestEnergy.forecast" in js

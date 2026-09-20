@@ -389,3 +389,18 @@ def test_the_digest_installer_enables_the_timer_not_the_service() -> None:
     assert "enable --now house-digest.service" not in script
     # User timers do not fire once the last session ends.
     assert "enable-linger" in script
+
+
+def test_energy_forecast_runs_nightly_from_its_own_venv() -> None:
+    """The forecasting models (LightGBM, torch, Chronos-2) are large and live in
+    ~/forecast-venv, not the dashboard's .venv; the dashboard only reads the
+    JSON. The timer runs after house-learning and before the digest."""
+    service = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "energy-forecast.service").read_text(encoding="utf-8")
+    timer = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "energy-forecast.timer").read_text(encoding="utf-8")
+
+    assert "ExecStart=/home/orangepi/forecast-venv/bin/python -m src.python.energy_forecast" in service
+    assert "WorkingDirectory=/home/orangepi/smart_home_AI" in service
+    assert "Environment=PYTHONPATH=/home/orangepi/smart_home_AI" in service
+    assert "Type=oneshot" in service and "Nice=15" in service
+    assert "OnCalendar=*-*-* 03:45:00 America/Vancouver" in timer
+    assert "Persistent=true" in timer and "WantedBy=timers.target" in timer

@@ -135,6 +135,8 @@ DEFAULT_PROPOSALS_PATH = PROJECT_ROOT / "automation-proposals"
 # file rather than generated on request: it takes a minute to produce and says
 # the same thing all day, so a page load must never wait for it.
 DEFAULT_DIGEST_PATH = PROJECT_ROOT / "house_digest.json"
+# Written nightly by energy-forecast.service, from its own venv.
+DEFAULT_ENERGY_FORECAST_PATH = PROJECT_ROOT / "energy_forecast.json"
 # What the news line in the header shows. On the board rather than in each browser, so
 # switching news off on a phone switches it off on the wall panel too.
 DEFAULT_NEWS_SETTINGS_PATH = PROJECT_ROOT / "dashboard_news.json"
@@ -685,6 +687,7 @@ def create_app(
     news_service: news_feed.NewsService | None = None,
     history_service: sensor_history.SensorHistory | None = None,
     energy_source: energy.LiveEnergy | None = None,
+    energy_forecast_path: Path | None = None,
     status_service: status_overview.StatusOverview | None = None,
     memory_service: house_memory.SummaryCache | None = None,
     ir_page_path: Path | None = None,
@@ -709,6 +712,7 @@ def create_app(
     app.state.news_service = news_service or news_feed.NewsService()
     app.state.history_service = history_service
     app.state.energy_source = energy_source
+    app.state.energy_forecast_path = energy_forecast_path or DEFAULT_ENERGY_FORECAST_PATH
     app.state.status_service = status_service
     app.state.memory_service = memory_service or house_memory.SummaryCache()
     # systemctl, swapped out in tests so they never touch the real user manager.
@@ -1502,9 +1506,11 @@ def create_app(
             source = energy.LiveEnergy(ha_config.base_url, lambda: os.getenv(ha_config.token_env))
             app.state.energy_source = source
         try:
-            return await asyncio.to_thread(source.snapshot)
+            doc = await asyncio.to_thread(source.snapshot)
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=502, detail="Home Assistant energy readings are unavailable") from error
+        forecast = await asyncio.to_thread(energy.read_forecast, app.state.energy_forecast_path)
+        return {**doc, "forecast": forecast}
 
     @app.get("/api/light-scenes")
     async def light_scenes_get() -> dict[str, Any]:

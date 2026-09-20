@@ -7057,3 +7057,21 @@ header > .header-right { flex-shrink: 0; }
 @media (max-width: 739px) {
   .energy-columns { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* The nightly energy forecast, under the last-24-hours chart (energy_forecast.py). */
+.energy-forecast {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.energy-forecast-head {
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

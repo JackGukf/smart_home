@@ -10604,6 +10604,24 @@ function energyColumnHtml({ name, provider, headline, unit, headlineNote, pill, 
     </div>`;
 }
 
+/* Last night's forecast, if the nightly job left one. The model that wrote it
+   is named on the page: it is whichever won a backtest on this house, and that
+   can change from night to night (src/python/energy_forecast.py). */
+function energyForecastHtml(forecast, rate) {
+  if (!forecast || !forecast.hourly?.length) return "";
+  const total = Number(forecast.next_24h_total);
+  const best = (forecast.scores || []).find((s) => s.model === forecast.model);
+  const accuracy = best && Number.isFinite(best.mae)
+    ? ` · typically within ${best.mae.toFixed(2)} kWh an hour${best.skill > 0 ? `, ${Math.round(best.skill * 100)}% better than the usual day` : ""}`
+    : "";
+  return `
+    <div class="energy-forecast">
+      <span class="energy-forecast-head"><i class="ti ti-chart-dots-3"></i> Next 24 hours</span>
+      <span><b class="mono">${total.toFixed(1)} kWh</b> ≈ <b class="mono">${energyMoney(total * rate)}</b></span>
+      <span class="section-meta">${escapeHtml(forecast.model)}${escapeHtml(accuracy)}</span>
+    </div>`;
+}
+
 function renderEnergyView() {
   const columns = document.querySelector("#energyColumns");
   if (!columns || !latestEnergy) return;
@@ -10633,7 +10651,8 @@ function renderEnergyView() {
         <span class="section-meta">${e.usual_24h_hourly_kwh ? "dashed line: a usual day" : "a usual day after three days of readings"}</span>
       </div>
       ${energyAreaSvg(e.last_24h_hourly_kwh, { compare: e.usual_24h_hourly_kwh, height: 120 })}
-      <div class="energy-axis">${[0, 6, 12, 18, 24].map((h) => `<span>${String((e.last_24h_start_hour + h) % 24).padStart(2, "0")}h</span>`).join("")}</div>`;
+      <div class="energy-axis">${[0, 6, 12, 18, 24].map((h) => `<span>${String((e.last_24h_start_hour + h) % 24).padStart(2, "0")}h</span>`).join("")}</div>
+      ${energyForecastHtml(latestEnergy.forecast, e.rate)}`;
   }
 }
 
