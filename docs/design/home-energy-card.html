@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Energy Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #0a0b12; --surface: #10111c; --card: #161826; --card-2: #1c1e2e;
+  --border: #1f2238; --accent: #4f8ef7; --green: #34d399; --amber: #fbbf24;
+  --orange: #fb923c; --text: #dde3f0; --muted: #6b7290; --dim: #7c8893;
+  --font: 'Inter', system-ui, sans-serif; --mono: 'JetBrains Mono', monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); line-height: 1.45; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 36px 16px 90px; }
+h1 { font-size: 25px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 34px 0 2px; }
+.lede, .note { color: var(--muted); font-size: 14px; }
+.note { margin: 4px 0 14px; }
+.row { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+
+/* The card at the size it really is on Home: four columns wide, five rows tall. */
+.card {
+  width: 380px; height: 300px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  padding: 13px 15px; display: flex; flex-direction: column;
+}
+.card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.card-title { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--dim); }
+.mono { font-family: var(--mono); }
+.pill { font-size: 10.5px; padding: 2px 7px; border-radius: 999px; border: 1px solid rgba(79,142,247,0.35); color: var(--accent); background: rgba(79,142,247,0.12); }
+
+/* A: side by side */
+.split { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 12px; flex: 1; min-height: 0; }
+.rule { background: var(--border); }
+.half { display: flex; flex-direction: column; min-width: 0; }
+.kind { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--dim); font-weight: 500; }
+.dot { width: 7px; height: 7px; border-radius: 2px; }
+.big { font-size: 30px; font-weight: 600; line-height: 1.1; margin-top: 4px; }
+.big small { font-size: 12px; font-weight: 400; color: var(--dim); margin-left: 3px; }
+.sub { font-size: 11.5px; color: var(--dim); }
+.chart { margin-top: auto; }
+.facts { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--dim); margin-top: 7px; }
+.facts b { color: var(--text); font-weight: 500; }
+
+/* B: stacked rows */
+.rows { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 10px; }
+.erow { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; flex: 1; min-height: 0; }
+.erow + .erow { border-top: 1px solid var(--border); padding-top: 10px; }
+.erow-left { min-width: 104px; }
+.erow-chart { min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: center; }
+
+/* C: one chart, switched */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg span { font-size: 11px; padding: 3px 10px; color: var(--dim); }
+.seg span.on { background: rgba(79,142,247,0.16); color: var(--accent); }
+
+svg { display: block; width: 100%; }
+.b-e { fill: #4f8ef7; }
+.b-e.last { fill: #8ab4f8; }
+.b-g { fill: #fb923c; }
+.b-g.last { fill: #fdba74; }
+.axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px; color: var(--muted); margin-top: 3px; }
+.tag { display: inline-block; font-size: 11px; color: var(--muted); margin-top: 8px; }
+.pros { font-size: 13px; color: var(--muted); margin: 8px 0 0; max-width: 380px; }
+.pros b { color: var(--text); font-weight: 500; }
+.pick { border-left: 2px solid var(--green); background: rgba(52,211,153,0.07); padding: 10px 14px; border-radius: 0 8px 8px 0; font-size: 13.5px; margin: 26px 0 0; }
+.pick b { color: var(--green); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Home → Energy card: electricity and gas, side by side</h1>
+<p class="lede">Design preview, 2026-09-20. Real figures from your own bills. The card is drawn at the size
+it occupies on Home (four columns wide, five rows tall). Nothing is built yet — say which you want.</p>
+
+<h2>Today</h2>
+<p class="note">Electricity owns the card; gas is one line of text at the bottom.</p>
+<div class="row">
+  <div class="card">
+    <div class="card-head"><span class="card-title">⚡ Energy</span></div>
+    <div class="big mono">453 <small>kWh last month</small></div>
+    <div class="sub">from your bills</div>
+    <div class="chart" style="margin-top:14px">
+      <svg viewBox="0 0 340 74" preserveAspectRatio="none" height="74">
+        <rect class="b-e" x="2" y="26" width="24" height="48" rx="2"/><rect class="b-e" x="30" y="19" width="24" height="55" rx="2"/>
+        <rect class="b-e" x="58" y="31" width="24" height="43" rx="2"/><rect class="b-e" x="86" y="29" width="24" height="45" rx="2"/>
+        <rect class="b-e" x="114" y="31" width="24" height="43" rx="2"/><rect class="b-e" x="142" y="50" width="24" height="24" rx="2"/>
+        <rect class="b-e" x="170" y="24" width="24" height="50" rx="2"/><rect class="b-e" x="198" y="25" width="24" height="49" rx="2"/>
+        <rect class="b-e" x="226" y="24" width="24" height="50" rx="2"/><rect class="b-e" x="254" y="21" width="24" height="53" rx="2"/>
+        <rect class="b-e" x="282" y="19" width="24" height="55" rx="2"/><rect class="b-e last" x="310" y="22" width="24" height="52" rx="2"/>
+      </svg>
+    </div>
+    <div class="facts"><span>Per day <b>14.6 kWh</b></span><span>Last bill <b>$131.73</b></span></div>
+    <div class="facts" style="margin-top:2px"><span>Gas <b>0.9 GJ</b> last bill</span></div>
+  </div>
+  <p class="pros"><b>The problem:</b> gas has two years of real history now and gets one line of text,
+  while electricity gets the whole card. The two are not comparable at a glance.</p>
+</div>
+
+<h2>Option A · Side by side</h2>
+<p class="note">The card splits down the middle. Each fuel keeps its own number, its own twelve bars and one fact.</p>
+<div class="row">
+  <div class="card">
+    <div class="card-head"><span class="card-title">⚡ Energy</span><span class="pill">from your bills</span></div>
+    <div class="split">
+      <div class="half">
+        <div class="kind"><i class="dot" style="background:#4f8ef7"></i> Electricity</div>
+        <div class="big mono">453<small>kWh</small></div>
+        <div class="sub">last month · +3% on last year</div>
+        <div class="chart">
+          <svg viewBox="0 0 160 56" preserveAspectRatio="none" height="56">
+            <rect class="b-e" x="1" y="20" width="11" height="36" rx="1.5"/><rect class="b-e" x="14" y="14" width="11" height="42" rx="1.5"/>
+            <rect class="b-e" x="27" y="25" width="11" height="31" rx="1.5"/><rect class="b-e" x="40" y="23" width="11" height="33" rx="1.5"/>
+            <rect class="b-e" x="53" y="25" width="11" height="31" rx="1.5"/><rect class="b-e" x="66" y="40" width="11" height="16" rx="1.5"/>
+            <rect class="b-e" x="79" y="18" width="11" height="38" rx="1.5"/><rect class="b-e" x="92" y="19" width="11" height="37" rx="1.5"/>
+            <rect class="b-e" x="105" y="18" width="11" height="38" rx="1.5"/><rect class="b-e" x="118" y="16" width="11" height="40" rx="1.5"/>
+            <rect class="b-e" x="131" y="14" width="11" height="42" rx="1.5"/><rect class="b-e last" x="144" y="17" width="11" height="39" rx="1.5"/>
+          </svg>
+          <div class="axis"><span>Oct</span><span>Apr</span><span>Sep</span></div>
+        </div>
+        <div class="facts"><span>14.6 kWh/day</span><span><b>$59.66</b></span></div>
+      </div>
+      <div class="rule"></div>
+      <div class="half">
+        <div class="kind"><i class="dot" style="background:#fb923c"></i> Natural gas</div>
+        <div class="big mono">0.9<small>GJ</small></div>
+        <div class="sub">last bill · −25% on last year</div>
+        <div class="chart">
+          <svg viewBox="0 0 160 56" preserveAspectRatio="none" height="56">
+            <rect class="b-g" x="1" y="52" width="11" height="4" rx="1.5"/><rect class="b-g" x="14" y="36" width="11" height="20" rx="1.5"/>
+            <rect class="b-g" x="27" y="22" width="11" height="34" rx="1.5"/><rect class="b-g" x="40" y="17" width="11" height="39" rx="1.5"/>
+            <rect class="b-g" x="53" y="2" width="11" height="54" rx="1.5"/><rect class="b-g" x="66" y="17" width="11" height="39" rx="1.5"/>
+            <rect class="b-g" x="79" y="16" width="11" height="40" rx="1.5"/><rect class="b-g" x="92" y="17" width="11" height="39" rx="1.5"/>
+            <rect class="b-g" x="105" y="42" width="11" height="14" rx="1.5"/><rect class="b-g" x="118" y="48" width="11" height="8" rx="1.5"/>
+            <rect class="b-g" x="131" y="50" width="11" height="6" rx="1.5"/><rect class="b-g last" x="144" y="52" width="11" height="4" rx="1.5"/>
+          </svg>
+          <div class="axis"><span>Sep</span><span>Mar</span><span>Aug</span></div>
+        </div>
+        <div class="facts"><span>0.037 GJ/day</span><span><b>$15.80</b></span></div>
+      </div>
+    </div>
+  </div>
+  <p class="pros"><b>Reads as one card, two fuels.</b> The winter shape of gas and the flatness of
+  electricity sit next to each other, which is the whole point. Narrowest on a phone, where the two
+  halves stack.</p>
+</div>
+
+<h2>Option B · One row each</h2>
+<p class="note">Two full-width rows. The bars get the card's width; the numbers stay on the left.</p>
+<div class="row">
+  <div class="card">
+    <div class="card-head"><span class="card-title">⚡ Energy</span><span class="pill">from your bills</span></div>
+    <div class="rows">
+      <div class="erow">
+        <div class="erow-left">
+          <div class="kind"><i class="dot" style="background:#4f8ef7"></i> Electricity</div>
+          <div class="big mono" style="font-size:26px">453<small>kWh</small></div>
+          <div class="sub">14.6/day · +3%</div>
+        </div>
+        <div class="erow-chart">
+          <svg viewBox="0 0 230 46" preserveAspectRatio="none" height="46">
+            <rect class="b-e" x="1" y="16" width="16" height="30" rx="1.5"/><rect class="b-e" x="20" y="11" width="16" height="35" rx="1.5"/>
+            <rect class="b-e" x="39" y="20" width="16" height="26" rx="1.5"/><rect class="b-e" x="58" y="19" width="16" height="27" rx="1.5"/>
+            <rect class="b-e" x="77" y="20" width="16" height="26" rx="1.5"/><rect class="b-e" x="96" y="33" width="16" height="13" rx="1.5"/>
+            <rect class="b-e" x="115" y="15" width="16" height="31" rx="1.5"/><rect class="b-e" x="134" y="15" width="16" height="31" rx="1.5"/>
+            <rect class="b-e" x="153" y="15" width="16" height="31" rx="1.5"/><rect class="b-e" x="172" y="13" width="16" height="33" rx="1.5"/>
+            <rect class="b-e" x="191" y="11" width="16" height="35" rx="1.5"/><rect class="b-e last" x="210" y="14" width="16" height="32" rx="1.5"/>
+          </svg>
+        </div>
+      </div>
+      <div class="erow">
+        <div class="erow-left">
+          <div class="kind"><i class="dot" style="background:#fb923c"></i> Natural gas</div>
+          <div class="big mono" style="font-size:26px">0.9<small>GJ</small></div>
+          <div class="sub">last bill · −25%</div>
+        </div>
+        <div class="erow-chart">
+          <svg viewBox="0 0 230 46" preserveAspectRatio="none" height="46">
+            <rect class="b-g" x="1" y="43" width="16" height="3" rx="1.5"/><rect class="b-g" x="20" y="30" width="16" height="16" rx="1.5"/>
+            <rect class="b-g" x="39" y="18" width="16" height="28" rx="1.5"/><rect class="b-g" x="58" y="14" width="16" height="32" rx="1.5"/>
+            <rect class="b-g" x="77" y="2" width="16" height="44" rx="1.5"/><rect class="b-g" x="96" y="14" width="16" height="32" rx="1.5"/>
+            <rect class="b-g" x="115" y="13" width="16" height="33" rx="1.5"/><rect class="b-g" x="134" y="14" width="16" height="32" rx="1.5"/>
+            <rect class="b-g" x="153" y="34" width="16" height="12" rx="1.5"/><rect class="b-g" x="172" y="39" width="16" height="7" rx="1.5"/>
+            <rect class="b-g" x="191" y="41" width="16" height="5" rx="1.5"/><rect class="b-g last" x="210" y="43" width="16" height="3" rx="1.5"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="pros"><b>The bars are twice as wide</b> as in A, so a year of gas is easier to read, and the
+  layout survives a narrow card without stacking. The two numbers are further apart, so comparing them
+  takes a moment longer.</p>
+</div>
+
+<h2>Option C · One chart, switched</h2>
+<p class="note">A segmented control; one fuel on screen at a time, as big as the card allows.</p>
+<div class="row">
+  <div class="card">
+    <div class="card-head"><span class="card-title">⚡ Energy</span>
+      <span class="seg"><span class="on">Electricity</span><span>Gas</span></span></div>
+    <div class="big mono">453 <small>kWh last month · +3% on last year</small></div>
+    <div class="sub">14.6 kWh/day · last bill $131.73</div>
+    <div class="chart" style="margin-top:10px">
+      <svg viewBox="0 0 340 96" preserveAspectRatio="none" height="96">
+        <rect class="b-e" x="2" y="34" width="24" height="62" rx="2"/><rect class="b-e" x="30" y="24" width="24" height="72" rx="2"/>
+        <rect class="b-e" x="58" y="41" width="24" height="55" rx="2"/><rect class="b-e" x="86" y="38" width="24" height="58" rx="2"/>
+        <rect class="b-e" x="114" y="41" width="24" height="55" rx="2"/><rect class="b-e" x="142" y="66" width="24" height="30" rx="2"/>
+        <rect class="b-e" x="170" y="31" width="24" height="65" rx="2"/><rect class="b-e" x="198" y="32" width="24" height="64" rx="2"/>
+        <rect class="b-e" x="226" y="31" width="24" height="65" rx="2"/><rect class="b-e" x="254" y="27" width="24" height="69" rx="2"/>
+        <rect class="b-e" x="282" y="24" width="24" height="72" rx="2"/><rect class="b-e last" x="310" y="29" width="24" height="67" rx="2"/>
+      </svg>
+      <div class="axis"><span>Oct 25</span><span>Jan</span><span>Apr</span><span>Jul</span><span>Sep 26</span></div>
+    </div>
+  </div>
+  <p class="pros"><b>The biggest chart of the three</b>, and room for the cost line. But one fuel is always
+  hidden, and the Home view is meant to be read without touching it.</p>
+</div>
+
+<div class="pick"><b>My suggestion: A.</b> Home is a glance, and A is the only one where both fuels are
+visible at once with their shapes comparable. B is the fallback if the bars feel too small on the wall
+panel — it is the same content, laid out to give the charts width. Either takes the same work; C is
+less code but hides half the answer.</div>
+
+<p class="tag">Figures: electricity Oct 2025 – Sep 2026 (real months), gas Sep 2025 – Aug 2026 (real
+bills). Money uses your measured $0.1317/kWh and $17.56/GJ.</p>
+
+</div>
+</body>
+</html>

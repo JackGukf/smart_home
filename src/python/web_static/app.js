@@ -10787,30 +10787,90 @@ function energyAxis(days) {
   return `<div class="energy-axis">${picks.map((i) => `<span>${escapeHtml(energyDateLabel(days[i].date))}</span>`).join("")}</div>`;
 }
 
+/* The Home card: electricity and gas side by side, each with its own number,
+   its own year of bars, what it cost and how it compares with the same period
+   a year ago. Each half adapts to what the house can actually say - live
+   readings, uploaded bills, or sample data - and labels itself accordingly. */
+function energyChange(change) {
+  if (change === null || change === undefined) return "";
+  const word = change > 0 ? "+" : "";
+  return ` · <span class="energy-change ${change > 0 ? "up" : "down"}">${word}${change}%</span>`;
+}
+
+function energyHalfHtml({ kind, name, value, unit, sub, chart, left, right }) {
+  return `
+    <div class="energy-half">
+      <div class="energy-half-head"><i class="energy-dot ${kind}"></i>${escapeHtml(name)}</div>
+      <div class="energy-now">
+        <span class="energy-kw mono">${value}</span>
+        <span class="energy-unit">${escapeHtml(unit)}</span>
+      </div>
+      <div class="energy-half-sub">${sub}</div>
+      <div class="energy-spark">${chart}</div>
+      <div class="energy-facts"><span>${left}</span><span>${right}</span></div>
+    </div>`;
+}
+
+function homeElectricityHalf(e) {
+  if (e.mode === "records") {
+    const periods = (e.periods || []).slice(-12);
+    const money = periods.length ? energyMoney(Number(e.last_period_kwh ?? 0) * e.rate) : "";
+    return energyHalfHtml({
+      kind: "electric", name: "Electricity",
+      value: Number(e.last_period_kwh ?? 0).toFixed(0), unit: "kWh",
+      sub: `last ${e.period_kind === "month" ? "month" : "bill"}${energyChange(e.same_period_last_year?.change_percent)}`,
+      chart: energyBarsSvg(periods.map((p) => p.kwh), { kind: "electric", height: 52 }),
+      left: `<b class="mono">${Number(e.kwh_per_day ?? 0).toFixed(1)}</b> kWh/day`,
+      right: money ? `≈ <b class="mono">${money}</b>` : "",
+    });
+  }
+  // Live, or the sample data that stands in for it: the last hour and the day.
+  return energyHalfHtml({
+    kind: "electric", name: "Electricity",
+    value: energyFixed(e.kw_now, 2), unit: "kW now",
+    sub: `${escapeHtml(ENERGY_STATE_TEXT[e.state] || "")}${e.sample ? " · sample" : ""}`,
+    chart: energyAreaSvg(e.last_hour_kw, { height: 52 }),
+    left: `Last 24 h <b class="mono">${Number(e.last_24h_kwh).toFixed(1)}</b> kWh`,
+    right: `≈ <b class="mono">${energyMoney(e.last_24h_kwh * e.rate)}</b>`,
+  });
+}
+
+function homeGasHalf(g) {
+  if (g.sample) {
+    return energyHalfHtml({
+      kind: "gas", name: "Natural gas",
+      value: energyFixed(g.yesterday_gj, 2), unit: "GJ",
+      sub: "yesterday · sample",
+      chart: energyBarsSvg((g.days || []).map((d) => d.gj), { kind: "gas", height: 52 }),
+      left: `<b class="mono">${Number(g.rate).toFixed(2)}</b> $/GJ`,
+      right: "",
+    });
+  }
+  const periods = (g.periods || []).slice(-12);
+  const last = Number(g.last_period_gj ?? 0);
+  return energyHalfHtml({
+    kind: "gas", name: "Natural gas",
+    value: last.toFixed(1), unit: "GJ",
+    sub: `last bill${energyChange(g.same_period_last_year?.change_percent)}`,
+    chart: energyBarsSvg(periods.map((p) => p.gj), { kind: "gas", height: 52 }),
+    left: `<b class="mono">${Number(g.gj_per_day ?? 0).toFixed(3)}</b> GJ/day`,
+    right: `≈ <b class="mono">${energyMoney(last * g.rate)}</b>`,
+  });
+}
+
 function renderHomeEnergy() {
   const body = document.querySelector("#homeEnergyBody");
   if (!body || !latestEnergy) return;
   const e = latestEnergy.electricity;
   const g = latestEnergy.gas;
   const sample = document.querySelector("#homeEnergySample");
-  if (sample) sample.hidden = !e.sample;
-  const records = e.mode === "records";
+  // The pill is for a card that is entirely made up; a half that is says so itself.
+  if (sample) sample.hidden = !(e.sample && g.sample);
   body.innerHTML = `
-    <div class="energy-now">
-      <span class="energy-kw mono">${records ? Number(e.last_period_kwh ?? 0).toFixed(0) : energyFixed(e.kw_now, 2)}</span>
-      <span class="energy-unit">${records ? `kWh last ${e.period_kind === "month" ? "month" : "bill"}` : "kW now"}</span>
-      <span class="energy-state ${records ? "base" : escapeHtml(e.state)}">${records ? "from your bills" : escapeHtml(ENERGY_STATE_TEXT[e.state] || "")}</span>
-    </div>
-    <div class="energy-spark">${records ? energyBarsSvg((e.periods || []).map((p) => p.kwh), { kind: "electric", height: 56 }) : energyAreaSvg(e.last_hour_kw, { height: 56 })}</div>
-    <div class="energy-facts">
-      ${records
-        ? `<span>Per day <b class="mono">${Number(e.kwh_per_day ?? 0).toFixed(1)} kWh</b></span>
-           <span>${e.last_bill?.cost ? `Last bill <b class="mono">${energyMoney(e.last_bill.cost)}</b>` : ""}</span>`
-        : `<span>Last 24 h <b class="mono">${Number(e.last_24h_kwh).toFixed(1)} kWh</b></span>
-           <span>≈ <b class="mono">${energyMoney(e.last_24h_kwh * e.rate)}</b></span>`}
-      <span>Gas ${g.sample
-        ? `<b class="mono">${energyFixed(g.yesterday_gj, 2)} GJ</b> yesterday${e.sample ? "" : " (sample)"}`
-        : `<b class="mono">${Number(g.last_period_gj ?? 0).toFixed(1)} GJ</b> last bill`}</span>
+    <div class="energy-split">
+      ${homeElectricityHalf(e)}
+      <div class="energy-split-rule"></div>
+      ${homeGasHalf(g)}
     </div>`;
 }
 

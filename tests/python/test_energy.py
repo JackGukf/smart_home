@@ -69,7 +69,10 @@ def test_the_card_and_the_view_show_the_sample_flag():
     assert 'data-home-card="energy"' in html and 'id="homeEnergySample"' in html
     assert 'data-view-panel="energy"' in html and 'id="energySampleNote"' in html
     # Per section: each of the two says whether it is sample data on its own.
-    assert "sample.hidden = !e.sample" in js and "note.hidden = !e.sample && !g.sample" in js
+    # The card's pill is for a card that is entirely invented; a half that is
+    # made up carries its own "sample" in its subtitle.
+    assert "sample.hidden = !(e.sample && g.sample)" in js
+    assert "note.hidden = !e.sample && !g.sample" in js
     # Gas: the sample column is labelled, and real bills get their own column.
     assert 'pill: "Sample"' in js and "gasColumnHtml(g)" in js
 
@@ -466,3 +469,33 @@ def test_records_mode_never_pretends_to_be_live(tmp_path):
     assert "there is no \"now\" and no last-24-hours line yet" in js
     # The hourly forecast belongs to the live meter, not to monthly bills.
     assert 'e.mode === "records" ? "" : energyForecastHtml' in js
+
+
+def test_the_home_card_gives_each_fuel_its_own_half():
+    """Gas has two years of real history; one line of text at the bottom of the
+    card did not do it justice (2026-09-20)."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    css = (STATIC / "styles.css").read_text(encoding="utf-8")
+
+    assert "function homeElectricityHalf" in js and "function homeGasHalf" in js
+    assert '<div class="energy-split">' in js and "energy-split-rule" in js
+    # Each half: a number, a year of bars, what it cost, and the year-on-year change.
+    assert 'energyBarsSvg(periods.map((p) => p.kwh), { kind: "electric"' in js
+    assert 'energyBarsSvg(periods.map((p) => p.gj), { kind: "gas"' in js
+    assert "energyChange(e.same_period_last_year?.change_percent)" in js
+    assert "energyChange(g.same_period_last_year?.change_percent)" in js
+    assert "energyMoney(last * g.rate)" in js and "energyMoney(Number(e.last_period_kwh ?? 0) * e.rate)" in js
+    # A rise in use is not good news, and the colours say so.
+    assert ".energy-change.up { color: var(--orange); }" in css
+    assert ".energy-change.down { color: var(--green); }" in css
+    # On a phone the halves stack rather than squeeze.
+    assert "@media (max-width: 560px)" in css.split("Home Energy card")[1]
+
+
+def test_a_live_meter_keeps_the_kilowatts_and_the_hour():
+    """With the PowerLync paired the electricity half goes back to now and the
+    last hour; the gas half is unaffected."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    half = js[js.index("function homeElectricityHalf"):js.index("function homeGasHalf")]
+    assert 'unit: "kW now"' in half and "energyAreaSvg(e.last_hour_kw" in half
+    assert "Last 24 h" in half

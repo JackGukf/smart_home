@@ -7191,3 +7191,54 @@ header > .header-right { flex-shrink: 0; }
 
 .ai-file-btn:hover { border-color: var(--border-hover); color: var(--text); }
 .ai-warn { color: var(--amber); }
+
+/* ── Home Energy card: electricity and gas side by side (2026-09-20) ── */
+.energy-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  grid-gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+
+.energy-split-rule { background: var(--border); }
+
+.energy-half {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-gap: 3px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.energy-half-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--t-text-dim);
+}
+
+.energy-half .energy-kw { font-size: 26px; }
+.energy-half-sub { font-size: 11.5px; color: var(--t-text-dim); }
+.energy-half .energy-facts { font-size: 11px; gap: 8px; flex-wrap: nowrap; }
+
+i.energy-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+i.energy-dot.electric { background: var(--amber); }
+i.energy-dot.gas { background: var(--cyan); }
+
+.energy-change.up { color: var(--orange); }
+.energy-change.down { color: var(--green); }
+
+/* On a phone the two halves stack rather than squeeze. */
+@media (max-width: 560px) {
+  .energy-split { grid-template-columns: minmax(0, 1fr); grid-gap: 10px; }
+  .energy-split-rule { height: 1px; }
+}
