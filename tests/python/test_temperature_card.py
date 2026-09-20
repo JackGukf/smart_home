@@ -131,3 +131,20 @@ def test_the_card_has_four_sparklines_and_no_tiles() -> None:
         assert f'key: "{key}"' in js
     assert "temp-sensor-tile" not in js
     assert '"/api/sensors/history"' in js
+
+
+def test_the_hero_row_wraps_rather_than_colliding():
+    """Four figures - indoor, humidity, CO2, outdoor - do not fit a narrow
+    card, and this card is narrow on a phone *and* in its column on a laptop.
+    Grid tracks answered that by printing over each other (2026-09-20); a
+    wrapping row answers it without a media or container query, which matters
+    because the owner's iPad ignores container queries."""
+    from pathlib import Path
+
+    css = (Path(__file__).resolve().parents[2] / "src" / "python" / "web_static" / "styles.css").read_text(encoding="utf-8")
+    hero = css[css.index(".tc-hero {"):css.index(".tc-big")]
+
+    assert "flex-wrap: wrap;" in hero and "display: flex;" in hero
+    assert "grid-template-columns" not in hero, "fixed tracks cannot wrap"
+    # Outdoor keeps to the right until the row wraps.
+    assert ".tc-out { margin-left: auto; }" in css

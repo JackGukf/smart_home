@@ -4780,20 +4780,32 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
 }
 
 .tc-hero {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  grid-column-gap: 20px;
-  align-items: end;
+  /* Wrapping flex, not a grid of fixed tracks. Four figures - indoor,
+     humidity, CO2, outdoor - do not fit a narrow card, and grid tracks answer
+     that by running past each other: CO2 printed over Outdoor on a phone, and
+     on a laptop too, because this card sits in a narrow column whatever the
+     window is doing (2026-09-20, scripts/check-card-overlap.py).
+     Wrapping needs no media query and no container query - which matters,
+     because the owner's iPad is old enough to ignore those. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 20px;
   flex-shrink: 0;
 }
+
+.tc-hero > * { min-width: 0; }
+
+/* Outdoor sits at the right of the row, and goes back to the left when the
+   row wraps and it is first on its line. */
+.tc-out { margin-left: auto; }
 
 .tc-big { font-size: 34px; font-weight: 500; line-height: 0.95; letter-spacing: -0.02em; color: var(--t-text); }
 .tc-mid { font-size: 19px; font-weight: 500; line-height: 1; color: var(--t-text); }
 .tc-cap { margin-top: 3px; font-size: 11px; color: var(--t-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tc-cap b { font-family: var(--mono); font-weight: 500; color: var(--t-text); }
-.tc-out { justify-self: end; min-width: 0; text-align: right; }
+.tc-out { text-align: right; }
 /* CO2 joins the top row between humidity and outdoor, its level in colour. */
-.tc-hero.has-co2 { grid-template-columns: auto auto auto minmax(0, 1fr); }
 .tc-co2 { min-width: 0; }
 .tc-unit { margin-left: 3px; font-size: 11px; color: var(--t-text-dim); }
 .tc-co2 .co2-level { font-size: 11px; }
@@ -7248,4 +7260,23 @@ i.energy-dot.gas { background: var(--cyan); }
 @media (max-width: 560px) {
   .energy-split { grid-template-columns: minmax(0, 1fr); grid-gap: 10px; }
   .energy-split-rule { height: 1px; }
+}
+
+/* ── Narrow screens: the phone, and a browser window dragged small ──
+   Four figures across a 393-pixel phone is two too many, so the Temperatures
+   hero becomes two rows of two and the week's temperatures stack. Both used to
+   overflow their columns and print over the text beside them; the check that
+   found it is scripts/check-card-overlap.py. */
+@media (max-width: 560px) {
+  .tc-hero { gap: 8px 14px; }
+  .tc-big { font-size: 30px; }
+
+  .wk-temps {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.15;
+  }
+
+  .wk-temps span { margin-left: 0; }
 }

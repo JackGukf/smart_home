@@ -61,3 +61,33 @@ def test_the_home_card_lays_several_dials_across_and_names_them():
     assert "const designW = Number(inner.dataset.designW) || CLIMATE_DESIGN_W;" in js
     assert "availW / designW" in js and "availW - designW * scale" in js
     assert ".home-fit-row {" in css and "flex-direction: row;" in css
+
+
+def test_the_card_falls_back_to_the_local_thermostat_when_the_cloud_goes_quiet():
+    """Both integrations stay in Home Assistant, the HomeKit copy hidden. When
+    the internet drops, the cloud entity goes unavailable and the local one is
+    still on the LAN - so the card follows it, with no switch to throw."""
+    homekit = climate("climate.my_ecobee", "My ecobee", 23.5, hvac_modes=["off", "heat"])
+    cloud = climate("climate.my_ecobee_2", "My ecobee", 23.5, hvac_modes=["heat", "off"],
+                    preset_modes=["home", "away", "sleep"], equipment_running="", current_humidity=57)
+
+    [kept] = web_app._one_per_thermostat([homekit, cloud])
+    assert kept["entity_id"] == "climate.my_ecobee_2"
+
+    cloud["state"] = "unavailable"
+    [kept] = web_app._one_per_thermostat([homekit, cloud])
+    assert kept["entity_id"] == "climate.my_ecobee", "the local one takes over"
+
+    # And back again once the cloud answers.
+    cloud["state"] = "heat"
+    assert web_app._one_per_thermostat([homekit, cloud])[0]["entity_id"] == "climate.my_ecobee_2"
+
+
+def test_an_unavailable_pair_still_shows_one_thermostat():
+    """Both quiet - the thermostat unplugged, say - is still one card, not two."""
+    homekit = climate("climate.my_ecobee", "My ecobee", 23.5)
+    cloud = climate("climate.my_ecobee_2", "My ecobee", 23.5, preset_modes=["home"])
+    for entity in (homekit, cloud):
+        entity["state"] = "unavailable"
+    kept = web_app._one_per_thermostat([homekit, cloud])
+    assert len(kept) == 1 and kept[0]["entity_id"] == "climate.my_ecobee_2"

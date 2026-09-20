@@ -12,6 +12,42 @@ Start with **Open items**, then **Traps** - several cost an hour each.
 > new Home layout. Open item 1 below (learn the cabinet light's IR button) is
 > obsolete: a TP-Link plug replaced it.
 
+## Text overlap: how to know, rather than to hope (2026-09-20)
+
+`scripts/check-card-overlap.py` drives the board's own Chromium over the
+DevTools protocol, loads the dashboard at every size this house reads it on -
+iPhone 15, iPad 13, the 1920x1080 wall panel, a laptop, a desktop - and asks
+the page which pieces of text overlap, which are clipped, and which spill out
+of their card. Run it on the board:
+
+    .venv/bin/python scripts/check-card-overlap.py                       # all views, all sizes
+    .venv/bin/python scripts/check-card-overlap.py --view home --device iphone15
+    .venv/bin/python scripts/check-card-overlap.py --kind clipped --kind spill
+
+It exits 1 when it finds something, so it can gate a deploy. Three things it
+learned the hard way:
+
+- **It signs itself in** with the session cookie the TV cast uses, and stops
+  with "not signed in" if it lands on the login page. Its first run reported a
+  clean sweep while looking at the login form - silence has to mean "checked",
+  never "saw nothing".
+- **A clipped box is not an overlap.** A caption with `overflow: hidden` has a
+  box that runs past the edge hiding it; rects are cut down by every clipping
+  ancestor before they are compared.
+- **Layered text is left alone** - a badge on a tile, a label inside the
+  thermostat dial - because it is meant to sit over something.
+
+What it caught first time out: the **Temperatures card**. Its hero row was a
+grid of four tracks (indoor, humidity, CO2, outdoor), and grid tracks answer
+"too narrow" by running past each other - CO2 printed over Outdoor by 19px on
+the iPhone, and on the **laptop** too, because that card sits in a narrow
+column whatever the window is doing. A media query would have fixed the phone
+and missed the laptop. The row is now a wrapping flex row, which needs no
+query at all - and no container query, which matters because the owner's iPad
+ignores those. The week's forecast temperatures stack on narrow screens for
+the same reason.
+
+
 ## What exists now
 
 ### Home view

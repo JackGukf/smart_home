@@ -6368,15 +6368,25 @@ def _ecobee_payload_from_home_assistant(path: Path) -> dict[str, Any] | None:
     }
 
 
+UNAVAILABLE_STATES = frozenset({"unavailable", "unknown", None})
+
+
 def _thermostat_richness(entity: dict[str, Any]) -> tuple:
     """How much a climate entity can actually tell us about the thermostat.
 
     The same ecobee arrives twice - once over HomeKit, locally, and once
-    through its cloud integration - and the cloud one knows about presets and
-    what the equipment is doing. More knowledge wins; the entity id breaks a
-    tie so the choice does not wander between refreshes."""
+    through its cloud integration. The cloud one knows about presets, the room
+    sensors and what the equipment is doing, so it wins while it is answering.
+
+    **Answering comes first.** The cloud entity goes unavailable when the house
+    loses its internet, and the HomeKit one is still on the LAN: ranking
+    availability above knowledge is what makes the card fall back to local
+    control by itself, with no switch to throw (the owner's ask, 2026-09-20).
+    The entity id breaks a tie, so the choice does not wander between
+    refreshes."""
     attributes = entity.get("attributes") or {}
     return (
+        entity.get("state") not in UNAVAILABLE_STATES,
         len(attributes.get("preset_modes") or []),
         attributes.get("equipment_running") is not None,
         len(attributes.get("hvac_modes") or []),
@@ -6434,6 +6444,11 @@ def _ecobee_card_from_home_assistant(
     }
 
 
+# What the thermostat's own sensor is called on the card. The thermostat is in
+# the living room here, and its device is named after the thermostat rather than
+# the room, so there is nothing better to read it from.
+BUILTIN_SENSOR_ROOM = "Living Room"
+
 _ROOM_KEYWORDS: list[tuple[str, str]] = [
     ("living room", "Living Room"),
     ("master bedroom", "Master Bedroom"),
@@ -6463,9 +6478,12 @@ _ECOBEE_SENSOR_DEVICE_TEMPLATE = """
 {%- set tstat = device_id('__ENTITY__') -%}
 {%- set ns = namespace(rows=[]) -%}
 {%- if tstat -%}
+{%- set entries = device_attr(tstat, 'config_entries') | list -%}
+{%- set ns.rows = [['__ENTITY__', device_attr(tstat, 'name_by_user') or device_attr(tstat, 'name') or '']] -%}
 {%- for e in (states.sensor | list) + (states.binary_sensor | list) -%}
 {%- set d = device_id(e.entity_id) -%}
-{%- if d and (d == tstat or device_attr(d, 'via_device_id') == tstat) -%}
+{%- if d and (d == tstat or device_attr(d, 'via_device_id') == tstat
+      or ((device_attr(d, 'config_entries') | list | select('in', entries) | list | count) > 0)) -%}
 {%- set ns.rows = ns.rows + [[e.entity_id, device_attr(d, 'name_by_user') or device_attr(d, 'name') or '']] -%}
 {%- endif -%}
 {%- endfor -%}
@@ -6478,6 +6496,16 @@ def _home_assistant_ecobee_sensor_devices(
     config: HomeAssistantConfig, token: str, climate_entity_id: str
 ) -> dict[str, str] | None:
     """Map sensor entity_id -> device name for sensors belonging to a thermostat.
+
+    Three ways a sensor can belong to a thermostat, because integrations model
+    remote sensors differently: it is on the thermostat's own device, its device
+    is linked by via_device, or - the ecobee cloud integration's way - its device
+    simply belongs to the same config entry. The last was added on 2026-09-20,
+    when the Family room remote sensor vanished from the card: that integration
+    gives each remote sensor a device of its own with no link back.
+
+    The thermostat's own entity is in the mapping too, so the caller can tell
+    which sensors are the thermostat's built-in ones without reading entity ids.
 
     Returns None whenever the lookup cannot be trusted (bad entity id, template
     API unavailable, unexpected payload) so the caller falls back to matching on
@@ -6540,6 +6568,11 @@ def _ecobee_sensors_from_ha_states(
     room-keyword matching is used instead so the card still populates.
     """
     climate_slug = climate_entity_id.split(".", 1)[-1].lower()
+    # The thermostat's own device, so its built-in sensors are recognised by
+    # what they are attached to rather than by how their entity id is spelled.
+    # A second ecobee entity ("climate.my_ecobee_2", the cloud one beside the
+    # HomeKit one) breaks the entity-id test and took the card down with it.
+    own_device = (device_rooms or {}).get(climate_entity_id)
 
     occ_by_room: dict[str, bool] = {}
     temp_entries: list[dict[str, Any]] = []
@@ -6558,9 +6591,11 @@ def _ecobee_sensors_from_ha_states(
             clean = friendly[: -len(" Temperature")].strip() if friendly.lower().endswith(" temperature") else friendly
             clean_lower = clean.lower()
 
-            # Ecobee built-in: entity slug starts with the climate entity slug
-            if slug.startswith(climate_slug + "_"):
-                room_name = "Living Room"
+            # Ecobee built-in: the thermostat's own device, or - without
+            # registry data - an entity named after the climate entity.
+            if (own_device and device_rooms.get(entity_id) == own_device) or \
+                    (not own_device and slug.startswith(climate_slug + "_")):
+                room_name = BUILTIN_SENSOR_ROOM
             elif device_rooms is not None:
                 # Structural match: the sensor's device is linked to the thermostat
                 # by via_device. Naming plays no part in whether it is included.
@@ -6579,7 +6614,7 @@ def _ecobee_sensors_from_ha_states(
                 temperature = None
 
             temp_entries.append({"id": slug, "name": room_name, "temperature": temperature,
-                                  "builtin": slug.startswith(climate_slug + "_")})
+                                  "builtin": room_name == BUILTIN_SENSOR_ROOM})
 
         if domain == "binary_sensor" and attrs.get("device_class") == "occupancy":
             clean = friendly[: -len(" Occupancy")].strip() if friendly.lower().endswith(" occupancy") else friendly

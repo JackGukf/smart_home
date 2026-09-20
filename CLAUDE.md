@@ -98,6 +98,18 @@
 > reports `waiting_for_heating` - the furnace has never run. See
 > `docs/energy-monitoring.md`.
 
+> **One thermostat, two integrations (2026-09-20).** The ecobee is in Home
+> Assistant twice - HomeKit on the LAN, and the cloud integration that carries
+> the room sensors, presets and `equipment_running`. The HomeKit copy is
+> *hidden, not disabled* (`scripts/hide-duplicate-ecobee.py`), and the
+> dashboard ranks an **answering** thermostat above a richer one, so the card
+> falls back to local control by itself when the internet goes and back again
+> when it returns.
+>
+> **Text overlap is testable now:** `scripts/check-card-overlap.py` drives
+> Chromium on the board across every view and device size. See the 2026-09-18
+> handoff.
+
 ## Project Overview
 
 Smart home controller for an **Orange Pi 6 Plus** targeting TP-Link/Kasa switches, Tuya sensors, Govee/Lepro ambient devices, cameras, Home Assistant entities, a Matter bridge, and a web dashboard. Dual-language: Python for fast automation and C/C++ for long-running services.
