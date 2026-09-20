@@ -94,6 +94,7 @@ rsync --checksum -av \
     "${PROJECT_ROOT}/scripts/check-assist-routing.py" \
     "${PROJECT_ROOT}/scripts/setup-ha-powerlync.py" \
     "${PROJECT_ROOT}/scripts/install-desktop-control.sh" \
+    "${PROJECT_ROOT}/scripts/patch-npu-memory.sh" \
     "${PI_TARGET}:${REMOTE_PATH}/scripts/"
 
 # The dashboard reads the TP-Link device list from the project root on every

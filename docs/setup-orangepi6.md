@@ -459,11 +459,22 @@ Measured with 16 GB installed (15.6 GB visible to Linux), about 9.1 GB in use:
 | Processes | ~4.2 GB | npu-detector 1.2, Home Assistant 0.9, the GNOME desktop ~0.8, Whisper + Piper 0.6, dashboard, go2rtc, Zigbee, Matter |
 | GPU (Mali) | 0.1 GB | not the culprit: GNOME maps 1 GB of `/dev/mali0` but only ~111 MB is backed |
 
-Shrinking the NPU reserve to 1 GiB (the driver's own 4-8 GB path) would free
-3 GB. There are no kernel headers on the board, so the options are a one-byte
-patch of `aipu.ko` (offset `0x7984`, `mov w23,#4` -> `#1`; module signing and
-modversions are off) or rebuilding the module against the Orange Pi kernel
-source. Not done yet; a kernel package update would replace the module anyway.
+**Shrunk to 1 GiB on 2026-09-19**, the driver's own 4-8 GB path: DMA memory
+4193 -> 1121 MB, available RAM 6.8 -> 11.0 GB, the detector unchanged on all
+five cameras. There are no kernel headers for 6.6.89-cix on the board or in the
+archives, so the module cannot be rebuilt from `/usr/src/aipu-5.11.0`; instead
+`scripts/patch-npu-memory.sh` changes one instruction in the compiled module
+(`.text+0x7944`, `mov w23,#4` -> `#1` - the same instruction word the driver
+writes at `.text+0x7d34` for smaller boards). Module signing and MODVERSIONS
+are off, so it loads normally.
+
+    sudo scripts/patch-npu-memory.sh --check     # is it patched, and what it costs now
+    sudo scripts/patch-npu-memory.sh             # patch, reload the driver, restart the detector
+    sudo scripts/patch-npu-memory.sh --restore   # the backup in ~/npu-driver-backup
+
+**A kernel or NPU driver package update replaces `aipu.ko`**, and the 4 GB comes
+back silently - nothing breaks, the board is just 3 GB poorer. Run the script
+again after any such update; it is idempotent and says when there is nothing to do.
 
 **The desktop** stays the boot default (`graphical.target`, GDM autologin), for
 when something is wrong and a monitor goes on the board. Settings -> Desktop on
