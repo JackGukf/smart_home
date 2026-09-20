@@ -5725,20 +5725,26 @@ function renderHomeClimate() {
 
   /* Dial-only summary: the wheel mirrors the thermostat state; clicking it
      jumps to the Climate view for the full controls. */
+  // One thermostat needs no name on it: the card is already titled Climate,
+  // and the line it saves goes to the wheel. Several sit side by side rather
+  // than stacked, so the card's height stays one dial tall whatever the count.
+  const alone = latestThermostats.length === 1;
   const thermoCards = latestThermostats.map((th) => {
     const ui = getThermoUI(th);
     const current = th.temperature != null ? Math.round(Number(th.temperature)) : "--";
     return `
       <div class="home-dial" data-goto-view="climate" role="button" tabindex="0"
            title="Open Climate for full thermostat controls">
-        <div class="home-dial-name">${escapeHtml(th.name)}</div>
+        ${alone ? "" : `<div class="home-dial-name">${escapeHtml(th.name)}</div>`}
         ${buildThermoDial(th.id, ui, current)}
         <div class="home-dial-sub">${escapeHtml(String(th.hvac_mode || "off").toUpperCase())}${th.humidity != null ? ` · ${escapeHtml(String(th.humidity))}% humidity` : ""}</div>
       </div>`;
   }).join("");
 
   const content = thermoCards || `<div class="home-empty">No thermostat found</div>`;
-  renderHtml(body, `<div class="home-fit-clip"><div class="home-fit">${content}</div></div>`);
+  const across = Math.max(1, latestThermostats.length);
+  renderHtml(body, `<div class="home-fit-clip"><div class="home-fit${across > 1 ? " home-fit-row" : ""}"` +
+    ` data-design-w="${CLIMATE_DESIGN_W * across}">${content}</div></div>`);
   fitClimateBody();
 }
 
@@ -6369,23 +6375,25 @@ function fitHomeFitBody(body) {
   if (!body || !clip || !inner) return;
 
   const fixed = homeGridMode();
+  // Several dials side by side are that many designs wide (renderHomeClimate).
+  const designW = Number(inner.dataset.designW) || CLIMATE_DESIGN_W;
   inner.style.transform = "none";
   inner.style.marginLeft = "0";
   clip.style.height = "";
-  inner.style.width = `${CLIMATE_DESIGN_W}px`;
+  inner.style.width = `${designW}px`;
 
   const availW = clip.clientWidth;
   const availH = fixed ? clip.clientHeight : 0;
   const naturalH = inner.scrollHeight;
   if (availW < 40 || !naturalH) return;
 
-  let scale = availW / CLIMATE_DESIGN_W;
+  let scale = availW / designW;
   if (fixed) scale = Math.min(scale, availH / naturalH);
   if (!inner.querySelector(".thermo-dial-wrap")) scale = Math.min(scale, 1.4); // don't blow up empty states
   scale = Math.max(0.3, Math.min(scale, 2.2));
 
   inner.style.transform = `scale(${scale})`;
-  inner.style.marginLeft = `${Math.max(0, (availW - CLIMATE_DESIGN_W * scale) / 2)}px`;
+  inner.style.marginLeft = `${Math.max(0, (availW - designW * scale) / 2)}px`;
   if (!fixed) clip.style.height = `${Math.ceil(naturalH * scale)}px`;
 }
 

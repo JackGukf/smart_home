@@ -4033,6 +4033,17 @@ aside {
   gap: 10px;
 }
 
+/* More than one thermostat: side by side, so the card stays one dial tall
+   instead of stacking them into a space sized for one. */
+.home-fit-row {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+}
+
+.home-fit-row .home-dial { flex: 1 1 0; min-width: 0; }
+
 /* Dial-only climate summary — click through for the full thermostat. */
 .home-dial {
   display: flex;
