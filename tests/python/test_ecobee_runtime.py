@@ -171,14 +171,86 @@ def test_the_password_is_never_written_down(tmp_path, monkeypatch):
             written["path"] = self.config_filename
             Path(self.config_filename).write_text(json.dumps({"ACCESS_TOKEN": "AT", "REFRESH_TOKEN": "RT"}))
 
+    class MfaRequired(Exception):
+        pass
+
     fake = types.ModuleType("pyecobee")
     fake.Ecobee = FakeEcobee
     const = types.ModuleType("pyecobee.const")
     const.ECOBEE_USERNAME, const.ECOBEE_PASSWORD = "USERNAME", "PASSWORD"
-    monkeypatch.setitem(sys.modules, "pyecobee", fake)
-    monkeypatch.setitem(sys.modules, "pyecobee.const", const)
+    errors = types.ModuleType("pyecobee.errors")
+    errors.EcobeeAuthMfaRequiredError = MfaRequired
+    for name, module in (("pyecobee", fake), ("pyecobee.const", const), ("pyecobee.errors", errors)):
+        monkeypatch.setitem(sys.modules, name, module)
 
     store = tmp_path / "ecobee_web_session.json"
     er.web_login("someone@example.com", "hunter2", store)
     assert store.is_file() and oct(store.stat().st_mode)[-3:] == "600"
     assert "hunter2" not in store.read_text()
+
+
+def test_a_one_time_code_finishes_the_sign_in(tmp_path, monkeypatch):
+    """Most ecobee accounts have two-factor sign-in: the password gets half way
+    and Auth0 raises a challenge that the code completes."""
+    class MfaRequired(Exception):
+        pass
+
+    class Challenge:
+        mfa_type = "otp"
+
+    class FakeEcobee:
+        def __init__(self, config=None, config_filename=None):
+            self.config_filename = config_filename
+            self.thermostats = []
+            self.submitted = None
+
+        def request_tokens_web(self):
+            raise MfaRequired(Challenge())
+
+        def submit_mfa_code(self, challenge, code):
+            self.submitted = code
+            return True
+
+        def _write_config(self):
+            Path(self.config_filename).write_text('{"ACCESS_TOKEN": "AT"}')
+
+    fake = types.ModuleType("pyecobee")
+    fake.Ecobee = FakeEcobee
+    const = types.ModuleType("pyecobee.const")
+    const.ECOBEE_USERNAME, const.ECOBEE_PASSWORD = "USERNAME", "PASSWORD"
+    errors = types.ModuleType("pyecobee.errors")
+    errors.EcobeeAuthMfaRequiredError = MfaRequired
+    for name, module in (("pyecobee", fake), ("pyecobee.const", const), ("pyecobee.errors", errors)):
+        monkeypatch.setitem(sys.modules, name, module)
+
+    asked: list[str] = []
+    store = tmp_path / "ecobee_web_session.json"
+    session = er.web_login("someone@example.com", "hunter2", store,
+                           ask_code=lambda kind: asked.append(kind) or " 123456 ")
+    assert asked == ["otp"], "the kind of challenge is passed on, so the prompt can name it"
+    assert session.submitted == "123456", "whitespace from a pasted code is stripped"
+    assert store.is_file() and "hunter2" not in store.read_text()
+
+
+def test_without_anyone_to_ask_it_says_so(tmp_path, monkeypatch):
+    class MfaRequired(Exception):
+        pass
+
+    class FakeEcobee:
+        def __init__(self, config=None, config_filename=None):
+            pass
+
+        def request_tokens_web(self):
+            raise MfaRequired(object())
+
+    fake = types.ModuleType("pyecobee")
+    fake.Ecobee = FakeEcobee
+    const = types.ModuleType("pyecobee.const")
+    const.ECOBEE_USERNAME, const.ECOBEE_PASSWORD = "USERNAME", "PASSWORD"
+    errors = types.ModuleType("pyecobee.errors")
+    errors.EcobeeAuthMfaRequiredError = MfaRequired
+    for name, module in (("pyecobee", fake), ("pyecobee.const", const), ("pyecobee.errors", errors)):
+        monkeypatch.setitem(sys.modules, name, module)
+
+    with pytest.raises(RuntimeError, match="one-time code"):
+        er.web_login("a@b.c", "pw", tmp_path / "s.json")

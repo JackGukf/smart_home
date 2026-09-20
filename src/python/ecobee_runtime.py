@@ -17,13 +17,13 @@ email and password over ecobee's web sign-in. So:
 
     python -m src.python.ecobee_runtime --login
 
-It asks for the email and password, holds the password only long enough to
-sign in, and saves **tokens** - never the password - to
+It asks for the email and password, then - because most accounts have
+two-factor sign-in - for the one-time code from the authenticator app or the
+text message. The password is held only long enough to sign in, and what is
+saved is **tokens**, never the password, in
 `ai-data/ecobee_web_session.json` (0600). This is a session of its own: Home
 Assistant's tokens are left alone, because ecobee rotates a refresh token and
 two clients sharing one would knock each other out.
-
-An account with two-factor sign-in will ask for the code.
 
 **The old way**, if ecobee ever issues developer keys again:
 
@@ -255,15 +255,30 @@ def fetch_history(tokens: Tokens, thermostat_id: str, days: int = 730,
 WEB_SESSION = "ecobee_web_session.json"
 
 
-def web_login(username: str, password: str, store: Path) -> Any:
-    """Sign in as the account and keep the tokens (never the password)."""
+def web_login(username: str, password: str, store: Path,
+              ask_code: Callable[[str], str] | None = None) -> Any:
+    """Sign in as the account and keep the tokens (never the password).
+
+    An account with two-factor sign-in - which is most of them now - stops
+    half way: ecobee's Auth0 raises a challenge, and the one-time code
+    finishes it. `ask_code` is how the caller gets that code from the person;
+    it is handed the kind of challenge ("otp" for an app, "sms" for a text).
+    """
     import pyecobee
     from pyecobee.const import ECOBEE_PASSWORD, ECOBEE_USERNAME
+    from pyecobee.errors import EcobeeAuthMfaRequiredError
 
     store.parent.mkdir(parents=True, exist_ok=True)
     session = pyecobee.Ecobee(config={ECOBEE_USERNAME: username, ECOBEE_PASSWORD: password})
-    if not session.request_tokens_web():
-        raise RuntimeError("ecobee refused the sign-in (a two-factor account will do this)")
+    try:
+        ok = session.request_tokens_web()
+    except EcobeeAuthMfaRequiredError as challenge_error:
+        challenge = challenge_error.args[0]
+        if ask_code is None:
+            raise RuntimeError("this account needs a one-time code, and there is nobody to ask") from challenge_error
+        ok = session.submit_mfa_code(challenge, ask_code(getattr(challenge, "mfa_type", "otp")).strip())
+    if not ok:
+        raise RuntimeError("ecobee refused the sign-in")
     session.config_filename = str(store)
     session._write_config()
     _only_owner(store)
@@ -349,7 +364,12 @@ def main(argv: list[str] | None = None) -> int:
 
         username = input("ecobee email: ").strip()
         password = getpass.getpass("ecobee password (not stored): ")
-        session = web_login(username, password, web_store)
+
+        def ask_code(kind: str) -> str:
+            where = "your authenticator app" if kind == "otp" else "the text message"
+            return input(f"ecobee sent a challenge - the one-time code from {where}: ")
+
+        session = web_login(username, password, web_store, ask_code)
         print(f"signed in; tokens in {web_store}")
         for thermostat in session.thermostats:
             print(f"  thermostat {thermostat['identifier']}  {thermostat.get('name', '')}")
