@@ -201,7 +201,10 @@ def parse_bill_text(text: str) -> Parsed:
     if found["gj"] and found["period_start"] and found["period_end"]:
         span = (date.fromisoformat(found["period_end"]) - date.fromisoformat(found["period_start"])).days
         found["days"] = span
-        status = "parsed" if 20 <= span <= 70 else "needs_review"
+        # A gas bill covers a month. A wider span means the page's earliest and
+        # latest dates were picked up - a previous-reading date, a due date -
+        # rather than the billing period, so a person should look.
+        status = "parsed" if 20 <= span <= 45 else "needs_review"
     else:
         status = "needs_review"
     return Parsed("bill", status, found)
@@ -568,3 +571,65 @@ def runtime_from_house_memory(events_db: Path | str, since: date | None = None) 
         if day.isoformat() not in known and (since is None or day >= since):
             days.append({"day": day.isoformat(), "furnace_hours": 0.0, "outdoor_mean_c": None})
     return sorted(days, key=lambda d: d["day"])
+
+
+def reparse_file(db: sqlite3.Connection, file_id: int) -> dict[str, Any]:
+    """Read a stored file again with today's parser.
+
+    Files uploaded before a parser learned something - day-first dates, a new
+    export shape - are still on disk; this gives them a second chance without
+    asking the owner to find the original again."""
+    doc = file_row(db, file_id)
+    data = Path(doc["stored_path"]).read_bytes()
+    parsed = parse_upload(doc["name"], data)
+    status = "imported" if doc["status"] == "imported" else parsed.status
+    db.execute("UPDATE files SET kind = ?, status = ?, found = ? WHERE id = ?",
+               (parsed.kind, status, json.dumps(parsed.found), file_id))
+    db.commit()
+    return file_row(db, file_id)
+
+
+def delete_file(db: sqlite3.Connection, file_id: int) -> dict[str, Any]:
+    """Forget a file and everything it put in: the way to undo a bad import."""
+    doc = file_row(db, file_id)
+    removed = {
+        "bills": db.execute("DELETE FROM bills WHERE file_id = ?", (file_id,)).rowcount,
+        "readings": db.execute("DELETE FROM readings WHERE file_id = ?", (file_id,)).rowcount,
+    }
+    db.execute("DELETE FROM files WHERE id = ?", (file_id,))
+    db.commit()
+    stored = Path(doc["stored_path"])
+    if stored.is_file():
+        stored.unlink()
+    return {"name": doc["name"], "removed": removed}
+
+
+def overlapping_bills(db: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Billing periods that cover days another bill already covers.
+
+    A PDF of a bill and a line in the yearly export are often the same gas
+    twice, and a fit that counts it twice is wrong in a way nothing announces."""
+    rows = [dict(r) for r in db.execute(
+        "SELECT id, period_start, period_end, gj, avg_temp_c, file_id FROM bills ORDER BY period_start")]
+    clashes = []
+    for i, first in enumerate(rows):
+        for second in rows[i + 1:]:
+            if second["period_start"] < first["period_end"] and second["period_end"] > first["period_start"]:
+                clashes.append({"kept": _richer(first, second), "other": _poorer(first, second)})
+    return clashes
+
+
+def _quality(bill: dict[str, Any]) -> tuple:
+    """Which of two overlapping bills to believe: the one carrying a period
+    temperature (it came from the export, with its own day count), then the
+    shorter period, which is the less likely to be two dates from one page."""
+    span = (date.fromisoformat(bill["period_end"]) - date.fromisoformat(bill["period_start"])).days
+    return (bill.get("avg_temp_c") is not None, -span)
+
+
+def _richer(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    return a if _quality(a) >= _quality(b) else b
+
+
+def _poorer(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    return b if _quality(a) >= _quality(b) else a

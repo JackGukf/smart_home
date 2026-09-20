@@ -156,7 +156,12 @@ def observations(db: sqlite3.Connection) -> list[Observation]:
         start, end = datetime.fromisoformat(interval["start"]), datetime.fromisoformat(interval["end"])
         hours, covered = _hours_between(runtime, start, end)
         out.append(Observation(start, end, float(interval["gj"]), "reading", furnace_hours=hours, covered=covered))
-    for bill in db.execute("SELECT period_start, period_end, gj, avg_temp_c FROM bills"):
+    from src.python import ai_data as _ai_data
+
+    dropped = {clash["other"]["id"] for clash in _ai_data.overlapping_bills(db)}
+    for bill in db.execute("SELECT id, period_start, period_end, gj, avg_temp_c FROM bills"):
+        if bill["id"] in dropped:
+            continue    # the same gas as another bill; counting it twice would skew the fit
         start = datetime.fromisoformat(f"{bill['period_start']}T00:00:00")
         end = datetime.fromisoformat(f"{bill['period_end']}T00:00:00")
         if end <= start:

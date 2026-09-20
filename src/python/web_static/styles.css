@@ -7164,3 +7164,19 @@ header > .header-right { flex-shrink: 0; }
   line-height: 1.45;
   color: var(--t-text-dim);
 }
+
+.ai-file-actions { display: inline-flex; gap: 6px; align-items: center; }
+
+.ai-file-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--t-text-dim);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.ai-file-btn:hover { border-color: var(--border-hover); color: var(--text); }
+.ai-warn { color: var(--amber); }

@@ -97,3 +97,68 @@ def test_the_gas_model_says_what_it_is_waiting_for(tmp_path):
     assert doc["gas"]["model"]["base_gj_per_day"] is None       # nothing invented
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "waiting for heating season" in js and "not enough data yet" in js
+
+
+def test_a_file_can_be_read_again_with_a_newer_parser(tmp_path):
+    """Files uploaded before the parser learned day-first dates are still on
+    disk. Re-reading gives them a second chance without finding the original."""
+    from src.python import ai_data
+
+    api = client(tmp_path)
+    csv = ("Bill from date,Bill to date,# of days,Billed GJ,Average temperature\n"
+           "22/07/2026,18/08/2026,28,0.9,19\n19/06/2026,21/07/2026,33,1.3,18\n")
+    doc = api.post("/api/ai-data/files", files={"file": ("h.csv", csv.encode(), "text/csv")}).json()["file"]
+
+    # Pretend it was parsed by the old, month-first parser: nothing found.
+    db = ai_data.connect(tmp_path / "ai-data" / "gas.db")
+    db.execute("UPDATE files SET kind='unknown', status='needs_review', found='{}' WHERE id = ?", (doc["id"],))
+    db.commit()
+    db.close()
+
+    again = api.post(f"/api/ai-data/files/{doc['id']}/reparse").json()["file"]
+    assert again["kind"] == "bills" and again["status"] == "parsed" and again["found"]["count"] == 2
+    assert api.post("/api/ai-data/files/999/reparse").status_code == 404
+
+
+def test_a_bad_import_can_be_undone(tmp_path):
+    api = client(tmp_path)
+    csv = b"Date,Usage (GJ)\n2026-01-31,8.42\n2026-02-28,7.10\n"
+    doc = api.post("/api/ai-data/files", files={"file": ("u.csv", csv, "text/csv")}).json()["file"]
+    api.post(f"/api/ai-data/files/{doc['id']}/import")
+    assert api.get("/api/ai-data").json()["inventory"]["bills"]["count"] == 2
+
+    removed = api.delete(f"/api/ai-data/files/{doc['id']}").json()
+    assert removed["removed"]["bills"] == 2
+    state = api.get("/api/ai-data").json()
+    assert state["inventory"]["bills"]["count"] == 0 and state["files"] == []
+    assert api.delete("/api/ai-data/files/999").status_code == 404
+
+
+def test_overlapping_bills_are_named_and_not_counted_twice(tmp_path):
+    """A PDF of a bill and a line in the yearly export are often the same gas
+    twice; a fit that counts it twice is wrong in a way nothing announces."""
+    from src.python import ai_data, gas_model
+
+    api = client(tmp_path)
+    csv = ("Bill from date,Bill to date,# of days,Billed GJ,Average temperature\n"
+           "22/05/2026,18/06/2026,28,1.9,16\n19/06/2026,21/07/2026,33,1.3,18\n"
+           "22/07/2026,18/08/2026,28,0.9,19\n21/01/2026,19/02/2026,30,9.3,6\n")
+    doc = api.post("/api/ai-data/files", files={"file": ("h.csv", csv.encode(), "text/csv")}).json()["file"]
+    api.post(f"/api/ai-data/files/{doc['id']}/import")
+
+    db = ai_data.connect(tmp_path / "ai-data" / "gas.db")
+    # The July invoice PDF, whose dates were taken from the wrong places.
+    db.execute("INSERT INTO bills (period_start, period_end, gj) VALUES ('2026-06-18','2026-08-12',1.9)")
+    db.commit()
+
+    clashes = ai_data.overlapping_bills(db)
+    assert clashes, "the PDF's period covers days the export already covers"
+    assert all(c["kept"]["avg_temp_c"] is not None for c in clashes), "believe the export, not the loose PDF"
+    # The fit sees each stretch of gas once.
+    assert gas_model.fit(db).observations == 4
+    db.close()
+
+    doc = api.get("/api/ai-data").json()
+    assert doc["overlaps"] and doc["overlaps"][0]["other"] == "2026-06-18 to 2026-08-12"
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "cover days another bill already covers" in js

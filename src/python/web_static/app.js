@@ -10519,9 +10519,22 @@ function renderAiFiles(files) {
       <span class="ai-file-kind">${escapeHtml(f.kind)}</span>
       <span class="ai-file-found">${escapeHtml(said(f))}</span>
       <span class="pill ${cls}">${escapeHtml(f.status.replace("_", " "))}</span>
-      ${canImport ? `<button class="btn-primary ai-import" data-file="${f.id}" type="button">Import</button>` : ""}
+      <span class="ai-file-actions">
+        ${canImport ? `<button class="btn-primary ai-import" data-file="${f.id}" type="button">Import</button>` : ""}
+        <button class="ai-file-btn ai-reread" data-file="${f.id}" type="button" title="Read this file again with today's parser">Re-read</button>
+        <button class="ai-file-btn ai-remove" data-file="${f.id}" type="button" title="Forget this file and the rows it added">Remove</button>
+      </span>
     </div>`;
   }).join("");
+}
+
+function renderAiOverlaps(overlaps) {
+  const box = document.querySelector("#aiFiles");
+  if (!box || !overlaps?.length) return;
+  box.insertAdjacentHTML("afterbegin", `<p class="settings-status ai-warn">
+    ${overlaps.length} billing period${overlaps.length === 1 ? "" : "s"} cover days another bill already covers
+    (${escapeHtml(overlaps.map((o) => o.other).join(", "))}). The model ignores the duplicates, but removing the
+    file that brought them in keeps things tidy.</p>`);
 }
 
 function renderAiGas(gas) {
@@ -10560,6 +10573,7 @@ async function loadAiData() {
   renderAiInventory(aiDataDoc.inventory);
   renderAiReadings(aiDataDoc.readings || []);
   renderAiFiles(aiDataDoc.files || []);
+  renderAiOverlaps(aiDataDoc.overlaps || []);
   renderAiGas(aiDataDoc.gas || { model: { status: "not_enough_data" } });
   const sub = document.querySelector("#aiDataSub");
   if (sub) {
@@ -10602,15 +10616,28 @@ async function uploadAiFiles(files) {
   });
 
   document.querySelector("#aiFiles")?.addEventListener("click", async (event) => {
-    const button = event.target.closest(".ai-import");
+    const button = event.target.closest(".ai-import, .ai-reread, .ai-remove");
     if (!button) return;
-    button.disabled = true;
     const status = document.querySelector("#aiUploadStatus");
+    const id = button.dataset.file;
+    if (button.classList.contains("ai-remove") &&
+        !confirm("Forget this file and every row it added?\nThe bills or readings it brought in are deleted.")) {
+      return;
+    }
+    button.disabled = true;
     try {
-      const doc = await requestJson(`/api/ai-data/files/${button.dataset.file}/import`, { method: "POST" });
-      if (status) status.textContent = `Imported ${doc.added} row${doc.added === 1 ? "" : "s"}.`;
+      if (button.classList.contains("ai-import")) {
+        const doc = await requestJson(`/api/ai-data/files/${id}/import`, { method: "POST" });
+        if (status) status.textContent = `Imported ${doc.added} row${doc.added === 1 ? "" : "s"}.`;
+      } else if (button.classList.contains("ai-reread")) {
+        const doc = await requestJson(`/api/ai-data/files/${id}/reparse`, { method: "POST" });
+        if (status) status.textContent = `Read again: ${doc.file.status.replace("_", " ")}.`;
+      } else {
+        const doc = await requestJson(`/api/ai-data/files/${id}`, { method: "DELETE" });
+        if (status) status.textContent = `Removed ${doc.name} and ${doc.removed.bills} bill(s), ${doc.removed.readings} reading(s).`;
+      }
     } catch (error) {
-      if (status) status.textContent = `Not imported: ${apiErrorDetail(error)}`;
+      if (status) status.textContent = `Not done: ${apiErrorDetail(error)}`;
     }
     await loadAiData();
   });

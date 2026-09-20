@@ -1336,7 +1336,11 @@ def create_app(
         db = _ai_db()
         try:
             return {"inventory": ai_data.inventory(db), "files": ai_data.files(db),
-                    "readings": ai_data.readings(db, 30), "gas": gas_model.report(db)}
+                    "readings": ai_data.readings(db, 30), "gas": gas_model.report(db),
+                    "overlaps": [{"kept": c["kept"]["period_start"], "other_id": c["other"]["id"],
+                                  "other": f"{c['other']['period_start']} to {c['other']['period_end']}",
+                                  "gj": c["other"]["gj"]}
+                                 for c in ai_data.overlapping_bills(db)]}
         finally:
             db.close()
 
@@ -1380,6 +1384,39 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such file") from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/ai-data/files/{file_id}/reparse")
+    async def ai_data_reparse(file_id: int) -> dict[str, Any]:
+        """Read a stored file again with today's parser - for files uploaded
+        before it learned something."""
+        def run() -> dict[str, Any]:
+            db = _ai_db()
+            try:
+                return {"file": ai_data.reparse_file(db, file_id)}
+            finally:
+                db.close()
+
+        try:
+            return await asyncio.to_thread(run)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="no such file") from error
+        except OSError as error:
+            raise HTTPException(status_code=410, detail="the stored file is gone") from error
+
+    @app.delete("/api/ai-data/files/{file_id}")
+    async def ai_data_delete(file_id: int) -> dict[str, Any]:
+        """Forget a file and the rows it added: how a bad import is undone."""
+        def run() -> dict[str, Any]:
+            db = _ai_db()
+            try:
+                return ai_data.delete_file(db, file_id)
+            finally:
+                db.close()
+
+        try:
+            return await asyncio.to_thread(run)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="no such file") from error
 
     @app.post("/api/ai-data/readings")
     async def ai_data_reading(request: GasReadingRequest) -> dict[str, Any]:
