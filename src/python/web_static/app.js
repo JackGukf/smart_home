@@ -10769,12 +10769,20 @@ function renderHomeEnergy() {
     <div class="energy-facts">
       <span>Last 24 h <b class="mono">${Number(e.last_24h_kwh).toFixed(1)} kWh</b></span>
       <span>≈ <b class="mono">${energyMoney(e.last_24h_kwh * e.rate)}</b></span>
-      <span>Gas <b class="mono">${energyFixed(g.yesterday_gj, 2)} GJ</b> yesterday${g.sample && !e.sample ? " (sample)" : ""}</span>
+      <span>Gas ${g.sample
+        ? `<b class="mono">${energyFixed(g.yesterday_gj, 2)} GJ</b> yesterday${e.sample ? "" : " (sample)"}`
+        : `<b class="mono">${Number(g.last_period_gj ?? 0).toFixed(1)} GJ</b> last bill`}</span>
     </div>`;
 }
 
-function energyColumnHtml({ name, provider, headline, unit, headlineNote, pill, days, values, digits, rate, kind }) {
+function energyColumnHtml({ name, provider, headline, unit, headlineNote, pill, days, values, digits, rate, kind, rows }) {
   const total = values.reduce((a, b) => a + b, 0);
+  const defaultRows = [
+    { label: days.length ? `Last ${days.length} day${days.length === 1 ? "" : "s"}` : "No whole day yet",
+      value: `${total.toFixed(digits)} ${unit} · ${energyMoney(total * rate)}` },
+    { label: "Daily average", value: `${(total / Math.max(1, values.length)).toFixed(digits + 1)} ${unit}` },
+    { label: "Same month last year", value: "No history yet" },
+  ];
   return `
     <div class="panel energy-column">
       <div class="home-panel-head">
@@ -10788,10 +10796,61 @@ function energyColumnHtml({ name, provider, headline, unit, headlineNote, pill, 
       ${energyBarsSvg(values, { kind })}
       ${energyAxis(days)}
       <div class="energy-rows">
-        <div><span>${days.length ? `Last ${days.length} day${days.length === 1 ? "" : "s"}` : "No whole day yet"}</span><b class="mono">${total.toFixed(digits)} ${escapeHtml(unit)} · ${energyMoney(total * rate)}</b></div>
-        <div><span>Daily average</span><b class="mono">${(total / Math.max(1, values.length)).toFixed(digits + 1)} ${escapeHtml(unit)}</b></div>
-        <div><span>Same month last year</span><b>No history yet</b></div>
+        ${(rows || defaultRows).map((row) => `<div><span>${escapeHtml(row.label)}</span><b class="mono">${escapeHtml(String(row.value))}</b></div>`).join("")}
       </div>
+    </div>`;
+}
+
+/* Natural gas: the owner's own billing periods, because the meter cannot be
+   read from the house and daily bars would have to be invented. Each bar is one
+   bill - a measured amount over a measured stretch - and the footer says what
+   the model made of them (src/python/gas_model.py). */
+const GAS_MODEL_WORDS = {
+  degree_day: "fitted to your bills and the weather",
+  runtime: "fitted to furnace runtime",
+  base_only: "base load only so far",
+};
+
+function gasPeriodLabel(period) {
+  const [y, m, d] = String(period.end || period.date).split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+}
+
+function gasColumnHtml(g) {
+  const periods = g.periods || [];
+  const values = periods.map((p) => p.gj);
+  const total = values.reduce((a, b) => a + b, 0);
+  const year = g.same_period_last_year;
+  const m = g.model || {};
+  const rows = [
+    { label: `Last ${periods.length} bill${periods.length === 1 ? "" : "s"}`,
+      value: `${total.toFixed(1)} GJ · ${energyMoney(total * g.rate)}${g.rate_measured ? "" : " (est.)"}` },
+    { label: "Per day, last bill", value: `${Number(g.gj_per_day ?? 0).toFixed(3)} GJ` },
+    { label: "Same period last year",
+      value: year ? `${year.gj.toFixed(1)} GJ · ${year.change_percent > 0 ? "+" : ""}${year.change_percent}%` : "No history yet" },
+  ];
+  if (m.base_gj_per_day != null) {
+    rows.push({ label: "Hot water & cooking", value: `${m.base_gj_per_day.toFixed(3)} GJ/day` });
+  }
+  const last = g.last_period || {};
+  return `
+    <div class="panel energy-column">
+      <div class="home-panel-head">
+        <span class="panel-title"><i class="ti ti-flame"></i> Natural gas</span>
+        <span class="section-meta">${escapeHtml(g.provider)}</span>
+      </div>
+      <div class="energy-headline">
+        <span class="energy-kw mono">${Number(g.last_period_gj ?? 0).toFixed(1)}</span>
+        <span class="energy-unit">GJ in the last bill${last.days ? ` (${last.days} days)` : ""}</span>
+        <span class="energy-state gas">${escapeHtml(GAS_MODEL_WORDS[m.kind] || "from your bills")}</span>
+      </div>
+      ${energyBarsSvg(values, { kind: "gas" })}
+      <div class="energy-axis">${periods.length ? [0, Math.round((periods.length - 1) / 3), Math.round((periods.length - 1) * 2 / 3), periods.length - 1]
+        .map((i) => `<span>${escapeHtml(gasPeriodLabel(periods[i]))}</span>`).join("") : ""}</div>
+      <div class="energy-rows">
+        ${rows.map((row) => `<div><span>${escapeHtml(row.label)}</span><b class="mono">${escapeHtml(String(row.value))}</b></div>`).join("")}
+      </div>
+      ${m.error_percent != null ? `<p class="energy-gas-note">Each bar is one bill. The model explains them to within ${m.error_percent}%${m.balance_temp_c ? `, and puts this house's heating point at ${m.balance_temp_c} °C` : ""} — add meter readings on <b>AI → AI data</b> to sharpen it.</p>` : ""}
     </div>`;
 }
 
@@ -10821,19 +10880,21 @@ function renderEnergyView() {
   const note = document.querySelector("#energySampleNote");
   if (note) {
     note.hidden = !e.sample && !g.sample;
-    note.textContent = e.sample
-      ? "Sample data: the BC Hydro PowerLync is not connected yet, so these figures are invented. They are replaced by real readings once it is paired."
-      : "Electricity is live from the PowerLync. Gas is sample data: the FortisBC meter reports only to FortisBC.";
+    note.textContent = [
+      e.sample ? "Electricity is sample data until the BC Hydro PowerLync is paired." : "Electricity is live from the PowerLync.",
+      g.sample ? "Gas is sample data: upload a FortisBC bill on AI → AI data and it becomes real."
+               : "Gas is your own bills; the meter itself cannot be read from the house.",
+    ].join(" ");
   }
   columns.innerHTML = energyColumnHtml({
     name: "Electricity", provider: e.provider, kind: "electric", unit: "kWh",
     headline: energyFixed(e.last_24h_kwh, 1), headlineNote: "in the last 24 h", pill: `${energyFixed(e.kw_now, 2)} kW now`,
     days: e.days, values: e.days.map((d) => d.kwh), digits: 0, rate: e.rate,
-  }) + energyColumnHtml({
+  }) + (g.sample ? energyColumnHtml({
     name: "Natural gas", provider: g.provider, kind: "gas", unit: "GJ",
-    headline: energyFixed(g.yesterday_gj, 2), headlineNote: "yesterday", pill: g.sample ? "Sample" : "Read daily",
+    headline: energyFixed(g.yesterday_gj, 2), headlineNote: "yesterday", pill: "Sample",
     days: g.days, values: g.days.map((d) => d.gj), digits: 2, rate: g.rate,
-  });
+  }) : gasColumnHtml(g));
   const today = document.querySelector("#energyToday");
   if (today) {
     today.innerHTML = `

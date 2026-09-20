@@ -7156,3 +7156,11 @@ header > .header-right { flex-shrink: 0; }
 .pill.ok { color: var(--green); border-color: rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.1); }
 .pill.warn { color: var(--amber); border-color: rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.1); }
 .pill.info { color: var(--accent); border-color: var(--accent-border); background: var(--accent-dim); }
+
+/* The gas column's footnote: what the fitted model makes of the bills. */
+.energy-gas-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--t-text-dim);
+}

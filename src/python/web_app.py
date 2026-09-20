@@ -1604,7 +1604,9 @@ def create_app(
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=502, detail="Home Assistant energy readings are unavailable") from error
         forecast = await asyncio.to_thread(energy.read_forecast, app.state.energy_forecast_path)
-        return {**doc, "forecast": forecast}
+        # Gas: the owner's own bills once any have been uploaded, sample data until then.
+        gas = await asyncio.to_thread(energy.gas_from_records, app.state.ai_data_dir / "gas.db")
+        return {**doc, "forecast": forecast, **({"gas": gas} if gas else {})}
 
     @app.get("/api/light-scenes")
     async def light_scenes_get() -> dict[str, Any]:

@@ -68,9 +68,10 @@ def test_the_card_and_the_view_show_the_sample_flag():
 
     assert 'data-home-card="energy"' in html and 'id="homeEnergySample"' in html
     assert 'data-view-panel="energy"' in html and 'id="energySampleNote"' in html
-    # Per section: once electricity is live, gas is still sample data and says so.
+    # Per section: each of the two says whether it is sample data on its own.
     assert "sample.hidden = !e.sample" in js and "note.hidden = !e.sample && !g.sample" in js
-    assert 'g.sample ? "Sample" : "Read daily"' in js
+    # Gas: the sample column is labelled, and real bills get their own column.
+    assert 'pill: "Sample"' in js and "gasColumnHtml(g)" in js
 
 
 def test_energy_sits_between_cameras_and_devices_in_the_sidebar():
@@ -322,3 +323,70 @@ def test_the_view_names_the_model_that_wrote_the_forecast():
     assert "function energyForecastHtml" in js and "Next 24 hours" in js
     assert "escapeHtml(forecast.model)" in js          # the model is named on screen
     assert "energyForecastHtml(latestEnergy.forecast" in js
+
+
+# ── Gas from the owner's own bills ──
+
+BILL_CSV = ("Bill from date,Bill to date,# of days,Billed GJ,Average temperature\n"
+            "22/07/2026,18/08/2026,28,0.9,19\n"
+            "19/06/2026,21/07/2026,33,1.3,18\n"
+            "22/05/2026,18/06/2026,28,1.9,16\n"
+            "21/04/2026,21/05/2026,31,3.4,13\n"
+            "21/03/2026,20/04/2026,31,9,8\n"
+            "20/02/2026,20/03/2026,29,9.4,6\n"
+            "18/07/2025,20/08/2025,34,1.2,18\n"
+            "21/01/2025,18/02/2025,29,14.9,0\n")
+
+
+def _with_bills(tmp_path):
+    from src.python import ai_data
+    db = ai_data.connect(tmp_path / "ai-data" / "gas.db")
+    doc = ai_data.add_file(db, tmp_path / "ai-data" / "files", "history.csv", BILL_CSV.encode())
+    ai_data.import_file(db, doc["id"])
+    db.close()
+    return tmp_path / "ai-data" / "gas.db"
+
+
+def test_gas_is_billing_periods_not_invented_days(tmp_path):
+    """The meter cannot be read, so the gas column shows what was really
+    measured - each bill - rather than daily bars nobody measured."""
+    doc = energy.gas_from_records(_with_bills(tmp_path), now=datetime(2026, 9, 19))
+
+    assert doc["sample"] is False and doc["provider"] == "FortisBC"
+    assert len(doc["periods"]) == 8 and doc["periods"][-1]["gj"] == 0.9
+    assert doc["last_period_gj"] == 0.9 and doc["last_period"]["days"] == 27
+    assert doc["gj_per_day"] == pytest.approx(0.033, abs=0.002)
+    assert doc["model"]["kind"] == "degree_day"
+    # No cost on this export, so the price per GJ is the illustrative one and says so.
+    assert doc["rate_measured"] is False and doc["rate"] == energy.GAS_RATE
+
+
+def test_the_same_period_last_year_is_the_comparison_people_make(tmp_path):
+    doc = energy.gas_from_records(_with_bills(tmp_path), now=datetime(2026, 9, 19))
+    year = doc["same_period_last_year"]
+    assert year["end"] == "2025-08-20" and year["gj"] == 1.2
+    assert year["change_percent"] == -25       # 0.9 against 1.2 a year earlier
+
+
+def test_without_any_bills_the_gas_column_stays_sample_data(tmp_path):
+    assert energy.gas_from_records(tmp_path / "nothing" / "gas.db") is None
+
+
+def test_the_endpoint_serves_real_gas_once_a_bill_is_in(tmp_path):
+    cfg = tmp_path / "devices.local.yaml"
+    cfg.write_text(yaml.dump({}), encoding="utf-8")
+    _with_bills(tmp_path)
+    client = TestClient(web_app.create_app(config_path=cfg, check_camera_ports=False,
+                                           ai_data_dir=tmp_path / "ai-data"))
+    gas = client.get("/api/energy").json()["gas"]
+    assert gas["sample"] is False and gas["last_period_gj"] == 0.9
+    assert "periods" in gas and gas["model"]["base_gj_per_day"] > 0
+
+
+def test_the_view_draws_bills_and_names_what_fitted_them():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "function gasColumnHtml" in js and "GJ in the last bill" in js
+    assert "fitted to your bills and the weather" in js
+    assert "Same period last year" in js and "Hot water & cooking" in js
+    # The sample path is still there for a house with no bills uploaded.
+    assert "g.sample ? energyColumnHtml({" in js

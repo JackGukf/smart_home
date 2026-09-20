@@ -409,3 +409,73 @@ def read_forecast(path, now: datetime | None = None) -> dict[str, Any] | None:
     if (now or datetime.now()) - at > timedelta(hours=FORECAST_MAX_AGE_HOURS):
         return None
     return doc
+
+
+# ── Gas, from the bills the owner uploaded ──
+#
+# The FortisBC meter cannot be read from the house, so there are no daily gas
+# figures to show and inventing them would be worse than showing none. What the
+# house does have is real: two years of billing periods, and a model fitted on
+# them (src/python/gas_model.py). So the gas column shows **billing periods** -
+# each one a measured amount over a measured stretch - and says what the model
+# made of them.
+
+GAS_PERIODS_SHOWN = 24
+
+
+def gas_from_records(db_path, now: datetime | None = None) -> dict[str, Any] | None:
+    """The gas section from the owner's own bills, or None if there are none yet."""
+    from src.python import ai_data, gas_model
+
+    now = now or datetime.now()
+    try:
+        db = ai_data.connect(db_path)
+    except Exception:  # noqa: BLE001 - no database yet is not an error
+        return None
+    try:
+        rows = [dict(r) for r in db.execute(
+            "SELECT period_start, period_end, gj, cost, avg_temp_c FROM bills ORDER BY period_start")]
+        if not rows:
+            return None
+        model = gas_model.fit(db, now)
+        periods = [{
+            "start": r["period_start"], "end": r["period_end"],
+            "date": r["period_end"],           # the chart labels by the day a period ended
+            "gj": round(float(r["gj"]), 2),
+            "days": (date.fromisoformat(r["period_end"]) - date.fromisoformat(r["period_start"])).days,
+            "avg_temp_c": r["avg_temp_c"],
+            "cost": r["cost"],
+        } for r in rows][-GAS_PERIODS_SHOWN:]
+        costed = [(p["cost"], p["gj"]) for p in periods if p["cost"] and p["gj"]]
+        rate = round(sum(c for c, _ in costed) / sum(g for _, g in costed), 2) if costed else GAS_RATE
+        last = periods[-1]
+        return {
+            "sample": False,
+            "source": "your FortisBC bills",
+            "provider": "FortisBC",
+            "periods": periods,
+            "last_period": last,
+            "last_period_gj": last["gj"],
+            "gj_per_day": round(last["gj"] / last["days"], 3) if last["days"] else None,
+            "same_period_last_year": _same_period_last_year(periods, last),
+            "rate": rate,
+            "rate_measured": bool(costed),
+            "model": model.as_dict(),
+            # Daily figures only where the model's own input is known for the day.
+            "days": [d for d in gas_model.daily_estimates(db, model, 30, now.date()) if d["gj"] is not None],
+        }
+    finally:
+        db.close()
+
+
+def _same_period_last_year(periods: list[dict[str, Any]], last: dict[str, Any]) -> dict[str, Any] | None:
+    """The bill from a year ago, for the one comparison a person actually makes."""
+    target = date.fromisoformat(last["end"]) - timedelta(days=365)
+    nearest = min((p for p in periods if p is not last),
+                  key=lambda p: abs((date.fromisoformat(p["end"]) - target).days), default=None)
+    if nearest is None or abs((date.fromisoformat(nearest["end"]) - target).days) > 20:
+        return None
+    change = None
+    if nearest["gj"]:
+        change = round(100 * (last["gj"] - nearest["gj"]) / nearest["gj"])
+    return {**nearest, "change_percent": change}
