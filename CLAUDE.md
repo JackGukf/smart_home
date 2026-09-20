@@ -330,10 +330,11 @@ Three things that will waste a day if you do not know them:
   what is built and measured, the one open fault (the wake word never runs), the
   evidence that pins it, the next test, and thirteen traps from getting audio
   working on a board whose microphone and speaker share one I2S bus
-- `docs/energy-monitoring.md` — **electricity and gas**: the PowerLync read
+- `docs/energy-monitoring.md` — **electricity, gas and forecasting**: the PowerLync read
   locally over HomeKit and how to connect it, why the FortisBC gas meter cannot
   be read from the house and the three ways that could work, and the plan for
-  an energy "AI mode" once live readings exist
+  the nightly forecast (seasonal median, LightGBM, Chronos-2, picked by a
+  backtest, `~/forecast-venv`), and the rest of the energy "AI mode" plan
 - `docs/dashboard-cast.md` — **Cast to TV**: the dashboard as live video on the
   LLANO-S450 dongle over DLNA, switched in Settings and off by default (off costs
   nothing); `switch.tv_cast` in Home Assistant and the Voice Panel's TV cast

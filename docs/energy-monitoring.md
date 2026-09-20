@@ -123,6 +123,60 @@ not FlexNet. Nothing on the board can hear it.
 
 Until one of these exists, the gas column stays sample data and says so.
 
+## Forecasting: baseline, LightGBM and Chronos-2 (deployed 2026-09-19)
+
+`src/python/energy_forecast.py` holds three models behind one interface, and a
+walk-forward backtest on **this house's own series** decides which one the
+nightly job uses. The baseline keeps the job unless something beats it by 3%:
+a model that is only a hair better is not worth the moving parts.
+
+| Model | What it is | Trains on the board in |
+| --- | --- | --- |
+| **seasonal median** | this hour of this weekday, historically. No dependencies | 0 s |
+| **LightGBM** | gradient boosting on lags (1-4, 24, 25, 48, 168 h), rolling means and calendar; recursive over 24 hours | ~1.2 s |
+| **Chronos-2** | Amazon's 120M-parameter pretrained model, zero-shot - no training at all | first call 5.9 s (loads weights), then 0.3 s |
+
+**Measured on the board**, 30 days of hourly readings from the ecobee
+(720 points, a real house series - there is no electricity history until the
+PowerLync is paired):
+
+| Model | MAE (degC) | RMSE | sMAPE | skill vs baseline |
+| --- | --- | --- | --- | --- |
+| chronos-2 | **0.218** | 0.281 | 1.0% | **+73%** |
+| lightgbm | 0.547 | 0.581 | 2.1% | +31% |
+| seasonal median | 0.794 | 0.989 | 3.9% | - |
+
+A thermostat is a smooth series, which flatters a big model. On a **spiky**
+series - 30 days from the sample electricity generator, which is shape plus
+noise plus appliance bursts - the same backtest gives chronos-2 +14% and
+lightgbm +4.5% over the baseline. Electricity will sit nearer that end, so
+**do not assume Chronos-2 wins on the real meter**: the nightly job re-scores
+every night and will say.
+
+Cost on the board: peak ~1.3 GB with Chronos-2 (~160 MB without), a few
+seconds a night, 5.6 GB of venv and 456 MB of model weights on disk.
+
+### How it runs
+
+- **`energy-forecast.timer`** at 03:45 Vancouver (after house-learning, before
+  the digest) runs `energy-forecast.service` from **`~/forecast-venv`** - torch
+  and LightGBM stay out of the dashboard's environment, which only reads the
+  JSON. Set the venv up with `scripts/install-forecast-venv.sh`
+  (`--no-chronos` for the light install).
+- Until the PowerLync is paired the job finds no electricity statistic and
+  exits saying so - that is the normal state today, and it is not an error.
+- It writes `energy_forecast.json`; `/api/energy` carries it while it is less
+  than 36 hours old, and the Energy view shows "Next 24 hours" with the total,
+  the cost, **the name of the model that produced it** and how accurate that
+  model was in the backtest.
+- Try it by hand on any statistic:
+
+      PYTHONPATH=. ~/forecast-venv/bin/python -m src.python.energy_forecast \
+          --evaluate --statistic-id sensor.my_ecobee_current_temperature --kind mean
+
+Nothing here drives a device. The house rule stands: Python computes, rules
+execute, and no model sits in a trigger path.
+
 ## Next: an energy "AI mode"
 
 Planned for when live electricity has run for a week or two (the usual day
@@ -131,6 +185,8 @@ rules execute, the model only writes prose or drafts rules for a person to
 approve.** Nothing here puts a model in a trigger path.
 
 What live readings make possible, roughly in order of value:
+
+Forecasting is now in place (above). What is left:
 
 1. **What is on right now.** Every step in demand (say ±150 W within 30 s) is
    matched against the Home Assistant events at the same moment, which
