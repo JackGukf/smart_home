@@ -146,15 +146,34 @@ def _hours_between(runtime: dict[date, float], start: datetime, end: datetime) -
     return total, covered
 
 
+def runtime_trusted_from(db: sqlite3.Connection) -> date | None:
+    """The first day the thermostat ever recorded the furnace running.
+
+    Ecobee's report gives zeros for days before the thermostat was driving the
+    furnace, and a zero is indistinguishable from an idle day - except that
+    the house was billed 14.9 GJ that January. So runtime is believed only from
+    the first hour it ever saw; before that it is *unknown*, not zero, and the
+    bills from then are left to the degree-day model.
+    """
+    row = db.execute("SELECT MIN(day) AS day FROM runtime WHERE furnace_hours > 0").fetchone()
+    return date.fromisoformat(row["day"]) if row and row["day"] else None
+
+
 def observations(db: sqlite3.Connection) -> list[Observation]:
     """Everything measured, as gas over a stretch of time."""
     from src.python import ai_data
 
     runtime = runtime_by_day(db)
+    trusted_from = runtime_trusted_from(db)
+
+    def believable(start: datetime, end: datetime, covered: bool) -> bool:
+        return covered and trusted_from is not None and start.date() >= trusted_from
+
     out: list[Observation] = []
     for interval in ai_data.intervals(db):
         start, end = datetime.fromisoformat(interval["start"]), datetime.fromisoformat(interval["end"])
         hours, covered = _hours_between(runtime, start, end)
+        covered = believable(start, end, covered)
         out.append(Observation(start, end, float(interval["gj"]), "reading", furnace_hours=hours, covered=covered))
     from src.python import ai_data as _ai_data
 
@@ -168,7 +187,7 @@ def observations(db: sqlite3.Connection) -> list[Observation]:
             continue
         hours, covered = _hours_between(runtime, start, end)
         out.append(Observation(start, end, float(bill["gj"]), "bill", furnace_hours=hours,
-                               covered=covered, avg_temp_c=bill["avg_temp_c"]))
+                               covered=believable(start, end, covered), avg_temp_c=bill["avg_temp_c"]))
     return sorted(out, key=lambda o: o.start)
 
 

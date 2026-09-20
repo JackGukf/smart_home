@@ -141,24 +141,57 @@ measured, and nothing else:
   Summer bills measure the base load almost on their own.
 
 **Furnace runtime** comes from **Ecobee's own runtime report**
-(`src/python/ecobee_runtime.py`): five-minute intervals, about two years back,
-read-only (`smartRead`). That is what makes the model fittable against two
-years of bills *now* rather than after a winter of watching. Authorise once
-with a free developer key:
+(`src/python/ecobee_runtime.py`): five-minute intervals, about two years back.
+Ecobee **stopped issuing developer keys** ("we are not currently accepting new
+developer registrations"), so the way in is the account's own web sign-in - the
+same one Home Assistant's ecobee integration now uses:
 
-    .venv/bin/python -m src.python.ecobee_runtime --authorize --api-key YOUR_KEY
+    .venv/bin/python -m src.python.ecobee_runtime --login     # email, password, one-time code
     .venv/bin/python -m src.python.ecobee_runtime --fetch --days 730
+
+The password is held only long enough to sign in and never written; the session
+file keeps **tokens only** (`ai-data/ecobee_web_session.json`, 0600), separate
+from Home Assistant's, because ecobee rotates a refresh token and two clients
+sharing one knock each other out. `ecobee-runtime.timer` keeps it current each
+morning at 03:20.
+
+Traps that cost an evening here:
+
+- pyecobee's own `_write_config()` **stores the account password** in the file,
+  and only writes anything when the object was built from a file. The session
+  is written by `save_web_session()` instead: three tokens, nothing else.
+- The library prefixes the API version itself, so the endpoint is
+  `runtimeReport`, not `1/runtimeReport` - the latter is answered with
+  "Invalid request type: 1" rather than a 404.
+- The report needs `selectionType: thermostats` and an identifier;
+  `registered` returns an empty report rather than an error.
+- **Zeros before the thermostat drove the furnace are not idle days.** This
+  house's ecobee reported outdoor temperatures from 2024-09 but no furnace time
+  until **2025-03-08**, while January 2025 was billed 14.9 GJ. Fitting on those
+  zeros put the base load at 0.17 GJ/day, four times what the summer bills say.
+  `runtime_trusted_from()` believes runtime only from the first hour it ever
+  saw; earlier bills are left to the degree-day model.
 
 `ecobee-runtime.timer` then keeps it up to date every morning at 03:20. Without
 Ecobee, `ai_data.runtime_from_house_memory()` recovers the same thing from Home
 Assistant's `hvac_action` as recorded by `house-memory.service` - only from
 2026-09-07 onwards, and only as well as the recording.
 
-Where it stands **today**: the house memory holds 13 days of thermostat records
-and **every one says idle** - it is September, the setpoint is 17 degC and the
-house is 24 degC. So the model reports `waiting_for_heating` and fits the base
-load only. It will fit properly when the furnace first runs, or as soon as
-Ecobee's history is fetched.
+Where it stands **since 2026-09-19**, with two years of bills and 732 days of
+runtime (210,528 five-minute intervals, 1,020 furnace hours, all on `auxHeat1` -
+a single-stage gas furnace):
+
+| | degree-day | runtime |
+| --- | --- | --- |
+| fitted on | 24 bills | 17 bills (from 2025-03-08) |
+| base load | 0.0371 GJ/day | 0.0426 GJ/day |
+| heating | 0.0304 GJ per degree-day, balance 16.5 degC | **0.069 GJ per furnace hour** |
+| error | **6.17%** | 6.40% |
+
+Both are believable and they agree, which is the point: the degree-day model
+wins narrowly and is the one shown, with the runtime model's error beside it.
+The furnace rate works out at **65,000 BTU/h input**, an ordinary size for a
+house this age - a physical sanity check the weather model cannot give.
 
 What it cannot do: a modulating furnace breaks the fixed-rate assumption. The
 fit reports its own error against the readings, so a wrong assumption shows up

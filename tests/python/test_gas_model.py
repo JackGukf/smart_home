@@ -219,3 +219,35 @@ def test_runtime_wins_when_there_is_runtime_to_use(db, tmp_path):
     assert model.kind == "runtime"
     assert [a["kind"] for a in model.alternatives] == ["degree_day"]
     assert model.gj_per_furnace_hour == pytest.approx(RATE, abs=0.02)
+
+
+def test_zeros_from_before_the_thermostat_drove_the_furnace_are_not_believed(db, tmp_path):
+    """The owner's ecobee reported outdoor temperatures from Sept 2024 but no
+    furnace time until 2025-03-08, while January 2025 was billed 14.9 GJ. Those
+    zeros are missing data, not idle days, and fitting on them put the base load
+    at 0.17 GJ/day - four times what the summer bills measure."""
+    loaded(db, tmp_path)
+    day = date(2024, 9, 18)
+    while day < date(2026, 9, 19):
+        heating = day >= date(2025, 3, 8) and day.month in (10, 11, 12, 1, 2, 3, 4)
+        ai_data.record_runtime(db, [{"day": day.isoformat(),
+                                     "furnace_hours": 4.0 if heating else 0.0,
+                                     "outdoor_mean_c": 5.0}], "ecobee")
+        day += timedelta(days=1)
+
+    assert gas_model.runtime_trusted_from(db) == date(2025, 3, 8)
+    seen = [o for o in gas_model.observations(db) if o.covered]
+    assert all(o.start.date() >= date(2025, 3, 8) for o in seen)
+    assert any(o.start.date() < date(2025, 3, 8) for o in gas_model.observations(db)), "they are kept, just not trusted"
+
+    model = gas_model.fit(db, now=datetime(2026, 9, 19))
+    # Whichever model wins, the base load stays near what July and August say.
+    assert model.base_gj_per_day == pytest.approx(0.037, abs=0.02)
+
+
+def test_with_no_runtime_at_all_nothing_is_trusted(db, tmp_path):
+    loaded(db, tmp_path)
+    ai_data.record_runtime(db, [{"day": "2026-08-01", "furnace_hours": 0.0, "outdoor_mean_c": 19.0}], "ecobee")
+    assert gas_model.runtime_trusted_from(db) is None
+    assert not any(o.covered for o in gas_model.observations(db))
+    assert gas_model.fit(db, now=datetime(2026, 9, 19)).kind == "degree_day"

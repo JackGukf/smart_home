@@ -142,7 +142,11 @@ def test_the_web_session_reads_the_same_runtime_report():
     [day] = er.daily_runtime(rows)
     assert day["furnace_hours"] == pytest.approx(10 / 60, abs=0.001)   # two five-minute intervals
     method, endpoint, selection = session.requests[0]
-    assert (method, endpoint) == ("GET", "1/runtimeReport")
+    # The library adds the API version itself; "1/runtimeReport" would become
+    # /1/1/runtimeReport, which ecobee answers with "Invalid request type: 1".
+    assert (method, endpoint) == ("GET", "runtimeReport")
+    assert selection["selection"]["selectionType"] == "thermostats"
+    assert selection["selection"]["selectionMatch"] == "511", "the report needs an identifier"
     assert selection["columns"].startswith("auxHeat1") and selection["includeSensors"] is False
 
 
@@ -286,3 +290,37 @@ def test_a_saved_session_refreshes_and_writes_the_new_token_back(tmp_path, monke
     kept = json.loads(store.read_text())
     assert kept["REFRESH_TOKEN"] == "rotated-RT" and kept["ACCESS_TOKEN"] == "new-AT"
     assert oct(store.stat().st_mode)[-3:] == "600"
+
+
+def test_the_thermostat_list_needs_an_update_first(tmp_path, monkeypatch, capsys):
+    """Signing in returns tokens; the thermostats arrive with the first update.
+    Listing them straight after the sign-in found None and crashed."""
+    class FakeEcobee:
+        def __init__(self, config=None, config_filename=None):
+            self.access_token = "AT"
+            self.refresh_token = "RT"
+            self.auth0_token = "A0"
+            self.thermostats = None          # exactly what the library hands back
+
+        def request_tokens_web(self):
+            return True
+
+        def update(self):
+            self.thermostats = [{"identifier": "511", "name": "My ecobee"}]
+            return True
+
+    fake = types.ModuleType("pyecobee")
+    fake.Ecobee = FakeEcobee
+    const = types.ModuleType("pyecobee.const")
+    const.ECOBEE_USERNAME, const.ECOBEE_PASSWORD = "USERNAME", "PASSWORD"
+    errors = types.ModuleType("pyecobee.errors")
+    errors.EcobeeAuthMfaRequiredError = type("MfaRequired", (Exception,), {})
+    for name, module in (("pyecobee", fake), ("pyecobee.const", const), ("pyecobee.errors", errors)):
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr("builtins.input", lambda *a: "someone@example.com")
+    monkeypatch.setattr("getpass.getpass", lambda *a: "hunter2")
+    monkeypatch.setenv("ECOBEE_TOKENS", str(tmp_path / "ecobee_tokens.json"))
+
+    assert er.main(["--login"]) == 0
+    printed = capsys.readouterr().out
+    assert "signed in" in printed and "thermostat 511" in printed

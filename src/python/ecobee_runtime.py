@@ -321,14 +321,30 @@ def _only_owner(path: Path) -> None:
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
-def web_runtime_report(session: Any, start: date, end: date) -> list[dict[str, Any]]:
+def _first_thermostat(session: Any) -> str:
+    """The account's thermostat. The runtime report wants an identifier: asking
+    for "registered" returns nothing rather than saying so."""
+    if not session.thermostats:
+        session.update()
+    thermostats = session.thermostats or []
+    if not thermostats:
+        raise RuntimeError("no thermostat on this ecobee account")
+    return thermostats[0]["identifier"]
+
+
+def web_runtime_report(session: Any, start: date, end: date,
+                       thermostat_id: str | None = None) -> list[dict[str, Any]]:
     """The same runtime report, over the library's signed-in session."""
     selection = {
-        "selection": {"selectionType": "registered", "selectionMatch": ""},
+        "selection": {"selectionType": "thermostats",
+                      "selectionMatch": thermostat_id or _first_thermostat(session)},
         "startDate": start.isoformat(), "endDate": end.isoformat(),
         "columns": ",".join(COLUMNS), "includeSensors": False,
     }
-    raw = session._request("GET", "1/runtimeReport", "get runtime report",
+    # "runtimeReport", not "1/runtimeReport": the library puts the API version
+    # in front of whatever endpoint it is given, and /1/1/runtimeReport comes
+    # back as "Invalid request type: 1" rather than as a 404.
+    raw = session._request("GET", "runtimeReport", "get runtime report",
                            params={"json": json.dumps(selection)})
     doc = raw if isinstance(raw, dict) else json.loads(raw or "{}")
     status = (doc.get("status") or {}).get("code", 0)
@@ -344,13 +360,15 @@ def web_runtime_report(session: Any, start: date, end: date) -> list[dict[str, A
 
 
 def web_fetch_history(session: Any, days: int = 730, today: date | None = None,
-                      on_chunk: Callable[[date, date, int], None] | None = None) -> list[dict[str, Any]]:
+                      on_chunk: Callable[[date, date, int], None] | None = None,
+                      thermostat_id: str | None = None) -> list[dict[str, Any]]:
     end = today or date.today()
     cursor = end - timedelta(days=days)
+    thermostat_id = thermostat_id or _first_thermostat(session)
     rows: list[dict[str, Any]] = []
     while cursor <= end:
         stop = min(cursor + timedelta(days=CHUNK_DAYS - 1), end)
-        chunk = web_runtime_report(session, cursor, stop)
+        chunk = web_runtime_report(session, cursor, stop, thermostat_id)
         rows.extend(chunk)
         if on_chunk:
             on_chunk(cursor, stop, len(chunk))
@@ -394,7 +412,10 @@ def main(argv: list[str] | None = None) -> int:
 
         session = web_login(username, password, web_store, ask_code)
         print(f"signed in; tokens in {web_store}")
-        for thermostat in session.thermostats:
+        # The thermostat list arrives with the first update, not with the tokens.
+        session.update()
+        save_web_session(session, web_store)   # update() may already have rotated the token
+        for thermostat in session.thermostats or []:
             print(f"  thermostat {thermostat['identifier']}  {thermostat.get('name', '')}")
         return 0
 
