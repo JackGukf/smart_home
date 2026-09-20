@@ -279,18 +279,41 @@ def web_login(username: str, password: str, store: Path,
         ok = session.submit_mfa_code(challenge, ask_code(getattr(challenge, "mfa_type", "otp")).strip())
     if not ok:
         raise RuntimeError("ecobee refused the sign-in")
-    session.config_filename = str(store)
-    session._write_config()
-    _only_owner(store)
+    save_web_session(session, store)
     return session
 
 
+# Only these. The library's own `_write_config` also stores the account's
+# password, which is exactly what this is written to avoid: the password is
+# used to sign in and then forgotten, and a rotated refresh token is enough to
+# come back tomorrow.
+WEB_SESSION_KEYS = ("ACCESS_TOKEN", "REFRESH_TOKEN", "AUTH0_TOKEN")
+
+
+def save_web_session(session: Any, store: Path) -> None:
+    """Keep the tokens, and nothing that could be used as a password."""
+    kept = {
+        "ACCESS_TOKEN": session.access_token,
+        "REFRESH_TOKEN": session.refresh_token,
+        "AUTH0_TOKEN": session.auth0_token,
+    }
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_text(json.dumps(kept, indent=2) + "\n", encoding="utf-8")
+    _only_owner(store)
+
+
 def web_session(store: Path) -> Any:
-    """A signed-in session from the saved tokens, refreshed by the library."""
+    """A signed-in session from the saved tokens.
+
+    `update()` refreshes the access token when it has expired, using the
+    refresh token alone - no password, no second code. ecobee rotates that
+    refresh token, so the new one is written straight back; losing it would
+    mean signing in by hand again."""
     import pyecobee
 
-    session = pyecobee.Ecobee(config_filename=str(store))
+    session = pyecobee.Ecobee(config=json.loads(Path(store).read_text(encoding="utf-8")))
     session.update()
+    save_web_session(session, store)
     return session
 
 

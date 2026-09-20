@@ -167,9 +167,9 @@ def test_the_password_is_never_written_down(tmp_path, monkeypatch):
         def request_tokens_web(self):
             return True
 
-        def _write_config(self):
-            written["path"] = self.config_filename
-            Path(self.config_filename).write_text(json.dumps({"ACCESS_TOKEN": "AT", "REFRESH_TOKEN": "RT"}))
+        access_token = "AT"
+        refresh_token = "RT"
+        auth0_token = "A0"
 
     class MfaRequired(Exception):
         pass
@@ -186,7 +186,11 @@ def test_the_password_is_never_written_down(tmp_path, monkeypatch):
     store = tmp_path / "ecobee_web_session.json"
     er.web_login("someone@example.com", "hunter2", store)
     assert store.is_file() and oct(store.stat().st_mode)[-3:] == "600"
-    assert "hunter2" not in store.read_text()
+    kept = json.loads(store.read_text())
+    # The library's own writer would have put the password in the file; this
+    # keeps the tokens and nothing else.
+    assert set(kept) == set(er.WEB_SESSION_KEYS)
+    assert "hunter2" not in store.read_text() and "someone@example.com" not in store.read_text()
 
 
 def test_a_one_time_code_finishes_the_sign_in(tmp_path, monkeypatch):
@@ -211,8 +215,9 @@ def test_a_one_time_code_finishes_the_sign_in(tmp_path, monkeypatch):
             self.submitted = code
             return True
 
-        def _write_config(self):
-            Path(self.config_filename).write_text('{"ACCESS_TOKEN": "AT"}')
+        access_token = "AT"
+        refresh_token = "RT"
+        auth0_token = "A0"
 
     fake = types.ModuleType("pyecobee")
     fake.Ecobee = FakeEcobee
@@ -230,6 +235,7 @@ def test_a_one_time_code_finishes_the_sign_in(tmp_path, monkeypatch):
     assert asked == ["otp"], "the kind of challenge is passed on, so the prompt can name it"
     assert session.submitted == "123456", "whitespace from a pasted code is stripped"
     assert store.is_file() and "hunter2" not in store.read_text()
+    assert set(json.loads(store.read_text())) == set(er.WEB_SESSION_KEYS)
 
 
 def test_without_anyone_to_ask_it_says_so(tmp_path, monkeypatch):
@@ -254,3 +260,29 @@ def test_without_anyone_to_ask_it_says_so(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="one-time code"):
         er.web_login("a@b.c", "pw", tmp_path / "s.json")
+
+
+def test_a_saved_session_refreshes_and_writes_the_new_token_back(tmp_path, monkeypatch):
+    """ecobee rotates the refresh token on every refresh. Keeping the old one
+    would mean signing in by hand again tomorrow."""
+    class FakeEcobee:
+        def __init__(self, config=None, config_filename=None):
+            assert config and "PASSWORD" not in config, "a saved session has no password in it"
+            self.access_token = "new-AT"
+            self.refresh_token = "rotated-RT"
+            self.auth0_token = config.get("AUTH0_TOKEN")
+
+        def update(self):
+            return True
+
+    fake = types.ModuleType("pyecobee")
+    fake.Ecobee = FakeEcobee
+    monkeypatch.setitem(sys.modules, "pyecobee", fake)
+
+    store = tmp_path / "ecobee_web_session.json"
+    store.write_text(json.dumps({"ACCESS_TOKEN": "old", "REFRESH_TOKEN": "old-RT", "AUTH0_TOKEN": "A0"}))
+    er.web_session(store)
+
+    kept = json.loads(store.read_text())
+    assert kept["REFRESH_TOKEN"] == "rotated-RT" and kept["ACCESS_TOKEN"] == "new-AT"
+    assert oct(store.stat().st_mode)[-3:] == "600"
