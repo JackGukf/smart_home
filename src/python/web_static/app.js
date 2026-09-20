@@ -10805,7 +10805,7 @@ function energyHalfHtml({ kind, name, value, unit, sub, chart, left, right }) {
         <span class="energy-kw mono">${value}</span>
         <span class="energy-unit">${escapeHtml(unit)}</span>
       </div>
-      <div class="energy-half-sub">${sub}</div>
+      <div class="energy-half-sub" title="compared with the same period a year earlier">${sub}</div>
       <div class="energy-spark">${chart}</div>
       <div class="energy-facts"><span>${left}</span><span>${right}</span></div>
     </div>`;
@@ -12221,7 +12221,7 @@ function scheduleLiveRefresh() {
 
 /* The view a "show_view" frame asks for, or null. Checked here as well as on the
    server, so a malformed frame can never open an arbitrary panel. */
-const WALL_PANEL_VIEWS = new Set(["home", "cameras", "alarm", "devices", "climate", "status"]);
+const WALL_PANEL_VIEWS = new Set(["home", "cameras", "energy", "alarm", "devices", "climate", "status"]);
 function wallPanelView(data) {
   try {
     const view = String(JSON.parse(data || "{}").view || "").toLowerCase();

@@ -66,8 +66,9 @@ async def test_each_decided_view_is_forwarded(view: str) -> None:
 
 
 def test_the_views_are_the_owners_decision() -> None:
-    """Home, Cameras, Security, Devices, Climate and Status - Security is 'alarm' here."""
-    assert web_app.WALL_PANEL_VIEWS == {"home", "cameras", "alarm", "devices", "climate", "status"}
+    """Home, Cameras, Energy, Security, Devices, Climate and Status - Security is
+    'alarm' here. Energy joined on 2026-09-20, once the card had real bills."""
+    assert web_app.WALL_PANEL_VIEWS == {"home", "cameras", "energy", "alarm", "devices", "climate", "status"}
 
 
 @pytest.mark.asyncio
@@ -198,3 +199,31 @@ def test_the_tvs_events_become_the_same_frames_as_the_wall_panels() -> None:
     assert web_app._TV_CAST_FRAMES[web_app.TV_CAST_VIEW_EVENT]({"view": "settings"}) is None
     assert web_app._TV_CAST_FRAMES[web_app.TV_CAST_SCROLL_EVENT]({"direction": "sideways"}) is None
     assert set(web_app._TV_CAST_FRAMES).isdisjoint(web_app._WALL_PANEL_FRAMES)
+
+
+def test_the_voice_panel_offers_energy_and_still_fits_its_screen() -> None:
+    """Seven view cards in four rows, then the scroll and camera rows, on a
+    480-pixel screen. The cards are 62 tall and the buttons 54."""
+    import re
+    from pathlib import Path
+
+    panel = (Path(__file__).resolve().parents[2] / "configs" / "esphome" / "voice-panel.yaml").read_text(encoding="utf-8")
+    wall = panel[panel.index("- id: wall_page"):panel.index("- id: settings_page")]
+
+    cards = {re.search(r"key: (\w+)", line).group(1): int(re.search(r"y: (\d+)", line).group(1))
+             for line in wall.splitlines() if "wall_panel_show_view" in line and "card-view.yaml" in line}
+    assert set(cards) == web_app.WALL_PANEL_VIEWS, "the panel offers exactly what the dashboard accepts"
+    assert cards["energy"] == 124
+
+    rows = sorted(set(cards.values()))
+    assert rows == [56, 124, 192, 260] and all(b - a >= 62 for a, b in zip(rows, rows[1:]))
+
+    scroll = min(int(y) for y in re.findall(r'wall panel: scrolled \w+", x: \d+, y: (\d+)', wall))
+    camera = min(int(y) for y in re.findall(r'wall panel: (?:previous|next) camera", x: \d+, y: (\d+)', wall))
+    toast = int(re.search(r"id: wall_toast\s+x: \d+\s+y: (\d+)", wall).group(1))
+    assert rows[-1] + 62 <= scroll, "the last row of views clears the scroll buttons"
+    assert scroll + 54 <= camera and camera + 54 <= toast and toast + 18 <= 480
+
+    # The highlight script has to know every card, or one never reads "Showing".
+    for view in web_app.WALL_PANEL_VIEWS:
+        assert f"id: wall_{view}_view_card" in panel and f"id: wall_{view}_view_sub" in panel

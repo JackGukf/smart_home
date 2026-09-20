@@ -1167,6 +1167,15 @@ script:
             std::string text = id(wall_view) == "climate" ? "Showing" : "Show";
             return text;
       - lvgl.widget.update:
+          id: wall_energy_view_card
+          state:
+            checked: !lambda 'return id(wall_view) == "energy";'
+      - lvgl.label.update:
+          id: wall_energy_view_sub
+          text: !lambda |-
+            std::string text = id(wall_view) == "energy" ? "Showing" : "Show";
+            return text;
+      - lvgl.widget.update:
           id: wall_status_view_card
           state:
             checked: !lambda 'return id(wall_view) == "status";'
@@ -2448,23 +2457,28 @@ lvgl:
                   id: open_app
                   page: 0
             widgets:
-            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: home, title: "Home", icon: "", x: 24, y: 66}}
-            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: cameras, title: "Cameras", icon: "", x: 247, y: 66}}
-            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: alarm, title: "Security", icon: "", x: 24, y: 134}}
-            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: devices, title: "Devices", icon: "", x: 247, y: 134}}
-            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: climate, title: "Climate", icon: "", x: 24, y: 202}}
-            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: status, title: "Status", icon: "", x: 247, y: 202}}
+            # Seven views in four rows since 2026-09-20, when Energy joined: the
+            # order the dashboard's own sidebar uses. Rows are 68 apart from
+            # y=56 - ten higher than before - so the scroll and camera rows
+            # below still fit the 480-pixel screen.
+            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: home, title: "Home", icon: "", x: 24, y: 56}}
+            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: cameras, title: "Cameras", icon: "", x: 247, y: 56}}
+            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: energy, title: "Energy", icon: "", x: 24, y: 124}}
+            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: devices, title: "Devices", icon: "", x: 247, y: 124}}
+            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: alarm, title: "Security", icon: "", x: 24, y: 192}}
+            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: climate, title: "Climate", icon: "", x: 247, y: 192}}
+            - !include {file: panel/card-view.yaml, vars: {remote: wall, event: esphome.wall_panel_show_view, screen: "Hallway wall panel", key: status, title: "Status", icon: "", x: 24, y: 260}}
             # Scroll the hallway screen: most of a screen at a time. Events, like
             # the views, so the panel's main loop never waits on the network; the
             # dashboard forwards them to the wall panel's browser only.
-            - !include {file: panel/wall-button.yaml, vars: {remote: wall, key: scroll_up, text: "\uF077   Scroll up", event: esphome.wall_panel_scroll, field: direction, value: up, toast: "Hallway wall panel: scrolled up", x: 24, y: 276, width: 209}}
-            - !include {file: panel/wall-button.yaml, vars: {remote: wall, key: scroll_down, text: "\uF078   Scroll down", event: esphome.wall_panel_scroll, field: direction, value: down, toast: "Hallway wall panel: scrolled down", x: 247, y: 276, width: 209}}
+            - !include {file: panel/wall-button.yaml, vars: {remote: wall, key: scroll_up, text: "\uF077   Scroll up", event: esphome.wall_panel_scroll, field: direction, value: up, toast: "Hallway wall panel: scrolled up", x: 24, y: 330, width: 209}}
+            - !include {file: panel/wall-button.yaml, vars: {remote: wall, key: scroll_down, text: "\uF078   Scroll down", event: esphome.wall_panel_scroll, field: direction, value: down, toast: "Hallway wall panel: scrolled down", x: 247, y: 330, width: 209}}
             # The camera on the wall panel's Home view: previous and next, with
             # its name in between as the wall panel reports it.
-            - !include {file: panel/wall-button.yaml, vars: {remote: wall, key: camera_prev, text: "\uF053", event: esphome.wall_panel_camera, field: step, value: prev, toast: "Hallway wall panel: previous camera", x: 24, y: 342, width: 64}}
+            - !include {file: panel/wall-button.yaml, vars: {remote: wall, key: camera_prev, text: "\uF053", event: esphome.wall_panel_camera, field: step, value: prev, toast: "Hallway wall panel: previous camera", x: 24, y: 392, width: 64}}
             - obj:
                 x: 96
-                y: 342
+                y: 392
                 width: 288
                 height: 54
                 radius: 14
@@ -2492,11 +2506,11 @@ lvgl:
                       text: "..."
                       text_font: montserrat_16
                       text_color: 0xF2F5F8
-            - !include {file: panel/wall-button.yaml, vars: {remote: wall, key: camera_next, text: "\uF054", event: esphome.wall_panel_camera, field: step, value: next, toast: "Hallway wall panel: next camera", x: 392, y: 342, width: 64}}
+            - !include {file: panel/wall-button.yaml, vars: {remote: wall, key: camera_next, text: "\uF054", event: esphome.wall_panel_camera, field: step, value: next, toast: "Hallway wall panel: next camera", x: 392, y: 392, width: 64}}
             - label:
                 id: wall_toast
                 x: 28
-                y: 412
+                y: 454
                 width: 424
                 text: "Tap a view to show it on the hallway wall panel"
                 text_font: montserrat_14

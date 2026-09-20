@@ -7221,8 +7221,15 @@ header > .header-right { flex-shrink: 0; }
 }
 
 .energy-half .energy-kw { font-size: 26px; }
-.energy-half-sub { font-size: 11.5px; color: var(--t-text-dim); }
+.energy-half-sub { font-size: 11.5px; color: var(--t-text-dim); white-space: nowrap; }
 .energy-half .energy-facts { font-size: 11px; gap: 8px; flex-wrap: nowrap; }
+
+/* The chart is drawn at a fixed height and the row it sits in is whatever the
+   card has left. On a short card - a desktop window, where Home's rows are
+   shorter - the drawing overflowed upwards over "last month · +3%". It fills
+   its row instead, however tall that row turns out to be. */
+.energy-half .energy-spark { overflow: hidden; min-height: 26px; }
+.energy-half .energy-spark > svg { height: 100% !important; width: 100%; }
 
 i.energy-dot {
   width: 7px;

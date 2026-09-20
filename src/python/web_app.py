@@ -5598,7 +5598,8 @@ NIGHT_LIGHTS_AFTER_ENTITY = "input_datetime.family_room_lights_off_after"
 NIGHT_LIGHTS_UNTIL = "06:00"
 
 WALL_PANEL_VIEW_EVENT = "esphome.wall_panel_show_view"
-WALL_PANEL_VIEWS = frozenset({"home", "cameras", "alarm", "devices", "climate", "status"})
+# Energy joined on 2026-09-20, once the card had real bills behind it.
+WALL_PANEL_VIEWS = frozenset({"home", "cameras", "energy", "alarm", "devices", "climate", "status"})
 # The same remote also scrolls the wall panel's screen and steps the Home
 # camera card through the cameras. Each is its own event, checked against its
 # own fixed list of values before anything is forwarded.
