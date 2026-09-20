@@ -89,6 +89,15 @@
 > ~80 s with no kernel panic. That is the prime suspect for the 2026-09-02 reset
 > loop. The default password is also still `orangepi`.
 
+> **AI view and gas from furnace runtime (2026-09-19).** The sidebar's
+> Automations is now **AI**: Automations as before, plus **AI data** - upload
+> FortisBC bills (PDF) and exports (CSV), type meter readings, and see the gas
+> model. Gas cannot be read from the meter, so it is fitted as
+> `base x days + rate x furnace hours` from **Ecobee's runtime report**
+> (two years back, read-only) and corrected by the readings. In September it
+> reports `waiting_for_heating` - the furnace has never run. See
+> `docs/energy-monitoring.md`.
+
 ## Project Overview
 
 Smart home controller for an **Orange Pi 6 Plus** targeting TP-Link/Kasa switches, Tuya sensors, Govee/Lepro ambient devices, cameras, Home Assistant entities, a Matter bridge, and a web dashboard. Dual-language: Python for fast automation and C/C++ for long-running services.

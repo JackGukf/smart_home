@@ -123,6 +123,59 @@ not FlexNet. Nothing on the board can hear it.
 
 Until one of these exists, the gas column stays sample data and says so.
 
+### What is built instead: gas from furnace runtime (2026-09-19)
+
+The meter cannot be read, but the furnace can be timed, and a single-stage
+furnace burns at one rate. So gas is *inferred*:
+
+    gas over a period  =  base x days  +  rate x furnace hours
+
+**base** is everything that is not the furnace (water heater, cooking, dryer),
+**rate** is what the furnace burns in an hour. Neither is assumed: both are
+fitted by least squares (`src/python/gas_model.py`) on things that were really
+measured, and nothing else:
+
+- **pairs of meter readings** typed into the dashboard - exact, and the
+  correction the owner asked for: each new reading re-fits the model;
+- **FortisBC bills** - a month at a time, and there are two years of them.
+  Summer bills measure the base load almost on their own.
+
+**Furnace runtime** comes from **Ecobee's own runtime report**
+(`src/python/ecobee_runtime.py`): five-minute intervals, about two years back,
+read-only (`smartRead`). That is what makes the model fittable against two
+years of bills *now* rather than after a winter of watching. Authorise once
+with a free developer key:
+
+    .venv/bin/python -m src.python.ecobee_runtime --authorize --api-key YOUR_KEY
+    .venv/bin/python -m src.python.ecobee_runtime --fetch --days 730
+
+`ecobee-runtime.timer` then keeps it up to date every morning at 03:20. Without
+Ecobee, `ai_data.runtime_from_house_memory()` recovers the same thing from Home
+Assistant's `hvac_action` as recorded by `house-memory.service` - only from
+2026-09-07 onwards, and only as well as the recording.
+
+Where it stands **today**: the house memory holds 13 days of thermostat records
+and **every one says idle** - it is September, the setpoint is 17 degC and the
+house is 24 degC. So the model reports `waiting_for_heating` and fits the base
+load only. It will fit properly when the furnace first runs, or as soon as
+Ecobee's history is fetched.
+
+What it cannot do: a modulating furnace breaks the fixed-rate assumption. The
+fit reports its own error against the readings, so a wrong assumption shows up
+as a number rather than as silence. Expect a few percent on a day once a
+handful of readings are in.
+
+### The AI data page
+
+The sidebar's **Automations** became **AI**, a launcher with two apps:
+Automations exactly as it was, and **AI data** - drop a bill or an export, type
+a meter reading, see what the house has and what the gas model made of it.
+Files are parsed and shown, and become rows only when imported: a bill whose
+numbers were read wrongly is worse than one that was not read at all. Bills are
+read with `pypdf`; a scan with no text says so rather than guessing. Everything
+lives in `ai-data/` on the board (git-ignored), and nothing leaves the house.
+Design: `docs/design/ai-view.html`. Set up with `scripts/install-ai-data.sh`.
+
 ## Forecasting: baseline, LightGBM and Chronos-2 (deployed 2026-09-19)
 
 `src/python/energy_forecast.py` holds three models behind one interface, and a
