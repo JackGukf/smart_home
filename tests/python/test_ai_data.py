@@ -180,3 +180,18 @@ def test_a_bill_pdf_with_day_first_dates_reads_too():
                                      "Natural gas used 0.9 GJ\nTotal amount due $41.20")
     assert parsed.found["period_start"] == "2026-07-22" and parsed.found["period_end"] == "2026-08-18"
     assert parsed.found["gj"] == 0.9 and parsed.status == "parsed"
+
+
+def test_equipment_running_is_believed_over_hvac_action():
+    """ecobee's `equipment_running` names what was switched on, so the fan
+    running by itself - which burns no gas - is not counted as heat."""
+    assert ai_data._is_heating({"equipment_running": "auxHeat1,fan"}) is True
+    assert ai_data._is_heating({"equipment_running": "fan"}) is False
+    assert ai_data._is_heating({"equipment_running": "compCool1,fan"}) is False
+    assert ai_data._is_heating({"equipment_running": ""}) is False
+    # The HomeKit entity has no such attribute, so hvac_action stands in.
+    assert ai_data._is_heating({"hvac_action": "heating"}) is True
+    assert ai_data._is_heating({"hvac_action": "idle"}) is False
+    assert ai_data._is_heating({}) is None
+    # And a thermostat that reports both is read from the better one.
+    assert ai_data._is_heating({"equipment_running": "fan", "hvac_action": "heating"}) is False

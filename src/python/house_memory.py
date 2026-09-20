@@ -56,8 +56,11 @@ SKIP_ENTITY = re.compile(
 # winter; whether it is heating, and at what temperature, is in the
 # attributes - and that is what the energy model will need.
 TRACKED_ATTRIBUTES: dict[str, tuple[str, ...]] = {
-    "climate": ("hvac_action", "current_temperature", "temperature", "target_temp_low",
-                "target_temp_high", "current_humidity", "preset_mode", "fan_mode"),
+    # equipment_running names what the thermostat actually switched on
+    # ("auxHeat1", "fan", "compCool1"), which is how gas is told from cooling
+    # and from the fan alone - the gas model reads it (src/python/gas_model.py).
+    "climate": ("hvac_action", "equipment_running", "current_temperature", "temperature",
+                "target_temp_low", "target_temp_high", "current_humidity", "preset_mode", "fan_mode"),
     "weather": ("temperature", "humidity", "wind_speed", "cloud_coverage"),
     "alarm_control_panel": (),
     "media_player": ("source", "app_name"),

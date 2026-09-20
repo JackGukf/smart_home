@@ -10,8 +10,22 @@ Read-only: the `smartRead` scope, no thermostat is ever written to.
 
 ## Getting in, once
 
-Ecobee has no password login for apps. You register a developer application
-for your own account and then authorise it with a PIN:
+**The easy way (2026-09-19).** Ecobee has stopped issuing developer keys
+("we are not currently accepting new developer registrations"), but the library
+Home Assistant's own ecobee integration uses can log in with the account's
+email and password over ecobee's web sign-in. So:
+
+    python -m src.python.ecobee_runtime --login
+
+It asks for the email and password, holds the password only long enough to
+sign in, and saves **tokens** - never the password - to
+`ai-data/ecobee_web_session.json` (0600). This is a session of its own: Home
+Assistant's tokens are left alone, because ecobee rotates a refresh token and
+two clients sharing one would knock each other out.
+
+An account with two-factor sign-in will ask for the code.
+
+**The old way**, if ecobee ever issues developer keys again:
 
     python -m src.python.ecobee_runtime --authorize --api-key YOUR_KEY
 
@@ -236,6 +250,76 @@ def fetch_history(tokens: Tokens, thermostat_id: str, days: int = 730,
     return rows
 
 
+# ── ecobee's web sign-in, the way Home Assistant's integration does it ──
+
+WEB_SESSION = "ecobee_web_session.json"
+
+
+def web_login(username: str, password: str, store: Path) -> Any:
+    """Sign in as the account and keep the tokens (never the password)."""
+    import pyecobee
+    from pyecobee.const import ECOBEE_PASSWORD, ECOBEE_USERNAME
+
+    store.parent.mkdir(parents=True, exist_ok=True)
+    session = pyecobee.Ecobee(config={ECOBEE_USERNAME: username, ECOBEE_PASSWORD: password})
+    if not session.request_tokens_web():
+        raise RuntimeError("ecobee refused the sign-in (a two-factor account will do this)")
+    session.config_filename = str(store)
+    session._write_config()
+    _only_owner(store)
+    return session
+
+
+def web_session(store: Path) -> Any:
+    """A signed-in session from the saved tokens, refreshed by the library."""
+    import pyecobee
+
+    session = pyecobee.Ecobee(config_filename=str(store))
+    session.update()
+    return session
+
+
+def _only_owner(path: Path) -> None:
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def web_runtime_report(session: Any, start: date, end: date) -> list[dict[str, Any]]:
+    """The same runtime report, over the library's signed-in session."""
+    selection = {
+        "selection": {"selectionType": "registered", "selectionMatch": ""},
+        "startDate": start.isoformat(), "endDate": end.isoformat(),
+        "columns": ",".join(COLUMNS), "includeSensors": False,
+    }
+    raw = session._request("GET", "1/runtimeReport", "get runtime report",
+                           params={"json": json.dumps(selection)})
+    doc = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+    status = (doc.get("status") or {}).get("code", 0)
+    if status not in (0, None):
+        raise RuntimeError(f"ecobee runtime report failed: {(doc.get('status') or {}).get('message')}")
+    rows: list[dict[str, Any]] = []
+    for report in doc.get("reportList", []):
+        for line in report.get("rowList", []):
+            parsed = _row(line)
+            if parsed:
+                rows.append(parsed)
+    return rows
+
+
+def web_fetch_history(session: Any, days: int = 730, today: date | None = None,
+                      on_chunk: Callable[[date, date, int], None] | None = None) -> list[dict[str, Any]]:
+    end = today or date.today()
+    cursor = end - timedelta(days=days)
+    rows: list[dict[str, Any]] = []
+    while cursor <= end:
+        stop = min(cursor + timedelta(days=CHUNK_DAYS - 1), end)
+        chunk = web_runtime_report(session, cursor, stop)
+        rows.extend(chunk)
+        if on_chunk:
+            on_chunk(cursor, stop, len(chunk))
+        cursor = stop + timedelta(days=1)
+    return rows
+
+
 # ── the command line ──
 
 def _token_path(project_root: Path) -> Path:
@@ -247,7 +331,9 @@ def main(argv: list[str] | None = None) -> int:
 
     project_root = Path(__file__).resolve().parents[2]
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--authorize", action="store_true", help="get a PIN and swap it for tokens")
+    ap.add_argument("--login", action="store_true",
+                    help="sign in with the ecobee account's email and password (the usual way now)")
+    ap.add_argument("--authorize", action="store_true", help="get a PIN and swap it for tokens (needs a developer key)")
     ap.add_argument("--fetch", action="store_true", help="fetch runtime history into the AI data database")
     ap.add_argument("--api-key", default=os.getenv("ECOBEE_API_KEY"), help="your ecobee developer app key")
     ap.add_argument("--days", type=int, default=730)
@@ -255,6 +341,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", default=str(project_root / "ai-data" / "gas.db"))
     args = ap.parse_args(argv)
     tokens_path = _token_path(project_root)
+
+    web_store = tokens_path.with_name(WEB_SESSION)
+
+    if args.login:
+        import getpass
+
+        username = input("ecobee email: ").strip()
+        password = getpass.getpass("ecobee password (not stored): ")
+        session = web_login(username, password, web_store)
+        print(f"signed in; tokens in {web_store}")
+        for thermostat in session.thermostats:
+            print(f"  thermostat {thermostat['identifier']}  {thermostat.get('name', '')}")
+        return 0
 
     if args.authorize:
         if not args.api_key:
@@ -277,8 +376,27 @@ def main(argv: list[str] | None = None) -> int:
         ap.print_help()
         return 0
 
+    from src.python import ai_data
+
+    if web_store.is_file():
+        # The web sign-in, which is what an account without a developer key has.
+        session = web_session(web_store)
+
+        def say_web(start: date, stop: date, count: int) -> None:
+            print(f"  {start} to {stop}: {count} intervals")
+
+        rows = web_fetch_history(session, args.days, on_chunk=say_web)
+        days = daily_runtime(rows)
+        stages = stage_totals(rows)
+        print(f"{len(rows)} intervals, {len(days)} days")
+        print("stages used: " + (", ".join(f"{k} {v} h" for k, v in stages.items())
+                                 or "none - the furnace never ran in this window"))
+        db = ai_data.connect(args.db)
+        print(f"wrote {ai_data.record_runtime(db, days, 'ecobee')} days into {args.db}")
+        return 0
+
     if not tokens_path.is_file():
-        print(f"no tokens at {tokens_path} - run --authorize first", file=sys.stderr)
+        print(f"no ecobee session yet - run --login (or --authorize with a developer key)", file=sys.stderr)
         return 1
     tokens = usable(tokens_path)
     identifier = args.thermostat
@@ -297,8 +415,6 @@ def main(argv: list[str] | None = None) -> int:
     stages = stage_totals(rows)
     print(f"{len(rows)} intervals, {len(days)} days")
     print("stages used: " + (", ".join(f"{k} {v} h" for k, v in stages.items()) or "none - the furnace never ran"))
-
-    from src.python import ai_data
 
     db = ai_data.connect(args.db)
     written = ai_data.record_runtime(db, days, "ecobee")

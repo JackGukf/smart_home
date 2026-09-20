@@ -30,3 +30,7 @@ paho-mqtt>=2.0,<3.0
 # FortisBC bills arrive as PDFs; the AI data page reads the period, the
 # gigajoules and the total out of them (src/python/ai_data.py).
 pypdf
+# Ecobee's runtime report, for the gas model: the same library Home
+# Assistant's ecobee integration uses, which signs in with the account
+# rather than a developer key (src/python/ecobee_runtime.py).
+python-ecobee-api

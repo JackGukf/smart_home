@@ -518,23 +518,51 @@ def inventory(db: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
-def runtime_from_house_memory(events_db: Path | str, since: date | None = None) -> list[dict[str, Any]]:
+HEATING_EQUIPMENT = ("auxheat", "heatpump", "compheat")   # what ecobee calls the heat stages
+
+
+def _is_heating(attrs: dict[str, Any]) -> bool | None:
+    """Was the furnace burning, as far as this record can say?
+
+    `equipment_running` is the better witness where it exists: it names what the
+    thermostat switched on, so the fan running on its own - which burns no gas -
+    is not mistaken for heat. `hvac_action` is the fallback, and says "heating"
+    for the same thing."""
+    equipment = attrs.get("equipment_running")
+    if equipment is not None:
+        names = str(equipment).lower()
+        return any(word in names for word in HEATING_EQUIPMENT)
+    action = attrs.get("hvac_action")
+    return None if action is None else action == "heating"
+
+
+def runtime_from_house_memory(events_db: Path | str, since: date | None = None,
+                              entity_ids: tuple[str, ...] = ("climate.my_ecobee_2", "climate.my_ecobee")
+                              ) -> list[dict[str, Any]]:
     """Furnace hours a day from the house memory's record of the thermostat.
 
-    The fallback when the Ecobee's own history is not available. Home Assistant
-    reports `hvac_action` when it changes, so a day's heating is the time
-    between a "heating" and the next state - which is only as good as the
-    recording: a gap in the house memory looks like a furnace that stayed on.
-    Days whose last known state is still "heating" at midnight are closed there
-    rather than run on into the next day.
+    What there is until ecobee's own history is fetched. Home Assistant reports
+    a change when it happens, so a day's heating is the time between the furnace
+    coming on and the next record - only as good as the recording: a gap in the
+    house memory looks like a furnace that stayed on. Days whose last known
+    state is still heating at midnight are closed there rather than run into the
+    next day.
+
+    The entities are tried in order and the first with any records wins: the
+    cloud integration's entity (`equipment_running`) before the HomeKit one
+    (`hvac_action`), because it can tell a running fan from burning gas.
     """
     import sqlite3 as _sqlite3
 
     db = _sqlite3.connect(f"file:{events_db}?mode=ro", uri=True)
     db.row_factory = _sqlite3.Row
+    rows: list[Any] = []
     try:
-        rows = list(db.execute(
-            "SELECT ts, attrs FROM events WHERE entity_id = 'climate.my_ecobee' ORDER BY ts"))
+        for entity_id in entity_ids:
+            rows = list(db.execute("SELECT ts, attrs FROM events WHERE entity_id = ? ORDER BY ts",
+                                   (entity_id,)))
+            if len(rows) > 1:
+                break
     except _sqlite3.Error:
         return []
     finally:
@@ -546,10 +574,10 @@ def runtime_from_house_memory(events_db: Path | str, since: date | None = None) 
             attrs = json.loads(row["attrs"] or "{}")
         except ValueError:
             continue
-        action = attrs.get("hvac_action")
-        if action is None:
+        heating = _is_heating(attrs)
+        if heating is None:
             continue
-        points.append((datetime.fromtimestamp(float(row["ts"])), action == "heating"))
+        points.append((datetime.fromtimestamp(float(row["ts"])), heating))
 
     hours: dict[date, float] = {}
     for (when, heating), (next_when, _) in zip(points, points[1:]):

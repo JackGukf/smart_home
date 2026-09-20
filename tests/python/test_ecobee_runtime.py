@@ -6,8 +6,11 @@ No network: every test drives the module's `fetch` seam.
 from __future__ import annotations
 
 import json
+import sys
+import types
 import urllib.parse
 from datetime import date, datetime
+from pathlib import Path
 
 import pytest
 
@@ -111,3 +114,71 @@ def test_a_bad_row_is_skipped_not_fatal():
     row = er._row("2026-01-05,00:05:00,300,0,0,0,0,300,,21.1")
     assert row["auxHeat1"] == 300 and row["outdoorTemp"] is None
     assert row["at"] == datetime(2026, 1, 5, 0, 5)
+
+
+class FakeWebSession:
+    """The signed-in session python-ecobee-api hands back, as far as this uses it."""
+
+    def __init__(self):
+        self.requests: list[tuple] = []
+        self.thermostats = [{"identifier": "511", "name": "My ecobee"}]
+
+    def _request(self, method, endpoint, log_msg_action, params=None, body=None):
+        self.requests.append((method, endpoint, json.loads(params["json"])))
+        selection = json.loads(params["json"])
+        start = date.fromisoformat(selection["startDate"])
+        rows = [f"{start.isoformat()},06:00:00,300,0,0,0,0,300,28.4,70.5",
+                f"{start.isoformat()},06:05:00,300,0,0,0,0,300,28.4,70.5"]
+        return {"status": {"code": 0}, "reportList": [{"rowList": rows}]}
+
+
+def test_the_web_session_reads_the_same_runtime_report():
+    """Ecobee stopped issuing developer keys, so the account's own sign-in is
+    the way in; the report and the parsing are unchanged."""
+    session = FakeWebSession()
+    rows = er.web_runtime_report(session, date(2026, 1, 5), date(2026, 1, 5))
+    assert len(rows) == 2 and rows[0]["auxHeat1"] == 300
+
+    [day] = er.daily_runtime(rows)
+    assert day["furnace_hours"] == pytest.approx(10 / 60, abs=0.001)   # two five-minute intervals
+    method, endpoint, selection = session.requests[0]
+    assert (method, endpoint) == ("GET", "1/runtimeReport")
+    assert selection["columns"].startswith("auxHeat1") and selection["includeSensors"] is False
+
+
+def test_web_history_is_chunked_too():
+    session = FakeWebSession()
+    seen: list[tuple] = []
+    er.web_fetch_history(session, days=70, today=date(2026, 3, 1), on_chunk=lambda a, b, n: seen.append((a, b)))
+    assert all((b - a).days < er.CHUNK_DAYS for a, b in seen)
+    assert seen[0][0] == date(2025, 12, 21) and seen[-1][1] == date(2026, 3, 1)
+
+
+def test_the_password_is_never_written_down(tmp_path, monkeypatch):
+    """Only tokens are kept, and only the owner can read them."""
+    written = {}
+
+    class FakeEcobee:
+        def __init__(self, config=None, config_filename=None):
+            self.config = config or {}
+            self.config_filename = config_filename
+            self.thermostats = [{"identifier": "511", "name": "My ecobee"}]
+
+        def request_tokens_web(self):
+            return True
+
+        def _write_config(self):
+            written["path"] = self.config_filename
+            Path(self.config_filename).write_text(json.dumps({"ACCESS_TOKEN": "AT", "REFRESH_TOKEN": "RT"}))
+
+    fake = types.ModuleType("pyecobee")
+    fake.Ecobee = FakeEcobee
+    const = types.ModuleType("pyecobee.const")
+    const.ECOBEE_USERNAME, const.ECOBEE_PASSWORD = "USERNAME", "PASSWORD"
+    monkeypatch.setitem(sys.modules, "pyecobee", fake)
+    monkeypatch.setitem(sys.modules, "pyecobee.const", const)
+
+    store = tmp_path / "ecobee_web_session.json"
+    er.web_login("someone@example.com", "hunter2", store)
+    assert store.is_file() and oct(store.stat().st_mode)[-3:] == "600"
+    assert "hunter2" not in store.read_text()
