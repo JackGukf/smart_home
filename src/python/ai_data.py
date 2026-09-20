@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS bills (
     period_end TEXT NOT NULL,
     gj REAL NOT NULL,
     cost REAL,
+    avg_temp_c REAL,                 -- some exports carry it; the degree-day model uses it
     file_id INTEGER,
     UNIQUE (period_start, period_end)
 );
@@ -88,6 +89,11 @@ def connect(path: Path | str) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    # Databases made before 2026-09-19 have no avg_temp_c; adding it is the
+    # whole migration, and SQLite has no "ADD COLUMN IF NOT EXISTS".
+    if "avg_temp_c" not in {row["name"] for row in db.execute("PRAGMA table_info(bills)")}:
+        db.execute("ALTER TABLE bills ADD COLUMN avg_temp_c REAL")
+        db.commit()
     return db
 
 
@@ -100,9 +106,10 @@ class Parsed:
     found: dict[str, Any]
 
 
+SLASH_DATE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
 DATE_PATTERNS = (
     (re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b"), ("y", "m", "d")),
-    (re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b"), ("m", "d", "y")),
+    (SLASH_DATE, ("m", "d", "y")),
     (re.compile(r"\b([A-Z][a-z]{2,8})\.?\s+(\d{1,2}),?\s+(\d{4})\b"), ("mon", "d", "y")),
 )
 MONTHS = {m.lower(): i for i, m in enumerate(
@@ -123,11 +130,50 @@ def _as_date(groups: tuple[str, ...], order: tuple[str, ...]) -> date | None:
         return None
 
 
+def parse_date_column(values: list[str]) -> tuple[list[date | None], str]:
+    """A whole column of dates at once, so 22/07/2026 is not thrown away.
+
+    `01/02/2026` is the second of January in one country and the first of
+    February in another, and no single value can say which. A column usually
+    can: if any day-part is above 12 the order is settled. When even the column
+    is ambiguous, day-first is assumed - which is what FortisBC's export uses -
+    and the caller checks the result against the "# of days" column."""
+    slashed = [SLASH_DATE.search(str(v) or "") for v in values]
+    firsts = [int(m.group(1)) for m in slashed if m]
+    seconds = [int(m.group(2)) for m in slashed if m]
+    order = "day-first"
+    if firsts and max(firsts) > 12:
+        order = "day-first"
+    elif seconds and max(seconds) > 12:
+        order = "month-first"
+    out: list[date | None] = []
+    for value, match in zip(values, slashed):
+        if match:
+            first, second, year = (int(g) for g in match.groups())
+            day, month = (first, second) if order == "day-first" else (second, first)
+            try:
+                out.append(date(year, month, day))
+                continue
+            except ValueError:
+                out.append(None)
+                continue
+        found = find_dates(str(value))
+        out.append(found[0] if found else None)
+    return out, order
+
+
 def find_dates(text: str) -> list[date]:
+    """Dates loose in text - a PDF bill, a cell. A slashed date with a first
+    part above 12 can only be day-first (22/07/2026); otherwise month-first is
+    assumed, which is what a North American statement prints. A column of them
+    is better decided all at once: see `parse_date_column`."""
     found: list[date] = []
     for pattern, order in DATE_PATTERNS:
         for match in pattern.finditer(text):
-            when = _as_date(match.groups(), order)
+            groups = match.groups()
+            if pattern is SLASH_DATE and int(groups[0]) > 12:
+                order = ("d", "m", "y")
+            when = _as_date(groups, order)
             if when and date(2000, 1, 1) <= when <= date(2100, 1, 1):
                 found.append(when)
     return found
@@ -178,6 +224,61 @@ CSV_DATE_HINTS = ("date", "day", "period", "start", "read", "time", "month")
 CSV_VALUE_HINTS = ("gj", "usage", "consumption", "amount", "energy", "volume", "reading", "ft3", "cubic")
 
 
+def _column(header: list[str], *words: str) -> int | None:
+    return next((i for i, h in enumerate(header) if any(w in h for w in words)), None)
+
+
+def _numbers(rows: list[list[str]], index: int | None) -> list[float | None]:
+    if index is None:
+        return [None] * len(rows)
+    out: list[float | None] = []
+    for row in rows:
+        try:
+            out.append(float(str(row[index]).replace(",", "").replace("$", "").strip()))
+        except (ValueError, IndexError):
+            out.append(None)
+    return out
+
+
+def parse_bill_history(header: list[str], rows: list[list[str]]) -> Parsed | None:
+    """FortisBC's 24-month export: from, to, days, GJ, average temperature.
+
+    Two date columns is what marks it out. The "# of days" column is not just
+    imported - it is the check that the dates were read the right way round."""
+    date_columns = [i for i, h in enumerate(header)
+                    if any(w in h for w in ("date", "from", "to", "period", "start", "end"))]
+    if len(date_columns) < 2:
+        return None
+    starts, order = parse_date_column([row[date_columns[0]] if date_columns[0] < len(row) else "" for row in rows])
+    ends, _ = parse_date_column([row[date_columns[1]] if date_columns[1] < len(row) else "" for row in rows])
+    gj_column = _column(header, "gj", "usage", "consumption", "energy")
+    if gj_column is None:
+        return None
+    amounts = _numbers(rows, gj_column)
+    days_column = _column(header, "days")
+    stated_days = _numbers(rows, days_column)
+    temps = _numbers(rows, _column(header, "temp"))
+
+    parsed, mismatched = [], 0
+    for start, end, gj, days, temp in zip(starts, ends, amounts, stated_days, temps):
+        if not (start and end and gj is not None) or end <= start:
+            continue
+        span = (end - start).days
+        if days is not None and abs(span - days) > 1:
+            mismatched += 1        # the dates do not match the row's own day count
+            continue
+        parsed.append({"start": start.isoformat(), "end": end.isoformat(), "gj": gj,
+                       "days": span, "avg_temp_c": temp})
+    if not parsed:
+        return None
+    found = {"rows": parsed[:400], "count": len(parsed), "unit": "GJ", "date_order": order,
+             "columns": {"start": header[date_columns[0]], "end": header[date_columns[1]],
+                         "gj": header[gj_column]},
+             "with_temperature": sum(1 for row in parsed if row["avg_temp_c"] is not None),
+             "mismatched_rows": mismatched}
+    return Parsed("bills", "parsed" if mismatched == 0 else "needs_review", found)
+
+
 def parse_csv_text(text: str) -> Parsed:
     """Any CSV of dates and amounts: the columns are detected, not configured."""
     sample = text[:64_000]
@@ -190,6 +291,9 @@ def parse_csv_text(text: str) -> Parsed:
     if len(rows) < 2:
         return Parsed("unknown", "needs_review", {"reason": "no rows"})
     header = [str(c).strip().lower() for c in rows[0]]
+    history = parse_bill_history(header, rows[1:])
+    if history:
+        return history
     date_col = next((i for i, h in enumerate(header) if any(w in h for w in CSV_DATE_HINTS)), None)
     value_col = next((i for i, h in enumerate(header) if any(w in h for w in CSV_VALUE_HINTS)), None)
     if date_col is None or value_col is None:
@@ -292,6 +396,12 @@ def import_file(db: sqlite3.Connection, file_id: int,
         added = db.execute(
             "INSERT OR IGNORE INTO bills (period_start, period_end, gj, cost, file_id) VALUES (?, ?, ?, ?, ?)",
             (found["period_start"], found["period_end"], found["gj"], found.get("cost"), file_id)).rowcount
+    elif kind == "bills":
+        for row in found.get("rows") or []:
+            added += db.execute(
+                "INSERT OR IGNORE INTO bills (period_start, period_end, gj, cost, avg_temp_c, file_id)"
+                " VALUES (?, ?, ?, NULL, ?, ?)",
+                (row["start"], row["end"], float(row["gj"]), row.get("avg_temp_c"), file_id)).rowcount
     elif kind in ("usage", "readings"):
         rows = found.get("rows") or []
         if not rows:

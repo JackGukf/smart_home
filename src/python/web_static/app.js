@@ -10532,11 +10532,25 @@ function renderAiGas(gas) {
   const [cls, words] = GAS_STATUS[m.status] || ["warn", m.status];
   if (fitted) fitted.innerHTML = `<span class="pill ${cls}">${escapeHtml(words)}</span>`;
   const rows = [];
-  if (m.base_gj_per_day != null) rows.push(aiRow("Always on", `${m.base_gj_per_day.toFixed(3)} GJ/day`, "water heater, cooking, dryer"));
+  const HOW = {
+    runtime: "from how long the furnace ran",
+    degree_day: "from how cold each billing period was",
+    base_only: "base load only, so far",
+  };
+  if (HOW[m.kind]) rows.push(aiRow("Worked out", HOW[m.kind],
+    m.kind === "degree_day" ? "your bills carry the period's average temperature" : ""));
+  if (m.base_gj_per_day != null) rows.push(aiRow("Always on", `${m.base_gj_per_day.toFixed(3)} GJ/day`, "hot water, cooking, dryer — what July and August measure"));
   if (m.gj_per_furnace_hour != null) rows.push(aiRow("Furnace", `${m.gj_per_furnace_hour.toFixed(3)} GJ/hour`, "while it is burning"));
+  if (m.gj_per_degree_day != null) rows.push(aiRow("Heating", `${m.gj_per_degree_day.toFixed(4)} GJ per degree-day`,
+    `below ${m.balance_temp_c} °C, where this house starts needing heat`));
   if (m.error_percent != null) rows.push(aiRow("Agreement with what was measured", `±${m.error_percent}%`,
     `${m.observations} stretches · ${Object.entries(m.sources || {}).map(([k, v]) => `${v} ${k}${v === 1 ? "" : "s"}`).join(", ")}`));
   if (gas.yesterday_gj != null) rows.push(aiRow("Yesterday", `${gas.yesterday_gj} GJ`, "estimated"));
+  if (gas.monthly_estimate_gj != null) rows.push(aiRow("A month like the last one", `${gas.monthly_estimate_gj} GJ`, "estimated"));
+  if ((m.alternatives || []).length) {
+    rows.push(aiRow("Also fitted", m.alternatives.map((a) => `${a.kind.replace("_", " ")} ±${a.error_percent}%`).join(", "),
+      "the better of the two is the one above"));
+  }
   box.innerHTML = (m.note ? `<p class="settings-status">${escapeHtml(m.note)}</p>` : "") +
     (rows.length ? rows.join("") : `<div class="home-empty">Add a bill or a few meter readings, and the model fits itself tonight.</div>`);
 }

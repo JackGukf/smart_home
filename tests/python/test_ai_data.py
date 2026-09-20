@@ -147,3 +147,36 @@ def test_runtime_can_be_recovered_from_the_house_memory(tmp_path, db):
     assert by_day["2026-11-02"] == pytest.approx(3.5)     # 2 h + 1.5 h
     assert by_day["2026-11-03"] == 0.0                    # watched, never heated
     assert ai_data.record_runtime(db, days, "house-memory") == len(days)
+
+
+def test_the_owners_export_reads_day_first_and_keeps_both_dates(db, tmp_path):
+    """FortisBC's 24-month export: two date columns, day-first dates, and a
+    period average temperature. Read month-first, 22/07/2026 is not a date at
+    all and the whole file came back empty - which is what happened."""
+    csv = ("Bill from date,Bill to date,# of days,Billed GJ,Average temperature\n"
+           "22/07/2026,18/08/2026,28,0.9,19\n"
+           "19/06/2026,21/07/2026,33,1.3,18\n"
+           "21/01/2025,18/02/2025,29,14.9,0\n")
+    parsed = ai_data.parse_csv_text(csv)
+    assert parsed.kind == "bills" and parsed.status == "parsed"
+    assert parsed.found["date_order"] == "day-first" and parsed.found["count"] == 3
+    assert parsed.found["rows"][0] == {"start": "2026-07-22", "end": "2026-08-18",
+                                       "gj": 0.9, "days": 27, "avg_temp_c": 19.0}
+    doc = ai_data.add_file(db, tmp_path / "files", "history.csv", csv.encode())
+    assert ai_data.import_file(db, doc["id"])["added"] == 3
+    assert db.execute("SELECT avg_temp_c FROM bills ORDER BY period_start").fetchone()["avg_temp_c"] == 0.0
+
+
+def test_a_row_whose_dates_disagree_with_its_own_day_count_is_held_back(db):
+    """The '# of days' column is the check that the dates were read the right
+    way round, not just another field to import."""
+    parsed = ai_data.parse_csv_text("From,To,# of days,GJ\n01/02/2026,01/03/2026,90,4.0\n"
+                                    "01/04/2026,01/05/2026,30,3.0\n")
+    assert parsed.found["mismatched_rows"] == 1 and parsed.status == "needs_review"
+
+
+def test_a_bill_pdf_with_day_first_dates_reads_too():
+    parsed = ai_data.parse_bill_text("Billing period 22/07/2026 to 18/08/2026\n"
+                                     "Natural gas used 0.9 GJ\nTotal amount due $41.20")
+    assert parsed.found["period_start"] == "2026-07-22" and parsed.found["period_end"] == "2026-08-18"
+    assert parsed.found["gj"] == 0.9 and parsed.status == "parsed"
