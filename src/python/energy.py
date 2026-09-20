@@ -486,3 +486,76 @@ def _same_period_last_year(periods: list[dict[str, Any]], last: dict[str, Any]) 
     if nearest["gj"]:
         change = round(100 * (last["gj"] - nearest["gj"]) / nearest["gj"])
     return {**nearest, "change_percent": change}
+
+
+# ── Electricity, from BC Hydro's exports, until the PowerLync is paired ──
+#
+# Two years of bills say what the house used and what it cost; they cannot say
+# what it is using now. So this is a third state, between the sample data and
+# the live meter: real history, honestly labelled, with the live half missing.
+
+def electricity_from_records(db_path, now: datetime | None = None) -> dict[str, Any] | None:
+    """The electricity section from uploaded bills, or None if none are in."""
+    from src.python import ai_data
+
+    now = now or datetime.now()
+    try:
+        db = ai_data.connect(db_path)
+    except Exception:  # noqa: BLE001 - no database yet is not an error
+        return None
+    try:
+        rows = [dict(r) for r in db.execute(
+            "SELECT period_start, period_end, kwh, cost, tier1_price, tier2_price,"
+            " tier2_threshold_kwh, basic_per_day, source FROM power_periods ORDER BY period_start")]
+        if not rows:
+            return None
+        bills = [r for r in rows if r["source"] == "bill"]
+        months = [r for r in rows if r["source"] == "usage"]
+        # Calendar months make the better chart - twice as many points - but the
+        # bills are where the money is, so both are kept and each is used for
+        # what it knows.
+        series = months or bills
+        periods = [{"start": r["period_start"], "end": r["period_end"], "date": r["period_end"],
+                    "kwh": round(r["kwh"], 1), "cost": r["cost"],
+                    "days": (date.fromisoformat(r["period_end"]) - date.fromisoformat(r["period_start"])).days}
+                   for r in series][-GAS_PERIODS_SHOWN:]
+        last = periods[-1]
+        costed = [(r["cost"], r["kwh"]) for r in bills if r["cost"] and r["kwh"]]
+        rate = round(sum(c for c, _ in costed) / sum(k for _, k in costed), 4) if costed else ELECTRIC_RATE
+        newest_priced = next((r for r in reversed(bills) if r["tier1_price"]), None)
+        last_bill = bills[-1] if bills else None
+        return {
+            "sample": False,
+            "mode": "records",
+            "source": "your BC Hydro bills",
+            "provider": "BC Hydro",
+            "period_kind": "month" if months else "bill",
+            "periods": periods,
+            "last_period": last,
+            "last_period_kwh": last["kwh"],
+            "kwh_per_day": round(last["kwh"] / last["days"], 1) if last["days"] else None,
+            "same_period_last_year": _same_period_last_year_kwh(periods, last),
+            "last_bill": ({"start": last_bill["period_start"], "end": last_bill["period_end"],
+                           "kwh": round(last_bill["kwh"], 1), "cost": last_bill["cost"]}
+                          if last_bill else None),
+            "rate": rate,
+            "rate_measured": bool(costed),
+            "tier1_price": newest_priced["tier1_price"] if newest_priced else None,
+            "tier2_price": newest_priced["tier2_price"] if newest_priced else None,
+            "tier2_threshold_kwh": newest_priced["tier2_threshold_kwh"] if newest_priced else None,
+            "basic_per_day": newest_priced["basic_per_day"] if newest_priced else None,
+            "year_kwh": round(sum(p["kwh"] for p in periods[-12:]), 1),
+            "year_cost": round(sum(r["cost"] for r in bills[-6:] if r["cost"]), 2) if costed else None,
+        }
+    finally:
+        db.close()
+
+
+def _same_period_last_year_kwh(periods: list[dict[str, Any]], last: dict[str, Any]) -> dict[str, Any] | None:
+    target = date.fromisoformat(last["end"]) - timedelta(days=365)
+    nearest = min((p for p in periods if p is not last),
+                  key=lambda p: abs((date.fromisoformat(p["end"]) - target).days), default=None)
+    if nearest is None or abs((date.fromisoformat(nearest["end"]) - target).days) > 20:
+        return None
+    change = round(100 * (last["kwh"] - nearest["kwh"]) / nearest["kwh"]) if nearest["kwh"] else None
+    return {**nearest, "change_percent": change}

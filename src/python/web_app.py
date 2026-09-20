@@ -1643,7 +1643,16 @@ def create_app(
         forecast = await asyncio.to_thread(energy.read_forecast, app.state.energy_forecast_path)
         # Gas: the owner's own bills once any have been uploaded, sample data until then.
         gas = await asyncio.to_thread(energy.gas_from_records, app.state.ai_data_dir / "gas.db")
-        return {**doc, "forecast": forecast, **({"gas": gas} if gas else {})}
+        extra: dict[str, Any] = {"forecast": forecast}
+        if gas:
+            extra["gas"] = gas
+        # Electricity: the live meter wins; uploaded bills beat sample data.
+        if doc["electricity"]["sample"]:
+            records = await asyncio.to_thread(energy.electricity_from_records,
+                                              app.state.ai_data_dir / "gas.db")
+            if records:
+                extra["electricity"] = records
+        return {**doc, **extra}
 
     @app.get("/api/light-scenes")
     async def light_scenes_get() -> dict[str, Any]:

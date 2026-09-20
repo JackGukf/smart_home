@@ -74,6 +74,23 @@ CREATE TABLE IF NOT EXISTS bills (
     file_id INTEGER,
     UNIQUE (period_start, period_end)
 );
+-- Electricity, from BC Hydro's own exports and bills. Only dates, amounts and
+-- money are kept: the files carry the account holder, the account number and
+-- the service address, and none of that is any use to a model.
+CREATE TABLE IF NOT EXISTS power_periods (
+    id INTEGER PRIMARY KEY,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    kwh REAL NOT NULL,
+    cost REAL,
+    tier1_price REAL,
+    tier2_price REAL,
+    tier2_threshold_kwh REAL,
+    basic_per_day REAL,
+    source TEXT NOT NULL,            -- bill | usage
+    file_id INTEGER,
+    UNIQUE (period_start, period_end, source)
+);
 CREATE TABLE IF NOT EXISTS runtime (
     day TEXT PRIMARY KEY,
     furnace_hours REAL NOT NULL,
@@ -282,6 +299,138 @@ def parse_bill_history(header: list[str], rows: list[list[str]]) -> Parsed | Non
     return Parsed("bills", "parsed" if mismatched == 0 else "needs_review", found)
 
 
+# BC Hydro's monthly export: one row a month, "Interval Start Date/Time" and
+# "Net Consumption (kWh)". The rest of the columns are the account's identity.
+def parse_power_usage_csv(header: list[str], rows: list[list[str]]) -> Parsed | None:
+    date_col = _column(header, "interval start")
+    kwh_col = _column(header, "consumption (kwh)", "net consumption")
+    if date_col is None or kwh_col is None:
+        return None
+    starts, order = parse_date_column([r[date_col] if date_col < len(r) else "" for r in rows])
+    amounts = _numbers(rows, kwh_col)
+    points = sorted(((s, k) for s, k in zip(starts, amounts) if s and k is not None),
+                    key=lambda p: p[0])
+    if len(points) < 2:
+        return None
+    parsed = []
+    for (start, kwh), (next_start, _) in zip(points, points[1:] + [(None, None)]):
+        # A month, or less if the next row comes sooner. Never more: a missing
+        # month would otherwise become one period ten months long.
+        end = min(next_start, _month_after(start)) if next_start else _month_after(start)
+        parsed.append({"start": start.isoformat(), "end": end.isoformat(), "kwh": kwh,
+                       "days": (end - start).days})
+    return Parsed("power_usage", "parsed", {"rows": parsed, "count": len(parsed), "unit": "kWh",
+                                            "date_order": order,
+                                            "columns": {"date": header[date_col], "kwh": header[kwh_col]}})
+
+
+def _month_after(day: date) -> date:
+    return date(day.year + (day.month == 12), (day.month % 12) + 1, day.day if day.day <= 28 else 28)
+
+
+# BC Hydro's billing export: several rows an invoice, and the one that matters
+# is "Detail: Usage" - it carries the billing period, the kWh and the charges.
+def parse_power_billing_csv(header: list[str], rows: list[list[str]]) -> Parsed | None:
+    from_col, to_col = _column(header, "from date"), _column(header, "to date")
+    kwh_col = _column(header, "kwh usage")
+    if from_col is None or to_col is None or kwh_col is None:
+        return None
+    invoice_col = _column(header, "invoice number")
+    due_col = _column(header, "amount due")
+    type_col = _column(header, "type")
+
+    # What each invoice was actually asked for, from its "Amount Due" row.
+    due_by_invoice: dict[str, float] = {}
+    if invoice_col is not None and due_col is not None:
+        for row in rows:
+            if max(invoice_col, due_col) >= len(row):
+                continue
+            try:
+                due = float(str(row[due_col]).replace(",", "").replace("$", "").strip())
+            except ValueError:
+                continue
+            kind = str(row[type_col]).strip().lower() if type_col is not None and type_col < len(row) else ""
+            if kind.startswith("amount due"):
+                due_by_invoice[str(row[invoice_col]).strip()] = due
+
+    starts, order = parse_date_column([r[from_col] if from_col < len(r) else "" for r in rows])
+    ends, _ = parse_date_column([r[to_col] if to_col < len(r) else "" for r in rows])
+    kwh = _numbers(rows, kwh_col)
+    basic = _numbers(rows, _column(header, "basic charge"))
+    usage = _numbers(rows, _column(header, "usage charge"))
+
+    parsed = []
+    for row, start, end, amount, basic_charge, usage_charge in zip(rows, starts, ends, kwh, basic, usage):
+        if not (start and end and amount is not None) or end <= start:
+            continue
+        invoice = str(row[invoice_col]).strip() if invoice_col is not None and invoice_col < len(row) else ""
+        cost = due_by_invoice.get(invoice)
+        if cost is None and (basic_charge is not None or usage_charge is not None):
+            cost = round((basic_charge or 0) + (usage_charge or 0), 2)
+        parsed.append({"start": start.isoformat(), "end": end.isoformat(), "kwh": amount,
+                       "days": (end - start).days, "cost": cost})
+    if not parsed:
+        return None
+    return Parsed("power_bills", "parsed", {"rows": parsed, "count": len(parsed), "unit": "kWh",
+                                            "date_order": order,
+                                            "with_cost": sum(1 for r in parsed if r["cost"] is not None)})
+
+
+# "Your bill for Jan 20, 2026 to Mar 19, 2026". Both halves are matched as
+# whole dates: a lazy ".{6,20}?" stops at "Mar 19," and loses the year.
+_DATE_SHAPE = r"(?:[A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})"
+POWER_PERIOD = re.compile(rf"your bill for\s+({_DATE_SHAPE})\s+to\s+({_DATE_SHAPE})", re.I)
+POWER_USED = re.compile(r"([\d,]+)\s*kWh used over\s*(\d+)\s*days", re.I)
+POWER_TIER = re.compile(r"Tier\s*(\d):\s*([\d,]+)\s*kWh\s*x\s*\$([\d.]+)\s*/kWh", re.I)
+POWER_BASIC = re.compile(r"Basic Charge\s*(\d+)\s*days\s*x\s*\$([\d.]+)\s*/day", re.I)
+POWER_THRESHOLD = re.compile(r"Tier 2\s*threshold of\s*([\d,]+)\s*kWh", re.I)
+POWER_TOTAL = re.compile(r"total due[^$]{0,40}\$\s?([\d,]+\.\d{2})", re.I)
+
+
+def parse_power_bill_text(text: str) -> Parsed | None:
+    """A BC Hydro bill: the period, the kilowatt hours, and the tier prices.
+
+    The figures are written plainly on the page ("631 kWh used over 59 days"),
+    which is a happier parse than the gas bill's - no guessing which two of the
+    page's dates are the billing period."""
+    flat = " ".join(text.split())
+    used = POWER_USED.search(flat)
+    period = POWER_PERIOD.search(flat)
+    if not used or not period:
+        return None
+    starts = find_dates(period.group(1))
+    ends = find_dates(period.group(2))
+    if not starts or not ends:
+        return None
+    tiers: dict[int, tuple[float, float]] = {}
+    for tier, amount, price in POWER_TIER.findall(flat):
+        tiers[int(tier)] = (float(amount.replace(",", "")), float(price))   # last wins: the newest price
+    basic_charges = POWER_BASIC.findall(flat)    # last wins, as with the tiers
+    threshold = POWER_THRESHOLD.search(flat)
+    # A bill that spans a rate change is written as two blocks - "172 kWh used
+    # over 12 days" at the old price and "719 kWh over 50 days" at the new one.
+    # The period is the whole bill; the usage is all of it.
+    blocks = [(float(k.replace(",", "")), int(d)) for k, d in POWER_USED.findall(flat)]
+    kwh = sum(k for k, _ in blocks)
+    days = sum(d for _, d in blocks)
+    total = POWER_TOTAL.search(flat)
+    found: dict[str, Any] = {
+        "rows": [{"start": starts[0].isoformat(), "end": ends[0].isoformat(), "kwh": kwh,
+                  "days": days,
+                  "cost": float(total.group(1).replace(",", "")) if total else None,
+                  "blocks": len(blocks),
+                  # The newest price on the bill is the one in force now.
+                  "tier1_price": tiers.get(1, (None, None))[1],
+                  "tier2_price": tiers.get(2, (None, None))[1],
+                  "tier2_threshold_kwh": float(threshold.group(1).replace(",", "")) if threshold else None,
+                  "basic_per_day": float(basic_charges[-1][1]) if basic_charges else None}],
+        "count": 1, "unit": "kWh",
+    }
+    stated = (ends[0] - starts[0]).days
+    status = "parsed" if abs(stated - days) <= 1 and 20 <= days <= 75 else "needs_review"
+    return Parsed("power_bills", status, found)
+
+
 def parse_csv_text(text: str) -> Parsed:
     """Any CSV of dates and amounts: the columns are detected, not configured."""
     sample = text[:64_000]
@@ -294,9 +443,10 @@ def parse_csv_text(text: str) -> Parsed:
     if len(rows) < 2:
         return Parsed("unknown", "needs_review", {"reason": "no rows"})
     header = [str(c).strip().lower() for c in rows[0]]
-    history = parse_bill_history(header, rows[1:])
-    if history:
-        return history
+    for reader in (parse_power_usage_csv, parse_power_billing_csv, parse_bill_history):
+        found = reader(header, rows[1:])
+        if found:
+            return found
     date_col = next((i for i, h in enumerate(header) if any(w in h for w in CSV_DATE_HINTS)), None)
     value_col = next((i for i, h in enumerate(header) if any(w in h for w in CSV_VALUE_HINTS)), None)
     if date_col is None or value_col is None:
@@ -327,7 +477,7 @@ def parse_upload(name: str, data: bytes) -> Parsed:
         if not text.strip():
             return Parsed("bill", "needs_review",
                           {"reason": "no text in this PDF - a scan, or pypdf is not installed on the board"})
-        return parse_bill_text(text)
+        return parse_power_bill_text(text) or parse_bill_text(text)
     if suffix in (".csv", ".txt"):
         return parse_csv_text(data.decode("utf-8", "replace"))
     return Parsed("unknown", "needs_review", {"reason": f"{suffix or 'no extension'} is not a kind this reads"})
@@ -405,6 +555,24 @@ def import_file(db: sqlite3.Connection, file_id: int,
                 "INSERT OR IGNORE INTO bills (period_start, period_end, gj, cost, avg_temp_c, file_id)"
                 " VALUES (?, ?, ?, NULL, ?, ?)",
                 (row["start"], row["end"], float(row["gj"]), row.get("avg_temp_c"), file_id)).rowcount
+    elif kind in ("power_usage", "power_bills"):
+        source = "bill" if kind == "power_bills" else "usage"
+        for row in found.get("rows") or []:
+            # A period can arrive twice: the yearly export has what it cost, the
+            # bill PDF has the tier prices. Merge rather than keep the first.
+            added += db.execute(
+                "INSERT INTO power_periods (period_start, period_end, kwh, cost, tier1_price,"
+                " tier2_price, tier2_threshold_kwh, basic_per_day, source, file_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (period_start, period_end, source) DO UPDATE SET"
+                "   cost = COALESCE(excluded.cost, cost),"
+                "   tier1_price = COALESCE(excluded.tier1_price, tier1_price),"
+                "   tier2_price = COALESCE(excluded.tier2_price, tier2_price),"
+                "   tier2_threshold_kwh = COALESCE(excluded.tier2_threshold_kwh, tier2_threshold_kwh),"
+                "   basic_per_day = COALESCE(excluded.basic_per_day, basic_per_day)",
+                (row["start"], row["end"], float(row["kwh"]), row.get("cost"), row.get("tier1_price"),
+                 row.get("tier2_price"), row.get("tier2_threshold_kwh"), row.get("basic_per_day"),
+                 source, file_id)).rowcount
     elif kind in ("usage", "readings"):
         rows = found.get("rows") or []
         if not rows:
@@ -506,7 +674,12 @@ def inventory(db: sqlite3.Connection) -> dict[str, Any]:
     bills = one("SELECT COUNT(*) n, MIN(period_start) first, MAX(period_end) last, SUM(gj) gj FROM bills")
     reads = one("SELECT COUNT(*) n, MIN(at) first, MAX(at) last FROM readings")
     runs = one("SELECT COUNT(*) n, MIN(day) first, MAX(day) last, SUM(furnace_hours) hours FROM runtime")
+    power = one("SELECT COUNT(*) n, MIN(period_start) first, MAX(period_end) last, SUM(kwh) kwh,"
+                " SUM(CASE WHEN cost IS NOT NULL THEN 1 ELSE 0 END) costed FROM power_periods")
     return {
+        "electricity": {"count": power["n"], "first": power["first"], "last": power["last"],
+                        "kwh": round(power["kwh"], 1) if power["kwh"] else 0.0,
+                        "with_cost": power["costed"] or 0},
         "bills": {"count": bills["n"], "first": bills["first"], "last": bills["last"],
                   "gj": round(bills["gj"], 2) if bills["gj"] else 0.0},
         "readings": {"count": reads["n"], "first": reads["first"], "last": reads["last"],
@@ -611,6 +784,12 @@ def reparse_file(db: sqlite3.Connection, file_id: int) -> dict[str, Any]:
     data = Path(doc["stored_path"]).read_bytes()
     parsed = parse_upload(doc["name"], data)
     status = "imported" if doc["status"] == "imported" else parsed.status
+    if parsed.kind != doc["kind"]:
+        # It was read as something else before - kilowatt hours as gigajoules,
+        # in the case that prompted this. Whatever it put in must come out.
+        for table in ("bills", "readings", "power_periods"):
+            db.execute(f"DELETE FROM {table} WHERE file_id = ?", (file_id,))
+        status = parsed.status
     db.execute("UPDATE files SET kind = ?, status = ?, found = ? WHERE id = ?",
                (parsed.kind, status, json.dumps(parsed.found), file_id))
     db.commit()
@@ -623,6 +802,7 @@ def delete_file(db: sqlite3.Connection, file_id: int) -> dict[str, Any]:
     removed = {
         "bills": db.execute("DELETE FROM bills WHERE file_id = ?", (file_id,)).rowcount,
         "readings": db.execute("DELETE FROM readings WHERE file_id = ?", (file_id,)).rowcount,
+        "electricity": db.execute("DELETE FROM power_periods WHERE file_id = ?", (file_id,)).rowcount,
     }
     db.execute("DELETE FROM files WHERE id = ?", (file_id,))
     db.commit()

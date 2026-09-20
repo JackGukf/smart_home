@@ -410,3 +410,59 @@ def test_a_duplicated_period_is_not_a_bar_but_its_money_still_counts(tmp_path):
     assert all(p["end"] != "2026-08-12" for p in doc["periods"]), "the duplicate is not drawn"
     assert doc["last_period_gj"] == 0.9
     assert doc["rate_measured"] is True and doc["rate"] == pytest.approx(31.82 / 1.9, abs=0.01)
+
+
+# ── Electricity from BC Hydro's exports, before the PowerLync ──
+
+POWER_USAGE_CSV = ('"Account Holder","Account Number","Interval Start Date/Time","Net Consumption (kWh)"\n'
+                   '"A B","0","2025-07-01","366.00"\n"A B","0","2025-08-01","425.00"\n'
+                   '"A B","0","2025-09-01","411.00"\n"A B","0","2026-07-01","445.00"\n'
+                   '"A B","0","2026-08-01","422.00"\n"A B","0","2026-09-01","500.00"\n')
+POWER_BILL_CSV = ('"Invoice Number","Type","Amount Due","From Date","To Date","kWh Usage","Basic Charge","Usage Charge"\n'
+                  '"1","Amount Due","82.99",,,,,\n'
+                  '"1","Detail: Usage",,"2026-07-20","2026-09-18","714.0","13.74","78.33"\n')
+
+
+def _with_power(tmp_path):
+    from src.python import ai_data
+    db = ai_data.connect(tmp_path / "ai-data" / "gas.db")
+    for name, text in (("usage.csv", POWER_USAGE_CSV), ("billing.csv", POWER_BILL_CSV)):
+        doc = ai_data.add_file(db, tmp_path / "ai-data" / "files", name, text.encode())
+        ai_data.import_file(db, doc["id"])
+    db.close()
+    return tmp_path / "ai-data" / "gas.db"
+
+
+def test_uploaded_bc_hydro_history_becomes_the_electricity_column(tmp_path):
+    doc = energy.electricity_from_records(_with_power(tmp_path), now=datetime(2026, 9, 19))
+
+    assert doc["sample"] is False and doc["mode"] == "records"
+    assert doc["provider"] == "BC Hydro" and doc["period_kind"] == "month"
+    assert len(doc["periods"]) == 6 and doc["last_period_kwh"] == 500.0
+    # The money comes from the billing export, not from a guess.
+    assert doc["rate_measured"] is True and doc["rate"] == pytest.approx(82.99 / 714, abs=0.0005)
+    assert doc["last_bill"]["kwh"] == 714.0 and doc["last_bill"]["cost"] == 82.99
+
+
+def test_a_year_on_year_comparison_comes_out_of_it(tmp_path):
+    doc = energy.electricity_from_records(_with_power(tmp_path), now=datetime(2026, 9, 19))
+    year = doc["same_period_last_year"]
+    assert year["end"] == "2025-10-01" and year["kwh"] == 411.0
+    assert year["change_percent"] == 22      # 500 against 411
+
+
+def test_records_mode_never_pretends_to_be_live(tmp_path):
+    cfg = tmp_path / "devices.local.yaml"
+    cfg.write_text(yaml.dump({}), encoding="utf-8")
+    _with_power(tmp_path)
+    client = TestClient(web_app.create_app(config_path=cfg, check_camera_ports=False,
+                                           ai_data_dir=tmp_path / "ai-data"))
+    e = client.get("/api/energy").json()["electricity"]
+    assert e["mode"] == "records" and e["sample"] is False
+    assert "kw_now" not in e and "last_24h_kwh" not in e, "there is no now without a meter"
+
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "function powerRecordsColumnHtml" in js
+    assert "there is no \"now\" and no last-24-hours line yet" in js
+    # The hourly forecast belongs to the live meter, not to monthly bills.
+    assert 'e.mode === "records" ? "" : energyForecastHtml' in js

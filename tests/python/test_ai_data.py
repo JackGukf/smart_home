@@ -195,3 +195,62 @@ def test_equipment_running_is_believed_over_hvac_action():
     assert ai_data._is_heating({}) is None
     # And a thermostat that reports both is read from the better one.
     assert ai_data._is_heating({"equipment_running": "fan", "hvac_action": "heating"}) is False
+
+
+def test_bc_hydro_monthly_export_becomes_months(db, tmp_path):
+    """BC Hydro's export gives a start date and a figure; the period runs to the
+    next row, or a month, whichever is sooner - a missing month must not become
+    one ten-month period."""
+    csv = ('"Account Holder","Account Number","Interval Start Date/Time","Net Consumption (kWh)","Peak Demand (kW)"\n'
+           '"A B","0","2024-09-01","366.00","N/A"\n"A B","0","2024-10-01","425.00","N/A"\n'
+           '"A B","0","2025-06-01","411.00","N/A"\n')
+    parsed = ai_data.parse_csv_text(csv)
+    assert parsed.kind == "power_usage" and parsed.status == "parsed"
+    assert parsed.found["rows"][0] == {"start": "2024-09-01", "end": "2024-10-01", "kwh": 366.0, "days": 30}
+    assert parsed.found["rows"][1]["end"] == "2024-11-01", "the gap is not swallowed"
+
+    doc = ai_data.add_file(db, tmp_path / "files", "usage.csv", csv.encode())
+    assert ai_data.import_file(db, doc["id"])["added"] == 3
+    assert ai_data.inventory(db)["electricity"]["count"] == 3
+    # Kilowatt hours must not land in the gas table.
+    assert ai_data.inventory(db)["bills"]["count"] == 0
+
+
+def test_a_bc_hydro_bill_pdf_reads_its_period_usage_and_tiers():
+    text = ("Your bill for Mar 20, 2026 to May 20, 2026\n"
+            "172 kWh used over 12 days\n719 kWh used over 50 days\n"
+            "Basic Charge 12 days x $0.2330 /day\nBasic Charge 50 days x $0.2344 /day\n"
+            "Tier 1: 172 kWh x $0.1172 /kWh\nTier 1: 719 kWh x $0.1187 /kWh\n"
+            "Tier 2: 0 kWh x $0.1408 /kWh\n"
+            "You were 485 kWh below your Tier 2 threshold of 1,376 kWh this billing period.\n"
+            "TOTAL DUE $127.48")
+    parsed = ai_data.parse_power_bill_text(text)
+    assert parsed.kind == "power_bills" and parsed.status == "parsed"
+    [row] = parsed.found["rows"]
+    # A bill spanning a rate change is written in two blocks; both are the bill.
+    assert row["kwh"] == 891.0 and row["days"] == 62 and row["blocks"] == 2
+    assert row["start"] == "2026-03-20" and row["end"] == "2026-05-20"
+    assert row["cost"] == 127.48
+    assert row["tier1_price"] == 0.1187, "the newest price on the bill is the one in force"
+    assert row["tier2_threshold_kwh"] == 1376.0 and row["basic_per_day"] == 0.2344
+
+
+def test_the_export_and_the_pdf_of_the_same_period_are_merged(db, tmp_path):
+    """The yearly export has what it cost; the bill PDF has the tier prices.
+    Keeping only the first would lose one of them."""
+    csv = ('"Invoice Number","Type","Amount Due","From Date","To Date","kWh Usage"\n'
+           '"1","Amount Due","131.73",,,\n'
+           '"1","Detail: Usage",,"2026-05-21","2026-07-20","920.0"\n')
+    first = ai_data.add_file(db, tmp_path / "files", "billing.csv", csv.encode())
+    ai_data.import_file(db, first["id"])
+
+    text = ("Your bill for May 21, 2026 to Jul 20, 2026\n920 kWh used over 61 days\n"
+            "Tier 1: 920 kWh x $0.1187 /kWh\nBasic Charge 61 days x $0.2344 /day\n")
+    second = ai_data.add_file(db, tmp_path / "files", "bill.pdf.csv", text.encode())
+    db.execute("UPDATE files SET kind='power_bills', found=? WHERE id=?",
+               (json.dumps(ai_data.parse_power_bill_text(text).found), second["id"]))
+    db.commit()
+    ai_data.import_file(db, second["id"])
+
+    [row] = db.execute("SELECT * FROM power_periods").fetchall()
+    assert row["cost"] == 131.73 and row["tier1_price"] == 0.1187
