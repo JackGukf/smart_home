@@ -8892,7 +8892,11 @@ function activateView(viewName) {
     loadSecurityActivity();
   }
   if (viewName === "zigbee") {
-    loadZigbeeFrame().catch((error) => console.error(error));
+    loadZigbeeService().then((service) => {
+      if (service.enabled) return loadZigbeeFrame();
+      _showZigbeeFallback("Zigbee is switched off.");
+      return null;
+    }).catch((error) => console.error(error));
     loadZigbeeBridgeCard().catch((error) => console.error(error));
   }
   if (viewName === "discovery") {
@@ -11640,6 +11644,19 @@ renderAlarmSection();
    comes from window.location rather than from the server. */
 let zigbeeFrameLoaded = false;
 
+async function loadZigbeeService() {
+  const button = document.querySelector("#zigbeeServiceBtn");
+  const label = document.querySelector("#zigbeeServiceLabel");
+  if (!button) return;
+  const info = await requestJson("/api/zigbee/service");
+  button.hidden = !info.installed;
+  if (!info.installed) return;
+  button.dataset.enabled = info.enabled ? "1" : "0";
+  button.classList.toggle("primary", !info.enabled);
+  if (label) label.textContent = info.enabled ? "Disable Zigbee" : "Enable Zigbee";
+  return info;
+}
+
 function _zigbeeUiUrl(port, token) {
   /* No fallback address on purpose: a literal here would be a second place the
      board's address is written down, and it would be wrong the moment the board
@@ -11803,6 +11820,35 @@ document.querySelector("#zigbeePermitBtn")?.addEventListener("click", async (eve
     await loadZigbeeBridgeCard();
   } catch (error) {
     logActivity("Could not change Zigbee permit join", "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.querySelector("#zigbeeServiceBtn")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const enabled = button.dataset.enabled !== "1";
+  button.disabled = true;
+  try {
+    await requestJson("/api/zigbee/service", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!enabled) {
+      const frame = document.querySelector("#zigbeeFrame");
+      if (frame) frame.src = "about:blank";
+      zigbeeFrameLoaded = false;
+      _showZigbeeFallback("Zigbee is switched off.");
+    } else {
+      const fallback = document.querySelector("#zigbeeFallback");
+      if (fallback) fallback.hidden = true;
+      await loadZigbeeFrame();
+      await loadZigbeeBridgeCard();
+    }
+    await loadZigbeeService();
+  } catch (error) {
+    logActivity(`Could not switch Zigbee: ${apiErrorDetail(error)}`, "error");
   } finally {
     button.disabled = false;
   }
@@ -12198,9 +12244,9 @@ setInterval(() => {
 /* ── Live updates ──────────────────────────────────────────────────────────
    A door sensor on a 60 s poll is useless: you open the door and the dashboard
    agrees up to a minute later. /api/events/stream pushes a notification when
-   Home Assistant reports a state change, and we answer it by running the normal
-   refresh. Deliberately a trigger and not a state feed - one code path builds
-   the cards, so the stream cannot leave the page disagreeing with the server.
+   Home Assistant reports a state change. The browser re-reads only those
+   Home Assistant cards; it does not make a door wait for Tuya, weather, camera
+   and thermostat calls.
 
    Everything here is best-effort. If the stream never opens, the 60 s poll above
    still runs and the dashboard is exactly as live as it was before. */
@@ -12208,11 +12254,47 @@ const LIVE_REFRESH_DEBOUNCE_MS = 250;
 /* Two events a second apart should give two refreshes; a burst from a bridge
    reconnect should give one. A trailing debounce does both. */
 let liveRefreshTimer = null;
-function scheduleLiveRefresh() {
+const pendingLiveEntities = new Set();
+
+async function refreshLiveHomeAssistantCards(entityIds) {
+  const results = await Promise.all(
+    entityIds.map((entityId) =>
+      requestJson("/api/home-assistant/entities/" + encodeURIComponent(entityId) + "/card")
+    )
+  );
+  let changed = false;
+  for (const result of results) {
+    const card = result?.card;
+    if (!card) continue;
+    const index = latestTuyaDevices.findIndex((device) => device.id === card.id);
+    if (index >= 0) latestTuyaDevices[index] = card;
+    else latestTuyaDevices.push(card);
+    changed = true;
+  }
+  if (!changed) return;
+  renderTuyaDevices(latestTuyaDevices);
+  renderDevicesOverview();
+  renderHomeView();
+  refreshActiveDynamicGroupPanel();
+  if (statusDot) statusDot.classList.add("online");
+  apiStatus.textContent = "Online";
+}
+
+function scheduleLiveRefresh(event) {
+  try {
+    const entityId = String(JSON.parse(event?.data || "{}").entity_id || "");
+    if (entityId) pendingLiveEntities.add(entityId);
+  } catch {}
   if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
-  liveRefreshTimer = setTimeout(() => {
+  liveRefreshTimer = setTimeout(async () => {
     liveRefreshTimer = null;
-    loadDevices().catch(console.error);
+    const entityIds = [...pendingLiveEntities];
+    pendingLiveEntities.clear();
+    try {
+      await refreshLiveHomeAssistantCards(entityIds);
+    } catch (error) {
+      console.error(error);
+    }
     /* A detection is exactly the kind of event this stream exists for, so the
        log follows the same push rather than waiting for the 60s poll. */
     loadMotionLog().catch(console.error);

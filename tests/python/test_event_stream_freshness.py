@@ -24,8 +24,17 @@ from src.python.tplink_switch import SwitchState
 HOST = "1.1.1.1"
 
 
-def _event(entity_id: str) -> dict:
-    return {"type": "event", "event": {"data": {"entity_id": entity_id}}}
+def _event(entity_id: str, old: str = "off", new: str = "on") -> dict:
+    return {
+        "type": "event",
+        "event": {
+            "data": {
+                "entity_id": entity_id,
+                "old_state": {"state": old},
+                "new_state": {"state": new},
+            }
+        },
+    }
 
 
 class Feed:
@@ -159,6 +168,17 @@ async def test_other_messages_are_ignored() -> None:
     feed.queue.put_nowait(_event("light.stick_s3"))
     frames = await _frames(web_app._coalesced_changes(feed.receive), count=1, within=0.5)
     assert _changed(frames) == ["light.stick_s3"]
+
+
+
+@pytest.mark.asyncio
+async def test_attribute_only_change_does_not_wake_the_dashboard() -> None:
+    feed = Feed()
+    feed.queue.put_nowait(_event("binary_sensor.entry_presence", "on", "on"))
+
+    frames = await _frames(web_app._coalesced_changes(feed.receive), count=1, within=0.2)
+
+    assert frames == []
 
 
 # --- the switch poll the second frame waits for ------------------------------

@@ -53,6 +53,7 @@ from src.python.house_digest import read_digest
 from src.python import ai_data
 from src.python import board_desktop
 from src.python import dashboard_cast
+from src.python import zigbee_service
 from src.python import energy
 from src.python import gas_model
 from src.python import panel_scenes
@@ -599,6 +600,12 @@ class CastRequest(BaseModel):
     enabled: bool
 
 
+class ZigbeeServiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
 class DesktopRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -709,6 +716,7 @@ def create_app(
     ir_page_path: Path | None = None,
     light_scenes_path: Path | None = None,
     cast_runner: Callable[..., subprocess.CompletedProcess] | None = None,
+    zigbee_runner: Callable[..., subprocess.CompletedProcess] | None = None,
     desktop_runner: Callable[..., subprocess.CompletedProcess] | None = None,
     cast_status_path: Path | None = None,
 ) -> FastAPI:
@@ -734,6 +742,7 @@ def create_app(
     app.state.memory_service = memory_service or house_memory.SummaryCache()
     # systemctl, swapped out in tests so they never touch the real user manager.
     app.state.cast_runner = cast_runner or subprocess.run
+    app.state.zigbee_runner = zigbee_runner or subprocess.run
     app.state.desktop_runner = desktop_runner or subprocess.run
     app.state.cast_status_path = cast_status_path
     app.state.cast_switch = None
@@ -1180,6 +1189,16 @@ def create_app(
     @app.get("/api/home-assistant/entities")
     async def home_assistant_entities() -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_payload, app.state.config_path)
+
+    @app.get("/api/home-assistant/entities/{entity_id}/card")
+    async def home_assistant_entity_card(entity_id: str) -> dict[str, Any]:
+        """Return one Home Assistant-backed dashboard card without cloud polling."""
+        return await asyncio.to_thread(
+            _home_assistant_live_card,
+            app.state.config_path,
+            entity_id,
+            app.state.discovery_path,
+        )
 
     @app.get("/api/home-alarm-card")
     async def home_alarm_card() -> dict[str, Any]:
@@ -2054,6 +2073,22 @@ def create_app(
         """
         token = _zigbee_frontend_token(app.state.zigbee_secret_path)
         return {"available": token is not None, "port": ZIGBEE_FRONTEND_PORT, "token": token}
+
+    @app.get("/api/zigbee/service")
+    async def zigbee_service_state() -> dict[str, Any]:
+        """Whether Zigbee and its replug recovery watcher are switched on."""
+        return await asyncio.to_thread(zigbee_service.state, app.state.zigbee_runner)
+
+    @app.put("/api/zigbee/service")
+    async def set_zigbee_service(request: ZigbeeServiceRequest) -> dict[str, Any]:
+        """Switch the coordinator and its watchdog together, now and after reboot."""
+        def apply() -> dict[str, Any]:
+            try:
+                return zigbee_service.set_enabled(request.enabled, app.state.zigbee_runner)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                raise HTTPException(status_code=502, detail=f"Could not switch Zigbee: {error}") from error
+
+        return await asyncio.to_thread(apply)
 
     @app.get("/api/zigbee/bridge")
     async def zigbee_bridge() -> dict[str, Any]:
@@ -3213,6 +3248,36 @@ def _tuya_cards_from_home_assistant(path: Path, discovery_path: Path | None = No
     ]
     cards.sort(key=lambda item: (item["category"], item["name"].lower()))
     return cards
+
+
+
+def _home_assistant_live_card(
+    path: Path, entity_id: str, discovery_path: Path | None = None
+) -> dict[str, Any]:
+    """Read one card from HA for a pushed state transition.
+
+    The normal Sensors endpoint deliberately combines Home Assistant and Tuya
+    cloud data. That is correct for a periodic refresh, but unnecessarily
+    makes a door or occupancy update wait for Tuya. This small path keeps the
+    live stream local to Home Assistant and returns no card for entities the
+    sensor views do not display.
+    """
+    config = _load_home_assistant_config(path)
+    token = os.getenv(config.token_env)
+    if not token:
+        raise HTTPException(status_code=503, detail=f"{config.token_env} is not configured")
+    state = _home_assistant_get(
+        config, token, f"/api/states/{quote(entity_id, safe='._-')}"
+    )
+    if not isinstance(state, dict):
+        raise HTTPException(status_code=404, detail="Home Assistant entity was not found")
+    tplink_names = _tplink_device_names(discovery_path)
+    confirmed_entity_ids = {
+        str(device.get("entity_id")) for device in _load_home_assistant_devices(path)
+    }
+    if not _is_tuya_home_assistant_entity(state, tplink_names, confirmed_entity_ids):
+        return {"card": None}
+    return {"card": _tuya_home_assistant_card(state)}
 
 
 def _tplink_device_names(discovery_path: Path | None) -> set[str]:
@@ -5728,6 +5793,22 @@ def _changed_frame(entity_id: str) -> str:
     return f"event: changed\ndata: {json.dumps({'entity_id': entity_id})}\n\n"
 
 
+
+def _is_real_state_change(data: dict[str, Any]) -> bool:
+    """Whether a state_changed event changed state rather than attributes.
+
+    Link quality, last-seen and illuminance metadata use Home Assistant's same
+    event type. They must not make every open dashboard reload. The ordinary
+    60-second reconciliation poll still picks up attribute-only changes.
+    """
+    old_state = data.get("old_state")
+    new_state = data.get("new_state")
+    if not isinstance(old_state, dict) or not isinstance(new_state, dict):
+        # Real HA events carry both; tolerate compact test/legacy messages.
+        return True
+    return old_state.get("state") != new_state.get("state")
+
+
 async def _coalesced_changes(
     receive: "Callable[[float], Awaitable[dict[str, Any]]]",
     before_notify: "Callable[[float], Awaitable[bool]] | None" = None,
@@ -5771,7 +5852,10 @@ async def _coalesced_changes(
                 if frame:
                     yield frame
                 continue
-            entity_id = str(((message.get("event") or {}).get("data") or {}).get("entity_id") or "")
+            data = event.get("data") or {}
+            if not _is_real_state_change(data):
+                continue
+            entity_id = str(data.get("entity_id") or "")
             domain = _home_assistant_entity_domain(entity_id)
             if domain not in _EVENT_WAKE_DOMAINS:
                 continue
