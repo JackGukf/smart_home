@@ -39,3 +39,9 @@ be changed only after confirming the individual device exposes that setting.
    86 passed.
 - `python3 -m py_compile src/python/web_app.py`  passed.
 - Deployed through `scripts/deploy-dashboard.sh`; dashboard service active.
+
+## Ecobee source pairing (2026-09-21)
+
+The physical Ecobee appears in Home Assistant as climate.my_ecobee (HomeKit, local) and climate.my_ecobee_2 (cloud). The dashboard now pairs the two by their shared friendly name and Home Assistants numeric duplicate-id convention, rather than their current temperature. The cloud entity is displayed while it is available because it supplies presets, equipment state, and room sensors; the local HomeKit entity becomes the displayed card automatically if the cloud entity is unavailable.
+
+This avoids duplicate Climate dials when the two integrations refresh at different times, while retaining local control during an internet outage. Focused tests cover differing temperatures, deterministic ordering, and the unavailable-cloud fallback.

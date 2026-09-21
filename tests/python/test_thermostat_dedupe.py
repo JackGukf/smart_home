@@ -91,3 +91,27 @@ def test_an_unavailable_pair_still_shows_one_thermostat():
         entity["state"] = "unavailable"
     kept = web_app._one_per_thermostat([homekit, cloud])
     assert len(kept) == 1 and kept[0]["entity_id"] == "climate.my_ecobee_2"
+
+
+def test_duplicate_pair_stays_merged_when_sources_report_different_temperatures():
+    """Cloud and HomeKit updates arrive independently, so temperature cannot
+    decide whether the two entities represent one thermostat."""
+    homekit = climate("climate.my_ecobee", "My ecobee", 21.4, hvac_modes=["off", "heat"])
+    cloud = climate(
+        "climate.my_ecobee_2",
+        "My ecobee",
+        21.8,
+        preset_modes=["home", "away", "sleep"],
+        equipment_running="",
+        current_humidity=57,
+    )
+
+    [kept] = web_app._one_per_thermostat([homekit, cloud])
+    assert kept["entity_id"] == "climate.my_ecobee_2"
+
+
+def test_same_named_thermostats_with_distinct_entity_stems_are_not_merged():
+    first = climate("climate.upstairs", "Hallway", 20.0)
+    second = climate("climate.downstairs", "Hallway", 22.0)
+
+    assert len(web_app._one_per_thermostat([first, second])) == 2

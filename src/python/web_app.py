@@ -6479,23 +6479,39 @@ def _thermostat_richness(entity: dict[str, Any]) -> tuple:
     )
 
 
-def _one_per_thermostat(climates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One card per physical thermostat.
+def _thermostat_identity(entity: dict[str, Any]) -> tuple[str, str]:
+    """Return a stable identity for duplicate HA views of one thermostat.
 
-    Two entities with the same name reading the same temperature are the same
-    device on the wall, and drawing it twice stacked two dials in a card sized
-    for one (2026-09-19). Same name and same current temperature is the test:
-    two thermostats that genuinely share a name would have to agree to the
-    degree to be merged, and if they do the card is no worse for it."""
-    best: dict[tuple, dict[str, Any]] = {}
+    Home Assistant gives integration duplicates a numeric entity-id suffix:
+    climate.my_ecobee and climate.my_ecobee_2 are two views of the same device.
+    The friendly name protects unrelated devices whose slugs happen to match.
+    Current temperature is deliberately excluded because the local and cloud
+    integrations report it at different moments.
+    """
+    attributes = entity.get("attributes") or {}
+    name = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        str(attributes.get("friendly_name") or "").strip().lower(),
+    ).strip()
+    entity_id = str(entity.get("entity_id") or "").lower()
+    slug = entity_id.split(".", 1)[-1]
+    return name, re.sub(r"_\d+$", "", slug)
+
+
+def _one_per_thermostat(climates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One card per physical thermostat, with automatic local fallback.
+
+    A cloud and HomeKit entity are paired only when they share a friendly name
+    and Home Assistant's numeric duplicate-id convention. This keeps genuinely
+    separate thermostats visible even if someone gives them the same name.
+    """
+    best: dict[tuple[str, str], dict[str, Any]] = {}
     for entity in climates:
-        attributes = entity.get("attributes") or {}
-        key = (str(attributes.get("friendly_name") or entity.get("entity_id") or "").strip().lower(),
-               attributes.get("current_temperature"))
+        key = _thermostat_identity(entity)
         if key not in best or _thermostat_richness(entity) > _thermostat_richness(best[key]):
             best[key] = entity
-    return list(best.values())
-
+    return [best[key] for key in sorted(best)]
 
 def _ecobee_card_from_home_assistant(
     entity: dict[str, Any],
