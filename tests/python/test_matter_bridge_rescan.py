@@ -1,19 +1,16 @@
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MAIN_CPP = PROJECT_ROOT / "src" / "cpp" / "matter_bridge" / "main.cpp"
 BUILD_SCRIPT = PROJECT_ROOT / "scripts" / "build-matter-bridge.sh"
 CONFIG_H = PROJECT_ROOT / "src" / "cpp" / "matter_bridge" / "CHIPProjectConfig.h"
 APP_CONFIG_H = PROJECT_ROOT / "src" / "cpp" / "matter_bridge" / "CHIPProjectAppConfig.h"
 
-
 def test_rescan_does_not_restart_commissioned_bridge_on_device_count_change() -> None:
     source = MAIN_CPP.read_text(encoding="utf-8")
 
     assert "exit(0)" not in source
     assert "keeping existing Matter endpoints stable" in source
-
 
 def test_bridge_capacity_is_derived_from_the_endpoint_table_and_project_config() -> None:
     """kMaxDynamicDevices was hardcoded to 4 while the endpoint table held 16 --
@@ -41,7 +38,6 @@ def test_bridge_capacity_is_derived_from_the_endpoint_table_and_project_config()
     assert "CHIP_SYSTEM_CONFIG_PACKETBUFFER_CAPACITY_MAX >= 9050" in source
     assert "CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT 16" in app_config
 
-
 def test_bridge_build_prunes_stock_zap_model_for_home_subscriptions() -> None:
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
 
@@ -67,7 +63,6 @@ def test_bridge_build_prunes_stock_zap_model_for_home_subscriptions() -> None:
     assert 'endpoint.get("endpointId") in (0, 1)' in script
     assert "bridge-app.zap" in script
 
-
 def test_bridge_sync_client_uses_short_http_timeouts() -> None:
     source = (PROJECT_ROOT / "src" / "cpp" / "matter_bridge" / "SyncClient.cpp").read_text(
         encoding="utf-8"
@@ -76,7 +71,6 @@ def test_bridge_sync_client_uses_short_http_timeouts() -> None:
     assert "CURLOPT_CONNECTTIMEOUT_MS, 500L" in source
     assert "CURLOPT_TIMEOUT_MS, 2000L" in source
     assert "CURLOPT_TIMEOUT, 5L" not in source
-
 
 def test_bridge_has_noop_init_stubs_for_pruned_stock_clusters() -> None:
     source = MAIN_CPP.read_text(encoding="utf-8")
@@ -97,7 +91,6 @@ def test_bridge_has_noop_init_stubs_for_pruned_stock_clusters() -> None:
     ):
         assert f"void {symbol}() {{}}" in source
 
-
 def test_bridge_registers_runtime_onoff_command_handler_for_dynamic_endpoints() -> None:
     source = MAIN_CPP.read_text(encoding="utf-8")
 
@@ -112,7 +105,6 @@ def test_bridge_registers_runtime_onoff_command_handler_for_dynamic_endpoints() 
     assert "HandleOnOffCommand(endpoint, true, /*notify_subscribers=*/true)" in source
     assert "HandleOnOffCommand(endpoint, false, /*notify_subscribers=*/true)" in source
     assert "HandleOnOffCommand(endpoint, on, /*notify_subscribers=*/false)" in source
-
 
 def test_bridge_exposes_stable_unique_id_for_each_bridged_endpoint() -> None:
     source = MAIN_CPP.read_text(encoding="utf-8")
@@ -129,3 +121,11 @@ def test_bridge_exposes_stable_unique_id_for_each_bridged_endpoint() -> None:
     assert "ZCL_UNIQUE_ID_ATTRIBUTE_ID" in impl
     assert "Attributes::UniqueID::Id" in source
     assert "dev->GetUniqueId()" in source
+
+def test_bridge_uses_avahi_backed_platform_mdns() -> None:
+    script = BUILD_SCRIPT.read_text(encoding="utf-8")
+
+    # Platform mDNS publishes IPv6 link-local addresses with an interface scope.
+    assert 'chip_mdns="platform"' in script
+    assert 'chip_mdns="minimal"' not in script
+    assert "Avahi platform mDNS" in script

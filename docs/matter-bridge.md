@@ -104,7 +104,7 @@ systemctl --user start matter-bridge.service   # opens the commissioning window
 
 **Root cause:** CHIP's minimal mDNS stack sends multicast announcements on **all** network interfaces, including docker0 (172.17.0.1). `--interface wlan0` only selects which IP is used for some A records; it does not restrict which interfaces multicast is sent on. iPhone received the 172.x A record last, cached it, and tried to connect to an unreachable address.
 
-**Fix (at the time):** Bring docker0 down at container startup (`ip link set docker0 down`) via the container entrypoint with `cap_add: [NET_ADMIN]`. Note: the bridge now runs directly on the host via systemd, and docker0 still exists on the Pi (Home Assistant runs in Docker) — if the 172.x A-record problem resurfaces, the longer-term fix is building the bridge with `chip_mdns="platform"` and running avahi-daemon.
+**Current fix:** The bridge uses platform mDNS through the host Avahi daemon. Avahi advertises the Ethernet IPv6 link-local address with its required interface scope and avoids Docker or stale-interface records after a network change. avahi-daemon must remain enabled and active on the Orange Pi. The bridge KVS and existing Apple Home fabric are preserved across a restart.
 
 **Regression test:** `test_bridge_mdns_no_docker_bridge_ip` in `test_matter_bridge_integration.py`
 

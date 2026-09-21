@@ -212,11 +212,12 @@ done
 echo "==> Running GN build for linux-arm64..."
 mkdir -p "$OUT_DIR"
 pushd "$CHIP_DIR" >/dev/null
+# Use Avahi platform mDNS so Matter discovery stays scoped to Ethernet after network changes.
 scripts/examples/gn_build_example.sh \
   "$CHIP_BRIDGE_DIR" \
   "$OUT_DIR" \
   'target_cpu="arm64"' \
-  'chip_mdns="minimal"' \
+  'chip_mdns="platform"' \
   'chip_inet_config_enable_ipv4=true' \
   'is_debug=false' \
   'chip_project_config_include="<CHIPProjectConfig.h>"' \
