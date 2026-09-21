@@ -255,3 +255,11 @@ Things to build next on top of the Matter bridge:
 - **State push from Python to bridge** — currently the bridge polls every 60 s; add a POST from the Python poller to push state changes immediately.
 - **Tuya sensors with real values** — bridge currently maps sensors to on/off; should use `TemperatureMeasurement` / `RelativeHumidityMeasurement` clusters with actual readings.
 - **Production DAC** — replace `GetExampleDACProvider()` with a real Device Attestation Certificate for App Store / commercial use (requires Matter certification).
+
+## Matter discovery reliability: September 2026
+
+The bridge now builds with platform mDNS and uses the Orange Pi host Avahi service for Matter discovery. Avahi is enabled at boot, so this remains in effect after an Orange Pi reboot. The bridge service restarts without replacing its KVS, preserving the existing Apple Home fabric and bridged-device endpoints.
+
+Validation after deployment used the established WSL CHIP-tool fabric. It rediscovered the bridge at 192.168.0.83 on UDP 5540, established a secure Matter session, and read the PartsList containing endpoints 3 through 7.
+
+This repair does not require changes inside the connectedhomeip SDK submodule. Local SDK files related to ZAP setup are separate from Matter discovery and are intentionally not part of this fix.
