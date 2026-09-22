@@ -2458,17 +2458,25 @@ aside {
   overflow: visible;
 }
 
-.environment-gauge-track {
+.environment-gauge-range {
   fill: none;
-  stroke: var(--red);
-  stroke-width: 8;
+  stroke-width: 7;
   stroke-linecap: butt;
 }
 
-/* The reference uses exactly three colours: white at the leading edge,
-   green through the measured value, then red for the remaining range. */
-.environment-gauge-good-fill { fill: var(--green); }
-.environment-gauge-cool-fill { fill: #f1f5f9; }
+/* The thin outer arc is the fixed threshold scale: low, comfortable, hot. */
+.environment-gauge-low { stroke: #f1f5f9; }
+.environment-gauge-comfort { stroke: var(--green); }
+.environment-gauge-hot { stroke: var(--red); }
+
+/* A second, wider semicircle beneath the threshold scale visualizes the live
+   value. Its colour comes from whichever range the reading occupies. */
+.environment-gauge-value {
+  fill: none;
+  stroke-width: 22;
+  stroke-linecap: butt;
+}
+
 
 .environment-gauge strong {
   position: absolute;

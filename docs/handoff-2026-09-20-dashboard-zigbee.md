@@ -60,9 +60,11 @@ Option B is active: cards inherit their groups alternating accent or amber colou
 
 Devices -> Environment now renders every temperature and humidity sensor as a
 paired gauge card. Each semicircle retains the dashboard slate theme and uses a
-white leading edge, green filled reading, and red remaining range. The green
-annular fill ends at the live temperature or humidity value, matching the
-chosen reference treatment while keeping the familiar dashboard colours.
+a thin outer threshold ring split into white (low), green (comfortable), and
+red (hot or humid). A separate thick inner semicircle starts at zero and ends
+at the live value, using the colour of that value's threshold range. This
+matches the selected gauge treatment while keeping the familiar dashboard
+colours.
 
 CO2-capable monitors use a dedicated breathing-orb card. The orb colour follows
 the existing fresh/okay/stuffy/poor CO2 classification and keeps the current
