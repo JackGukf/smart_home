@@ -55,3 +55,18 @@ section headers alternate only the dashboard accent and amber colours; red
 remains reserved for a real device alert.
 
 Option B is active: cards inherit their groups alternating accent or amber colour and use opposing rounded-corner shapes. Alert cards keep their red treatment.
+
+## Environment gauges and air quality (2026-09-21)
+
+Devices -> Environment now renders every temperature and humidity sensor as a
+paired gauge card. Each semicircle retains the dashboard slate theme and uses a
+light-blue start, green comfort band, and red warning band, matching the chosen
+reference treatment while keeping the familiar dashboard colours.
+
+CO2-capable monitors use a dedicated breathing-orb card. The orb colour follows
+the existing fresh/okay/stuffy/poor CO2 classification and keeps the current
+reading, status, temperature, humidity, and CO2 history available. Generic
+sensor tiles remain in area details, where their compact format is more useful.
+
+Focused dashboard regression checks cover the Environment split, CO2 monitor,
+and grouped-device rendering.

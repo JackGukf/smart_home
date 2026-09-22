@@ -1606,6 +1606,86 @@ function environmentSensorCard(sensor) {
   </article>`;
 }
 
+
+/* ── Environment view: paired gauges and the CO₂ breathing orb ──
+   The generic sensor tile remains in use in area details. The Environment view
+   is deliberately a calmer, more focused reading surface: temperature and
+   humidity share one physical-device card, while a CO₂ monitor earns its own
+   air-quality treatment. */
+function environmentGauge(value, unit, kind) {
+  if (!Number.isFinite(value)) return "";
+  const display = kind === "temperature" ? value.toFixed(1) : String(Math.round(value));
+  const label = kind === "temperature" ? "Temperature" : "Humidity";
+  return `<div class="environment-gauge" aria-label="${label} ${display}${unit}">
+    <span class="environment-gauge-label">${label}</span>
+    <svg class="environment-gauge-arc" viewBox="0 0 180 105" aria-hidden="true">
+      <path class="environment-gauge-track" pathLength="100" d="M18 90 A72 72 0 0 1 162 90" />
+      <path class="environment-gauge-cool" pathLength="100" d="M18 90 A72 72 0 0 1 162 90" />
+      <path class="environment-gauge-good" pathLength="100" d="M18 90 A72 72 0 0 1 162 90" />
+      <path class="environment-gauge-warm" pathLength="100" d="M18 90 A72 72 0 0 1 162 90" />
+    </svg>
+    <strong>${escapeHtml(display)}<small>${unit}</small></strong>
+  </div>`;
+}
+
+function environmentGaugeCard({ name, temperature, humidity, online = true, subtitle = "Sensor" }) {
+  const temp = Number(temperature);
+  const hum = Number(humidity);
+  const readings = environmentGauge(temp, "°C", "temperature") + environmentGauge(hum, "%H", "humidity");
+  const empty = readings || '<div class="environment-gauge-empty">No climate reading</div>';
+  return `<article class="environment-gauge-card${online ? "" : " environment-gauge-offline"}" data-device-id="${escapeHtml(name)}">
+    <div class="environment-gauge-top"><span class="environment-gauge-live">${online ? "ONLINE" : "OFFLINE"}</span><span>${escapeHtml(subtitle)}</span></div>
+    <div class="environment-gauge-pair">${empty}</div>
+    <h3 title="${escapeHtml(name)}">${escapeHtml(name)}</h3>
+  </article>`;
+}
+
+function environmentAirQualityCard(sensor) {
+  const level = sensor.co2_level || {};
+  const tint = CO2_TINT[level.key] || "var(--green)";
+  const temperature = Number(sensor.temperature);
+  const humidity = Number(sensor.humidity);
+  const facets = [
+    Number.isFinite(temperature) ? `${temperature.toFixed(1)}°C` : "",
+    Number.isFinite(humidity) ? `${Math.round(humidity)}% humidity` : "",
+  ].filter(Boolean).join(" · ");
+  const spark = sensor.co2_entity_id
+    ? `<div class="co2-spark environment-air-spark" data-co2-spark="${escapeHtml(sensor.co2_entity_id)}" aria-label="CO₂, last 24 hours"></div>`
+    : "";
+  return `<article class="environment-air-card${sensor.online ? "" : " environment-gauge-offline"}" data-device-id="${escapeHtml(sensor.name)}" style="--air-tint:${tint}">
+    <div class="environment-gauge-top"><span class="environment-air-label">Air quality</span><span class="environment-gauge-live">${sensor.online ? "ONLINE" : "OFFLINE"}</span></div>
+    <div class="environment-air-orb"><strong>${escapeHtml(String(sensor.co2))}</strong><span>ppm CO₂</span></div>
+    <div class="environment-air-state">${escapeHtml(level.text || "Current reading")}</div>
+    <h3 title="${escapeHtml(sensor.name)}">${escapeHtml(sensor.name)}</h3>
+    ${facets ? `<p>${escapeHtml(facets)}</p>` : ""}${spark}
+  </article>`;
+}
+
+function environmentSelectedCard(sensor) {
+  return sensor.co2 != null
+    ? environmentAirQualityCard(sensor)
+    : environmentGaugeCard({
+        name: sensor.name,
+        temperature: sensor.temperature,
+        humidity: sensor.humidity,
+        online: sensor.online,
+        subtitle: sensor.room || sensor.model || "Environment",
+      });
+}
+
+function environmentGroupGaugeCard(group) {
+  const readings = filterReadingsForView(expandSensorReadings(group.readings), "environment");
+  const temperature = readings.find((reading) => sensorCapabilityKey(reading) === "temperature");
+  const humidity = readings.find((reading) => sensorCapabilityKey(reading) === "humidity");
+  return environmentGaugeCard({
+    name: group.name,
+    temperature: temperature ? readingMetricNumber(temperature) : NaN,
+    humidity: humidity ? readingMetricNumber(humidity) : NaN,
+    online: readings.some((reading) => reading.online !== false),
+    subtitle: sensorDeviceSubtitle(readings),
+  });
+}
+
 /* The last 24 hours of CO2, hourly means from Home Assistant's history of the
    mirrored entity. Bands behind the line say where "stuffy" starts. */
 function co2SparkSvg(values) {
@@ -2701,8 +2781,8 @@ function renderEnvironmentSensors() {
     return;
   }
   grid.innerHTML =
-    latestEnvironmentSensors.map(environmentSensorCard).join("") +
-    groups.map((g) => renderSensorDeviceCard(g, "environment")).join("");
+    latestEnvironmentSensors.map(environmentSelectedCard).join("") +
+    groups.map(environmentGroupGaugeCard).join("");
   renderForeignKinds("environment", ["sensor", "environment"], "#environmentGrid");
   loadCo2History();
 }

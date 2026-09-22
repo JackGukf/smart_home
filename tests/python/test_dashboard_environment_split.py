@@ -47,7 +47,7 @@ def test_split_filter_is_capability_driven() -> None:
 def test_card_renderer_takes_a_mode() -> None:
     javascript = APP_JS.read_text(encoding="utf-8")
 
-    assert "function renderSensorDeviceCard(group, mode)" in javascript
+    assert "function renderSensorDeviceCard(group, mode, groupTone" in javascript
     assert 'renderSensorDeviceCard(group, "sensors")' in javascript or \
            'renderSensorDeviceCard(g, "sensors")' in javascript
 
