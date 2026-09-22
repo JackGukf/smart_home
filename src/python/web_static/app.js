@@ -1621,6 +1621,29 @@ function environmentGaugeRanges(kind) {
     : { maximum: 100, lowEnd: 30, comfortEnd: 60 };
 }
 
+function environmentGaugePoint(radius, percent) {
+  const angle = Math.PI + (Math.PI * percent / 100);
+  return [90 + radius * Math.cos(angle), 90 + radius * Math.sin(angle)];
+}
+
+function environmentGaugeArcPath(startPercent, endPercent, radius = 72) {
+  const [startX, startY] = environmentGaugePoint(radius, startPercent);
+  const [endX, endY] = environmentGaugePoint(radius, endPercent);
+  return `M${startX.toFixed(1)} ${startY.toFixed(1)} A${radius} ${radius} 0 0 1 ${endX.toFixed(1)} ${endY.toFixed(1)}`;
+}
+
+function environmentGaugeValueBandPath(percent) {
+  if (percent <= 0) return "";
+  const clamped = Math.min(100, percent);
+  // The value band is an annular sector sharing the same centre and angles as
+  // the range ring. It sits just inside the ring, so both layers stay aligned.
+  const [outerStartX, outerStartY] = environmentGaugePoint(65, 0);
+  const [outerEndX, outerEndY] = environmentGaugePoint(65, clamped);
+  const [innerEndX, innerEndY] = environmentGaugePoint(36, clamped);
+  const [innerStartX, innerStartY] = environmentGaugePoint(36, 0);
+  return `M${outerStartX.toFixed(1)} ${outerStartY.toFixed(1)} A65 65 0 0 1 ${outerEndX.toFixed(1)} ${outerEndY.toFixed(1)} L${innerEndX.toFixed(1)} ${innerEndY.toFixed(1)} A36 36 0 0 0 ${innerStartX.toFixed(1)} ${innerStartY.toFixed(1)} Z`;
+}
+
 function environmentGauge(value, unit, kind) {
   if (!Number.isFinite(value)) return "";
   const display = kind === "temperature" ? value.toFixed(1) : String(Math.round(value));
@@ -1633,15 +1656,13 @@ function environmentGauge(value, unit, kind) {
   const valueColour = value < range.lowEnd
     ? "#f1f5f9"
     : value <= range.comfortEnd ? "var(--green)" : "var(--red)";
-  const outerArc = 'M18 90 A72 72 0 0 1 162 90';
-  const valueArc = 'M35 90 A55 55 0 0 1 145 90';
   return `<div class="environment-gauge" aria-label="${label} ${display}${unit}">
     <span class="environment-gauge-label">${label}</span>
     <svg class="environment-gauge-arc" viewBox="0 0 180 105" aria-hidden="true">
-      <path class="environment-gauge-range environment-gauge-low" pathLength="100" d="${outerArc}" style="stroke-dasharray:${low} ${100 - low}" />
-      <path class="environment-gauge-range environment-gauge-comfort" pathLength="100" d="${outerArc}" style="stroke-dasharray:${comfort} ${100 - comfort};stroke-dashoffset:-${low}" />
-      <path class="environment-gauge-range environment-gauge-hot" pathLength="100" d="${outerArc}" style="stroke-dasharray:${hot} ${100 - hot};stroke-dashoffset:-${low + comfort}" />
-      <path class="environment-gauge-value" pathLength="100" d="${valueArc}" style="stroke:${valueColour};stroke-dasharray:${progress} ${100 - progress}" />
+      <path class="environment-gauge-range environment-gauge-low" d="${environmentGaugeArcPath(0, low)}" />
+      <path class="environment-gauge-range environment-gauge-comfort" d="${environmentGaugeArcPath(low, low + comfort)}" />
+      <path class="environment-gauge-range environment-gauge-hot" d="${environmentGaugeArcPath(low + comfort, 100)}" />
+      <path class="environment-gauge-value" d="${environmentGaugeValueBandPath(progress)}" style="fill:${valueColour}" />
     </svg>
     <strong>${escapeHtml(display)}<small>${unit}</small></strong>
   </div>`;

@@ -2469,13 +2469,9 @@ aside {
 .environment-gauge-comfort { stroke: var(--green); }
 .environment-gauge-hot { stroke: var(--red); }
 
-/* A second, wider semicircle beneath the threshold scale visualizes the live
-   value. Its colour comes from whichever range the reading occupies. */
-.environment-gauge-value {
-  fill: none;
-  stroke-width: 22;
-  stroke-linecap: butt;
-}
+/* The live value is a solid annular band beneath the range ring. The SVG
+   derives it from the same centre and angles, so it remains concentric. */
+.environment-gauge-value { stroke: none; }
 
 
 .environment-gauge strong {
