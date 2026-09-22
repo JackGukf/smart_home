@@ -1622,8 +1622,10 @@ function environmentGaugeBandPath(startPercent, endPercent) {
   const [outerEndX, outerEndY] = point(72, endPercent);
   const [innerEndX, innerEndY] = point(45, endPercent);
   const [innerStartX, innerStartY] = point(45, startPercent);
-  const large = endPercent - startPercent > 50 ? 1 : 0;
-  return `M${outerStartX.toFixed(1)} ${outerStartY.toFixed(1)} A72 72 0 ${large} 1 ${outerEndX.toFixed(1)} ${outerEndY.toFixed(1)} L${innerEndX.toFixed(1)} ${innerEndY.toFixed(1)} A45 45 0 ${large} 0 ${innerStartX.toFixed(1)} ${innerStartY.toFixed(1)} Z`;
+  // This is a segment of a *semicircle*, so its sweep is never greater than
+  // 180 degrees. SVG's large-arc flag must remain zero; setting it after 50%
+  // travels around the other side of the circle and creates a triangular fill.
+  return `M${outerStartX.toFixed(1)} ${outerStartY.toFixed(1)} A72 72 0 0 1 ${outerEndX.toFixed(1)} ${outerEndY.toFixed(1)} L${innerEndX.toFixed(1)} ${innerEndY.toFixed(1)} A45 45 0 0 0 ${innerStartX.toFixed(1)} ${innerStartY.toFixed(1)} Z`;
 }
 
 function environmentGauge(value, unit, kind) {
