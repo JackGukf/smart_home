@@ -1612,17 +1612,37 @@ function environmentSensorCard(sensor) {
    is deliberately a calmer, more focused reading surface: temperature and
    humidity share one physical-device card, while a CO₂ monitor earns its own
    air-quality treatment. */
+function environmentGaugeBandPath(startPercent, endPercent) {
+  if (endPercent <= startPercent) return "";
+  const point = (radius, percent) => {
+    const angle = Math.PI + (Math.PI * percent / 100);
+    return [90 + radius * Math.cos(angle), 90 + radius * Math.sin(angle)];
+  };
+  const [outerStartX, outerStartY] = point(72, startPercent);
+  const [outerEndX, outerEndY] = point(72, endPercent);
+  const [innerEndX, innerEndY] = point(45, endPercent);
+  const [innerStartX, innerStartY] = point(45, startPercent);
+  const large = endPercent - startPercent > 50 ? 1 : 0;
+  return `M${outerStartX.toFixed(1)} ${outerStartY.toFixed(1)} A72 72 0 ${large} 1 ${outerEndX.toFixed(1)} ${outerEndY.toFixed(1)} L${innerEndX.toFixed(1)} ${innerEndY.toFixed(1)} A45 45 0 ${large} 0 ${innerStartX.toFixed(1)} ${innerStartY.toFixed(1)} Z`;
+}
+
 function environmentGauge(value, unit, kind) {
   if (!Number.isFinite(value)) return "";
   const display = kind === "temperature" ? value.toFixed(1) : String(Math.round(value));
   const label = kind === "temperature" ? "Temperature" : "Humidity";
+  // The reference is a filled dial: its pale-blue leading edge and green
+  // donut segment extend to the live reading, while the unfilled rim is red.
+  // 40 C covers the indoor range; humidity is already a percentage.
+  const rawProgress = kind === "temperature" ? (value / 40) * 100 : value;
+  const progress = Math.max(0, Math.min(100, rawProgress));
+  const cool = Math.min(7, progress);
+  const arc = 'M18 90 A72 72 0 0 1 162 90';
   return `<div class="environment-gauge" aria-label="${label} ${display}${unit}">
     <span class="environment-gauge-label">${label}</span>
     <svg class="environment-gauge-arc" viewBox="0 0 180 105" aria-hidden="true">
-      <path class="environment-gauge-track" pathLength="100" d="M18 90 A72 72 0 0 1 162 90" />
-      <path class="environment-gauge-cool" pathLength="100" d="M18 90 A72 72 0 0 1 162 90" />
-      <path class="environment-gauge-good" pathLength="100" d="M18 90 A72 72 0 0 1 162 90" />
-      <path class="environment-gauge-warm" pathLength="100" d="M18 90 A72 72 0 0 1 162 90" />
+      <path class="environment-gauge-track" d="${arc}" />
+      <path class="environment-gauge-good-fill" d="${environmentGaugeBandPath(cool, progress)}" />
+      <path class="environment-gauge-cool-fill" d="${environmentGaugeBandPath(0, cool)}" />
     </svg>
     <strong>${escapeHtml(display)}<small>${unit}</small></strong>
   </div>`;

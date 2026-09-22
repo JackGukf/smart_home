@@ -2458,18 +2458,17 @@ aside {
   overflow: visible;
 }
 
-.environment-gauge-arc path {
+.environment-gauge-track {
   fill: none;
+  stroke: var(--red);
   stroke-width: 8;
   stroke-linecap: butt;
 }
 
-.environment-gauge-track { stroke: var(--t-seg-off); }
-/* A small cool-blue tail, then the green comfort band, with red warning at
-   the high end: the same visual language as the gauge reference. */
-.environment-gauge-cool { stroke: #b7efff; stroke-dasharray: 11 89; }
-.environment-gauge-good { stroke: var(--green); stroke-dasharray: 48 52; stroke-dashoffset: -11; }
-.environment-gauge-warm { stroke: var(--red); stroke-dasharray: 41 59; stroke-dashoffset: -59; }
+/* The reference uses exactly three colours: white at the leading edge,
+   green through the measured value, then red for the remaining range. */
+.environment-gauge-good-fill { fill: var(--green); }
+.environment-gauge-cool-fill { fill: #f1f5f9; }
 
 .environment-gauge strong {
   position: absolute;
