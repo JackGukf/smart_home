@@ -61,3 +61,15 @@ def test_sensor_section_headers_alternate_only_two_colours() -> None:
     assert "--sensor-section-color: var(--t-accent)" in styles
     assert "--sensor-section-color: var(--amber)" in styles
     assert "Alert red remains reserved" in styles
+
+
+def test_sensor_cards_receive_their_alternating_group_colour_and_shape() -> None:
+    app = APP_JS.read_text(encoding="utf-8")
+    styles = STYLES.read_text(encoding="utf-8")
+
+    assert 'renderSensorDeviceCard(group, "sensors", index % 2 ? "b" : "a")' in app
+    assert "sdc-tile" + chr(36) + "{groupToneClass}" in app
+    assert ".sdc-tile-group-a" in styles
+    assert ".sdc-tile-group-b" in styles
+    assert "border-radius: 18px 7px 18px 7px" in styles
+    assert "border-radius: 7px 18px 7px 18px" in styles

@@ -2340,6 +2340,24 @@ aside {
 
 /* An alerting sensor is why this view exists: border, ground and the headline
    word all move together rather than flipping a single dot. */
+.sdc-tile-group-a {
+  --sensor-group-colour: var(--t-accent);
+  border-color: color-mix(in srgb, var(--sensor-group-colour) 58%, transparent);
+  border-radius: 18px 7px 18px 7px;
+  background:
+    radial-gradient(120% 90% at 78% 6%, color-mix(in srgb, var(--sensor-group-colour) 23%, transparent), transparent 62%),
+    linear-gradient(180deg, var(--card-2), var(--card));
+}
+
+.sdc-tile-group-b {
+  --sensor-group-colour: var(--amber);
+  border-color: color-mix(in srgb, var(--sensor-group-colour) 58%, transparent);
+  border-radius: 7px 18px 7px 18px;
+  background:
+    radial-gradient(120% 90% at 78% 6%, color-mix(in srgb, var(--sensor-group-colour) 23%, transparent), transparent 62%),
+    linear-gradient(180deg, var(--card-2), var(--card));
+}
+
 .sdc-tile-alert {
   border-color: color-mix(in srgb, var(--red) 50%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 18%, transparent),

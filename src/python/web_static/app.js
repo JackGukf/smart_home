@@ -2207,7 +2207,7 @@ function renderSensorPageSections(sections) {
         '<span class="sensor-page-section-count">' + section.groups.length + '</span>' +
       '</div>' +
       '<div class="device-grid sensor-tile-grid sensor-page-section-grid">' +
-        section.groups.map((group) => renderSensorDeviceCard(group, "sensors")).join("") +
+        section.groups.map((group) => renderSensorDeviceCard(group, "sensors", index % 2 ? "b" : "a")).join("") +
       '</div>' +
     '</section>'
   ).join("");
@@ -2381,8 +2381,9 @@ function sensorTileFacet(facet) {
    oversized watermark, and everything else as small pairs under the name.
    Which reading gets to be the headline depends on the view -- Environment
    opens on a number, Sensors opens on the state that made you look. */
-function renderSensorDeviceCard(group, mode) {
+function renderSensorDeviceCard(group, mode, groupTone = "") {
   const { name } = group;
+  const groupToneClass = groupTone ? " sdc-tile-group-" + groupTone : "";
   const readings = filterReadingsForView(expandSensorReadings(group.readings), mode);
   const capN = countUniqueSensorCapabilities(readings);
 
@@ -2493,7 +2494,7 @@ function renderSensorDeviceCard(group, mode) {
   const offline = readings.length > 0 && readings.every((d) => d.online === false);
   const badge = capN > 1 ? `${capN}-in-1` : heroMeta.label;
 
-  return `<article class="sdc-tile${hasAlert ? " sdc-tile-alert" : ""}${offline ? " sdc-tile-offline" : ""}"
+  return `<article class="sdc-tile${groupToneClass}${hasAlert ? " sdc-tile-alert" : ""}${offline ? " sdc-tile-offline" : ""}"
     data-device-id="${escapeHtml(name)}" style="--tint:${tint}">
     ${sensorTileIcon(hero.key, "sdc-tile-mark")}
     <div class="sdc-tile-top">

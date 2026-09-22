@@ -53,3 +53,5 @@ Presence, Room conditions, and Other sensors. A multi-sensor card appears
 once, using safety, presence, then room conditions as its priority. The
 section headers alternate only the dashboard accent and amber colours; red
 remains reserved for a real device alert.
+
+Option B is active: cards inherit their groups alternating accent or amber colour and use opposing rounded-corner shapes. Alert cards keep their red treatment.
