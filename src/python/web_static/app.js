@@ -1613,12 +1613,12 @@ function environmentSensorCard(sensor) {
    humidity share one physical-device card, while a CO₂ monitor earns its own
    air-quality treatment. */
 function environmentGaugeRanges(kind) {
-  // The outer band is a genuine range scale. Temperatures below 18 C are low,
-  // 18–25 C are comfortable, and higher readings are hot. Relative humidity
-  // below 30% is dry, 30–60% comfortable, and higher readings are humid.
+  // These scales match the approved gauge: temperature is framed as a useful
+  // indoor 15–30 C span with 18–26 C comfortable. Humidity keeps its natural
+  // percentage scale, with 20–65% in the comfortable middle range.
   return kind === "temperature"
-    ? { maximum: 35, lowEnd: 18, comfortEnd: 25 }
-    : { maximum: 100, lowEnd: 30, comfortEnd: 60 };
+    ? { minimum: 15, maximum: 30, lowEnd: 18, comfortEnd: 26 }
+    : { minimum: 0, maximum: 100, lowEnd: 20, comfortEnd: 65 };
 }
 
 function environmentGaugePoint(radius, percent) {
@@ -1649,9 +1649,10 @@ function environmentGauge(value, unit, kind) {
   const display = kind === "temperature" ? value.toFixed(1) : String(Math.round(value));
   const label = kind === "temperature" ? "Temperature" : "Humidity";
   const range = environmentGaugeRanges(kind);
-  const progress = Math.max(0, Math.min(100, (value / range.maximum) * 100));
-  const low = (range.lowEnd / range.maximum) * 100;
-  const comfort = ((range.comfortEnd - range.lowEnd) / range.maximum) * 100;
+  const span = range.maximum - range.minimum;
+  const progress = Math.max(0, Math.min(100, ((value - range.minimum) / span) * 100));
+  const low = ((range.lowEnd - range.minimum) / span) * 100;
+  const comfort = ((range.comfortEnd - range.lowEnd) / span) * 100;
   const hot = 100 - low - comfort;
   const valueColour = value < range.lowEnd
     ? "#f1f5f9"
