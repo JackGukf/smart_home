@@ -2469,9 +2469,16 @@ aside {
 .environment-gauge-comfort { stroke: var(--green); }
 .environment-gauge-hot { stroke: var(--red); }
 
-/* The live value is a solid annular band beneath the range ring. The SVG
-   derives it from the same centre and angles, so it remains concentric. */
-.environment-gauge-value { stroke: none; }
+/* The full inner value track and the outer threshold ring use the exact
+   same semicircle path. The ring is drawn last so white, green, and red stay
+   visible above the filled value arc. */
+.environment-gauge-value-track,
+.environment-gauge-value {
+  fill: none;
+  stroke-width: 26;
+  stroke-linecap: butt;
+}
+.environment-gauge-value-track { stroke: #334149; }
 
 
 .environment-gauge strong {
