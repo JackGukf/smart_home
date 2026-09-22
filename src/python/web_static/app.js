@@ -1613,12 +1613,12 @@ function environmentSensorCard(sensor) {
    humidity share one physical-device card, while a CO₂ monitor earns its own
    air-quality treatment. */
 function environmentGaugeRanges(kind) {
-  // These scales match the approved gauge: temperature is framed as a useful
-  // indoor 15–30 C span with 18–26 C comfortable. Humidity keeps its natural
-  // percentage scale, with 20–65% in the comfortable middle range.
+  // These proportions match the approved gauge: a short white low range, a
+  // broad green comfort range, then red. A 10–30 C display scale places an
+  // ordinary 21–23 C room reading in the middle of the thick value arc.
   return kind === "temperature"
-    ? { minimum: 15, maximum: 30, lowEnd: 18, comfortEnd: 26 }
-    : { minimum: 0, maximum: 100, lowEnd: 20, comfortEnd: 65 };
+    ? { minimum: 10, maximum: 30, lowEnd: 12, comfortEnd: 24 }
+    : { minimum: 0, maximum: 100, lowEnd: 15, comfortEnd: 65 };
 }
 
 function environmentGaugePoint(radius, percent) {

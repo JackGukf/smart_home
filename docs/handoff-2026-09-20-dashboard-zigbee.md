@@ -61,10 +61,10 @@ Option B is active: cards inherit their groups alternating accent or amber colou
 Devices -> Environment now renders every temperature and humidity sensor as a
 paired gauge card. Each semicircle retains the dashboard slate theme and uses a
 a thin outer threshold ring split into white (low), green (comfortable), and
-red (hot or humid). A separate thick inner semicircle starts at zero and ends
-at the live value, using the colour of that value's threshold range. This
-matches the selected gauge treatment while keeping the familiar dashboard
-colours.
+red (hot or humid). A separate thick inner semicircle starts at the display
+minimum and ends at the live value, using the colour of that value's threshold
+range. Temperature uses a 10-30 C gauge with a 12-24 C comfort range; humidity
+uses a 0-100% gauge with a 15-65% comfort range.
 
 CO2-capable monitors use a dedicated breathing-orb card. The orb colour follows
 the existing fresh/okay/stuffy/poor CO2 classification and keeps the current
