@@ -45,3 +45,11 @@ be changed only after confirming the individual device exposes that setting.
 The physical Ecobee appears in Home Assistant as climate.my_ecobee (HomeKit, local) and climate.my_ecobee_2 (cloud). The dashboard now pairs the two by their shared friendly name and Home Assistants numeric duplicate-id convention, rather than their current temperature. The cloud entity is displayed while it is available because it supplies presets, equipment state, and room sensors; the local HomeKit entity becomes the displayed card automatically if the cloud entity is unavailable.
 
 This avoids duplicate Climate dials when the two integrations refresh at different times, while retaining local control during an internet outage. Focused tests cover differing temperatures, deterministic ordering, and the unavailable-cloud fallback.
+
+## Grouped Sensors page (2026-09-21)
+
+The Devices -> Sensors page groups physical sensor cards as Safety & entry,
+Presence, Room conditions, and Other sensors. A multi-sensor card appears
+once, using safety, presence, then room conditions as its priority. The
+section headers alternate only the dashboard accent and amber colours; red
+remains reserved for a real device alert.

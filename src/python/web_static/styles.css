@@ -2089,6 +2089,61 @@ aside {
   border-color: rgba(251, 191, 36, 0.38);
 }
 
+
+/* The Sensors page has four semantic sections, but section headers alternate
+   between only these two colours. Alert red remains reserved for a device
+   which actually needs attention. */
+.sensor-page-section {
+  --sensor-section-color: var(--t-accent);
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.sensor-page-section:first-of-type { margin-top: 0; }
+.sensor-page-section-tone-b { --sensor-section-color: var(--amber); }
+
+.sensor-page-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--sensor-section-color);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.sensor-page-section-head::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: color-mix(in srgb, var(--sensor-section-color) 42%, transparent);
+}
+
+.sensor-page-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.sensor-page-section-title i { font-size: 17px; }
+
+.sensor-page-section-count {
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sensor-section-color) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sensor-section-color) 30%, transparent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sensor-page-section-grid { width: 100%; }
+
 /* ── SENSOR DEVICE TILE ──
    A compact tile tinted by device type. The type icon repeats twice: once
    small in the badge, once oversized as a watermark, which is what makes the

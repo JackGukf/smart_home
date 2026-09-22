@@ -2163,6 +2163,56 @@ function groupSensorDevices(devices) {
     });
 }
 
+
+const SENSOR_PAGE_SECTIONS = [
+  { id: "safety", name: "Safety & entry", icon: "ti-shield-check" },
+  { id: "presence", name: "Presence", icon: "ti-radar-2" },
+  { id: "conditions", name: "Room conditions", icon: "ti-temperature" },
+  { id: "other", name: "Other sensors", icon: "ti-category" },
+];
+
+/* A sensor card belongs to one section on this page. The prioritisation means
+   a multi-sensor remains one physical card: safety comes first, then people,
+   then room conditions. */
+function sensorPageSectionId(group) {
+  const readings = filterReadingsForView(expandSensorReadings(group.readings), "sensors");
+  const keys = new Set(readings.map(sensorCapabilityKey));
+  const deviceClasses = new Set(readings.map((reading) => String(reading.device_class || "").toLowerCase()));
+  const categories = readings.map((reading) => String(reading.category || "").toLowerCase());
+
+  if (keys.has("water") || keys.has("smoke") || keys.has("door") ||
+      deviceClasses.has("tamper") || deviceClasses.has("vibration") ||
+      categories.some((category) => category.includes("tamper") || category.includes("vibration"))) {
+    return "safety";
+  }
+  if (keys.has("motion")) return "presence";
+  if (keys.has("illuminance") || keys.has("temperature") || keys.has("humidity")) return "conditions";
+  return "other";
+}
+
+function groupSensorPageSections(groups) {
+  const byId = new Map(SENSOR_PAGE_SECTIONS.map((section) => [section.id, {
+    ...section,
+    groups: [],
+  }]));
+  groups.forEach((group) => byId.get(sensorPageSectionId(group)).groups.push(group));
+  return SENSOR_PAGE_SECTIONS.map((section) => byId.get(section.id)).filter((section) => section.groups.length);
+}
+
+function renderSensorPageSections(sections) {
+  return sections.map((section, index) =>
+    '<section class="sensor-page-section sensor-page-section-tone-' + (index % 2 ? "b" : "a") + '">' +
+      '<div class="sensor-page-section-head">' +
+        '<span class="sensor-page-section-title"><i class="ti ' + section.icon + '" aria-hidden="true"></i>' + escapeHtml(section.name) + '</span>' +
+        '<span class="sensor-page-section-count">' + section.groups.length + '</span>' +
+      '</div>' +
+      '<div class="device-grid sensor-tile-grid sensor-page-section-grid">' +
+        section.groups.map((group) => renderSensorDeviceCard(group, "sensors")).join("") +
+      '</div>' +
+    '</section>'
+  ).join("");
+}
+
 function sensorDeviceSubtitle(readings) {
   const labels = readings.map((r) => {
     return String(r.category || "").replace("tuya_", "").replace(/_/g, " ") || "sensor";
@@ -2492,7 +2542,7 @@ function renderTuyaDevices(devices) {
     ? `<div class="sdc-alert-banner"><i class="ti ti-alert-triangle"></i> ${alertGroupCount} device${alertGroupCount > 1 ? "s" : ""} need${alertGroupCount > 1 ? "" : "s"} attention</div>`
     : "";
 
-  tuyaGrid.innerHTML = banner + groups.map((g) => renderSensorDeviceCard(g, "sensors")).join("");
+  tuyaGrid.innerHTML = banner + renderSensorPageSections(groupSensorPageSections(groups));
   renderDevicesOverview();
   renderEnvironmentSensors();
   renderMotionSensors();
