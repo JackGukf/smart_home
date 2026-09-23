@@ -60,6 +60,7 @@ header we could set will log it in.
 | `configs/devices.local.yaml` on the board | `dashboard_auth.trusted_hosts: [192.168.0.176]` |
 | `configuration.yaml` on the board | a delimited `homeassistant: auth_providers:` block |
 | `~/.local/bin/smart-home-kiosk` on the panel | the launcher, from `scripts/kiosk/kiosk-launch.sh` |
+| `~/.local/bin/smart-home-kiosk-watchdog` on the panel | checks the visible clock and restarts a stuck Chromium process |
 | `~/.config/smart-home-kiosk.env` on the panel | `DASHBOARD_URL` |
 | `~/.config/autostart/smart-home-kiosk.desktop` on the panel | what starts it |
 
@@ -129,6 +130,8 @@ one view. `camera_paths` lists them in the order somebody crosses them:
 camera_paths:
   - name: Front approach
     linger_seconds: 300
+    abandon_seconds: 60
+    prewarm_next: false
     cameras: [Garage camera, Frontyard camera, Front door camera]
 ```
 
@@ -141,14 +144,18 @@ already says it is the same person walking, and matching people between views
 would mean a second graph on an NPU where a QDQ `Concat` silently zeroed the
 last one's outputs for days. What the route needs is an order, and you know it.
 
-Four things carry it, and each was measured rather than assumed:
+Five things carry it, and each was measured rather than assumed:
 
-- **The next camera is opened before they reach it.** A WebRTC stream takes a
-  few seconds to come up, and by then they have walked out of frame — so the
-  card holds the camera on screen *and* the one they are heading for.
-- **Only those two.** Holding all three put the Pi 4 at 80% CPU with two
-  Chromium processes pegged at ~85% of a core each, and none of the streams
-  finished connecting. Only the next one has to be ready.
+- **Only the camera the person is at plays** (`prewarm_next: false`, the
+  default since build #336). The card opens one stream when somebody trips the
+  first camera, and the next camera only when *its* sensor sees them. A person
+  who stays at the garage or leaves costs one stream, never two.
+- **Pre-warming is opt-in.** `prewarm_next: true` holds the next camera open
+  too, so the handoff is instant — a WebRTC stream takes a few seconds to come
+  up, and by then they may have walked out of frame. But it is a second stream
+  decoding for the whole episode, and holding all three put the Pi 4 at 80% CPU
+  with two Chromium processes pegged at ~85% of a core each and none of the
+  streams finished connecting. Never pre-warm more than the next one.
 - **Slots are DOM nodes, not markup.** Re-creating an `<iframe>` reloads it, so
   rebuilding the card to add the next camera would drop the stream currently on
   screen — a black gap at the exact moment somebody walks into view. The card is
@@ -157,6 +164,47 @@ Four things carry it, and each was measured rather than assumed:
 - **Advancing is one-way.** `NPU_PRESENCE_HOLD` keeps the garage sensor true for
   a minute after somebody has left it, so the rule is "the furthest camera that
   has seen them". Anything else retreats to a view they have already left.
+- **Leaving ends the episode.** When nobody is seen, the card waits
+  `abandon_seconds` (default: the linger) if the person never advanced past the
+  camera that opened the episode — they stayed, or left — and the full
+  `linger_seconds` once it has followed them along the route.
+
+### Direction: an arrival is not a departure
+
+Since 2026-09 the detector also says **which way** the person is walking.
+`NPU_INWARD` in `.env` names each camera's inward axis — `x+`/`x-`/`y+`/`y-`,
+the frame axis someone walks along on the way to the house, and the sign that
+means inward:
+
+```bash
+# .env, on the board
+NPU_INWARD=garage_camera=x-,frontyard_camera=x+
+```
+
+`npu_detector.py` matches boxes between consecutive scored frames (no
+re-identification model — a person-shaped blob is not a face), measures travel
+along the axis, and publishes a per-frame `direction: inward|outward|still` in
+the `smarthome/vision/<camera>` payload, exposed in Home Assistant as
+`sensor.<camera>_npu_person_direction`. Point each outdoor camera's
+`direction_entity:` at it in `devices.local.yaml`.
+
+Two rules consume it:
+
+- A step whose direction says **outward** does not open or advance the route —
+  somebody walking away from the house is not somebody to follow.
+- When the camera on screen says **outward**, the live view closes at once
+  rather than waiting out the linger. It stays closed until the route's motion
+  sensors clear, because the detector may briefly report `unknown` direction
+  while its presence hold still reports occupancy.
+
+The front door's Zigbee PIR has no direction, so a missing direction leaves the
+old behaviour: the sensor is trusted as it always was. Cameras without an
+`NPU_INWARD` entry always report `unknown` and behave the same way.
+
+To calibrate the axis and sign, watch the live payload while walking the route
+once each way — `mosquitto_sub -t 'smarthome/vision/#' -v` on the board shows
+the `direction` field — and set the sign so walking towards the house reads
+`inward`.
 
 To watch it work without standing at the door, nudge the sensor in Home
 Assistant. The real Zigbee device reasserts its own state on its next report, so
@@ -187,6 +235,25 @@ ssh smarthome@192.168.0.176 'pkill -f chromium-kiosk'
 
 That is also how you bootstrap a panel still running a build from before the
 watch existed — it cannot reload itself into the version that knows how to.
+
+## Frozen browser recovery
+
+On 2026-09-22 the panel clock stopped at 23:14 while the Pi and dashboard
+server continued running. Chromium logged an audio thread hang at 23:14:35,
+but its main process stayed alive, so the launcher's exit-based restart loop
+could not help. The exact media-stack trigger is not proven. The kiosk now
+mutes its own camera audio and starts a separate watchdog for each Chromium
+process. Every 45 seconds the watchdog checks the clock pixels in the
+dashboard header. If those pixels stay identical for three minutes while the
+dashboard URL answers, it restarts Chromium. It resets its timer while the
+server is unreachable or the screenshot cannot be captured. This observes the
+rendered screen, so a stuck JavaScript timer, renderer, or video frame is
+detectable even when Chromium has not exited.
+
+The reboot that cleared this freeze also took longer because Wi-Fi initially
+associated but did not receive a DHCP lease. `NetworkManager-wait-online`
+used its full 60-second timeout, and the successful DHCP retry finished about
+two minutes after boot. That network delay is separate from the frozen browser.
 
 ## Verify
 

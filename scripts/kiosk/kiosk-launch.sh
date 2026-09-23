@@ -28,6 +28,7 @@ fi
 CHROMIUM_BIN="${CHROMIUM_BIN:-$(command -v chromium || command -v chromium-browser || true)}"
 PROFILE_DIR="${PROFILE_DIR:-${HOME}/.config/chromium-kiosk}"
 LOG_FILE="${LOG_FILE:-${HOME}/.local/state/smart-home-kiosk.log}"
+WATCHDOG_BIN="${WATCHDOG_BIN:-${HOME}/.local/bin/smart-home-kiosk-watchdog}"
 # How long to wait for the dashboard before opening Chromium anyway. The panel
 # showing an error page is better than the panel showing nothing at all.
 WAIT_SECONDS="${WAIT_SECONDS:-120}"
@@ -142,10 +143,25 @@ while true; do
         --check-for-update-interval=31536000 \
         --password-store=basic \
         --autoplay-policy=no-user-gesture-required \
+        --mute-audio \
         --overscroll-history-navigation=0 \
-        "${DASHBOARD_URL}" >> "${LOG_FILE}" 2>&1
+        "${DASHBOARD_URL}" >> "${LOG_FILE}" 2>&1 &
+    browser_pid=$!
 
+    watchdog_pid=""
+    if [[ -x "${WATCHDOG_BIN}" ]]; then
+        "${WATCHDOG_BIN}" "${browser_pid}" "${DASHBOARD_URL}" "${LOG_FILE}" &
+        watchdog_pid=$!
+    else
+        log "WARN: kiosk watchdog missing at ${WATCHDOG_BIN}"
+    fi
+
+    wait "${browser_pid}"
     status=$?
+    if [[ -n "${watchdog_pid}" ]]; then
+        kill "${watchdog_pid}" 2>/dev/null || true
+        wait "${watchdog_pid}" 2>/dev/null || true
+    fi
     log "chromium exited (status ${status})"
 
     # Five deaths inside a minute is a real fault, not a blip. Back off so the

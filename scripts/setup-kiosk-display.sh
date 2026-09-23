@@ -42,6 +42,7 @@ done
 TARGET="${PI_USER}@${PI_HOST}"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAUNCHER_SRC="${PROJECT_ROOT}/scripts/kiosk/kiosk-launch.sh"
+WATCHDOG_SRC="${PROJECT_ROOT}/scripts/kiosk/kiosk-watchdog.sh"
 
 echo "==> Panel:     ${TARGET}"
 echo "==> Dashboard: ${DASHBOARD_URL}"
@@ -60,6 +61,11 @@ fi
 if ! command -v curl >/dev/null 2>&1; then
     echo "    MISSING: curl (sudo apt install curl)"; fail=1
 fi
+for tool in grim wlr-randr timeout sha256sum; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+        echo "    MISSING: ${tool} (required for frozen-screen recovery)"; fail=1
+    fi
+done
 autologin_user="$(grep -E '^\s*autologin-user=' /etc/lightdm/lightdm.conf 2>/dev/null | tail -1 | cut -d= -f2)"
 autologin_session="$(grep -E '^\s*autologin-session=' /etc/lightdm/lightdm.conf 2>/dev/null | tail -1 | cut -d= -f2)"
 if [[ -n "${autologin_user}" ]]; then
@@ -82,7 +88,8 @@ echo
 echo "==> Installing the launcher..."
 ssh "${TARGET}" 'mkdir -p ~/.local/bin ~/.config/autostart ~/.local/state'
 scp -q "${LAUNCHER_SRC}" "${TARGET}:.local/bin/smart-home-kiosk"
-ssh "${TARGET}" 'chmod +x ~/.local/bin/smart-home-kiosk'
+scp -q "${WATCHDOG_SRC}" "${TARGET}:.local/bin/smart-home-kiosk-watchdog"
+ssh "${TARGET}" 'chmod +x ~/.local/bin/smart-home-kiosk ~/.local/bin/smart-home-kiosk-watchdog'
 
 echo "==> Writing ~/.config/smart-home-kiosk.env..."
 ssh "${TARGET}" "cat > ~/.config/smart-home-kiosk.env" <<ENVFILE
