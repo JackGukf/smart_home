@@ -3479,8 +3479,9 @@ async function captureSnapshotOnce(camera) {
       reader.onload = () => {
         const dataUri = reader.result;
         saveCachedSnapshot(cameraId, dataUri);
-        const img = cameraGrid.querySelector(`img[data-camera-snap="${CSS.escape(cameraId)}"]`);
-        if (img) img.src = dataUri;
+        document.querySelectorAll('img[data-camera-snap="' + CSS.escape(cameraId)
+          + '"], img[data-camera-thumb="' + CSS.escape(cameraId) + '"]')
+          .forEach((img) => { img.src = dataUri; });
         resolve(dataUri);
       };
       reader.onerror = () => resolve(null);
@@ -3491,13 +3492,24 @@ async function captureSnapshotOnce(camera) {
   }
 }
 
+let snapshotRefreshInFlight = null;
+
 async function cacheSnapshotsInBackground(cameras) {
-  for (const camera of cameras) {
-    if (!camera.view_url || activeCameraIds.has(cameraIdFor(camera))) continue;
-    if (camera.battery_powered) continue;
-    await captureSnapshotOnce(camera);
-    await new Promise((r) => setTimeout(r, 300));
-  }
+  if (snapshotRefreshInFlight) return snapshotRefreshInFlight;
+  // Put Home's outdoor previews first; two workers keep the gateway responsive
+  // while avoiding a long serial wait through every indoor camera.
+  const eligible = cameras.filter((camera) => camera.view_url && !camera.battery_powered)
+    .sort((a, b) => Number(isOutdoorCamera(b)) - Number(isOutdoorCamera(a)));
+  let next = 0;
+  const worker = async () => {
+    while (next < eligible.length) {
+      const camera = eligible[next++];
+      if (!activeCameraIds.has(cameraIdFor(camera))) await captureSnapshotOnce(camera);
+    }
+  };
+  snapshotRefreshInFlight = Promise.all([worker(), worker()])
+    .finally(() => { snapshotRefreshInFlight = null; });
+  return snapshotRefreshInFlight;
 }
 
 /* ── Doorbell camera card (prototype-style idle/live) ── */
@@ -3830,7 +3842,7 @@ function cameraAction(camera) {
 
 function snapshotUrlFor(camera) {
   const cameraId = encodeURIComponent(cameraIdFor(camera));
-  return `/api/cameras/${cameraId}/snapshot.jpg?ts=${Date.now()}`;
+  return "/api/cameras/" + cameraId + "/snapshot.jpg";
 }
 
 /* ────────────────────────────────────────────────────────────
@@ -6335,7 +6347,18 @@ document.addEventListener("click", (event) => {
    at most every five minutes and whenever the chosen sensors change. */
 const TEMP_OUTLIER_DEGREES = 1.5;
 const TEMP_HISTORY_MS = 5 * 60_000;
-let tempHistory = { key: "", at: 0, data: null, pending: false };
+const TEMP_HISTORY_CACHE_KEY = "home_temp_history_v1";
+function savedTempHistory() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TEMP_HISTORY_CACHE_KEY) || "null");
+    if (saved && typeof saved.key === "string" && Number.isFinite(saved.at)
+        && saved.data?.status === "ok") return saved;
+  } catch {}
+  return { key: "", at: 0, data: null };
+}
+let tempHistoryCache = savedTempHistory();
+let tempHistory = tempHistoryCache;
+const pendingTempHistoryKeys = new Set();
 
 const TEMP_SPARKS = [
   { key: "indoor_temperature", name: "Indoor temperature", unit: "°", decimals: 1, color: "#4a9ae0" },
@@ -6443,28 +6466,42 @@ function renderHomeTempSensors() {
       </div>
     </div>`);
 
-  drawTempSparks();
   loadTempHistory(model.groups);
+  drawTempSparks();
 }
 
 async function loadTempHistory(groups) {
   const key = JSON.stringify(groups);
-  const fresh = tempHistory.key === key && Date.now() - tempHistory.at < TEMP_HISTORY_MS;
-  if (fresh || tempHistory.pending) return;
-  tempHistory.pending = true;
+  if (tempHistory.key !== key) {
+    // Sources arrive independently at startup. A request for an early partial
+    // group must not block the final group or draw its history under new labels.
+    tempHistory = tempHistoryCache.key === key
+      ? tempHistoryCache : { key, at: 0, data: null };
+  }
+  if (tempHistory.data && Date.now() - tempHistory.at < TEMP_HISTORY_MS) return;
+  if (pendingTempHistoryKeys.has(key)) return;
+  pendingTempHistoryKeys.add(key);
   try {
     const data = await requestJson("/api/sensors/history", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ groups, hours: 24 }),
     });
-    tempHistory = { key, at: Date.now(), data: data.status === "ok" ? data : null, pending: false };
+    if (tempHistory.key !== key) return;
+    tempHistory = { key, at: Date.now(), data: data.status === "ok" ? data : null };
+    if (tempHistory.data) {
+      tempHistoryCache = tempHistory;
+      try { localStorage.setItem(TEMP_HISTORY_CACHE_KEY, JSON.stringify(tempHistory)); } catch {}
+    }
   } catch (error) {
     console.error(error);
-    // Try again on the next refresh rather than hammering a board that said no.
-    tempHistory = { key, at: Date.now(), data: tempHistory.data, pending: false };
+    if (tempHistory.key !== key) return;
+    // Keep a previously shown trend, but delay retry until the next refresh.
+    tempHistory = { key, at: Date.now(), data: tempHistory.data };
+  } finally {
+    pendingTempHistoryKeys.delete(key);
+    if (tempHistory.key === key) drawTempSparks();
   }
-  drawTempSparks();
 }
 
 /* Monotone cubic (Fritsch–Carlson): smooth, and never overshoots a low or a

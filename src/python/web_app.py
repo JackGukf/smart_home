@@ -739,6 +739,8 @@ def create_app(
     app.state.news_settings_path = news_settings_path or DEFAULT_NEWS_SETTINGS_PATH
     app.state.news_service = news_service or news_feed.NewsService()
     app.state.history_service = history_service
+    app.state.camera_snapshot_cache = {}
+    app.state.camera_snapshot_locks = {}
     app.state.energy_source = energy_source
     app.state.energy_forecast_path = energy_forecast_path or DEFAULT_ENERGY_FORECAST_PATH
     app.state.ai_data_dir = Path(ai_data_dir or DEFAULT_AI_DATA_DIR)
@@ -2014,22 +2016,35 @@ def create_app(
     @app.get("/api/cameras/{camera_id}/snapshot.jpg")
     async def camera_snapshot(camera_id: str) -> Response:
         camera = _find_camera(_load_cameras(app.state.config_path), camera_id)
-
-        # Prefer go2rtc, which reuses the session it already holds. Cameras like
-        # the Wyze RTSP build serve one client at a time, so grabbing the still
-        # with our own ffmpeg would open a competing session to the same camera.
-        frame = await asyncio.to_thread(_capture_go2rtc_frame, camera)
-        if not frame:
-            if not camera.stream_url or not camera.stream_url.startswith(("rtsp://", "rtsps://")):
-                raise HTTPException(status_code=400, detail="Camera does not have an RTSP stream URL")
-            if not shutil.which("ffmpeg"):
-                raise HTTPException(status_code=503, detail="ffmpeg is required for camera snapshots")
-            frame = await asyncio.to_thread(_capture_rtsp_frame, camera.stream_url)
+        cache = app.state.camera_snapshot_cache
+        cached = cache.get(camera_id)
+        if cached and time.monotonic() - cached[0] < CAMERA_SNAPSHOT_CACHE_SECONDS:
+            frame = cached[1]
+        else:
+            # Home previews, the Cameras view, and the background saver can ask
+            # for the same frame together. Only one capture should reach go2rtc.
+            lock = app.state.camera_snapshot_locks.setdefault(camera_id, asyncio.Lock())
+            async with lock:
+                cached = cache.get(camera_id)
+                if cached and time.monotonic() - cached[0] < CAMERA_SNAPSHOT_CACHE_SECONDS:
+                    frame = cached[1]
+                else:
+                    # go2rtc reuses the camera session; a direct ffmpeg read is
+                    # only a fallback for cameras whose gateway has no frame.
+                    frame = await asyncio.to_thread(_capture_go2rtc_frame, camera)
+                    if not frame:
+                        if not camera.stream_url or not camera.stream_url.startswith(("rtsp://", "rtsps://")):
+                            raise HTTPException(status_code=400, detail="Camera does not have an RTSP stream URL")
+                        if not shutil.which("ffmpeg"):
+                            raise HTTPException(status_code=503, detail="ffmpeg is required for camera snapshots")
+                        frame = await asyncio.to_thread(_capture_rtsp_frame, camera.stream_url)
+                    cache[camera_id] = (time.monotonic(), frame)
 
         return Response(
             frame,
             media_type="image/jpeg",
-            headers={"Cache-Control": "no-store", "Content-Encoding": "identity"},
+            headers={"Cache-Control": f"private, max-age={CAMERA_SNAPSHOT_CACHE_SECONDS}",
+                     "Content-Encoding": "identity"},
         )
 
     @app.post("/api/devices/{host}/commands/{command}")
@@ -7141,6 +7156,8 @@ def _camera_card(camera: CameraDefinition, check_ports: bool = True) -> dict[str
 
 # Words that only appear in the name of a camera pointed outside. The config's
 # own `outdoor:` always wins; this is what a house that has never set it gets.
+CAMERA_SNAPSHOT_CACHE_SECONDS = 30
+
 OUTDOOR_CAMERA_WORDS = ("garage", "yard", "front door", "frontdoor", "driveway",
                         "porch", "doorbell", "outdoor", "outside", "gate")
 
