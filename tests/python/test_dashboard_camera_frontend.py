@@ -109,19 +109,16 @@ def test_live_updates_never_break_page_load() -> None:
     assert body.index("try {") < body.index('addEventListener("changed"')
 
 
-def test_live_refresh_is_debounced_and_reuses_the_normal_refresh() -> None:
-    """A reconnecting bridge republishes everything; that must be one refresh.
-
-    And the stream is a trigger, not a second state feed - it calls the same
-    loadDevices() the poll does, so there is one code path building cards.
-    """
+def test_live_refresh_debounces_and_refreshes_camera_triggers() -> None:
+    """Sensor events refresh the camera path without waiting for the 60s poll."""
     source = APP_JS.read_text(encoding="utf-8")
-    start = source.index("function scheduleLiveRefresh()")
-    body = source[start:start + 500]
+    start = source.index("function scheduleLiveRefresh(event)")
+    body = source[start:start + 1600]
 
     assert "clearTimeout(liveRefreshTimer)" in body
-    assert "loadDevices()" in body
     assert "LIVE_REFRESH_DEBOUNCE_MS" in body
+    assert "refreshLiveCameraTriggers(entityIds)" in body
+    assert 'requestJson("/api/cameras")' in source
 
 
 def test_the_security_view_draws_the_house_and_the_card_draws_chips() -> None:

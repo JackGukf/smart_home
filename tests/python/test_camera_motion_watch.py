@@ -5,9 +5,8 @@ card while that sensor reads motion, and stops `motion_linger_seconds` after it
 reads clear. The rules that make it live with rather than fight the people in
 the house, and that are each easy to lose in a refactor:
 
-  * every screen decides for itself and starts out saying no - a dashboard left
-    open on a phone would otherwise pull a video stream over cellular because a
-    cat walked past;
+  * phones start with auto-watch off, so a dashboard left open on cellular
+    does not pull a video stream; the trusted wall panel defaults on;
   * motion returning inside the linger window cancels the stop, so someone
     standing at the door does not watch the picture blink out;
   * touching the card releases the episode - the automation stops managing it
@@ -47,6 +46,7 @@ const pick = (name) => {
 const CAMERA = {
   id: '192.168.0.191', name: 'Front door camera', room: 'Home',
   motion_entity: 'binary_sensor.0xa4c138f3061bad8d_presence',
+  person_entity: 'binary_sensor.front_door_camera_npu_person',
   motion_linger_seconds: 300,
 };
 
@@ -104,7 +104,7 @@ eval(src.match(/const MOTION_WATCH_DEFAULT_LINGER_MS = [^;]+;/)[0].replace('cons
 eval(src.match(/const MOTION_ON_STATES = new Set\\([^)]*\\);/)[0].replace('const ', 'globalThis.'));
 eval(src.match(/const HOME_CAMERA_AUTO_KEY = [^;]+;/)[0].replace('const ', 'globalThis.'));
 
-eval(pick('cameraIdFor') + pick('motionSensorIsTripped') + pick('motionLingerMs')
+eval(pick('cameraIdFor') + pick('motionSensorIsTripped') + pick('cameraTriggerIsTripped') + pick('motionLingerMs')
    + pick('openMotionEpisode') + pick('closeMotionEpisode')
    + pick('stopAllMotionEpisodes') + pick('releaseMotionEpisodes')
    + pick('updateMotionWatch') + pick('motionWatchEnabled')
@@ -363,3 +363,30 @@ def test_the_api_carries_the_pairing_to_the_page(tmp_path: Path) -> None:
     assert cameras["Front door camera"]["motion_entity"] == "binary_sensor.front_door_presence"
     assert cameras["Front door camera"]["motion_linger_seconds"] == 300
     assert "motion_entity" not in cameras["Garage camera"], "unpaired cameras stay unpaired"
+
+def test_either_front_door_sensor_starts_video(tmp_path: Path) -> None:
+    result = _run("""
+setMotion('off');
+latestCameras[0].person_state = 'on';
+optIn();
+report();
+""", tmp_path)
+    assert result["playing"] is True
+
+    result = _run("""
+setMotion('on');
+latestCameras[0].person_state = 'off';
+optIn();
+report();
+""", tmp_path)
+    assert result["playing"] is True
+
+
+def test_both_front_door_sensors_clear_do_not_start_video(tmp_path: Path) -> None:
+    result = _run("""
+setMotion('off');
+latestCameras[0].person_state = 'off';
+optIn();
+report();
+""", tmp_path)
+    assert result["playing"] is False

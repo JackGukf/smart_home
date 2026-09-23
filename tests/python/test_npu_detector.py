@@ -16,9 +16,12 @@ from src.python.npu_detector import (
     COCO_NAMES,
     Config,
     Detection,
+    SingleCameraTracker,
     build_payload,
     decode,
     nms,
+    summarize_direction,
+    _parse_inward,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -121,6 +124,71 @@ def test_empty_payload_still_reports_the_class_as_false() -> None:
     assert payload["counts"] == {}
 
 
+def test_payload_carries_the_frame_direction_and_per_detection() -> None:
+    payload = json.loads(build_payload(
+        "garage_camera",
+        [Detection("person", 0.9, (1, 2, 3, 4), direction="outward")],
+        ["person"],
+    ))
+    assert payload["direction"] == "outward"
+    assert payload["detections"][0]["direction"] == "outward"
+
+
+def test_payload_direction_prefers_inward_then_outward_then_still() -> None:
+    detections = [
+        Detection("person", 0.9, (1, 2, 3, 4), direction="still"),
+        Detection("person", 0.8, (5, 6, 7, 8), direction="outward"),
+        Detection("person", 0.7, (9, 10, 11, 12), direction="inward"),
+    ]
+    assert summarize_direction(detections) == "inward"
+    assert summarize_direction(detections[:2]) == "outward"
+    assert summarize_direction(detections[:1]) == "still"
+
+
+def test_payload_direction_is_unknown_without_an_axis_configured() -> None:
+    """A camera with no NPU_INWARD entry must not pretend to know the way."""
+    payload = json.loads(build_payload("cam", [], ["person"]))
+    assert payload["direction"] == "unknown"
+
+
+def test_inward_parsing_and_bad_entries() -> None:
+    assert _parse_inward("garage_camera=x-,frontyard_camera=y+") == {
+        "garage_camera": ("x", -1),
+        "frontyard_camera": ("y", 1),
+    }
+    assert _parse_inward("garage_camera=z-,garbage,=x+,") == {}
+
+
+def test_tracker_reports_direction_along_the_inward_axis() -> None:
+    """Walking one way is outward, and coming back reads inward once the window
+    has moved past the outward leg. A small wiggle is still."""
+    tracker = SingleCameraTracker(("x", -1), min_motion=10.0)
+    assert tracker.update([Detection("person", 0.9, (10, 100, 70, 200))], 0.0) == ["unknown"]
+    assert tracker.update([Detection("person", 0.9, (40, 100, 100, 200))], 1.0) == ["outward"]
+    assert tracker.update([Detection("person", 0.9, (10, 100, 70, 200))], 4.5) == ["inward"]
+
+    still = SingleCameraTracker(("x", -1), min_motion=10.0)
+    still.update([Detection("person", 0.9, (10, 100, 70, 200))], 0.0)
+    assert still.update([Detection("person", 0.9, (13, 100, 73, 200))], 1.0) == ["still"]
+
+
+def test_tracker_without_an_axis_reports_unknown() -> None:
+    tracker = SingleCameraTracker(None, min_motion=10.0)
+    tracker.update([Detection("person", 0.9, (10, 100, 70, 200))], 0.0)
+    assert tracker.update([Detection("person", 0.9, (40, 100, 100, 200))], 1.0) == ["unknown"]
+
+
+def test_tracker_does_not_match_different_classes() -> None:
+    """A car driving over a person track must not move the person's history."""
+    tracker = SingleCameraTracker(("x", -1), min_motion=10.0)
+    tracker.update([Detection("person", 0.9, (10, 100, 70, 200))], 0.0)
+    directions = tracker.update([
+        Detection("car", 0.9, (40, 100, 100, 200)),
+        Detection("person", 0.9, (10, 100, 70, 200)),
+    ], 1.0)
+    assert directions == ["unknown", "still"]
+
+
 def test_coco_labels_are_the_yolov8_order() -> None:
     assert len(COCO_NAMES) == 80
     assert COCO_NAMES[0] == "person"
@@ -142,6 +210,27 @@ def test_config_reads_cameras_and_classes_from_the_environment(monkeypatch) -> N
     cfg = Config.from_env()
     assert cfg.cameras == ["front_door_camera", "family_room_camera"]
     assert cfg.classes == {"person", "car"}
+
+
+def test_config_parses_camera_specific_person_confirmation(monkeypatch) -> None:
+    monkeypatch.setenv("NPU_CONFIRM_OVERRIDES", "front_door_camera=2,bad=0,broken")
+    cfg = Config.from_env()
+    assert cfg.confirm_for("front_door_camera") == 2
+    assert cfg.confirm_for("office_camera") == 1
+
+
+def test_motion_confirmation_is_camera_specific(monkeypatch) -> None:
+    monkeypatch.setenv("NPU_MOTION_CONFIRM_CAMERAS", "front_door_camera")
+    cfg = Config.from_env()
+    assert cfg.motion_confirm_cameras == {"front_door_camera"}
+
+
+def test_config_reads_the_inward_axes_and_motion_threshold(monkeypatch) -> None:
+    monkeypatch.setenv("NPU_INWARD", "garage_camera=x-,frontyard_camera=y+")
+    monkeypatch.setenv("NPU_MIN_MOTION", "30")
+    cfg = Config.from_env()
+    assert cfg.inward == {"garage_camera": ("x", -1), "frontyard_camera": ("y", 1)}
+    assert cfg.min_motion == 30.0
 
 
 # ------------------------------------------------------------------- packaging
@@ -232,7 +321,22 @@ def test_discovery_publishes_a_binary_sensor_and_a_count_per_class() -> None:
         "homeassistant/sensor/npu_vision_front_door_camera/person_count/config",
         "homeassistant/binary_sensor/npu_vision_front_door_camera/car/config",
         "homeassistant/sensor/npu_vision_front_door_camera/car_count/config",
+        "homeassistant/sensor/npu_vision_front_door_camera/direction/config",
     ])
+
+
+def test_discovery_publishes_a_direction_sensor_per_camera() -> None:
+    cfg = json.loads(
+        _discovery()["homeassistant/sensor/npu_vision_front_door_camera/direction/config"]
+    )
+    assert cfg["state_topic"] == "smarthome/vision/front_door_camera"
+    assert cfg["availability_mode"] == "all"
+    assert cfg["availability"] == [
+        {"topic": "smarthome/vision/status"},
+        {"topic": "smarthome/vision/front_door_camera/status"},
+    ]
+    assert "value_json.direction" in cfg["value_template"]
+    assert cfg["unique_id"] == "npu_vision_front_door_camera_direction"
 
 
 def test_binary_sensor_matches_the_json_the_detector_actually_publishes() -> None:
@@ -254,9 +358,11 @@ def test_every_entity_carries_availability() -> None:
     so a blind camera looks exactly like an empty one."""
     for payload in _discovery(classes=("person", "car")).values():
         cfg = json.loads(payload)
-        assert cfg["availability_topic"] == "smarthome/vision/status"
-        assert cfg["payload_available"] == "online"
-        assert cfg["payload_not_available"] == "offline"
+        assert cfg["availability_mode"] == "all"
+        assert cfg["availability"] == [
+            {"topic": "smarthome/vision/status"},
+            {"topic": "smarthome/vision/front_door_camera/status"},
+        ]
 
 
 def test_entities_are_grouped_under_one_device_per_camera() -> None:
@@ -273,7 +379,9 @@ def test_unique_ids_do_not_collide_across_cameras_or_classes() -> None:
     for camera in ("front_door_camera", "family_room_camera"):
         for payload in _discovery(camera, ("person", "car")).values():
             ids.add(json.loads(payload)["unique_id"])
-    assert len(ids) == 8
+    # Two classes (binary_sensor + count each) plus the direction sensor, per
+    # camera.
+    assert len(ids) == 10
 
 
 def test_count_sensor_defaults_to_zero_when_the_class_is_absent() -> None:
@@ -382,6 +490,88 @@ def test_npu_vision_entities_are_recognised() -> None:
 
 
 # ------------------------------------------------- per-camera independent loops
+
+def test_static_person_lookalike_cannot_trigger_without_local_change() -> None:
+    from src.python.npu_detector import PersonMotionGate
+
+    gate = PersonMotionGate()
+    frame = np.zeros((108, 192, 3), dtype=np.uint8)
+    frame[30:61, 50:71] = (80, 40, 120)
+    candidate = Detection("person", 0.386, (50, 30, 70, 60))
+
+    assert gate.filter(frame, [candidate]) == []
+    assert gate.filter(frame.copy(), [candidate]) == []
+
+    moved = frame.copy()
+    moved[30:61, 50:71] = (200, 200, 200)
+    assert gate.filter(moved, [candidate]) == [candidate]
+
+
+def test_global_brightness_change_is_not_person_motion() -> None:
+    from src.python.npu_detector import PersonMotionGate
+
+    gate = PersonMotionGate()
+    dark = np.zeros((108, 192, 3), dtype=np.uint8)
+    bright = np.full_like(dark, 60)
+    candidate = Detection("person", 0.4, (50, 30, 70, 60))
+    gate.filter(dark, [])
+    assert gate.filter(bright, [candidate]) == []
+
+
+def test_strong_person_detection_does_not_require_motion() -> None:
+    from src.python.npu_detector import PersonMotionGate
+
+    gate = PersonMotionGate()
+    frame = np.zeros((108, 192, 3), dtype=np.uint8)
+    candidate = Detection("person", 0.85, (50, 30, 70, 60))
+    assert gate.filter(frame, [candidate]) == [candidate]
+
+
+def test_stalled_camera_becomes_unavailable_and_recovers() -> None:
+    from src.python.npu_detector import CameraHealth
+
+    changes: list[tuple[str, bool]] = []
+    health = CameraHealth(["front_door_camera", "office_camera"], 20.0,
+                          lambda camera, online: changes.append((camera, online)))
+    health.seen("front_door_camera", now=100.0)
+    health.seen("office_camera", now=100.0)
+    health.seen("office_camera", now=115.0)
+    health.expire(now=121.0)
+    assert changes == [
+        ("front_door_camera", True),
+        ("office_camera", True),
+        ("front_door_camera", False),
+    ]
+    health.seen("front_door_camera", now=122.0)
+    assert changes[-1] == ("front_door_camera", True)
+
+
+def test_rtsp_timeout_is_set_before_capture_opens(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+    from src.python.npu_detector import FrameSource
+
+    calls: list[tuple[object, ...]] = []
+
+    class Capture:
+        def isOpened(self):
+            return True
+
+        def set(self, *args):
+            pass
+
+    fake_cv2 = SimpleNamespace(
+        CAP_FFMPEG=1900, CAP_PROP_OPEN_TIMEOUT_MSEC=53,
+        CAP_PROP_READ_TIMEOUT_MSEC=54, CAP_PROP_BUFFERSIZE=38,
+        VideoCapture=lambda *args: (calls.append(args), Capture())[1],
+    )
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+    source = FrameSource("front_door_camera", "rtsp://127.0.0.1:8554", 8.0)
+    assert source._open() is True
+    assert calls == [
+        ("rtsp://127.0.0.1:8554/front_door_camera", 1900, [53, 8000, 54, 8000])
+    ]
+
 
 class _FakeFrameSource:
     """Stands in for the held-open RTSP consumer, with no camera in sight."""
@@ -562,6 +752,37 @@ def test_first_sight_of_a_person_is_published_immediately() -> None:
 
     assert hold.update(1, now=0.0) == 1, "arrival was delayed"
     assert hold.published == 1
+
+
+def test_isolated_person_guess_does_not_enter_the_long_hold() -> None:
+    from src.python.npu_detector import PresenceHold
+
+    hold = PresenceHold(60.0, confirm_frames=2)
+    assert hold.update(1, now=0.0) is None
+    assert hold.update(0, now=0.5) is None
+    assert hold.update(0, now=10.0) is None
+    assert hold.published == 0
+
+
+def test_two_person_frames_confirm_even_with_a_short_dropout() -> None:
+    from src.python.npu_detector import PresenceHold
+
+    hold = PresenceHold(60.0, confirm_frames=2)
+    assert hold.update(1, now=0.0) is None
+    assert hold.update(0, now=0.5) is None
+    assert hold.update(1, now=1.0) == 1
+    assert hold.update(0, now=2.0) is None
+    assert hold.update(0, now=61.1) == 0
+
+
+def test_person_guesses_too_far_apart_do_not_confirm() -> None:
+    from src.python.npu_detector import PresenceHold
+
+    hold = PresenceHold(60.0, confirm_frames=2)
+    assert hold.update(1, now=0.0) is None
+    assert hold.update(0, now=1.0) is None
+    assert hold.update(1, now=4.0) is None
+    assert hold.published == 0
 
 
 def test_a_second_person_joining_is_also_immediate() -> None:

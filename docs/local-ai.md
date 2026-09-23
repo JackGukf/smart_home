@@ -273,15 +273,22 @@ provider that corrupts the heap on inputs it dislikes.
 | `NPU_CLASSES` | default `person`; e.g. `person,car,dog` |
 | `NPU_INTERVAL` | seconds; a floor, not a guarantee |
 | `NPU_CONF` / `NPU_IOU` | detection and NMS thresholds |
+| `NPU_CONFIRM_OVERRIDES` | per-camera repeated person frames, e.g. `front_door_camera=2`; default is 1 |
+| `NPU_MOTION_CONFIRM_CAMERAS` | cameras that require local image change for weak person-class boxes |
 | `NPU_FETCH_TIMEOUT` | drop a dead camera faster than the 8s default |
+| `NPU_INWARD` | per-camera inward axis, e.g. `garage_camera=x-,frontyard_camera=x+`; cameras without an entry publish `direction: unknown` |
+| `NPU_MIN_MOTION` | pixels of travel (default 24) before a track counts as moving rather than `still` |
 | `NPU_DISCOVERY` | `0` disables Home Assistant discovery |
 | `NPU_ENTITY_CATEGORY` | `diagnostic` by default; `""` puts entities on the main dashboard |
 
 ### Home Assistant entities
 
 Each camera arrives as a device with `binary_sensor.<camera>_npu_person`
-(device_class `occupancy`) and `sensor.<camera>_npu_person_count`. Entities go
-`unavailable` when the service stops — a last will on
+(device_class `occupancy`), `sensor.<camera>_npu_person_count`, and
+`sensor.<camera>_npu_person_direction` (`inward`/`outward`/`still`/`unknown`,
+from the per-frame `direction` the detector publishes — see
+`docs/kiosk-display.md`, "Direction: an arrival is not a departure"). Entities
+go `unavailable` when the service stops — a last will on
 `smarthome/vision/status` — so a blind camera is distinguishable from an empty
 one.
 
@@ -312,15 +319,50 @@ reporting "2,358 sightings" of an empty room.
 `PresenceHold` in `src/python/npu_detector.py` turns that into an enter/leave
 signal. It is deliberately asymmetric:
 
-- **A rise publishes immediately.** First sight of a person, or a second person
-  joining one already there, is never delayed and never suppressed.
+- **A rise normally publishes immediately.** The front-door camera requires
+  two person-class frames within three seconds because isolated YOLO guesses
+  were becoming one-minute false alerts. Other cameras keep immediate rises.
 - **A fall waits.** The published count is the highest seen in the last
   `NPU_PRESENCE_HOLD` seconds (default 60), so a dropout must persist to be
   believed.
 
-The only error it can make is reporting a room occupied for up to the hold after
-it emptied. It cannot make you wait to be noticed. Measured against the real gap
-distribution:
+With frames arriving, the hold can report a room occupied for up to the hold
+after it empties. A camera stream that stops delivering frames is different:
+the hold receives no empty frames and cannot clear an earlier detection. The
+detector now gives each camera its own MQTT availability status and marks it
+unavailable after 20 seconds without a completed inference; an RTSP read also
+has an 8-second timeout so it can reconnect. Home Assistant requires both the
+detector process and that camera to be online before using its retained state.
+
+On 2026-09-23, the front-door camera repeatedly marked a stationary purple
+umbrella beside the walkway as a person (the confirmed false alarm scored
+0.386). The Wyze RTSP connection provides video, not native person events;
+Home Security reads the detector's person-class MQTT sensor. Raising the
+threshold to 0.55 did not prevent further false alarms, and even the stock
+YOLOv8n model assigned the umbrella a weak person score (0.251) on a later
+frame. The front-door threshold was restored to 0.35.
+
+The live front-door settings are NPU_CONFIRM_OVERRIDES=front_door_camera=2 and
+NPU_MOTION_CONFIRM_CAMERAS=front_door_camera. A low-confidence person-class box
+must appear in two frames within three seconds **and** show local image change
+relative to the recent frame history. Whole-frame brightness changes do not
+count, and motion alone never creates a person event. A strong person detection
+(0.75 or greater) can still report somebody standing still. This is a
+camera-specific filter for the known static lookalike, not proof that the model
+can never mistake another object for a person.
+
+The front-door Home camera now opens when **either** its Zigbee presence sensor
+or the NPU person sensor reports on. This OR rule starts video as soon as the
+first sensor reaches Home Assistant; the browser refreshes camera states on the
+change event instead of waiting for its 60-second poll. The wall panel defaults
+to auto-watch on, while other browsers retain their opt-in choice. The Home
+Security card's “Someone” status still comes only from the NPU person sensor:
+Zigbee motion starts monitoring video but does not claim a person was
+identified. The NPU's three-second window is a confirmation *deadline*, not a
+fixed playback delay; with its 0.5-second frame interval, the second frame
+normally arrives sooner.
+
+Measured against the real gap distribution:
 
 | Hold | Gaps bridged | Office events over 2.1 days |
 | ---: | ---: | ---: |

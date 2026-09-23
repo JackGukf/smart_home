@@ -49,7 +49,8 @@ const GARAGE = { id: 'cam-garage', name: 'Garage camera',
 const YARD   = { id: 'cam-yard', name: 'Frontyard camera',
                  motion_entity: 'binary_sensor.frontyard_camera_npu_person' };
 const DOOR   = { id: 'cam-door', name: 'Front door camera',
-                 motion_entity: 'binary_sensor.front_door_presence' };
+                 motion_entity: 'binary_sensor.front_door_presence',
+                 person_entity: 'binary_sensor.front_door_camera_npu_person' };
 const ROUTE  = [GARAGE, YARD, DOOR];
 
 const events = { renders: 0, slotApplies: 0, exits: 0, slots: [], log: [] };
@@ -57,7 +58,9 @@ globalThis.latestCameras = ROUTE;
 globalThis.latestCameraPaths = [{
   name: 'Front approach',
   linger_seconds: 300,
-  steps: ROUTE.map((c) => ({ camera_id: c.id, name: c.name, motion_entity: c.motion_entity })),
+  abandon_seconds: 300,
+  prewarm_next: false,
+  steps: ROUTE.map((c) => ({ camera_id: c.id, name: c.name, motion_entity: c.motion_entity, person_entity: c.person_entity })),
 }];
 globalThis.latestCameraById = new Map(ROUTE.map((c) => [c.id, c]));
 globalThis.latestTuyaDevices = ROUTE.map((c) => ({ id: c.motion_entity, state: 'off', online: true }));
@@ -90,7 +93,7 @@ const fireTimers = () => { const due = timers; timers = []; due.forEach((t) => t
 eval(src.match(/const HOME_CAMERA_AUTO_KEY = [^;]+;/)[0].replace('const ', 'globalThis.'));
 eval(src.match(/const MOTION_ON_STATES = new Set\\([^)]*\\);/)[0].replace('const ', 'globalThis.'));
 
-eval(pick('cameraIdFor') + pick('motionSensorIsTripped') + pick('motionWatchEnabled')
+eval(pick('cameraIdFor') + pick('motionSensorIsTripped') + pick('cameraTriggerIsTripped') + pick('motionWatchEnabled')
    + pick('cameraPathList') + pick('pathCameraIds') + pick('pathEpisodeCameras')
    + pick('activePathCameraId') + pick('openPathEpisode') + pick('advancePathEpisode')
    + pick('closePathEpisode') + pick('stopAllPathEpisodes') + pick('updatePathWatch')
@@ -107,6 +110,7 @@ const walkTo = (at, { hold = true } = {}) => {
 const clearAll = () => {
   latestCameraPaths[0].steps.forEach((step) => { step.state = 'off'; });
 };
+const setDirection = (i, dir) => { latestCameraPaths[0].steps[i].direction = dir; };
 
 const report = (extra = {}) => console.log(JSON.stringify({
   showing: activePathCameraId(),
@@ -131,22 +135,36 @@ def _run(script: str, tmp_path: Path) -> dict:
 
 # ── Opening the route ────────────────────────────────────────────────────────
 
-def test_the_first_camera_opens_it_and_the_next_one(tmp_path: Path) -> None:
-    """The one on screen and the one they are walking towards, and no more.
-
-    Pre-warming matters because a stream takes seconds to come up and by then
-    they have moved on. Pre-warming the *whole* route does not: three 1080p
-    streams put the Raspberry Pi 4 panel at 80% CPU and none of them finished
-    connecting. Only the next one has to be ready."""
+def test_the_first_camera_opens_alone_by_default(tmp_path: Path) -> None:
+    """Only the camera the person is at plays. A second stream decoding for a
+    person who may never leave the garage is the thing prewarm_next exists to
+    opt into, and it is off by default."""
     result = _run("""
 walkTo(0);
 updatePathWatch();
 report();
 """, tmp_path)
     assert result["showing"] == "cam-garage"
-    assert result["playing"] == ["cam-garage", "cam-yard"]
+    assert result["playing"] == ["cam-garage"]
     assert "cam-door" not in result["playing"], "the far end of the route is not needed yet"
     assert result["episodes"] == 1
+
+
+def test_prewarm_next_holds_the_next_camera_open_too(tmp_path: Path) -> None:
+    """prewarm_next: true is the old behaviour, kept for routes that want the
+    instant handoff: the one on screen and the one they are walking towards,
+    and no more. Pre-warming the *whole* route does not: three 1080p streams
+    put the Raspberry Pi 4 panel at 80% CPU and none of them finished
+    connecting."""
+    result = _run("""
+latestCameraPaths[0].prewarm_next = true;
+walkTo(0);
+updatePathWatch();
+report();
+""", tmp_path)
+    assert result["showing"] == "cam-garage"
+    assert result["playing"] == ["cam-garage", "cam-yard"]
+    assert "cam-door" not in result["playing"]
 
 
 def test_arriving_mid_route_starts_where_they_are(tmp_path: Path) -> None:
@@ -193,6 +211,7 @@ def test_the_pre_warmed_camera_is_the_one_they_walk_into(tmp_path: Path) -> None
     """The handoff is only instant if the next camera was already open - and it
     must still be open, not re-added, after the step."""
     result = _run("""
+latestCameraPaths[0].prewarm_next = true;
 walkTo(0); updatePathWatch();
 const warmedAtGarage = [...events.slots];
 walkTo(1); updatePathWatch();
@@ -238,6 +257,99 @@ report({ pendingBefore });
     assert result["playing"] == [], "every camera on the route must stop"
     assert result["override"] is None
     assert result["episodes"] == 0
+
+
+def test_abandon_closes_early_when_nobody_advanced(tmp_path: Path) -> None:
+    """Somebody stayed at the garage, or left. They never came to the house,
+    so there is nothing to wait the full linger for."""
+    result = _run("""
+latestCameraPaths[0].abandon_seconds = 60;
+walkTo(0); updatePathWatch();
+clearAll(); updatePathWatch();
+report();
+""", tmp_path)
+    assert result["pending"] == [60_000]
+
+
+def test_abandon_does_not_apply_once_the_card_has_followed_them(tmp_path: Path) -> None:
+    result = _run("""
+latestCameraPaths[0].abandon_seconds = 60;
+walkTo(0); updatePathWatch();
+walkTo(1); updatePathWatch();
+clearAll(); updatePathWatch();
+report();
+""", tmp_path)
+    assert result["pending"] == [300_000], "a followed person gets the full linger"
+
+
+def test_somebody_walking_away_never_opens_the_route(tmp_path: Path) -> None:
+    """An outward direction on the only tripped camera is a departure, not an
+    arrival: do not open anything for it."""
+    result = _run("""
+setDirection(0, 'outward');
+walkTo(0); updatePathWatch();
+report();
+""", tmp_path)
+    assert result["episodes"] == 0
+    assert result["playing"] == []
+
+
+def test_advance_skips_a_camera_the_person_is_walking_away_from(tmp_path: Path) -> None:
+    """The frontyard sensor trips, but the person there is walking away from
+    the house - stay on the garage until they turn around."""
+    result = _run("""
+walkTo(0); updatePathWatch();
+setDirection(1, 'outward');
+walkTo(1); updatePathWatch();
+const atGarage = activePathCameraId();
+setDirection(1, undefined);
+walkTo(1); updatePathWatch();
+report({ atGarage });
+""", tmp_path)
+    assert result["atGarage"] == "cam-garage"
+    assert result["showing"] == "cam-yard"
+
+
+def test_the_view_closes_at_once_when_the_shown_camera_says_outward(tmp_path: Path) -> None:
+    """Close the view immediately, but retain a marker until held motion clears."""
+    result = _run("""
+walkTo(0); updatePathWatch();
+setDirection(0, 'outward'); updatePathWatch();
+report({ released: pathEpisodes.get('Front approach')?.released });
+""", tmp_path)
+    assert result["episodes"] == 1
+    assert result["released"] is True
+    assert result["playing"] == []
+    assert result["override"] is None
+
+
+def test_outward_then_unknown_cannot_reopen_a_held_route(tmp_path: Path) -> None:
+    """The detector's next empty frame changes direction to unknown while its
+    occupancy hold stays on. A new visit may open only after motion clears."""
+    result = _run("""
+walkTo(0); updatePathWatch();
+setDirection(0, 'outward'); updatePathWatch();
+setDirection(0, 'unknown'); updatePathWatch();
+const duringHold = { episodes: pathEpisodes.size, playing: [...activeCameraIds] };
+clearAll(); updatePathWatch();
+const afterClear = pathEpisodes.size;
+walkTo(0); updatePathWatch();
+report({ duringHold, afterClear });
+""", tmp_path)
+    assert result["duringHold"] == {"episodes": 1, "playing": []}
+    assert result["afterClear"] == 0
+    assert result["showing"] == "cam-garage"
+    assert result["playing"] == ["cam-garage"]
+
+
+def test_a_step_without_a_direction_is_trusted_as_before(tmp_path: Path) -> None:
+    """The front door's PIR has no direction entity, so its trip must still
+    open and advance the route."""
+    result = _run("""
+walkTo(2); updatePathWatch();
+report();
+""", tmp_path)
+    assert result["showing"] == "cam-door"
 
 
 def test_somebody_reappearing_cancels_the_close(tmp_path: Path) -> None:
@@ -286,7 +398,8 @@ def test_the_api_resolves_names_to_cameras(tmp_path: Path) -> None:
         "cameras": [
             {"name": "Garage camera", "host": "10.0.0.1", "provider": "wyze",
              "snapshot_url": "http://10.0.0.1/s.jpg",
-             "motion_entity": "binary_sensor.garage_camera_npu_person"},
+             "motion_entity": "binary_sensor.garage_camera_npu_person",
+             "direction_entity": "sensor.garage_camera_npu_person_direction"},
             {"name": "Front door camera", "host": "10.0.0.2", "provider": "wyze",
              "snapshot_url": "http://10.0.0.2/s.jpg",
              "motion_entity": "binary_sensor.front_door_presence"},
@@ -303,6 +416,40 @@ def test_the_api_resolves_names_to_cameras(tmp_path: Path) -> None:
     assert len(paths) == 1
     assert [step["camera_id"] for step in paths[0]["steps"]] == ["10.0.0.1", "10.0.0.2"]
     assert paths[0]["linger_seconds"] == 300
+    assert paths[0]["abandon_seconds"] == 300, "abandon defaults to the linger"
+    assert paths[0]["prewarm_next"] is False, "pre-warming is opt-in, not the default"
+    assert paths[0]["steps"][0]["direction_entity"] == "sensor.garage_camera_npu_person_direction"
+    assert paths[0]["steps"][1].get("direction_entity") is None, "no direction configured"
+
+
+def test_the_api_reads_the_path_knobs(tmp_path: Path) -> None:
+    import yaml
+    from fastapi.testclient import TestClient
+
+    from src.python.web_app import create_app
+
+    cfg = tmp_path / "devices.local.yaml"
+    cfg.write_text(yaml.dump({
+        "cameras": [
+            {"name": "Garage camera", "host": "10.0.0.1", "provider": "wyze",
+             "snapshot_url": "http://10.0.0.1/s.jpg",
+             "motion_entity": "binary_sensor.a"},
+            {"name": "Front door camera", "host": "10.0.0.2", "provider": "wyze",
+             "snapshot_url": "http://10.0.0.2/s.jpg",
+             "motion_entity": "binary_sensor.b"},
+        ],
+        "camera_paths": [
+            {"name": "Front approach", "linger_seconds": 300,
+             "abandon_seconds": 60, "prewarm_next": True,
+             "cameras": ["Garage camera", "Front door camera"]},
+        ],
+    }), encoding="utf-8")
+
+    paths = TestClient(create_app(config_path=cfg, check_camera_ports=False)) \
+        .get("/api/cameras").json()["paths"]
+
+    assert paths[0]["abandon_seconds"] == 60
+    assert paths[0]["prewarm_next"] is True
 
 
 def test_a_step_naming_a_camera_that_does_not_exist_is_dropped(tmp_path: Path) -> None:
@@ -375,7 +522,7 @@ releaseMotionEpisodes();
 report({ before, route: pathEpisodeCameras().map((c) => c.id) });
 """, tmp_path)
 
-    assert result["before"] == ["cam-garage", "cam-yard"]
+    assert result["before"] == ["cam-garage"], "only the camera they are at plays"
     assert result["route"] == [], "a released episode must not own the card"
     assert result["showing"] is None
     assert result["playing"] == [], "the route's streams stop with it"
@@ -474,3 +621,20 @@ report({ order: outdoorCameraOrder(homeCameraList().filter(isOutdoorCamera)).map
 """, tmp_path)
 
     assert result["order"] == ["cam-garage", "cam-yard", "cam-door", "cam-back"]
+
+def test_front_door_route_opens_from_either_sensor(tmp_path: Path) -> None:
+    result = _run("""
+clearAll();
+latestCameraPaths[0].steps[2].person_state = 'on';
+updatePathWatch();
+report();
+""", tmp_path)
+    assert result["showing"] == "cam-door"
+
+    result = _run("""
+walkTo(2, { hold: false });
+latestCameraPaths[0].steps[2].person_state = 'off';
+updatePathWatch();
+report();
+""", tmp_path)
+    assert result["showing"] == "cam-door"

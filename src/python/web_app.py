@@ -430,7 +430,11 @@ class CameraDefinition:
     # long the picture stays up after that sensor reads clear again. Pairing
     # only offers the behaviour; each screen opts in for itself.
     motion_entity: str | None = None
+    person_entity: str | None = None
     motion_linger_seconds: int = 300
+    # The detector's own direction sensor for this camera. Optional: without it
+    # the dashboard cannot tell an arrival from a departure.
+    direction_entity: str | None = None
     # Whether this camera looks outside. The Home card's strip shows only
     # these: a thumbnail of the living room adds nothing to a glance at the
     # doors, and shows the room to anyone walking past the wall panel. Taken
@@ -3023,7 +3027,10 @@ def _load_cameras(path: Path) -> list[CameraDefinition]:
                 go2rtc_url=go2rtc_url,
                 battery_powered=bool(item.get("battery_powered", False)),
                 motion_entity=(str(item["motion_entity"]) if item.get("motion_entity") else None),
+                person_entity=(str(item["person_entity"]) if item.get("person_entity") else None),
                 motion_linger_seconds=int(item.get("motion_linger_seconds", 300)),
+                direction_entity=(
+                    str(item["direction_entity"]) if item.get("direction_entity") else None),
                 outdoor=item.get("outdoor") if isinstance(item.get("outdoor"), bool) else None,
             )
         )
@@ -3046,6 +3053,12 @@ def _attach_motion_states(config_path: Path, cards: list[dict[str, Any]],
     """
     wanted = {str(card["motion_entity"]) for card in cards if card.get("motion_entity")}
     wanted |= {str(step["motion_entity"]) for path in paths for step in path["steps"]}
+    wanted |= {str(card["person_entity"]) for card in cards if card.get("person_entity")}
+    wanted |= {str(step["person_entity"]) for path in paths
+               for step in path["steps"] if step.get("person_entity")}
+    wanted |= {str(card["direction_entity"]) for card in cards if card.get("direction_entity")}
+    wanted |= {str(step["direction_entity"]) for path in paths
+               for step in path["steps"] if step.get("direction_entity")}
     if not wanted:
         return
 
@@ -3066,9 +3079,17 @@ def _attach_motion_states(config_path: Path, cards: list[dict[str, Any]],
     for card in cards:
         if card.get("motion_entity"):
             card["motion_state"] = current.get(str(card["motion_entity"]))
+        if card.get("person_entity"):
+            card["person_state"] = current.get(str(card["person_entity"]))
+        if card.get("direction_entity"):
+            card["direction_state"] = current.get(str(card["direction_entity"]))
     for path in paths:
         for step in path["steps"]:
             step["state"] = current.get(str(step["motion_entity"]))
+            if step.get("person_entity"):
+                step["person_state"] = current.get(str(step["person_entity"]))
+            if step.get("direction_entity"):
+                step["direction"] = current.get(str(step["direction_entity"]))
 
 
 def _camera_paths(config_path: Path, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3109,6 +3130,8 @@ def _camera_paths(config_path: Path, cards: list[dict[str, Any]]) -> list[dict[s
                 "camera_id": card["id"],
                 "name": card["name"],
                 "motion_entity": card["motion_entity"],
+                "person_entity": card.get("person_entity"),
+                "direction_entity": card.get("direction_entity"),
             })
         # One step is not a route - the single-camera watch already covers that,
         # and letting it through here would mean two rules driving one card.
@@ -3117,6 +3140,16 @@ def _camera_paths(config_path: Path, cards: list[dict[str, Any]]) -> list[dict[s
         paths.append({
             "name": str(entry.get("name") or "Camera path"),
             "linger_seconds": int(entry.get("linger_seconds", 300)),
+            # How long the card waits when the person clears the route without
+            # ever advancing past the camera that opened the episode - they
+            # stayed, or left, and there is no reason to watch for the full
+            # linger. Defaults to the linger.
+            "abandon_seconds": int(
+                entry.get("abandon_seconds", entry.get("linger_seconds", 300))),
+            # Holding the next camera open makes the handoff instant, but it is
+            # a second stream decoding for a person who may never leave the
+            # garage. Off by default; opt in per route.
+            "prewarm_next": bool(entry.get("prewarm_next", False)),
             "steps": steps,
         })
     return paths
@@ -7098,6 +7131,10 @@ def _camera_card(camera: CameraDefinition, check_ports: bool = True) -> dict[str
     if camera.motion_entity:
         card["motion_entity"] = camera.motion_entity
         card["motion_linger_seconds"] = camera.motion_linger_seconds
+    if camera.person_entity:
+        card["person_entity"] = camera.person_entity
+    if camera.direction_entity:
+        card["direction_entity"] = camera.direction_entity
     card["outdoor"] = _camera_is_outdoor(camera)
     return card
 

@@ -80,6 +80,15 @@ cameras:
     # screen turns it on for itself with "Auto on motion" on the camera card.
     # motion_entity: binary_sensor.hallway_motion_occupancy
     # motion_linger_seconds: 300
+    # Optional second trigger: front-door video opens when either Zigbee motion
+    # or the NPU person sensor is on. This does not label Zigbee motion a person.
+    # person_entity: binary_sensor.front_door_camera_npu_person
+    # The detector's own "which way is the person walking" sensor for this
+    # camera. Lets the Home card tell an arrival from a departure: a person
+    # walking away never opens or advances the route, and ends the episode
+    # at once. Published by npu_detector.py once NPU_INWARD is set for the
+    # camera in .env.
+    # direction_entity: sensor.wyze_camera_npu_person_direction
     # A camera whose stream a browser cannot play - HEVC, which WebRTC has no
     # support for - needs go2rtc to convert it, at real and permanent CPU cost.
     #
@@ -96,12 +105,22 @@ cameras:
     # go2rtc_audio: none
 
 # Chain cameras in the order somebody crosses them and the dashboard follows
-# them along it, opening the next camera before they reach it. Each camera still
-# needs its own motion_entity - that is what announces somebody arriving. Needs
-# two steps or more; one camera is what motion_entity alone already does.
+# them along it. Each camera still needs its own motion_entity - that is what
+# announces somebody arriving. Needs two steps or more; one camera is what
+# motion_entity alone already does.
+#
+# prewarm_next (default false): also keep the next camera's stream open so the
+# handoff is instant. Costs a second decoding stream the whole episode - off
+# for this house, where the panel should only play the camera the person is at.
+# abandon_seconds (default: linger_seconds): how long the card waits when the
+# person clears the route without ever advancing past the first camera that
+# saw them (they stayed at the garage, or left). linger_seconds applies once
+# the card has followed them along the route.
 # camera_paths:
 #   - name: Front approach
 #     linger_seconds: 300
+#     abandon_seconds: 60
+#     prewarm_next: false
 #     cameras: [Garage camera, Frontyard camera, Front door camera]
   # Each Wyze camera gets its own RTSP username/password, set per camera when
   # you enable RTSP in the app, so give every one its own *_env pair rather

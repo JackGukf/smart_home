@@ -63,12 +63,16 @@ class Detection:
     label: str
     confidence: float
     box: tuple[int, int, int, int]  # x1, y1, x2, y2 in the source image
+    # Which way the person is walking: "inward" (towards the house), "outward",
+    # "still", or "unknown" when the camera has no NPU_INWARD axis configured.
+    direction: str = "unknown"
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "label": self.label,
             "confidence": round(self.confidence, 3),
             "box": list(self.box),
+            "direction": self.direction,
         }
 
 
@@ -224,6 +228,123 @@ def decode(output: np.ndarray, scale: float, pad_x: int, pad_y: int,
     return out
 
 
+# ------------------------------------------------------------------ direction
+
+def _parse_inward(raw: str) -> dict[str, tuple[str, int]]:
+    """"garage_camera=x-,frontyard_camera=y+" -> {"garage_camera": ("x", -1), ...}.
+
+    The axis is the frame axis a person walks along on the way to the house, and
+    the sign is which way along it is inward. A bad entry is dropped with a
+    warning rather than taking the service down: this is geometry, not safety.
+    """
+    parsed: dict[str, tuple[str, int]] = {}
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        camera, _, spec = chunk.partition("=")
+        camera = camera.strip()
+        spec = spec.strip()
+        if not camera or len(spec) != 2 or spec[0] not in {"x", "y"} or spec[1] not in {"+", "-"}:
+            LOG.warning("NPU_INWARD: ignoring %r, expected camera=x+/x-/y+/y-", chunk)
+            continue
+        parsed[camera] = (spec[0], 1 if spec[1] == "+" else -1)
+    return parsed
+
+
+def _box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    area_a = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
+    area_b = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+    return inter / (area_a + area_b - inter + 1e-9)
+
+
+class SingleCameraTracker:
+    """Follow detections frame to frame within one camera and say which way a
+    person is moving.
+
+    No re-identification model: tracks are box overlap between consecutive
+    scored frames - a person-shaped blob is not a face. That is all a direction
+    needs, and it keeps the house rule that guessing who somebody is stays out
+    of the detector.
+
+    Direction is measured along the camera's configured inward axis (`x` or
+    `y`, with a sign), so "inward" means walking towards the house and
+    "outward" means walking away. A camera without a configured axis always
+    reports "unknown".
+    """
+
+    def __init__(self, spec: tuple[str, int] | None, min_motion: float,
+                 history: float = 4.0) -> None:
+        self.spec = spec
+        self.min_motion = min_motion
+        self.history = history
+        self._tracks: list[dict[str, Any]] = []
+        self._next_id = 1
+
+    def update(self, detections: Sequence[Detection], now: float) -> list[str]:
+        """Feed one frame. Returns a direction per detection, in the same order."""
+        unmatched = list(range(len(detections)))
+        directions: list[str] = ["unknown"] * len(detections)
+
+        for track in self._tracks:
+            best_i, best_iou = -1, 0.2
+            for i in unmatched:
+                if detections[i].label != track["label"]:
+                    continue
+                iou = _box_iou(detections[i].box, track["box"])
+                if iou > best_iou:
+                    best_i, best_iou = i, iou
+            if best_i >= 0:
+                det = detections[best_i]
+                unmatched.remove(best_i)
+                track["box"] = det.box
+                track["points"].append((
+                    now, (det.box[0] + det.box[2]) / 2, (det.box[1] + det.box[3]) / 2))
+                directions[best_i] = self._direction(track)
+
+        for i in unmatched:
+            det = detections[i]
+            self._tracks.append({
+                "id": self._next_id,
+                "label": det.label,
+                "box": det.box,
+                "points": [(now, (det.box[0] + det.box[2]) / 2,
+                            (det.box[1] + det.box[3]) / 2)],
+            })
+            self._next_id += 1
+            directions[i] = self._direction(self._tracks[-1])
+
+        cutoff = now - self.history
+        self._tracks = [t for t in self._tracks if t["points"][-1][0] >= cutoff]
+        return directions
+
+    def _direction(self, track: dict[str, Any]) -> str:
+        if self.spec is None:
+            return "unknown"
+        axis, inward = self.spec
+        points = [p for p in track["points"] if p[0] >= track["points"][-1][0] - self.history]
+        if len(points) < 2:
+            return "unknown"
+        axis_index = 1 if axis == "x" else 2   # points are (t, cx, cy)
+        travel = points[-1][axis_index] - points[0][axis_index]
+        if abs(travel) < self.min_motion:
+            return "still"
+        return "inward" if (travel > 0) == (inward > 0) else "outward"
+
+
+def summarize_direction(detections: Sequence[Detection]) -> str:
+    """One word for the frame. Inward is the word that matters most: somebody
+    arriving beats somebody leaving, and both beat standing still."""
+    directions = {d.direction for d in detections}
+    for candidate in ("inward", "outward", "still"):
+        if candidate in directions:
+            return candidate
+    return "unknown"
+
+
 # ---------------------------------------------------------------------- runtime
 
 def _parse_conf_overrides(raw: str) -> dict[str, float]:
@@ -245,6 +366,26 @@ def _parse_conf_overrides(raw: str) -> dict[str, float]:
     return overrides
 
 
+def _parse_confirm_overrides(raw: str) -> dict[str, int]:
+    """Parse camera=number settings for repeated person-frame confirmation."""
+    overrides: dict[str, int] = {}
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        camera, _, value = chunk.partition("=")
+        try:
+            frames = int(value)
+            if not camera.strip() or frames < 1:
+                raise ValueError
+        except ValueError:
+            LOG.warning("NPU_CONFIRM_OVERRIDES: ignoring %r, expected camera=positive_integer",
+                        chunk)
+            continue
+        overrides[camera.strip()] = frames
+    return overrides
+
+
 @dataclass
 class Config:
     model: Path
@@ -259,8 +400,14 @@ class Config:
     # outdoor camera at night sees headlights and branches that an indoor one
     # never does, so it may need to be surer before it says "person".
     conf_overrides: dict[str, float] = field(default_factory=dict)
+    confirm_overrides: dict[str, int] = field(default_factory=dict)
+    motion_confirm_cameras: set[str] = field(default_factory=set)
     iou: float = 0.45
     classes: set[str] = field(default_factory=lambda: {"person"})
+    # Per-camera inward axis, "camera=x+" style; see _parse_inward. Cameras
+    # without an entry report direction "unknown".
+    inward: dict[str, tuple[str, int]] = field(default_factory=dict)
+    min_motion: float = 24.0
     mqtt_host: str = "127.0.0.1"
     mqtt_port: int = 1883
     mqtt_user: str | None = None
@@ -281,6 +428,9 @@ class Config:
     def conf_for(self, camera: str) -> float:
         return self.conf_overrides.get(camera, self.conf)
 
+    def confirm_for(self, camera: str) -> int:
+        return self.confirm_overrides.get(camera, 1)
+
     @classmethod
     def from_env(cls) -> "Config":
         cameras = [c.strip() for c in os.getenv("NPU_CAMERAS", "").split(",") if c.strip()]
@@ -293,12 +443,20 @@ class Config:
             interval=float(os.getenv("NPU_INTERVAL", "2.0")),
             conf=float(os.getenv("NPU_CONF", "0.35")),
             conf_overrides=_parse_conf_overrides(os.getenv("NPU_CONF_OVERRIDES", "")),
+            confirm_overrides=_parse_confirm_overrides(
+                os.getenv("NPU_CONFIRM_OVERRIDES", "")),
+            motion_confirm_cameras={
+                c.strip() for c in os.getenv("NPU_MOTION_CONFIRM_CAMERAS", "").split(",")
+                if c.strip()
+            },
             # Seconds a person may go undetected before the room is called
             # empty. 0 disables the hold and publishes every frame, which is
             # what produced 2,289 state changes a day from one camera.
             presence_hold=float(os.getenv("NPU_PRESENCE_HOLD", "60")),
             iou=float(os.getenv("NPU_IOU", "0.45")),
             classes=classes,
+            inward=_parse_inward(os.getenv("NPU_INWARD", "")),
+            min_motion=float(os.getenv("NPU_MIN_MOTION", "24")),
             mqtt_host=os.getenv("MQTT_HOST", "127.0.0.1"),
             mqtt_port=int(os.getenv("MQTT_PORT", "1883")),
             mqtt_user=os.getenv("MQTT_USER") or None,
@@ -355,8 +513,95 @@ class Detector:
                       cfg.classes)
 
 
+class PersonMotionGate:
+    """Reject low-confidence person boxes in unchanged parts of a fixed camera.
+
+    The object detector supplies the person label; local image change only
+    verifies that the low-confidence box is not a static lookalike. Motion on
+    its own can never create a person event. Strong person detections bypass
+    this check so somebody already standing still is still visible.
+    """
+
+    def __init__(self, changed_fraction: float = 0.06,
+                 strong_confidence: float = 0.75) -> None:
+        self.changed_fraction = changed_fraction
+        self.strong_confidence = strong_confidence
+        self.frames: list[np.ndarray] = []
+
+    def filter(self, frame: np.ndarray, detections: Sequence[Detection]) -> list[Detection]:
+        import cv2
+
+        height, width = frame.shape[:2]
+        small_height = max(1, round(height * 640 / width))
+        gray = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),
+                          (640, small_height), interpolation=cv2.INTER_AREA)
+        moving = None
+        global_fraction = 0.0
+        if self.frames:
+            moving = cv2.absdiff(gray, self.frames[0]) > 25
+            global_fraction = float(moving.mean())
+
+        accepted: list[Detection] = []
+        for detection in detections:
+            if detection.label != "person" or detection.confidence >= self.strong_confidence:
+                accepted.append(detection)
+                continue
+            if moving is None:
+                continue
+            x1, y1, x2, y2 = detection.box
+            left = max(0, min(639, int(x1 * 640 / width)))
+            right = max(left + 1, min(640, int((x2 + 1) * 640 / width)))
+            top = max(0, min(small_height - 1, int(y1 * small_height / height)))
+            bottom = max(top + 1, min(small_height, int((y2 + 1) * small_height / height)))
+            local_fraction = float(moving[top:bottom, left:right].mean())
+            if (local_fraction >= self.changed_fraction
+                    and local_fraction >= global_fraction * 1.5):
+                accepted.append(detection)
+
+        self.frames.append(gray)
+        if len(self.frames) > 4:
+            self.frames.pop(0)
+        return accepted
+
+
+class CameraHealth:
+    """Expose each camera as unavailable when inference stops making progress.
+
+    The detector process can be healthy while one RTSP read is stalled. Its
+    retained last detection must not remain an active Home Assistant alarm.
+    """
+
+    def __init__(self, cameras: Iterable[str], stale_after: float,
+                 publish: Callable[[str, bool], None]) -> None:
+        self.stale_after = stale_after
+        self.publish = publish
+        self.last_good: dict[str, float | None] = {camera: None for camera in cameras}
+        self.online: set[str] = set()
+        self.lock = threading.Lock()
+
+    def seen(self, camera: str, now: float | None = None) -> None:
+        with self.lock:
+            self.last_good[camera] = time.monotonic() if now is None else now
+            if camera not in self.online:
+                self.online.add(camera)
+                self.publish(camera, True)
+                LOG.info("%s: detection stream online", camera)
+
+    def expire(self, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            for camera in tuple(self.online):
+                last = self.last_good[camera]
+                if last is not None and now - last > self.stale_after:
+                    self.online.remove(camera)
+                    self.publish(camera, False)
+                    LOG.warning("%s: no completed inference for %.0fs; marking unavailable",
+                                camera, now - last)
+
+
 def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cfg: Config,
-               publish: "Callable[[str, str], None]", stop: "threading.Event") -> None:
+               publish: "Callable[[str, str], None]", stop: "threading.Event",
+               frame_ok: "Callable[[str], None] | None" = None) -> None:
     """Watch one camera on its own cadence until stop is set.
 
     One thread per camera rather than a single loop over all of them, so an
@@ -373,11 +618,15 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
     wanting one every couple of seconds.
     """
     conf = cfg.conf_for(camera)
-    LOG.info("%s: watching every %.1fs (presence hold %.0fs, conf %.2f)",
-             camera, cfg.interval, cfg.presence_hold, conf)
+    LOG.info("%s: watching every %.1fs (presence hold %.0fs, conf %.2f, confirm %d frames)",
+             camera, cfg.interval, cfg.presence_hold, conf, cfg.confirm_for(camera))
     # One hold per watched class, per camera: a car appearing must not be able
     # to keep "person" alive, and vice versa.
-    holds = {label: PresenceHold(cfg.presence_hold) for label in cfg.classes}
+    holds = {label: PresenceHold(cfg.presence_hold, cfg.confirm_for(camera))
+             for label in cfg.classes}
+    motion_gate = PersonMotionGate() if camera in cfg.motion_confirm_cameras else None
+    tracker = SingleCameraTracker(cfg.inward.get(camera), cfg.min_motion)
+    last_direction: str | None = None
     source = FrameSource(camera, cfg.rtsp_url, cfg.fetch_timeout)
     camera_cfg = replace(cfg, conf=conf)
     last_inference = 0.0
@@ -405,12 +654,24 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
 
                 with npu_lock:
                     detections = detector.detect(frame, camera_cfg)
+                if frame_ok is not None:
+                    frame_ok(camera)
+                if motion_gate is not None:
+                    detections = motion_gate.filter(frame, detections)
+
+                directions = tracker.update(detections, time.monotonic())
+                for det, direction in zip(detections, directions):
+                    det.direction = direction
 
                 held, changed = _apply_holds(holds, detections, cfg.classes,
                                              time.monotonic())
-                if changed or not said_anything:
+                direction = summarize_direction(detections)
+                # Direction flips without any presence change - somebody turns
+                # around at the garage - and the dashboard needs to know.
+                if changed or not said_anything or direction != last_direction:
                     publish(camera, build_payload(camera, detections, cfg.classes, held))
                     said_anything = True
+                    last_direction = direction
                 LOG.debug("%s: %d detection(s)%s  infer %.0fms",
                           camera, len(detections), "" if changed else " (held)",
                           (time.monotonic() - now) * 1000)
@@ -461,7 +722,14 @@ class FrameSource:
         if self._capture is not None:
             self._capture.release()
             self._capture = None
-        capture = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+        # These are open-only properties. Setting them after VideoCapture()
+        # cannot interrupt an RTSP read stalled inside FFmpeg.
+        timeout_ms = max(1000, int(self.timeout * 1000))
+        capture = cv2.VideoCapture(
+            self.url, cv2.CAP_FFMPEG,
+            [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_ms,
+             cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout_ms],
+        )
         if not capture.isOpened():
             capture.release()
             LOG.warning("%s: could not open %s", self.camera, self.url)
@@ -530,10 +798,9 @@ def discovery_messages(
     Each watched class gets a binary_sensor (what an automation triggers on) and
     a count sensor (how many, for conditions like "more than one person").
 
-    Every entity carries the availability topic. Without it a stopped detector
-    leaves its last retained "person: false" in place forever, so a blind camera
-    is indistinguishable from an empty one - the same silent failure that let the
-    Zigbee bridge sit dead for an hour.
+    Both process and camera availability are required. A healthy process can
+    still have one stalled RTSP stream; its retained last detection must not
+    look like a current sighting in Home Assistant.
     """
     node = f"npu_vision_{camera}"
     device = {
@@ -546,16 +813,18 @@ def discovery_messages(
     state_topic = f"{base_topic}/{camera}"
 
     messages: list[tuple[str, str]] = []
+    common = {
+        "availability": [
+            {"topic": availability_topic},
+            {"topic": f"{state_topic}/status"},
+        ],
+        "availability_mode": "all",
+        "device": device,
+        "origin": origin,
+        "state_topic": state_topic,
+    }
     for label in sorted(classes):
         slug = label.replace(" ", "_")
-        common = {
-            "availability_topic": availability_topic,
-            "payload_available": "online",
-            "payload_not_available": "offline",
-            "device": device,
-            "origin": origin,
-            "state_topic": state_topic,
-        }
         # "diagnostic" keeps these off Home Assistant's auto-generated dashboard
         # and tucks them under the device instead. Automations and templates can
         # still use them normally - the category only affects presentation.
@@ -597,6 +866,18 @@ def discovery_messages(
                 "value_template": "{{ value_json.counts['" + label + "'] | default(0) }}",
             }),
         ))
+    # Which way the person is walking. A sensor rather than an attribute so a
+    # dashboard or automation can read it from /api/states like any other.
+    messages.append((
+        f"{discovery_prefix}/sensor/{node}/direction/config",
+        json.dumps({
+            **common,
+            "name": "Person direction",
+            "unique_id": f"{node}_direction",
+            "object_id": f"{node}_direction",
+            "value_template": "{{ value_json.direction | default('unknown') }}",
+        }),
+    ))
     return messages
 
 
@@ -611,9 +892,9 @@ class PresenceHold:
 
     The rule is asymmetric on purpose:
 
-    * **A rise is published immediately.** First sight of a person, or a second
-      person joining one already there, is never delayed and never suppressed.
-      That is the edge automations care about and the one that must not be lost.
+    * **A rise is normally published immediately.** A camera may opt into a
+      short, repeated-frame confirmation when isolated person-class guesses
+      would otherwise become long false alarms.
     * **A fall waits.** The published count is the highest seen in the last
       `hold` seconds, so a dropout has to persist before it is believed.
 
@@ -622,22 +903,40 @@ class PresenceHold:
     94% of dropouts; 10s bridges 74%.
     """
 
-    def __init__(self, hold: float) -> None:
+    def __init__(self, hold: float, confirm_frames: int = 1,
+                 confirm_window: float = 3.0) -> None:
         self.hold = hold
+        self.confirm_frames = max(1, confirm_frames)
+        self.confirm_window = confirm_window
         self.published = 0
         self._seen: list[tuple[float, int]] = []
+        self._pending: list[float] = []
 
     def update(self, count: int, now: float) -> int | None:
         """Feed one frame's count. Returns the count to publish, or None."""
-        self._seen.append((now, count))
+        self._pending = [t for t in self._pending if now - t <= self.confirm_window]
+        accepted = count
+        if count > self.published and self.confirm_frames > 1:
+            self._pending.append(now)
+            if len(self._pending) < self.confirm_frames:
+                # A single bad person-class guess must not enter the 60-second
+                # hold. Keep the current published count until it is confirmed.
+                accepted = self.published
+            else:
+                self._pending.clear()
+        elif count <= self.published:
+            # A confirmed count of one should not prime an unrelated rise to
+            # two. Before the first confirmation, allow brief missing frames.
+            if count == self.published and self.published > 0:
+                self._pending.clear()
+
+        self._seen.append((now, accepted))
         cutoff = now - self.hold
         self._seen = [(t, c) for t, c in self._seen if t >= cutoff]
 
-        # Highest count still inside the window - what we are prepared to
-        # believe. A rise overrides it, because a rise is never held back.
         target = max((c for _, c in self._seen), default=0)
-        if count > self.published:
-            target = count
+        if accepted > self.published:
+            target = accepted
         if target == self.published:
             return None
         self.published = target
@@ -679,6 +978,7 @@ def build_payload(camera: str, detections: Sequence[Detection], wanted: Iterable
         "detections": [d.as_dict() for d in detections],
         "counts": reported,
         "raw_counts": counts,
+        "direction": summarize_direction(detections),
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     # A plain boolean per watched class is what an automation actually binds to.
@@ -729,6 +1029,10 @@ def main(argv: list[str] | None = None) -> int:
         client.connect(cfg.mqtt_host, cfg.mqtt_port, keepalive=60)
         client.loop_start()
         client.publish(cfg.availability_topic, "online", retain=True)
+        # Clear retained per-camera availability from any previous process
+        # before Home Assistant can reuse an old detection.
+        for camera in cfg.cameras:
+            client.publish(f"{cfg.base_topic}/{camera}/status", "offline", retain=True)
         LOG.info("publishing to %s/<camera> on %s:%s", cfg.base_topic, cfg.mqtt_host, cfg.mqtt_port)
 
         if cfg.discovery:
@@ -755,6 +1059,14 @@ def main(argv: list[str] | None = None) -> int:
 
     npu_lock = threading.Lock()
 
+    def publish_health(camera: str, online: bool) -> None:
+        if client is not None:
+            client.publish(f"{cfg.base_topic}/{camera}/status",
+                           "online" if online else "offline", retain=True)
+
+    health = CameraHealth(cfg.cameras, max(20.0, cfg.fetch_timeout * 2.5),
+                          publish_health)
+
     if args.once:
         # Sequential and deterministic: --once is for checking a setup, where
         # interleaved output would be harder to read than it is worth.
@@ -777,7 +1089,7 @@ def main(argv: list[str] | None = None) -> int:
         threads = [
             threading.Thread(
                 target=run_camera,
-                args=(camera, detector, npu_lock, cfg, publish, stop_event),
+                args=(camera, detector, npu_lock, cfg, publish, stop_event, health.seen),
                 name=f"cam-{camera}",
                 daemon=True,
             )
@@ -787,7 +1099,7 @@ def main(argv: list[str] | None = None) -> int:
             thread.start()
         try:
             while not stop_event.wait(1.0):
-                pass
+                health.expire()
         except KeyboardInterrupt:  # pragma: no cover - interactive only
             stop_event.set()
         # Generous: a thread may be inside a fetch that has not timed out yet.

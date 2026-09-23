@@ -7041,7 +7041,7 @@ const MOTION_ON_STATES = new Set(["on", "true", "detected", "open", "motion"]);
 /* cameraId -> { released, stopTimer } for every episode currently in flight. */
 const motionEpisodes = new Map();
 
-/* Per browser, and off until somebody asks for it. */
+/* Per browser: phones opt in, while the trusted wall panel defaults on. */
 const HOME_CAMERA_AUTO_KEY = "home_camera_motion_auto";
 
 function motionWatchEnabled() {
@@ -7070,7 +7070,7 @@ function setMotionWatchEnabled(enabled) {
 
 /* Any camera at all paired with a sensor - otherwise the switch is decoration. */
 function anyCameraWatchesMotion() {
-  return (latestCameras || []).some((camera) => camera.motion_entity)
+  return (latestCameras || []).some((camera) => camera.motion_entity || camera.person_entity)
       || cameraPathList().length > 0;
 }
 
@@ -7097,6 +7097,16 @@ function motionSensorIsTripped(entityId, reportedState) {
   );
   if (!device || device.online === false) return null;   /* null: no opinion */
   return MOTION_ON_STATES.has(String(device.state ?? "").trim().toLowerCase());
+}
+
+function cameraTriggerIsTripped(item, motionState) {
+  const motion = item.motion_entity
+    ? motionSensorIsTripped(item.motion_entity, motionState) : null;
+  const person = item.person_entity
+    ? motionSensorIsTripped(item.person_entity, item.person_state) : null;
+  if (motion === true || person === true) return true;
+  if (motion === false || person === false) return false;
+  return null;
 }
 
 function motionLingerMs(camera) {
@@ -7128,29 +7138,39 @@ function closeMotionEpisode(cameraId) {
   logActivity("Motion clear - camera stopped");
 }
 
-/* ── Following somebody up the drive ───────────────────────────────────────
+/* ── Following somebody along a route ───────────────────────────────────────
 
    A camera path is an ordered route - garage, frontyard, front door - where
-   each camera has a sensor watching it. When somebody trips the first one the
-   card opens every camera on the route at once and shows the one they are at,
-   then follows them along it.
+   each camera has a sensor watching it. When somebody trips one, the card
+   shows the camera they are at and follows them along the route as later
+   cameras see them.
 
-   Opening all of them, rather than the current one and the next, is not
-   enthusiasm. Moving or re-creating an <iframe> reloads it, so a card that
-   swapped which cameras it held would tear down the very stream it had just
-   spent three seconds pre-warming. Instead the markup lists every camera on the
-   route for the whole episode - identical on every render, so renderHtml leaves
-   it alone - and following the person is a class change on slots that are
-   already playing. The switch is instant because nothing reconnects.
+   Two knobs shape the cost:
 
-   Advancing is one-way. The presence hold keeps the garage sensor reading true
-   for a minute after somebody has walked out of it, so "the furthest camera
-   that has seen them" is the only reading that does not bounce backwards to a
-   view they have already left.
+     * `prewarm_next: false` (the default) holds only the camera the person is
+       at. Advancing to the next step reconnects, which costs a stream a few
+       seconds to come up. `prewarm_next: true` holds the next camera open too
+       - the switch is instant, but a second stream decodes the whole time even
+       if the person never leaves the first camera's view. Measured on the
+       panel: three 1080p streams put the Pi 4 at 80% CPU, so only the next
+       camera is ever pre-warmed, never the whole route.
 
-   The cost is real - three streams decode on the panel instead of one - so it
-   lasts only as long as the episode, and the linger that ends it is the same
-   five minutes the single-camera watch uses. */
+   Advancing is one-way. The presence hold keeps the garage sensor true for a
+   minute after somebody has left it, so "the furthest camera that has seen
+   them" is the only reading that does not bounce backwards to a view they
+   have already left.
+
+   A step whose direction sensor (the detector's own `*_npu_direction`
+   entity) says "outward" does not count as an arrival - somebody walking away
+   from the house is not somebody to follow - and when the shown camera says
+   "outward" the episode ends at once instead of waiting out the linger. The
+   front door's PIR has no direction, so a missing direction means the sensor
+   is trusted as it always was.
+
+   When nobody is seen the episode closes after the linger (default 300 s), or
+   after `abandon_seconds` when the person cleared the route without ever
+   advancing past the camera that opened the episode - they stayed, or left,
+   but they never came to the house. */
 
 function cameraPathList() {
   return (latestCameraPaths || []).filter((path) => (path.steps || []).length > 1);
@@ -7164,7 +7184,9 @@ function pathCameraIds() {
   return ids;
 }
 
-/* path name -> { index, stopTimer, released }. Index is the step being shown. */
+/* path name -> { index, stopTimer, released, advanced }. A released episode
+   stays as a marker until motion clears, including after an outward departure.
+   Index is the step being shown; advanced records whether it ever followed. */
 const pathEpisodes = new Map();
 
 /* The cameras a live episode holds open: the one on screen, and the one they
@@ -7183,6 +7205,7 @@ function pathEpisodeCameras() {
        again, but it no longer owns the card. */
     if (!episode || episode.released) continue;
     for (const offset of [0, 1]) {
+      if (offset === 1 && path.prewarm_next === false) continue;
       const step = path.steps[episode.index + offset];
       if (!step) continue;
       const camera = latestCameraById.get(step.camera_id);
@@ -7202,7 +7225,7 @@ function activePathCameraId() {
 }
 
 function openPathEpisode(path, index) {
-  pathEpisodes.set(path.name, { index, stopTimer: null, released: false });
+  pathEpisodes.set(path.name, { index, stopTimer: null, released: false, advanced: false });
   homeCameraOverride = path.steps[index].camera_id;
   applyPathCameras();
   logActivity(`${path.name}: ${path.steps[index].name}`);
@@ -7210,6 +7233,7 @@ function openPathEpisode(path, index) {
 
 function advancePathEpisode(path, episode, index) {
   episode.index = index;
+  episode.advanced = true;
   homeCameraOverride = path.steps[index].camera_id;
   /* No full re-render: the slot they are walking into is already open and
      already playing, so this adds the *next* one and shows this one. Rebuilding
@@ -7219,12 +7243,14 @@ function advancePathEpisode(path, episode, index) {
   logActivity(`${path.name}: ${path.steps[index].name}`);
 }
 
-function closePathEpisode(pathName) {
+function closePathEpisode(pathName, suppressUntilClear = false) {
   const path = cameraPathList().find((p) => p.name === pathName);
   const episode = pathEpisodes.get(pathName);
   if (!episode || !path) return;
-  pathEpisodes.delete(pathName);
-  if (episode.released) return;
+  const wasReleased = episode.released;
+  if (suppressUntilClear) episode.released = true;
+  else pathEpisodes.delete(pathName);
+  if (wasReleased) return;
 
   for (const step of path.steps) activeCameraIds.delete(step.camera_id);
   if (homeCameraOverride === path.steps[episode.index]?.camera_id) homeCameraOverride = null;
@@ -7233,8 +7259,8 @@ function closePathEpisode(pathName) {
   logActivity(`${path.name}: clear`);
 }
 
-/* Bring the card in line with what the episode wants open: exactly the current
-   camera and the next one, playing, with the current one on screen. */
+/* Bring the card in line with what the episode wants open: the camera on
+   screen, plus the next one when prewarm_next is on. */
 function applyPathCameras() {
   const wanted = pathEpisodeCameras();
   const wantedIds = new Set(wanted.map(cameraIdFor));
@@ -7260,9 +7286,36 @@ function updatePathWatch() {
 
   for (const path of cameraPathList()) {
     const seen = path.steps.map(
-      (step) => motionSensorIsTripped(step.motion_entity, step.state) === true);
-    const furthest = seen.lastIndexOf(true);
+      (step) => cameraTriggerIsTripped(step, step.state) === true);
+    /* A step whose direction sensor says the person is walking away is not an
+       arrival: do not open for it, and do not advance to it. Steps without a
+       direction (the door PIR) count as they always did. */
+    const seenArriving = seen.map(
+      (tripped, i) => tripped && path.steps[i].direction !== "outward");
+    const furthest = seenArriving.lastIndexOf(true);
     const episode = pathEpisodes.get(path.name);
+
+    /* The person on screen is walking away from the house. End now rather
+       than holding the stream for the linger: the house does not want to
+       keep watching somebody leave. */
+    if (episode && !episode.released) {
+      const shown = path.steps[episode.index];
+      if (shown && shown.direction === "outward") {
+        if (episode.stopTimer) {
+          clearTimeout(episode.stopTimer);
+          episode.stopTimer = null;
+        }
+        closePathEpisode(path.name, true);
+        continue;
+      }
+    }
+
+    // The detector may report "unknown" on an empty frame while its presence
+    // hold still says occupied. Keep the route closed until motion truly clears.
+    if (episode?.released) {
+      if (!seen.some(Boolean)) pathEpisodes.delete(path.name);
+      continue;
+    }
 
     if (!episode) {
       if (furthest >= 0) openPathEpisode(path, furthest);
@@ -7274,19 +7327,21 @@ function updatePathWatch() {
         episode.stopTimer = null;
       }
       /* Forward only: a held sensor behind them must not drag the view back. */
-      if (furthest > episode.index && !episode.released) {
+      if (furthest > episode.index) {
         advancePathEpisode(path, episode, furthest);
       }
     } else if (!episode.stopTimer) {
-      if (episode.released) {
-        pathEpisodes.delete(path.name);
-      } else {
-        const linger = Number(path.linger_seconds);
-        episode.stopTimer = setTimeout(
-          () => closePathEpisode(path.name),
-          (Number.isFinite(linger) && linger >= 0 ? linger : 300) * 1000,
-        );
-      }
+      const linger = Number(path.linger_seconds);
+      const abandon = Number(path.abandon_seconds);
+      const seconds = episode.advanced
+        ? (Number.isFinite(linger) && linger >= 0 ? linger : 300)
+        : (Number.isFinite(abandon) && abandon >= 0
+          ? abandon
+          : (Number.isFinite(linger) && linger >= 0 ? linger : 300));
+      episode.stopTimer = setTimeout(
+        () => closePathEpisode(path.name),
+        seconds * 1000,
+      );
     }
   }
 }
@@ -7335,11 +7390,11 @@ function updateMotionWatch() {
   if (!motionWatchEnabled()) return;
 
   for (const camera of latestCameras || []) {
-    if (!camera.motion_entity) continue;
+    if (!camera.motion_entity && !camera.person_entity) continue;
     // A camera on a path is driven by the path, which knows what comes next.
     // Two rules on one card would fight over which camera is showing.
     if (pathCameraIds().has(cameraIdFor(camera))) continue;
-    const tripped = motionSensorIsTripped(camera.motion_entity, camera.motion_state);
+    const tripped = cameraTriggerIsTripped(camera, camera.motion_state);
     if (tripped === null) continue;          /* sensor missing or offline */
 
     const cameraId = cameraIdFor(camera);
@@ -12473,6 +12528,21 @@ async function refreshLiveHomeAssistantCards(entityIds) {
   refreshActiveDynamicGroupPanel();
 }
 
+function cameraTriggerChanged(entityIds) {
+  const changed = new Set(entityIds);
+  return (latestCameras || []).some((camera) =>
+    changed.has(camera.motion_entity) || changed.has(camera.person_entity));
+}
+
+async function refreshLiveCameraTriggers(entityIds) {
+  if (!cameraTriggerChanged(entityIds)) return;
+  const data = await requestJson("/api/cameras");
+  latestCameras = data.cameras || [];
+  latestCameraPaths = data.paths || [];
+  updatePathWatch();
+  updateMotionWatch();
+}
+
 function scheduleLiveRefresh(event) {
   try {
     const entityId = String(JSON.parse(event?.data || "{}").entity_id || "");
@@ -12484,7 +12554,18 @@ function scheduleLiveRefresh(event) {
     const entityIds = [...pendingLiveEntities];
     pendingLiveEntities.clear();
     try {
-      await refreshLiveHomeAssistantCards(entityIds);
+      await Promise.allSettled([
+        refreshLiveHomeAssistantCards(entityIds),
+        refreshLiveCameraTriggers(entityIds),
+        entityIds.some((id) =>
+          id === latestAlarmData?.panel?.entity_id
+          || (latestAlarmData?.zones || []).some((zone) => zone.id === id))
+          ? requestJson("/api/alarm").then((data) => {
+              latestAlarmData = data;
+              renderAlarmSection(data);
+              renderHomeAlarmCard(data);
+            }) : Promise.resolve(),
+      ]);
     } catch (error) {
       console.error(error);
     }
@@ -12584,6 +12665,13 @@ function connectLiveUpdates() {
     });
     source.addEventListener("wall_panel", () => {
       isWallPanel = true;
+      try {
+        if (localStorage.getItem(HOME_CAMERA_AUTO_KEY) === null) {
+          localStorage.setItem(HOME_CAMERA_AUTO_KEY, "1");
+        }
+      } catch {}
+      syncMotionWatchToggle();
+      updatePathWatch(); updateMotionWatch();
       reportWallPanelCamera(true);
     });
     source.addEventListener("tv_cast", () => {
