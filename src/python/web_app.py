@@ -1109,10 +1109,13 @@ def create_app(
         home_assistant_devices = await asyncio.to_thread(
             _tuya_cards_from_home_assistant, app.state.config_path, app.state.discovery_path
         )
-        direct_devices = await _tuya_cards_cached(app)
         if home_assistant_devices:
+            # HA's local sensor snapshot must not wait on a cold cloud poll.
+            _schedule_tuya_refresh(app)
+            direct_devices = app.state.tuya_cache.get("cards") or []
             supplements = _tuya_direct_sensor_supplements(direct_devices)
             return {"devices": home_assistant_devices + supplements, "source": "home_assistant"}
+        direct_devices = await _tuya_cards_cached(app)
         return {"devices": direct_devices, "source": "direct"}
 
     @app.get("/api/ambient-lights")
@@ -5827,13 +5830,14 @@ async def _coalesced_changes(
     """
     last_sent = float("-inf")
     pending: dict[str, Any] | None = None
+    deferred: list[dict[str, Any]] = []
     while True:
         if pending is None:
             timeout = _EVENT_KEEPALIVE_SECONDS
         else:
             timeout = max(0.0, last_sent + _EVENT_COALESCE_SECONDS - time.monotonic())
         try:
-            message: dict[str, Any] | None = await receive(timeout)
+            message: dict[str, Any] | None = deferred.pop(0) if deferred else await receive(timeout)
         except (asyncio.TimeoutError, TimeoutError):
             if pending is None:
                 yield ": keepalive\n\n"
@@ -5876,9 +5880,40 @@ async def _coalesced_changes(
         change, pending = pending, None
         yield _changed_frame(change["entity_id"])
         last_sent = time.monotonic()
-        if change["refresh"] and before_notify is not None and await before_notify(change["since"]):
-            yield _changed_frame(change["entity_id"])
-            last_sent = time.monotonic()
+        if change["refresh"] and before_notify is not None:
+            # Keep reading remote commands while switch freshness is pending.
+            # Other state events are preserved for the next coalescing pass.
+            fresh = asyncio.create_task(before_notify(change["since"]))
+            incoming = None
+            try:
+                while not fresh.done():
+                    incoming = asyncio.create_task(receive(_EVENT_KEEPALIVE_SECONDS))
+                    done, _ = await asyncio.wait({fresh, incoming}, return_when=asyncio.FIRST_COMPLETED)
+                    if incoming in done:
+                        try:
+                            queued = incoming.result()
+                        except (asyncio.TimeoutError, TimeoutError):
+                            continue
+                        event = queued.get("event") or {}
+                        framer = _REMOTE_FRAMES.get(str(event.get("event_type") or "")) if queued.get("type") == "event" else None
+                        if framer:
+                            frame = framer(event.get("data") or {})
+                            if frame:
+                                yield frame
+                        else:
+                            deferred.append(queued)
+                    else:
+                        incoming.cancel()
+                        await asyncio.gather(incoming, return_exceptions=True)
+                if await fresh:
+                    yield _changed_frame(change["entity_id"])
+                    last_sent = time.monotonic()
+            finally:
+                tasks = [task for task in (fresh, incoming) if task is not None]
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def default_home_alarm_sensors(zones: list[dict[str, Any]]) -> list[str]:

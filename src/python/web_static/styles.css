@@ -2452,8 +2452,8 @@ aside {
   position: absolute;
   top: 18px;
   left: 50%;
-  width: 122px;
-  height: 72px;
+  width: 100%;
+  height: auto;
   transform: translateX(-50%);
   overflow: visible;
 }
@@ -2469,13 +2469,11 @@ aside {
 .environment-gauge-comfort { stroke: var(--green); }
 .environment-gauge-hot { stroke: var(--red); }
 
-/* The full inner value track and the outer threshold ring use the exact
-   same semicircle path. The ring is drawn last so white, green, and red stay
-   visible above the filled value arc. */
+/* Concentric arcs share a centre, baseline and angular scale. The smaller value radius leaves a visible gap below the outer threshold ring. */
 .environment-gauge-value-track,
 .environment-gauge-value {
   fill: none;
-  stroke-width: 26;
+  stroke-width: 22;
   stroke-linecap: butt;
 }
 .environment-gauge-value-track { stroke: #334149; }
@@ -2583,7 +2581,7 @@ aside {
   .environment-gauge-card,
   .environment-air-card { min-height: 204px; padding: 12px; }
   .environment-gauge { height: 130px; }
-  .environment-gauge-arc { width: 108px; height: 65px; }
+  .environment-gauge-arc { width: 100%; height: auto; }
   .environment-gauge strong { bottom: 12px; font-size: 23px; }
 }
 

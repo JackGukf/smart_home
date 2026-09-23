@@ -155,6 +155,34 @@ def test_the_overview_is_cached_and_degrades_without_home_assistant(tmp_path: Pa
     assert len(calls) == 2
 
 
+def test_history_failure_preserves_local_status_and_ha_batteries(tmp_path: Path) -> None:
+    states = [
+        {"entity_id": "binary_sensor.entry", "state": "off", "attributes": {"device_class": "door"}},
+        {"entity_id": "sensor.leak_battery", "state": "26", "attributes": {"device_class": "battery"}},
+    ]
+
+    def fetch(url: str, headers: dict[str, str]):
+        if "/api/states" in url:
+            return states
+        raise ValueError("invalid history response")
+
+    service = so.StatusOverview("http://ha", lambda: "token", resource_log=tmp_path / "log",
+                                fetch=fetch, runner=lambda command: "", clock=lambda: NOW.timestamp())
+    result = service.overview()
+    assert result["status"] == "home_assistant_history_unavailable"
+    assert result["batteries"][0]["percent"] == 26
+    assert result["services"] and len(result["hours"]) == 24
+
+
+def test_malformed_ha_states_do_not_crash_status(tmp_path: Path) -> None:
+    service = so.StatusOverview("http://ha", lambda: "token", resource_log=tmp_path / "log",
+                                fetch=lambda url, headers: {"error": "offline"},
+                                runner=lambda command: "", clock=lambda: NOW.timestamp())
+    result = service.overview()
+    assert result["status"] == "home_assistant_unavailable"
+    assert result["services"] and result["board"]["status"] == "missing"
+
+
 def test_the_endpoint_serves_the_overview(tmp_path: Path) -> None:
     class Fake:
         def overview(self):

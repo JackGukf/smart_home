@@ -227,3 +227,26 @@ def test_the_voice_panel_offers_energy_and_still_fits_its_screen() -> None:
     # The highlight script has to know every card, or one never reads "Showing".
     for view in web_app.WALL_PANEL_VIEWS:
         assert f"id: wall_{view}_view_card" in panel and f"id: wall_{view}_view_sub" in panel
+
+
+@pytest.mark.asyncio
+async def test_remote_bypasses_pending_switch_refresh():
+    feed = Feed()
+    release = asyncio.Event()
+
+    async def slow_refresh(since):
+        await release.wait()
+        return True
+
+    stream = web_app._coalesced_changes(feed.receive, slow_refresh)
+    feed.queue.put_nowait(_event("state_changed", {"entity_id": "light.kitchen"}))
+    assert "changed" in await anext(stream)
+    feed.queue.put_nowait(_event(web_app.WALL_PANEL_VIEW_EVENT, {"view": "devices"}))
+    try:
+        frame = await asyncio.wait_for(anext(stream), 0.3)
+        assert "show_view" in frame and "devices" in frame
+        assert not release.is_set()
+        release.set()
+        assert "changed" in await asyncio.wait_for(anext(stream), 0.3)
+    finally:
+        await stream.aclose()

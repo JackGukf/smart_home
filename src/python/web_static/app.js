@@ -1641,17 +1641,17 @@ function environmentGauge(value, unit, kind) {
   const progress = Math.max(0, Math.min(100, ((value - range.minimum) / span) * 100));
   // Keep the range band visibly divided into all three colours, as approved
   // in the mockup. The reading colour still follows the real comfort limits.
-  const low = 20;
-  const comfort = 40;
-  const hot = 40;
+  const low = ((range.lowEnd - range.minimum) / span) * 100;
+  const comfort = ((range.comfortEnd - range.lowEnd) / span) * 100;
+
   const valueColour = value < range.lowEnd
     ? "#f1f5f9"
     : value <= range.comfortEnd ? "var(--green)" : "var(--red)";
   return `<div class="environment-gauge" aria-label="${label} ${display}${unit}">
     <span class="environment-gauge-label">${label}</span>
     <svg class="environment-gauge-arc" viewBox="0 0 180 105" aria-hidden="true">
-      <path class="environment-gauge-value-track" d="${environmentGaugeArcPath(0, 100)}" />
-      <path class="environment-gauge-value" d="${environmentGaugeArcPath(0, progress)}" style="stroke:${valueColour}" />
+      <path class="environment-gauge-value-track" d="${environmentGaugeArcPath(0, 100, 56)}" />
+      <path class="environment-gauge-value" d="${environmentGaugeArcPath(0, progress, 56)}" style="stroke:${valueColour}" />
       <path class="environment-gauge-range environment-gauge-low" d="${environmentGaugeArcPath(0, low)}" />
       <path class="environment-gauge-range environment-gauge-comfort" d="${environmentGaugeArcPath(low, low + comfort)}" />
       <path class="environment-gauge-range environment-gauge-hot" d="${environmentGaugeArcPath(low + comfort, 100)}" />
@@ -1661,12 +1661,12 @@ function environmentGauge(value, unit, kind) {
 }
 
 function environmentGaugeCard({ name, temperature, humidity, online = true, subtitle = "Sensor" }) {
-  const temp = Number(temperature);
-  const hum = Number(humidity);
+  const temp = temperature == null ? NaN : Number(temperature);
+  const hum = humidity == null ? NaN : Number(humidity);
   const readings = environmentGauge(temp, "°C", "temperature") + environmentGauge(hum, "%H", "humidity");
-  const empty = readings || '<div class="environment-gauge-empty">No climate reading</div>';
+  const empty = readings || '<div class="environment-gauge-empty">N/A</div>';
   return `<article class="environment-gauge-card${online ? "" : " environment-gauge-offline"}" data-device-id="${escapeHtml(name)}">
-    <div class="environment-gauge-top"><span class="environment-gauge-live">${online ? "ONLINE" : "OFFLINE"}</span><span>${escapeHtml(subtitle)}</span></div>
+    <div class="environment-gauge-top"><span class="environment-gauge-live">${online ? "ONLINE" : "OFFLINE"}</span></div>
     <div class="environment-gauge-pair">${empty}</div>
     <h3 title="${escapeHtml(name)}">${escapeHtml(name)}</h3>
   </article>`;
@@ -1675,8 +1675,8 @@ function environmentGaugeCard({ name, temperature, humidity, online = true, subt
 function environmentAirQualityCard(sensor) {
   const level = sensor.co2_level || {};
   const tint = CO2_TINT[level.key] || "var(--green)";
-  const temperature = Number(sensor.temperature);
-  const humidity = Number(sensor.humidity);
+  const temperature = sensor.temperature == null ? NaN : Number(sensor.temperature);
+  const humidity = sensor.humidity == null ? NaN : Number(sensor.humidity);
   const facets = [
     Number.isFinite(temperature) ? `${temperature.toFixed(1)}°C` : "",
     Number.isFinite(humidity) ? `${Math.round(humidity)}% humidity` : "",
@@ -4725,59 +4725,86 @@ function triggerSOS() {
 }
 
 /* ── Main load ── */
-async function loadDevices() {
-  if (statusDot) statusDot.classList.remove("online");
-  apiStatus.textContent = "Refreshing";
+let dashboardRefreshInFlight = null;
+const dashboardSourceFailures = new Set();
 
-  const [deviceData, cameraData, tuyaData, weatherData, ecobeeData, homeAssistantData, alarmData, matterData, areasData] = await Promise.all([
-    requestJson("/api/devices"),
-    requestJson("/api/cameras"),
-    requestJson("/api/tuya/devices"),
-    requestJson("/api/weather").catch(() => null), // weather being down must not kill the refresh
-    requestJson("/api/ecobee/thermostats"),
-    requestJson("/api/home-assistant/entities"),
-    requestJson("/api/alarm"),
-    requestJson("/api/matter/devices").catch(() => ({ devices: [], matter_online: false })),
-    requestJson("/api/areas").catch(() => areasDoc),
-  ]);
-
-  notifyDoorbellEvents(cameraData.cameras);
-  notifySeenNewHomeAssistantDevices(homeAssistantData.entities);
-
-  latestCameras       = cameraData.cameras;
-  latestCameraPaths   = cameraData.paths || [];
-  latestTuyaDevices   = tuyaData.devices;
-  latestAlarmData     = alarmData;
-  latestSwitchDevices = deviceData.devices;
-  latestMatterDevices = matterData.devices || [];
-  applyPendingCommands();
-  latestThermostats   = ecobeeData?.thermostats || [];
-  areasDoc            = areasData;
-
-  renderDevices(deviceData.devices, cameraData.cameras, matterData.devices || []);
-  renderTuyaDevices(tuyaData.devices);
-  renderThermostats(ecobeeData);
-  renderHomeAssistant(homeAssistantData);
-  renderCameras(cameraData.cameras, tuyaData.devices);
-  renderWeather(weatherData);
-  renderAlarmSection(alarmData);
-  _updateMatterServerStatus(matterData.matter_online ?? false);
-  _renderMatterDeviceList(matterData.devices || []);
-  renderHomeView();
-  refreshActiveDynamicGroupPanel();
-  /* After the render, so an episode that opens here draws over fresh cards.
-     Paths first: they own their cameras, and the single-camera watch skips
-     them, so letting the path decide first keeps the two from racing. */
-  updatePathWatch();
-  updateMotionWatch();
-
-  if (statusDot) statusDot.classList.add("online");
-  apiStatus.textContent = "Online";
-
-  logActivity("Devices refreshed");
-
-  cacheSnapshotsInBackground(cameraData.cameras).catch(console.error);
+async function refreshDashboardSource(url, apply, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const data = await requestJson(url, { signal: controller.signal });
+    if (["error", "offline", "unavailable", "needs_auth"].includes(data?.status)) {
+      throw new Error(data.message || data.status);
+    }
+    apply(data);
+    dashboardSourceFailures.delete(url);
+    renderHomeView();
+    refreshActiveDynamicGroupPanel();
+  } catch (error) {
+    // Leave this source's last rendered values intact; other sources update
+    // independently, even when this request is slow or unavailable.
+    dashboardSourceFailures.add(url);
+    console.info("Dashboard source unavailable:", url, error.message);
+  } finally {
+    clearTimeout(timer);
+  }
 }
+
+async function loadDevices() {
+  if (dashboardRefreshInFlight) return dashboardRefreshInFlight;
+  apiStatus.textContent = "Refreshing";
+  const redrawDevices = () => {
+    applyPendingCommands();
+    renderDevices(latestSwitchDevices, latestCameras, latestMatterDevices);
+  };
+  dashboardRefreshInFlight = Promise.allSettled([
+    refreshDashboardSource("/api/devices", data => {
+      latestSwitchDevices = data.devices || [];
+      redrawDevices();
+      if (statusDot) statusDot.classList.add("online");
+      apiStatus.textContent = "Local connected";
+    }),
+    refreshDashboardSource("/api/cameras", data => {
+      latestCameras = data.cameras || [];
+      latestCameraPaths = data.paths || [];
+      notifyDoorbellEvents(latestCameras);
+      renderCameras(latestCameras, latestTuyaDevices);
+      redrawDevices();
+      updatePathWatch(); updateMotionWatch();
+      cacheSnapshotsInBackground(latestCameras).catch(console.error);
+    }),
+    refreshDashboardSource("/api/tuya/devices", data => {
+      latestTuyaDevices = data.devices || [];
+      renderTuyaDevices(latestTuyaDevices);
+    }),
+    refreshDashboardSource("/api/weather", renderWeather),
+    refreshDashboardSource("/api/ecobee/thermostats", data => {
+      latestThermostats = data.thermostats || [];
+      renderThermostats(data);
+    }),
+    refreshDashboardSource("/api/home-assistant/entities", data => {
+      notifySeenNewHomeAssistantDevices(data.entities || []);
+      renderHomeAssistant(data);
+    }),
+    refreshDashboardSource("/api/alarm", data => {
+      latestAlarmData = data; renderAlarmSection(data);
+    }),
+    refreshDashboardSource("/api/matter/devices", data => {
+      latestMatterDevices = data.devices || [];
+      _updateMatterServerStatus(data.matter_online ?? false);
+      _renderMatterDeviceList(latestMatterDevices);
+      redrawDevices();
+    }),
+    refreshDashboardSource("/api/areas", data => { areasDoc = data; }),
+  ]).finally(() => {
+    apiStatus.textContent = dashboardSourceFailures.size
+      ? "Some data unavailable · last readings kept" : "Online";
+    if (statusDot) statusDot.classList.toggle("online", !dashboardSourceFailures.has("/api/devices"));
+    dashboardRefreshInFlight = null;
+  });
+  return dashboardRefreshInFlight;
+}
+
 
 /* ═════════════════ HOME (AREAS) VIEW ═════════════════ */
 
@@ -9642,7 +9669,7 @@ function renderStatusStrip(data) {
   const services = data.services || [];
   const down = services.filter((s) => !s.ok);
   setStatusText("#statusServicesCount", `${services.length - down.length}/${services.length}`, down.length ? "warn" : "good");
-  setStatusText("#statusServicesSub", down.length ? `${down.map((s) => s.name).join(", ")} down` : "all running");
+  setStatusText("#statusServicesSub", down.length ? `${down.map((s) => s.name).join(", ")} unavailable` : "all available");
 
   const board = data.board || {};
   const uptime = statusUptime(board.boot);
@@ -9698,12 +9725,16 @@ function renderStatusOverview(data = latestStatusOverview) {
   set("#statusServices", services.map((s) => `
     <div class="st-svc${s.ok ? "" : " down"}" title="${escapeHtml(s.unit)} · ${escapeHtml(s.state)}">
       <i class="st-svc-dot" aria-hidden="true"></i>
-      <span>${escapeHtml(s.name)}<small>${s.scope === "container" ? "container" : s.scope === "system" ? "system unit" : "user unit"}${s.ok ? "" : ` · ${escapeHtml(s.state)}`}</small></span>
+      <span>${escapeHtml(s.name)}<small>${s.scope === "network" ? escapeHtml(s.detail || "Connectivity check") : s.scope === "container" ? "container" : s.scope === "system" ? "system unit" : "user unit"}${s.ok ? "" : ` · ${escapeHtml(s.state)}`}</small></span>
     </div>`).join(""));
-  setStatusText("#statusServicesMeta", down ? `${down} not running` : `${services.length} running`);
+  setStatusText("#statusServicesMeta", down ? `${down} unavailable` : `${services.length} available`);
 
-  if (data.status === "needs_auth" || data.status === "home_assistant_unavailable") {
-    set("#statusActivity", `<p class="st-empty">Home Assistant is ${data.status === "needs_auth" ? "not connected" : "not answering"}.</p>`);
+  if (data.status === "needs_auth" || data.status === "home_assistant_unavailable"
+      || data.status === "home_assistant_history_unavailable") {
+    const message = data.status === "needs_auth" ? "Home Assistant is not connected."
+      : data.status === "home_assistant_history_unavailable" ? "Home Assistant history is unavailable."
+      : "Home Assistant is not answering.";
+    set("#statusActivity", `<p class="st-empty">${message}</p>`);
   }
 }
 
@@ -12420,14 +12451,15 @@ let liveRefreshTimer = null;
 const pendingLiveEntities = new Set();
 
 async function refreshLiveHomeAssistantCards(entityIds) {
-  const results = await Promise.all(
+  const results = await Promise.allSettled(
     entityIds.map((entityId) =>
       requestJson("/api/home-assistant/entities/" + encodeURIComponent(entityId) + "/card")
     )
   );
   let changed = false;
   for (const result of results) {
-    const card = result?.card;
+    if (result.status !== "fulfilled") continue;
+    const card = result.value?.card;
     if (!card) continue;
     const index = latestTuyaDevices.findIndex((device) => device.id === card.id);
     if (index >= 0) latestTuyaDevices[index] = card;
@@ -12439,8 +12471,6 @@ async function refreshLiveHomeAssistantCards(entityIds) {
   renderDevicesOverview();
   renderHomeView();
   refreshActiveDynamicGroupPanel();
-  if (statusDot) statusDot.classList.add("online");
-  apiStatus.textContent = "Online";
 }
 
 function scheduleLiveRefresh(event) {
@@ -12578,6 +12608,7 @@ function connectLiveUpdates() {
       try { reason = (JSON.parse(event.data || "{}").reason) || ""; } catch {}
       console.info("Live updates unavailable, falling back to polling.", reason);
       try { source.close(); } catch {}
+      setTimeout(connectLiveUpdates, 5000);
     });
 
     /* EventSource reconnects on its own after a transient drop. It gives up only

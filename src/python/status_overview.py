@@ -18,6 +18,7 @@ screens polling it must cost the board one pass, not one per screen.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 import re
 import subprocess
 import threading
@@ -271,6 +272,32 @@ def service_states(runner: Callable[[list[str]], str] = _run) -> list[dict[str, 
     return out
 
 
+CONNECTIVITY_TARGETS = (
+    ("Internet", "https://www.gstatic.com/generate_204"),
+    ("Govee cloud", "https://openapi.api.govee.com/"),
+    ("Weather cloud", "https://api.open-meteo.com/"),
+)
+
+
+def connectivity_states(runner: Callable[[list[str]], str] = _run) -> list[dict[str, Any]]:
+    """Bounded HTTPS reachability probes; never claim authenticated API health.
+
+    Any HTTP response proves DNS/TLS/connectivity to that endpoint, including
+    401/404. It does not prove account credentials or device data are healthy.
+    """
+    def check(target):
+        name, url = target
+        code = runner(["curl", "--silent", "--output", "/dev/null", "--write-out", "%{http_code}",
+                       "--connect-timeout", "1", "--max-time", "2", url]).strip()
+        reachable = code.isdigit() and 100 <= int(code) <= 599
+        return {"name": name, "unit": url, "scope": "network", "ok": reachable,
+                "state": "reachable" if reachable else "unreachable",
+                "detail": "HTTPS reachable · API health not checked" if reachable and name != "Internet"
+                          else "Internet reachable" if reachable else "Unreachable · local controls remain independent"}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        return list(pool.map(check, CONNECTIVITY_TARGETS))
+
+
 # ── the service ───────────────────────────────────────────────────────────────
 
 class StatusOverview:
@@ -309,7 +336,7 @@ class StatusOverview:
         start = now - timedelta(hours=HOURS)
 
         board = read_resource_history(self._resource_log, start, now)
-        services = service_states(self._runner)
+        services = service_states(self._runner) + connectivity_states(self._runner)
 
         token = self._token()
         activity: list[dict[str, Any]] = []
@@ -319,6 +346,9 @@ class StatusOverview:
             headers = {"Authorization": f"Bearer {token}"}
             try:
                 states = self._fetch(f"{self._base_url}/api/states", headers)
+                if not isinstance(states, list):
+                    raise ValueError("Home Assistant states were not a list")
+                states = [state for state in states if isinstance(state, dict)]
                 sensors = activity_sensors(states)
                 power = batteries(states)
                 if sensors:
@@ -328,9 +358,14 @@ class StatusOverview:
                         f"?end_time={now.strftime('%Y-%m-%dT%H:%M:%SZ')}&filter_entity_id={ids}"
                         "&minimal_response&no_attributes"
                     )
-                    history = self._fetch(url, headers)
-                    activity = hourly_activity(history, start, now, {s["entity_id"]: s for s in sensors})
-            except OSError:
+                    try:
+                        history = self._fetch(url, headers)
+                        if not isinstance(history, list):
+                            raise ValueError("Home Assistant history was not a list")
+                        activity = hourly_activity(history, start, now, {s["entity_id"]: s for s in sensors})
+                    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                        status = "home_assistant_history_unavailable"
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 status = "home_assistant_unavailable"
         else:
             status = "needs_auth"
