@@ -7488,8 +7488,12 @@ header > .header-right { flex-shrink: 0; }
 .home-energy-usual:empty { display: none; }
 .home-energy-body.with-flow { grid-template-rows: minmax(0, 1fr) auto; }   /* not :has() - old Safari */
 .home-flow { min-height: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
-.home-flow .flow-svg { width: auto; height: 100%; max-width: 100%; max-height: 180px; }
-.home-flow + .energy-tiles > div { padding: 6px 10px; }
+.home-flow .flow-svg { width: auto; height: 100%; max-width: 100%; max-height: 260px; }
+/* Label and figure on one line, so the flow gets the height; a narrow tile wraps back to two. */
+.home-flow + .energy-tiles > div {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  column-gap: 8px; row-gap: 0; padding: 4px 10px; line-height: 1.25;
+}
 @media (max-width: 699px) {
   .energy-day-card .energy-headline { flex-wrap: wrap; }
   .energy-day-card .energy-headline .energy-sub { margin-left: 0 !important; flex-basis: 100%; margin-top: 6px; }

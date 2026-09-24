@@ -11816,7 +11816,7 @@ function energyFlowSvg(m) {
 /* The same flow at the size of the Home card, and for phones: grid, home, and the split. */
 function energyFlowCompactSvg(m) {
   const id = `flow${++energyFlowSerial}`;
-  return `<svg class="flow-svg compact" viewBox="0 0 350 140" role="img"
+  return `<svg class="flow-svg compact" viewBox="0 14 350 114" role="img"
       aria-label="${flowKw(m.kw)} kW from the grid: ${flowKw(m.base)} always on, ${flowKw(m.rest)} everything else">
     ${flowRibbon("M 56 70 L 126 70", { kw: m.kw, from: FLOW.grid, to: FLOW.home, id })}
     ${flowRibbon("M 222 62 C 246 62, 246 32, 268 32", { kw: m.base, from: FLOW.home, to: FLOW.base, id, particle: "#e4dcff" })}
