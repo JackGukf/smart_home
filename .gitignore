@@ -116,3 +116,4 @@ configs/ir_buttons.json
 
 # Bills, meter readings, the gas database and the ecobee refresh token.
 ai-data/
+service_watchdog.json

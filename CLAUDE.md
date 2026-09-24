@@ -87,6 +87,18 @@
 > history and none after a crash. The `arm-smmu-v3 event 0x07` flood is a known
 > CIX firmware bug. See `docs/setup-orangepi6.md`, "Memory, logs and the desktop".
 >
+> **Service watchdog (2026-09-24).** Crashes were always restarted; *hangs*
+> were not - on 2026-09-23 the Zigbee coordinator hung for 20 h with every
+> container "Up". `service-watchdog.timer` (every 2 min,
+> `src/python/service_watchdog.py`) checks that Zigbee devices are talking,
+> the broker, Home Assistant's API and its Zigbee link, the dashboard, go2rtc,
+> the house memory and the Matter controller actually work, restarts what hung
+> (at most 3 times in 6 h, then asks for a person), and reports on the
+> dashboard (banners, Status view) and in Home Assistant. **Pause it** before
+> re-flashing the dongle or upgrading HA: `touch deploy/watchdog/.paused`.
+> Install: `scripts/install-service-watchdog.sh` (+ `sudo … --polkit` to let
+> it restart matter-server).
+>
 > **Never set `RuntimeWatchdogSec` on this board.** Its SBSA watchdog has a fixed
 > 10 s timeout that cannot be raised, so a 60 s setting resets the board every
 > ~80 s with no kernel panic. That is the prime suspect for the 2026-09-02 reset

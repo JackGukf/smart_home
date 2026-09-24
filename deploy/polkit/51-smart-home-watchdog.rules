@@ -1,0 +1,15 @@
+// Let the service watchdog restart the Matter controller, and nothing else.
+//
+// matter-server.service is a *system* unit (scripts/install-matter-server.sh),
+// and the watchdog runs as orangepi (service-watchdog.service, a user unit).
+// This allows that user one verb, restart, on exactly that unit. Without it the
+// watchdog can only report a hung Matter controller, not fix it.
+// Installed by: sudo scripts/install-service-watchdog.sh --polkit
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "orangepi" &&
+        action.lookup("unit") == "matter-server.service" &&
+        action.lookup("verb") == "restart") {
+        return polkit.Result.YES;
+    }
+});

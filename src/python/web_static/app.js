@@ -2710,6 +2710,64 @@ function renderMotionSensors() {
   if (routineState && routineState.data) renderMotionRoutine();
 }
 
+/* ── Service watchdog ──
+   service_watchdog.py restarts what hangs and says so. Its actions become
+   banners - mild for "fixed it", urgent for "needs a person" - and the Status
+   view lists every check. A screen shows what happened while it was open, plus
+   the last half hour for a screen just opened; a check that has given up stays
+   a banner until it recovers. */
+const WATCHDOG_REFRESH_MS = 60000;
+const WATCHDOG_RECENT_S = 1800;
+const WATCHDOG_LABELS = {
+  docker: "Docker", mosquitto: "MQTT broker", zigbee: "Zigbee", home_assistant: "Home Assistant",
+  ha_mqtt: "Home Assistant's Zigbee link", dashboard: "Dashboard", go2rtc: "Cameras (go2rtc)",
+  house_memory: "House memory", matter_server: "Matter controller", disk: "Disk space",
+};
+const watchdogOpenedAt = Date.now() / 1000;
+
+function watchdogBanners(doc) {
+  const since = Math.min(watchdogOpenedAt, Date.now() / 1000) - WATCHDOG_RECENT_S;
+  (doc.events || []).forEach((e) => {
+    const stuck = e.kind === "needs_person" && doc.checks?.[e.check]?.gave_up;
+    if (e.at < since && !stuck) return;
+    const urgent = e.kind === "needs_person" || e.kind === "action_failed";
+    const title = { restarted: `Fixed: ${e.label}`, recovered: `${e.label} is working again`,
+                    needs_person: `${e.label} needs attention`, action_failed: `${e.label}: the fix failed` }[e.kind] || e.label;
+    pushNotification("watchdog", title, e.message, { eventKey: e.id, urgent });
+  });
+}
+
+function renderWatchdogCard(doc) {
+  const card = document.querySelector("#watchdogCard");
+  if (!card) return;
+  card.hidden = !doc.checked_at;
+  if (!doc.checked_at) return;
+  const rows = (doc.report || []).map((line) => {
+    const [name, rest] = line.split(": ");
+    const state = /^ok\b/.test(rest) ? "ok" : /^FAIL/.test(rest) ? "fail" : "unknown";
+    const detail = (rest || "").replace(/^(ok|FAIL|\?) - /, "").replace(/^skipped, /, "skipped: ");
+    return `<div class="watchdog-row ${state}"><i></i><b>${escapeHtml(WATCHDOG_LABELS[name] || name)}</b><span>${escapeHtml(detail)}</span></div>`;
+  }).join("");
+  const events = (doc.events || []).slice(-5).reverse().map((e) => `
+    <div class="watchdog-event ${e.kind}"><span class="mono">${escapeHtml(new Date(e.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</span>
+      <span>${escapeHtml(e.message)}</span></div>`).join("");
+  const failing = (doc.report || []).filter((l) => l.includes(": FAIL")).length;
+  card.innerHTML = `
+    <div class="home-panel-head"><span class="panel-title"><i class="ti ti-heart-rate-monitor"></i> Service watchdog</span>
+      <span class="energy-state ${doc.paused ? "busy" : failing ? "high" : "base"}">${doc.paused ? "paused" : failing ? `${failing} failing` : "all working"}</span>
+      <span class="section-meta">checked ${escapeHtml(routineAgo(doc.checked_at))} · every 2 min</span></div>
+    <div class="watchdog-rows">${rows}</div>
+    ${events ? `<div class="watchdog-events"><span class="panel-title">What it did</span>${events}</div>` : ""}`;
+}
+
+async function loadWatchdog() {
+  const doc = await requestJson("/api/watchdog");
+  watchdogBanners(doc);
+  renderWatchdogCard(doc);
+}
+setInterval(() => { if (!document.hidden) loadWatchdog().catch(() => {}); }, WATCHDOG_REFRESH_MS);
+loadWatchdog().catch(() => {});
+
 /* ── Motion routine ──
    Where the house moves, by place, against its usual day - and one tap on an
    area opens the day as a timeline. The areas are the dashboard's own (Home →
@@ -4141,7 +4199,7 @@ function notificationsToShow(notifs, maxNewDevices = NOTIF_MAX_NEW_DEVICES) {
 function notificationsMarkup(notifs) {
   const { shown, hiddenNewDevices } = notificationsToShow(notifs);
   const banners = shown.map((n) => {
-    const urgent = n.type !== "doorbell";
+    const urgent = n.type !== "doorbell" && !(n.type === "watchdog" && !n.urgent);
     return `
       <div class="notif-banner ${urgent ? "urgent" : "mild"}">
         <div class="notif-icon">${notifIconSVG(n.type)}</div>
@@ -4250,6 +4308,9 @@ function respondToNotification(notif) {
     card?.scrollIntoView({ behavior: "smooth", block: "center" });
   } else if (notif.type === "alarm") {
     activateView("alarm");
+  } else if (notif.type === "watchdog") {
+    activateView("status");
+    document.querySelector("#watchdogCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 }
 

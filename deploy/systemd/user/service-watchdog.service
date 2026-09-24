@@ -1,0 +1,9 @@
+[Unit]
+Description=Service watchdog - restart services that hang (src/python/service_watchdog.py)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/.venv/bin/python -m src.python.service_watchdog
+# A pass is seconds; a restart it makes (Home Assistant) can take two minutes.
+TimeoutStartSec=300

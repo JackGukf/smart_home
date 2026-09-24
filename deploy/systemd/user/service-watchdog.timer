@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the service watchdog every two minutes
+
+[Timer]
+# Not straight after boot: every service is still starting then, and the
+# checks' own grace periods cover the rest.
+OnBootSec=5min
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

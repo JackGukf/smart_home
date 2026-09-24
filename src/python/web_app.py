@@ -63,6 +63,7 @@ from src.python import sensor_history
 from src.python import status_overview
 from src.python import house_memory
 from src.python import motion_routine
+from src.python import service_watchdog
 from src.python import tuya_ir
 from src.python import script_steps
 from src.python.automation_author import (
@@ -725,6 +726,7 @@ def create_app(
     ai_data_dir: Path | None = None,
     status_service: status_overview.StatusOverview | None = None,
     memory_service: house_memory.SummaryCache | None = None,
+    watchdog_status_path: Path | None = None,
     ir_page_path: Path | None = None,
     light_scenes_path: Path | None = None,
     cast_runner: Callable[..., subprocess.CompletedProcess] | None = None,
@@ -754,6 +756,7 @@ def create_app(
     app.state.ai_data_dir = Path(ai_data_dir or DEFAULT_AI_DATA_DIR)
     app.state.status_service = status_service
     app.state.memory_service = memory_service or house_memory.SummaryCache()
+    app.state.watchdog_status_path = watchdog_status_path or service_watchdog.STATUS_PATH
     # systemctl, swapped out in tests so they never touch the real user manager.
     app.state.cast_runner = cast_runner or subprocess.run
     app.state.zigbee_runner = zigbee_runner or subprocess.run
@@ -1485,6 +1488,16 @@ def create_app(
         capped = max(1, min(int(limit), 1000))
         events = await asyncio.to_thread(read_motion_log, app.state.motion_log_path, capped)
         return {"events": events, "retention_days": MOTION_LOG_MAX_DAYS}
+
+    @app.get("/api/watchdog")
+    async def watchdog_status() -> dict[str, Any]:
+        """The service watchdog's last pass and what it did (service_watchdog.py).
+        Before it has ever run there is nothing, which the page shows as nothing."""
+        doc = await asyncio.to_thread(service_watchdog.load_status, app.state.watchdog_status_path)
+        return {"checked_at": doc.get("checked_at"), "paused": doc.get("paused", False),
+                "report": doc.get("report", []), "events": doc.get("events", [])[-20:],
+                "checks": {name: {"failures": s.get("failures", 0), "gave_up": s.get("gave_up", False)}
+                           for name, s in (doc.get("checks") or {}).items()}}
 
     @app.post("/api/motion/routine")
     async def motion_routine_get(body: MotionRoutineRequest) -> dict[str, Any]:
