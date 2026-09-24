@@ -11150,77 +11150,9 @@ function energyAxis(days) {
   return `<div class="energy-axis">${picks.map((i) => `<span>${escapeHtml(energyDateLabel(days[i].date))}</span>`).join("")}</div>`;
 }
 
-/* The Home card: electricity and gas side by side, each with its own number,
-   its own year of bars, what it cost and how it compares with the same period
-   a year ago. Each half adapts to what the house can actually say - live
-   readings, uploaded bills, or sample data - and labels itself accordingly. */
-function energyChange(change) {
-  if (change === null || change === undefined) return "";
-  const word = change > 0 ? "+" : "";
-  return ` · <span class="energy-change ${change > 0 ? "up" : "down"}">${word}${change}%</span>`;
-}
-
-function energyHalfHtml({ kind, name, value, unit, sub, chart, left, right }) {
-  return `
-    <div class="energy-half">
-      <div class="energy-half-head"><i class="energy-dot ${kind}"></i>${escapeHtml(name)}</div>
-      <div class="energy-now">
-        <span class="energy-kw mono">${value}</span>
-        <span class="energy-unit">${escapeHtml(unit)}</span>
-      </div>
-      <div class="energy-half-sub" title="compared with the same period a year earlier">${sub}</div>
-      <div class="energy-spark">${chart}</div>
-      <div class="energy-facts"><span>${left}</span><span>${right}</span></div>
-    </div>`;
-}
-
-function homeElectricityHalf(e) {
-  if (e.mode === "records") {
-    const periods = (e.periods || []).slice(-12);
-    const money = periods.length ? energyMoney(Number(e.last_period_kwh ?? 0) * e.rate) : "";
-    return energyHalfHtml({
-      kind: "electric", name: "Electricity",
-      value: Number(e.last_period_kwh ?? 0).toFixed(0), unit: "kWh",
-      sub: `last ${e.period_kind === "month" ? "month" : "bill"}${energyChange(e.same_period_last_year?.change_percent)}`,
-      chart: energyBarsSvg(periods.map((p) => p.kwh), { kind: "electric", height: 52 }),
-      left: `<b class="mono">${Number(e.kwh_per_day ?? 0).toFixed(1)}</b> kWh/day`,
-      right: money ? `≈ <b class="mono">${money}</b>` : "",
-    });
-  }
-  // Live, or the sample data that stands in for it: the last hour and the day.
-  return energyHalfHtml({
-    kind: "electric", name: "Electricity",
-    value: energyFixed(e.kw_now, 2), unit: "kW now",
-    sub: `${escapeHtml(ENERGY_STATE_TEXT[e.state] || "")}${e.sample ? " · sample" : ""}`,
-    chart: energyAreaSvg(e.last_hour_kw, { height: 52 }),
-    left: `Last 24 h <b class="mono">${Number(e.last_24h_kwh).toFixed(1)}</b> kWh`,
-    right: `≈ <b class="mono">${energyMoney(e.last_24h_kwh * e.rate)}</b>`,
-  });
-}
-
-function homeGasHalf(g) {
-  if (g.sample) {
-    return energyHalfHtml({
-      kind: "gas", name: "Natural gas",
-      value: energyFixed(g.yesterday_gj, 2), unit: "GJ",
-      sub: "yesterday · sample",
-      chart: energyBarsSvg((g.days || []).map((d) => d.gj), { kind: "gas", height: 52 }),
-      left: `<b class="mono">${Number(g.rate).toFixed(2)}</b> $/GJ`,
-      right: "",
-    });
-  }
-  const periods = (g.periods || []).slice(-12);
-  const last = Number(g.last_period_gj ?? 0);
-  return energyHalfHtml({
-    kind: "gas", name: "Natural gas",
-    value: last.toFixed(1), unit: "GJ",
-    sub: `last bill${energyChange(g.same_period_last_year?.change_percent)}`,
-    chart: energyBarsSvg(periods.map((p) => p.gj), { kind: "gas", height: 52 }),
-    left: `<b class="mono">${Number(g.gj_per_day ?? 0).toFixed(3)}</b> GJ/day`,
-    right: `≈ <b class="mono">${energyMoney(last * g.rate)}</b>`,
-  });
-}
-
+/* The Home card: the power flow, small, and three figures. Live, they are
+   today, the pace and the bill's step; before the meter reports the flow
+   waits and the figures come from the bills, gas included. */
 function renderHomeEnergy() {
   const body = document.querySelector("#homeEnergyBody");
   if (!body || !latestEnergy) return;
@@ -11231,17 +11163,19 @@ function renderHomeEnergy() {
   if (sample) sample.hidden = !(e.sample && g.sample);
   const usualPill = document.querySelector("#homeEnergyUsual");
   if (usualPill) usualPill.innerHTML = "";
-  body.classList.toggle("with-flow", e.mode !== "records");
+  body.classList.add("with-flow");
+  const m = energyFlowModel(e, g, latestEnergy.furnace);
   if (e.mode === "records") {
+    // No reading yet: the flow waits, and the figures come from the bills.
     body.innerHTML = `
-      <div class="energy-split">
-        ${homeElectricityHalf(e)}
-        <div class="energy-split-rule"></div>
-        ${homeGasHalf(g)}
+      <div class="home-flow">${energyFlowCompactSvg(m)}</div>
+      <div class="energy-tiles three">
+        <div><span>Per day</span><b class="mono">${energyFixed(e.kwh_per_day, 1)} kWh</b></div>
+        <div><span>Gas, last bill</span><b class="mono">${g.sample ? "–" : `${Number(g.last_period_gj ?? 0).toFixed(1)} GJ`}</b></div>
+        <div><span>Meter</span><b class="mono warn">${m.waiting ? "waiting" : "none yet"}</b></div>
       </div>`;
     return;
   }
-  const m = energyFlowModel(e, g, latestEnergy.furnace);
   const day = energyDayModel(e, latestEnergy.forecast);
   const b = e.bill;
   const step = b && b.projected_kwh !== null ? (b.projected_kwh > b.threshold_kwh ? "Step 2" : "Step 1") : null;
@@ -11423,6 +11357,7 @@ function energyFlowModel(e, g, furnace) {
     usual: Number.isFinite(usual) ? usual : null,
     vsUsual: kw !== null && usual ? Math.round((kw / usual - 1) * 100) : null,
     peak: Math.max(kw ?? 0, ...recent, 0.1),
+    waiting: latestEnergy?.meter === "waiting",
     price: e.bill?.tier1_price ?? e.rate,
   };
 }
@@ -11546,7 +11481,7 @@ function energyFlowSvg(m) {
     ${FLOW_ICON.bolt(80, 101, FLOW.grid)}
     <text x="80" y="140" text-anchor="middle" class="flow-num">${flowKw(m.kw)}</text>
     <text x="80" y="185" text-anchor="middle" class="flow-name">Grid</text>
-    <text x="80" y="201" text-anchor="middle" class="flow-sub">last hour's peak ${flowKw(m.peak)}</text>
+    <text x="80" y="201" text-anchor="middle" class="flow-sub">${m.kw === null ? "no reading yet" : `last hour's peak ${flowKw(m.peak)}`}</text>
     ${gasOn ? flowHalo(`${id}-hs`, 80, 287, 52, FLOW.gas, 0.14) : ""}
     <circle cx="80" cy="287" r="36" fill="#1c1e2e" stroke="${gasOn ? FLOW.gas : FLOW.idle}" stroke-opacity="0.6" stroke-width="2" stroke-dasharray="4 5"/>
     ${FLOW_ICON.flame(80, 287, gasOn ? FLOW.gas : FLOW.idle)}
@@ -11558,7 +11493,9 @@ function energyFlowSvg(m) {
     <text x="400" y="166" text-anchor="middle" class="flow-num big">${flowKw(m.kw)}</text>
     <text x="400" y="183" text-anchor="middle" class="flow-sub">kW in use</text>
     ${vs}
-    <text x="400" y="60" text-anchor="middle" class="flow-sub">${m.kw !== null ? `${Math.round(m.kw * m.price * 100)}¢ an hour at Step 1` : ""}</text>
+    <text x="400" y="60" text-anchor="middle" class="flow-sub">${m.kw !== null
+      ? `${Math.round(m.kw * m.price * 100)}¢ an hour at Step 1`
+      : m.waiting ? "Waiting for the first meter reading" : "Live once the PowerLync reports"}</text>
     ${chipSvg}
   </svg>`;
 }
@@ -11656,15 +11593,22 @@ function energyStatusHtml() {
     </div>`;
 }
 
-function renderEnergyLive(e, g, furnace, forecast) {
-  const m = energyFlowModel(e, g, furnace);
-  const set = (sel, html) => { const el = document.querySelector(sel); if (el) el.innerHTML = html; };
-  set("#energyFlow", `
+function renderEnergyFlowCard(m) {
+  const el = document.querySelector("#energyFlow");
+  if (!el) return;
+  el.innerHTML = `
     <div class="home-panel-head"><span class="panel-title"><i class="ti ti-arrows-split-2"></i> Power flow · now</span>
+      ${m.kw === null ? `<span class="energy-state busy">${m.waiting ? "Waiting for the meter" : "No meter yet"}</span>` : ""}
       <span class="flow-legend"><span><i style="background:${FLOW.grid}"></i>Electricity, metered</span>
       <span><i style="background:${FLOW.gas}"></i>Gas, modelled</span><span><i class="dash"></i>Estimate</span></span></div>
     <div class="flow-full">${energyFlowSvg(m)}</div>
-    <div class="flow-small">${energyFlowCompactSvg(m)}</div>`);
+    <div class="flow-small">${energyFlowCompactSvg(m)}</div>`;
+}
+
+function renderEnergyLive(e, g, furnace, forecast) {
+  const m = energyFlowModel(e, g, furnace);
+  const set = (sel, html) => { const el = document.querySelector(sel); if (el) el.innerHTML = html; };
+  renderEnergyFlowCard(m);
 
   const recent = (e.last_hour_kw || []).filter(Number.isFinite);
   const hours = (e.today_hourly_kwh || []).slice(0, e.sample ? -1 : undefined);
@@ -11748,8 +11692,14 @@ function renderEnergyView() {
     if (!status.hidden) status.innerHTML = energyStatusHtml();
   }
   const liveBox = document.querySelector("#energyLive");
-  if (liveBox) liveBox.hidden = !live;
+  if (liveBox) {
+    // Without a reading the flow still shows - grey, waiting - and the gas
+    // side and the furnace are real already; the other cards need the meter.
+    liveBox.hidden = false;
+    liveBox.classList.toggle("flow-only", !live);
+  }
   if (live) renderEnergyLive(e, g, latestEnergy.furnace, latestEnergy.forecast);
+  else renderEnergyFlowCard(energyFlowModel(e, g, latestEnergy.furnace));
   const note = document.querySelector("#energySampleNote");
   if (note) {
     note.hidden = !e.sample && !g.sample;

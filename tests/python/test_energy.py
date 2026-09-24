@@ -493,34 +493,16 @@ def test_records_mode_never_pretends_to_be_live(tmp_path):
     assert 'e.mode === "records" ? "" : energyForecastHtml' in js
 
 
-def test_the_home_card_gives_each_fuel_its_own_half():
-    """Gas has two years of real history; one line of text at the bottom of the
-    card did not do it justice (2026-09-20)."""
+def test_the_home_card_shows_the_flow_with_or_without_a_reading():
+    """The flow replaced the electricity-and-gas halves (2026-09-24). Without a
+    reading it waits, and the figures come from the bills - gas included, which
+    has two years of real history."""
     js = (STATIC / "app.js").read_text(encoding="utf-8")
-    css = (STATIC / "styles.css").read_text(encoding="utf-8")
-
-    assert "function homeElectricityHalf" in js and "function homeGasHalf" in js
-    assert '<div class="energy-split">' in js and "energy-split-rule" in js
-    # Each half: a number, a year of bars, what it cost, and the year-on-year change.
-    assert 'energyBarsSvg(periods.map((p) => p.kwh), { kind: "electric"' in js
-    assert 'energyBarsSvg(periods.map((p) => p.gj), { kind: "gas"' in js
-    assert "energyChange(e.same_period_last_year?.change_percent)" in js
-    assert "energyChange(g.same_period_last_year?.change_percent)" in js
-    assert "energyMoney(last * g.rate)" in js and "energyMoney(Number(e.last_period_kwh ?? 0) * e.rate)" in js
-    # A rise in use is not good news, and the colours say so.
-    assert ".energy-change.up { color: var(--orange); }" in css
-    assert ".energy-change.down { color: var(--green); }" in css
-    # On a phone the halves stack rather than squeeze.
-    assert "@media (max-width: 560px)" in css.split("Home Energy card")[1]
-
-
-def test_a_live_meter_keeps_the_kilowatts_and_the_hour():
-    """With the PowerLync paired the electricity half goes back to now and the
-    last hour; the gas half is unaffected."""
-    js = (STATIC / "app.js").read_text(encoding="utf-8")
-    half = js[js.index("function homeElectricityHalf"):js.index("function homeGasHalf")]
-    assert 'unit: "kW now"' in half and "energyAreaSvg(e.last_hour_kw" in half
-    assert "Last 24 h" in half
+    home = js[js.index("function renderHomeEnergy()"):js.index("function energyColumnHtml(")]
+    assert home.count("energyFlowCompactSvg(m)") == 2          # waiting, and live
+    assert "Gas, last bill" in home and "g.last_period_gj" in home
+    assert "day.soFar" in home and "energyMoney(day.pace * m.price)" in home
+    assert "function homeElectricityHalf" not in js
 
 
 # ── The power flow and the bill in progress ──
@@ -605,3 +587,14 @@ def test_the_live_view_has_its_cards_and_the_flow_draws_no_blur():
     # the wall panel's Raspberry Pi 4. Glow is a wide faint stroke instead.
     assert "feGaussianBlur" not in flow and "filter=" not in flow
     assert "energyFlowCompactSvg(m)" in js[js.index("function renderHomeEnergy()"):]
+
+
+def test_the_flow_shows_while_waiting_for_the_meter():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    view = js[js.index("function renderEnergyView()"):]
+    # Bills mode (no reading) still draws the flow, alone and waiting.
+    assert 'classList.toggle("flow-only", !live)' in view
+    assert "else renderEnergyFlowCard(energyFlowModel(e, g, latestEnergy.furnace))" in view
+    assert "Waiting for the first meter reading" in js
+    home = js[js.index("function renderHomeEnergy()"):]
+    assert home.index("energyFlowCompactSvg(m)") < home.index('if (e.mode === "records")') + 400

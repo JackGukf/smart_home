@@ -141,7 +141,11 @@ first reading are not guessed, the card says "counted from"), **Always on**
   electricity even where uploaded bills would otherwise take its place - the
   way to see it before the meter reports. It is labelled as a preview.
 - When the PowerLync is paired but the meter is silent, the view says so
-  (`"meter": "waiting"`) instead of showing 0 W.
+  (`"meter": "waiting"`) instead of showing 0 W. **The flow shows anyway**
+  (2026-09-24, the owner's call): electricity grey and "waiting for the first
+  meter reading", the gas side and the furnace real already. The other cards
+  need readings and stay hidden; the Home card shows the waiting flow with
+  per-day kWh and the last gas bill from the uploaded bills.
 - The flow's glow is a wide faint stroke, not an SVG blur: the particles
   animate, and a blur re-rendered each frame is too much for the wall panel's
   Raspberry Pi 4. A test keeps blur filters out of the flow code.

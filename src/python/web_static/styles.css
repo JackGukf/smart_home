@@ -7400,6 +7400,10 @@ header > .header-right { flex-shrink: 0; }
 .energy-flow-card, .energy-day-card, .energy-heat-card { grid-column: span 8; }
 .energy-now-card, .energy-bill-card, .energy-base-card { grid-column: span 4; }
 .energy-live > .panel { display: grid; grid-gap: 10px; align-content: start; min-width: 0; }
+/* No reading yet: only the flow, full width, waiting; the other cards need the meter. */
+.energy-live.flow-only > .panel { display: none; }
+.energy-live.flow-only > .energy-flow-card { display: grid; grid-column: 1 / -1; }
+.energy-flow-card .home-panel-head .energy-state { margin-left: 10px !important; }
 .energy-flow-card { background: radial-gradient(ellipse at 46% 48%, rgba(79, 142, 247, 0.09), transparent 62%), var(--card); }
 @media (max-width: 1099px) {
   .energy-live > .panel { grid-column: 1 / -1; }
