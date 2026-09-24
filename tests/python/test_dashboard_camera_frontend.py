@@ -287,3 +287,55 @@ def test_sensor_suffix_stripping_is_left_alone() -> None:
     body = source[start:start + 400]
 
     assert ".map(([name, readings]) => ({ name, readings }))" in body
+
+
+def test_route_companion_uses_existing_thumbnail_geometry(tmp_path: Path) -> None:
+    """The second live iframe covers the matching existing tile, not a new card."""
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        return
+    harness = r"""
+const src = require('fs').readFileSync(process.argv[2], 'utf8');
+const at = src.indexOf('function placePathCompanion()');
+let depth = 0, end = src.indexOf('{', at);
+for (; end < src.length; end++) {
+  if (src[end] === '{') depth++;
+  else if (src[end] === '}') { depth--; if (depth === 0) break; }
+}
+const code = src.slice(at, end + 1);
+const classes = new Set(['home-camera-slot', 'companion']);
+const slot = {
+  dataset: { pathSlot: 'cam-yard' },
+  classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) },
+  style: {},
+};
+const tile = {
+  dataset: { homeCameraPick: 'cam-yard' },
+  getBoundingClientRect: () => ({ left: 120, top: 320, width: 160, height: 90 }),
+};
+const body = {
+  dataset: { pathMode: '1' },
+  getBoundingClientRect: () => ({ left: 20, top: 40 }),
+  querySelectorAll: () => [slot],
+};
+const extra = { querySelectorAll: () => [tile] };
+globalThis.document = {
+  querySelector: (selector) => selector === '#homeCameraBody' ? body : extra,
+};
+eval(code);
+placePathCompanion();
+console.log(JSON.stringify({ style: slot.style, visible: classes.has('in-tile') }));
+"""
+    script = tmp_path / "companion.js"
+    script.write_text(harness, encoding="utf-8")
+    result = subprocess.run(
+        ["node", str(script), str(APP_JS)], capture_output=True, text=True, check=True
+    )
+    placed = json.loads(result.stdout)
+    assert placed == {
+        "style": {"left": "100px", "top": "280px", "width": "160px", "height": "90px"},
+        "visible": True,
+    }

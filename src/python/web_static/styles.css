@@ -5270,8 +5270,8 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
 .home-camera-auto:hover { color: var(--t-text); }
 
 /* ── Camera path slots ──
-   One live feed fills the existing card. A second iframe stays mounted
-   offscreen for an instant handoff, without adding another visible window. */
+   The second live iframe remains mounted in the body but is painted precisely
+   over its existing thumbnail tile. No extra camera card or WebRTC reload. */
 .home-camera-slot {
   position: absolute;
   width: 1px;
@@ -5288,6 +5288,40 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
   overflow: visible;
   opacity: 1;
   pointer-events: auto;
+}
+
+.home-camera-body[data-path-mode="1"] { overflow: visible; z-index: 2; }
+
+.home-camera-slot.companion.in-tile {
+  position: absolute;
+  overflow: hidden;
+  opacity: 1;
+  pointer-events: none;
+  z-index: 1;
+  border-radius: var(--radius-sm);
+}
+.home-camera-slot.companion.in-tile .home-camera-frame {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+.home-camera-slot.companion.in-tile .home-camera-meta { display: none; }
+.home-camera-slot.companion.in-tile::after {
+  content: attr(data-camera-name);
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 4px;
+  color: white;
+  font-size: 10px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
+}
+html.no-aspect-ratio .home-camera-slot.companion.in-tile .home-camera-frame::before {
+  display: none;
 }
 
 /* The slots are absolutely positioned until one is showing, so the body needs

@@ -6804,7 +6804,7 @@ function renderHomeCameraExtra() {
   const host = document.querySelector("#homeCameraExtra");
   if (!host) return;
   const cameras = outdoorCameraOrder(homeCameraList().filter(isOutdoorCamera));
-  if (!cameras.length) { renderHtml(host, ""); return; }
+  if (!cameras.length) { renderHtml(host, ""); placePathCompanion(); return; }
 
   const shown = shownHomeCameraId;
   const sightings = cameraSightings();
@@ -6814,7 +6814,7 @@ function renderHomeCameraExtra() {
      2x2 grid of big tiles, instead of a strip of small ones over a gap. */
   const roomy = homeCameraRoomy && allOthers.length >= 3;
   const others = allOthers.slice(0, roomy ? 3 : CAMERA_STRIP_SIZE);
-  if (!others.length) { renderHtml(host, ""); return; }
+  if (!others.length) { renderHtml(host, ""); placePathCompanion(); return; }
 
   const strip = others.map((camera) => {
     const id = cameraIdFor(camera);
@@ -6846,6 +6846,9 @@ function renderHomeCameraExtra() {
     renderHtml(host, `<div class="cam-strip" style="grid-template-columns:repeat(${others.length}, minmax(0, 1fr))">${strip}</div>`
       + `<div class="cam-last">${line}</div>`);
   }
+  /* Paint the already-running companion feed over its existing thumbnail.
+     The iframe stays in the body, so switching the main view never reloads it. */
+  placePathCompanion();
   /* Ask again once this has drawn: the card's size alone never changes when
      the picture first arrives, so a resize observer only ever measured the
      "Loading" placeholder. Unchanged, this does nothing. */
@@ -6866,7 +6869,9 @@ function cameraCardHasRoomForGrid() {
   const body = document.querySelector("#homeCameraBody");
   const extra = document.querySelector("#homeCameraExtra");
   if (!body || !extra || !body.clientHeight || !extra.clientWidth) return false;
-  const content = Array.from(body.children).reduce((sum, child) => sum + child.offsetHeight, 0);
+  const content = Array.from(body.children)
+    .filter((child) => !child.classList.contains("home-camera-slot") || child.classList.contains("showing"))
+    .reduce((sum, child) => sum + child.offsetHeight, 0);
   const shared = body.clientHeight + extra.offsetHeight + CAMERA_EXTRA_MARGIN;
   const tile = (extra.clientWidth - CAMERA_GRID_GAP) / 2 * 9 / 16;
   return content + CAMERA_EXTRA_MARGIN + 2 * tile + CAMERA_GRID_GAP <= shared;
@@ -6874,7 +6879,10 @@ function cameraCardHasRoomForGrid() {
 
 function updateCameraGridMode() {
   const roomy = cameraCardHasRoomForGrid();
-  if (roomy === homeCameraRoomy) return;
+  if (roomy === homeCameraRoomy) {
+    placePathCompanion();
+    return;
+  }
   homeCameraRoomy = roomy;
   renderHomeCameraExtra();
 }
@@ -6986,7 +6994,15 @@ function exitPathMode() {
 function applyPathSlots() {
   const showing = activePathCameraId();
   for (const slot of document.querySelectorAll("[data-path-slot]")) {
-    slot.classList.toggle("showing", slot.dataset.pathSlot === showing);
+    const main = slot.dataset.pathSlot === showing;
+    slot.classList.toggle("showing", main);
+    slot.classList.toggle("companion", !main);
+    slot.classList.remove("in-tile");
+    if (main) {
+      for (const property of ["left", "top", "width", "height"]) {
+        slot.style.removeProperty(property);
+      }
+    }
   }
   /* The picker is markup this function deliberately does not rebuild, so it
      would otherwise keep naming the camera the route started on while the card
@@ -6995,6 +7011,34 @@ function applyPathSlots() {
   if (select && showing && select.value !== showing) select.value = showing;
 }
 
+
+/* Position the second live iframe exactly over its existing camera tile.
+   It remains the same DOM node inside the body; moving or rebuilding an iframe
+   would reconnect WebRTC. The tile underneath still handles taps. */
+function placePathCompanion() {
+  const body = document.querySelector("#homeCameraBody");
+  const extra = document.querySelector("#homeCameraExtra");
+  if (!body || !extra || body.dataset.pathMode !== "1") return;
+  const bodyRect = body.getBoundingClientRect();
+  for (const slot of body.querySelectorAll(".home-camera-slot.companion")) {
+    const tile = [...extra.querySelectorAll("[data-home-camera-pick]")]
+      .find((item) => item.dataset.homeCameraPick === slot.dataset.pathSlot);
+    if (!tile) {
+      slot.classList.remove("in-tile");
+      continue;
+    }
+    const rect = tile.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      slot.classList.remove("in-tile");
+      continue;
+    }
+    slot.style.left = `${rect.left - bodyRect.left}px`;
+    slot.style.top = `${rect.top - bodyRect.top}px`;
+    slot.style.width = `${rect.width}px`;
+    slot.style.height = `${rect.height}px`;
+    slot.classList.add("in-tile");
+  }
+}
 
 /* ── Home camera: watch in place ──
 

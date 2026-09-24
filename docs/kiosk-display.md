@@ -153,10 +153,13 @@ Five things carry it, and each was measured rather than assumed:
 - **The front door takes the main window when the frontyard detects an
   arrival.** prewarm_next: true opens the door feed during the garage stage,
   so the existing card can switch to it quickly. The frontyard stays in the
-  existing thumbnail strip. If the door detector reports unavailable, the
-  frontyard remains in the main window until it recovers. Only one live feed
-  is visible; the other stays mounted offscreen. Three 1080p streams previously
-  put the Pi 4 at 80% CPU, so the route never opens three simultaneously.
+  existing thumbnail strip as a live video. At the garage step, garage is
+  large and the prewarmed door plays in its existing tile; at the frontyard
+  step, door is large and frontyard plays in its tile. If the door detector
+  reports unavailable, the frontyard remains large until it recovers. The
+  second iframe stays mounted while the layout changes, so it does not
+  reconnect. Three 1080p streams previously put the Pi 4 at 80% CPU, so the
+  route never opens three simultaneously.
 - **Slots are DOM nodes, not markup.** Re-creating an `<iframe>` reloads it, so
   rebuilding the card to add the next camera would drop the stream currently on
   screen — a black gap at the exact moment somebody walks into view. The card is
