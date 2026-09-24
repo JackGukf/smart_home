@@ -110,8 +110,9 @@ cameras:
 # motion_entity alone already does.
 #
 # prewarm_next (default false): also keep the next camera's stream open so the
-# handoff is instant. Costs a second decoding stream the whole episode - off
-# for this house, where the panel should only play the camera the person is at.
+# handoff is instant. With priority_camera, that camera is warmed from the
+# first step and takes the existing main window one step before its own sensor
+# trips. The other live feed stays hidden; this uses at most two streams.
 # abandon_seconds (default: linger_seconds): how long the card waits when the
 # person clears the route without ever advancing past the first camera that
 # saw them (they stayed at the garage, or left). linger_seconds applies once
@@ -120,7 +121,7 @@ cameras:
 #   - name: Front approach
 #     linger_seconds: 300
 #     abandon_seconds: 60
-#     prewarm_next: true  # current and next camera; at the door, keep frontyard
+#     prewarm_next: true  # warm front door, then promote it when frontyard sees arrival
 #     priority_camera: Front door camera
 #     cameras: [Garage camera, Frontyard camera, Front door camera]
   # Each Wyze camera gets its own RTSP username/password, set per camera when

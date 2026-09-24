@@ -67,9 +67,11 @@ globalThis.latestCameraById = new Map(ROUTE.map((c) => [c.id, c]));
 globalThis.latestTuyaDevices = ROUTE.map((c) => ({ id: c.motion_entity, state: 'off', online: true }));
 globalThis.activeCameraIds = new Set();
 globalThis.homeCameraOverride = null;
+globalThis.shownHomeCameraId = null;
 globalThis.motionEpisodes = new Map();
 globalThis.pathEpisodes = new Map();
 globalThis.renderHomeCamera = () => { events.renders += 1; };
+globalThis.renderHomeCameraExtra = () => { events.stripExcludes = shownHomeCameraId; };
 globalThis.exitPathMode = () => { events.exits += 1; };
 // Records which cameras the card is asked to hold open, without a DOM.
 globalThis.syncPathSlots = (cameras) => {
@@ -96,7 +98,7 @@ eval(src.match(/const MOTION_ON_STATES = new Set\\([^)]*\\);/)[0].replace('const
 
 eval(pick('cameraIdFor') + pick('motionSensorIsTripped') + pick('cameraTriggerIsTripped') + pick('motionWatchEnabled')
    + pick('cameraPathList') + pick('pathCameraIds') + pick('pathEpisodeCameras')
-   + pick('activePathCameraId') + pick('openPathEpisode') + pick('advancePathEpisode')
+   + pick('pathDisplayCameraId') + pick('activePathCameraId') + pick('openPathEpisode') + pick('advancePathEpisode')
    + pick('closePathEpisode') + pick('stopAllPathEpisodes') + pick('updatePathWatch')
    + pick('applyPathCameras') + pick('releaseMotionEpisodes'));
 
@@ -151,12 +153,9 @@ report();
     assert result["episodes"] == 1
 
 
-def test_prewarm_next_holds_the_next_camera_open_too(tmp_path: Path) -> None:
-    """prewarm_next: true is the old behaviour, kept for routes that want the
-    instant handoff: the one on screen and the one they are walking towards,
-    and no more. Pre-warming the *whole* route does not: three 1080p streams
-    put the Raspberry Pi 4 panel at 80% CPU and none of them finished
-    connecting."""
+def test_priority_door_is_pre_warmed_with_the_first_camera(tmp_path: Path) -> None:
+    """The door is ready before the person reaches the yard, with two live
+    streams at most on the Raspberry Pi panel."""
     result = _run("""
 latestCameraPaths[0].prewarm_next = true;
 walkTo(0);
@@ -164,8 +163,8 @@ updatePathWatch();
 report();
 """, tmp_path)
     assert result["showing"] == "cam-garage"
-    assert result["playing"] == ["cam-garage", "cam-yard"]
-    assert "cam-door" not in result["playing"]
+    assert result["playing"] == ["cam-door", "cam-garage"]
+    assert "cam-yard" not in result["playing"]
 
 
 def test_arriving_mid_route_starts_where_they_are(tmp_path: Path) -> None:
@@ -218,9 +217,27 @@ const warmedAtGarage = [...events.slots];
 walkTo(1); updatePathWatch();
 report({ warmedAtGarage });
 """, tmp_path)
-    assert result["warmedAtGarage"] == ["cam-garage", "cam-yard"]
-    assert result["slots"] == ["cam-yard", "cam-door"], "showing the yard, warming the door"
+    assert result["warmedAtGarage"] == ["cam-garage", "cam-door"]
+    assert result["slots"] == ["cam-yard", "cam-door"], "door stays warm while the yard is detected"
+    assert result["showing"] == "cam-door", "the door takes the existing main window"
+    assert result["stripExcludes"] == "cam-door", "the existing strip must not duplicate the main view"
     assert result["playing"] == ["cam-door", "cam-yard"]
+
+
+def test_unavailable_door_keeps_yard_in_main_window(tmp_path: Path) -> None:
+    result = _run("""
+latestCameraPaths[0].prewarm_next = true;
+latestCameraPaths[0].steps[2].person_state = 'unavailable';
+walkTo(1, { hold: false }); updatePathWatch();
+const duringOutage = activePathCameraId();
+latestCameraPaths[0].steps[2].person_state = 'off';
+updatePathWatch();
+report({ duringOutage });
+""", tmp_path)
+    assert result["duringOutage"] == "cam-yard"
+    assert result["showing"] == "cam-door"
+    assert result["override"] == "cam-door"
+    assert result["renders"] == 1, "availability recovery updates the existing card"
 
 
 def test_a_held_sensor_behind_them_never_drags_the_view_back(tmp_path: Path) -> None:

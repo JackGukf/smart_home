@@ -66,6 +66,7 @@ globalThis.pathEpisodes = new Map();
 globalThis.latestCameraById = new Map();
 globalThis.applyPathSlots = () => {};
 globalThis.renderHomeCamera = () => { events.renders += 1; };
+globalThis.renderHomeCameraExtra = () => {};
 globalThis.logActivity = (msg) => { events.log.push(msg); };
 globalThis.captureSnapshotOnce = async () => { events.snapshots += 1; };
 
@@ -110,7 +111,7 @@ eval(pick('cameraIdFor') + pick('motionSensorIsTripped') + pick('cameraTriggerIs
    + pick('updateMotionWatch') + pick('motionWatchEnabled')
    + pick('setMotionWatchEnabled') + pick('anyCameraWatchesMotion')
    + pick('syncMotionWatchToggle') + pick('cameraPathList') + pick('pathCameraIds')
-   + pick('pathEpisodeCameras') + pick('activePathCameraId') + pick('openPathEpisode')
+   + pick('pathEpisodeCameras') + pick('pathDisplayCameraId') + pick('activePathCameraId') + pick('openPathEpisode')
    + pick('advancePathEpisode') + pick('closePathEpisode') + pick('stopAllPathEpisodes')
    + pick('updatePathWatch'));
 

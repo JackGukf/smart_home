@@ -6987,7 +6987,6 @@ function applyPathSlots() {
   const showing = activePathCameraId();
   for (const slot of document.querySelectorAll("[data-path-slot]")) {
     slot.classList.toggle("showing", slot.dataset.pathSlot === showing);
-    slot.classList.toggle("companion", slot.dataset.pathSlot !== showing);
   }
   /* The picker is markup this function deliberately does not rebuild, so it
      would otherwise keep naming the camera the route started on while the card
@@ -7223,25 +7222,24 @@ function pathCameraIds() {
   return ids;
 }
 
-/* path name -> { index, stopTimer, released, advanced }. A released episode
-   stays as a marker until motion clears, including after an outward departure.
-   Index is the step being shown; advanced records whether it ever followed. */
+/* path name -> { index, stopTimer, released, advanced, displayId }.
+   Index records the furthest sensor reached; displayId can be the door. */
 const pathEpisodes = new Map();
 
-/* At most two live feeds: the current camera and the next one, or the
-   previous one at the door. Keeping frontyard beside the front door gives a
-   usable fallback when the door camera drops off Wi-Fi. Three simultaneous
-   1080p streams overloaded the Pi 4 in the earlier panel test. */
+/* Keep at most two live feeds. Warm the priority door camera from the first
+   approach step so it is connected before the person reaches the yard. */
 function pathEpisodeCameras() {
   const cameras = [];
   for (const path of cameraPathList()) {
     const episode = pathEpisodes.get(path.name);
-    /* A released episode is still tracked, so the same motion cannot start it
-       again, but it no longer owns the card. */
     if (!episode || episode.released) continue;
     const current = path.steps[episode.index];
+    const priorityIndex = path.steps.findIndex(
+      (step) => step.camera_id === path.priority_camera_id);
+    const priority = priorityIndex > episode.index ? path.steps[priorityIndex] : null;
     const companion = path.prewarm_next
-      ? path.steps[episode.index + 1] || path.steps[episode.index - 1] : null;
+      ? priority || path.steps[episode.index + 1] || path.steps[episode.index - 1]
+      : null;
     for (const step of [current, companion]) {
       if (!step) continue;
       const camera = latestCameraById.get(step.camera_id);
@@ -7251,18 +7249,35 @@ function pathEpisodeCameras() {
   return cameras;
 }
 
-/* The camera a live path episode wants on screen, or null when none is. */
+/* Show the door in the existing main window when the yard sees an arrival.
+   A known-unavailable door detector keeps the useful yard view as fallback. */
+function pathDisplayCameraId(path, episode) {
+  const current = path.steps[episode.index];
+  const priorityIndex = path.steps.findIndex(
+    (step) => step.camera_id === path.priority_camera_id);
+  const priority = path.steps[priorityIndex];
+  const state = String(priority?.person_state || "").toLowerCase();
+  if (path.prewarm_next && priorityIndex === episode.index + 1
+      && priority && state !== "unavailable" && state !== "unknown"
+      && latestCameraById.has(priority.camera_id)) {
+    return priority.camera_id;
+  }
+  return current?.camera_id ?? null;
+}
+
 function activePathCameraId() {
   for (const path of cameraPathList()) {
     const episode = pathEpisodes.get(path.name);
-    if (episode && !episode.released) return path.steps[episode.index]?.camera_id ?? null;
+    if (episode && !episode.released) return pathDisplayCameraId(path, episode);
   }
   return null;
 }
 
 function openPathEpisode(path, index) {
-  pathEpisodes.set(path.name, { index, stopTimer: null, released: false, advanced: false });
-  homeCameraOverride = path.steps[index].camera_id;
+  const episode = { index, stopTimer: null, released: false, advanced: false };
+  pathEpisodes.set(path.name, episode);
+  episode.displayId = pathDisplayCameraId(path, episode);
+  homeCameraOverride = episode.displayId;
   applyPathCameras();
   logActivity(`${path.name}: ${path.steps[index].name}`);
 }
@@ -7270,11 +7285,8 @@ function openPathEpisode(path, index) {
 function advancePathEpisode(path, episode, index) {
   episode.index = index;
   episode.advanced = true;
-  homeCameraOverride = path.steps[index].camera_id;
-  /* No full re-render: the slot they are walking into is already open and
-     already playing, so this adds the *next* one and shows this one. Rebuilding
-     the card here would reload every iframe in it, which is the whole reason
-     the slots are managed as nodes rather than as a block of markup. */
+  episode.displayId = pathDisplayCameraId(path, episode);
+  homeCameraOverride = episode.displayId;
   applyPathCameras();
   logActivity(`${path.name}: ${path.steps[index].name}`);
 }
@@ -7291,7 +7303,7 @@ function closePathEpisode(pathName, suppressUntilClear = false) {
   if (wasReleased) return;
 
   for (const step of path.steps) activeCameraIds.delete(step.camera_id);
-  if (homeCameraOverride === path.steps[episode.index]?.camera_id) homeCameraOverride = null;
+  if (path.steps.some((step) => step.camera_id === homeCameraOverride)) homeCameraOverride = null;
   exitPathMode();
   renderHomeCamera();
   logActivity(`${path.name}: clear`);
@@ -7307,6 +7319,8 @@ function applyPathCameras() {
   }
   for (const id of wantedIds) activeCameraIds.add(id);
   syncPathSlots(wanted);
+  shownHomeCameraId = activePathCameraId();
+  renderHomeCameraExtra();
 }
 
 function stopAllPathEpisodes() {
@@ -7388,6 +7402,12 @@ function updatePathWatch() {
         () => closePathEpisode(path.name),
         seconds * 1000,
       );
+    }
+    const displayId = pathDisplayCameraId(path, episode);
+    if (displayId !== episode.displayId) {
+      episode.displayId = displayId;
+      homeCameraOverride = displayId;
+      renderHomeCamera();
     }
   }
 }

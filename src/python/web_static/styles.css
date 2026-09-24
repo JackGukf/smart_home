@@ -5270,9 +5270,8 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
 .home-camera-auto:hover { color: var(--t-text); }
 
 /* ── Camera path slots ──
-   A route holds the main feed and, when prewarming, one companion feed. The
-   companion stays visible so an unavailable door stream never hides the last
-   useful approach view. Neither iframe is rebuilt during handoff. */
+   One live feed fills the existing card. A second iframe stays mounted
+   offscreen for an instant handoff, without adding another visible window. */
 .home-camera-slot {
   position: absolute;
   width: 1px;
@@ -5289,36 +5288,6 @@ html.no-aspect-ratio .cam-thumb { height: 64px; }
   overflow: visible;
   opacity: 1;
   pointer-events: auto;
-}
-
-/* The warmed route feed stays visible as a small second window. Its iframe
-   remains the same DOM node when the main view advances, so the handoff does
-   not reconnect either stream. */
-.home-camera-slot.companion {
-  right: 8px;
-  bottom: 8px;
-  z-index: 2;
-  width: min(38%, 220px);
-  height: auto;
-  overflow: visible;
-  opacity: 1;
-  pointer-events: auto;
-  border-radius: var(--radius-sm);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, .55);
-}
-.home-camera-slot.companion .home-camera-meta { display: none; }
-.home-camera-slot.companion .home-camera-frame { border: 2px solid var(--t-card-border); }
-.home-camera-slot.companion::after {
-  content: attr(data-camera-name);
-  position: absolute;
-  left: 5px;
-  bottom: 4px;
-  padding: 2px 5px;
-  border-radius: 3px;
-  background: rgba(0, 0, 0, .72);
-  color: white;
-  font-size: 10px;
-  pointer-events: none;
 }
 
 /* The slots are absolutely positioned until one is showing, so the body needs
