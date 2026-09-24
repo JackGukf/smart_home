@@ -402,10 +402,10 @@ def load_series(base_url: str, token: str, statistic_id: str, days: int = 30,
 
     end = datetime.now().replace(minute=0, second=0, microsecond=0)
     rows = energy.fetch_statistics(base_url, token, statistic_id, end - timedelta(days=days), end,
-                                   "hour", (kind,))
+                                   "hour", (kind, "state") if kind == "change" else (kind,))
     series: Series = []
     for row in rows:
-        value = row.get(kind)
+        value = energy.metered_kwh(row) if kind == "change" else row.get(kind)
         if value is None:
             continue
         series.append((energy._local(row["start"]), float(value)))

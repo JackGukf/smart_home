@@ -598,3 +598,27 @@ def test_the_flow_shows_while_waiting_for_the_meter():
     assert "Waiting for the first meter reading" in js
     home = js[js.index("function renderHomeEnergy()"):]
     assert home.index("energyFlowCompactSvg(m)") < home.index('if (e.mode === "records")') + 400
+
+
+def test_the_registers_first_reading_is_not_consumption():
+    # 2026-09-24: the register went 0 -> 104491.9 kWh at 09:20 and Home
+    # Assistant booked all of it to the 09:00 hour.
+    midnight = NOW.replace(hour=0, minute=0)
+    hourly = [{"start": _iso(midnight + timedelta(hours=h)), "change": 0.0, "state": 0.0} for h in range(9)]
+    hourly.append({"start": _iso(midnight + timedelta(hours=9)), "change": 104492.4, "state": 104492.4})
+    hourly += [{"start": _iso(midnight + timedelta(hours=h)), "change": 0.6, "state": 104492.4 + 0.6 * (h - 9)}
+               for h in range(10, NOW.hour)]
+    daily = [{"start": _iso(midnight - timedelta(days=1)), "change": 0.0, "state": 0.0}]
+    e = energy.build_live_electricity(NOW, None, [], hourly, daily)
+
+    assert e["today_hourly_kwh"][:10] == [None] * 10       # not zeros: the meter was not reporting
+    assert e["today_kwh"] == pytest.approx(0.6 * (NOW.hour - 10))
+    assert e["base_kw"] == 0.6 and e["days"] == []
+
+
+def test_metered_kwh_rejects_what_no_house_can_draw():
+    assert energy.metered_kwh({"change": 2.5}) == 2.5                    # no state asked for: trusted
+    assert energy.metered_kwh({"change": 2.5, "state": 0}) is None       # register not reporting
+    assert energy.metered_kwh({"change": 60.0, "state": 9e4}) is None    # a jump, not an hour
+    assert energy.metered_kwh({"change": 60.0, "state": 9e4}, hours=24) == 60.0
+    assert energy.metered_kwh({"change": -1.0, "state": 9e4}) is None

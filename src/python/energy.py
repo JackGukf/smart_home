@@ -143,6 +143,9 @@ STATISTICS_CACHE_SECONDS = 300  # hourly statistics change once an hour
 USUAL_DAYS = 14                 # "a usual day" is the median of this many
 USUAL_MIN_DAYS = 3              # fewer whole days than this and there is no usual day yet
 FETCH_TIMEOUT_S = 15
+# The most a house can draw in an hour: 200 A service at 240 V. A larger
+# "change" is the register appearing or being re-read, not electricity.
+MAX_KWH_PER_HOUR = 48.0
 
 
 def find_powerlync_entities(states: list[dict[str, Any]]) -> tuple[str, str] | None:
@@ -211,6 +214,22 @@ def minute_series(history: list[dict[str, Any]], end: datetime, minutes: int = 6
     return series
 
 
+def metered_kwh(row: dict[str, Any], hours: float = 1) -> float | None:
+    """kWh used in one statistics period, or None if the meter was not reporting.
+
+    Home Assistant counts the register's first real reading as consumption:
+    on 2026-09-24 the PowerLync went from 0 to 104491.9 kWh at 09:20 and the
+    09:00 hour "used" all of it. So a period whose register reads 0 is not a
+    reading (like find_powerlync_entities), and a change no house could draw
+    in the time is a register jump, not electricity. Both are gaps, not zeros."""
+    change = _number(row.get("change"))
+    if change is None or change < 0 or change > MAX_KWH_PER_HOUR * hours:
+        return None
+    if "state" in row and not (_number(row.get("state")) or 0) > 0:
+        return None
+    return change
+
+
 def _state_of(kw: float | None) -> str:
     if kw is None:
         return "unknown"
@@ -237,8 +256,8 @@ def build_live_electricity(
 
     by_hour: dict[datetime, float] = {}
     for row in hourly:
-        change = _number(row.get("change"))
-        if change is not None and change >= 0:
+        change = metered_kwh(row)
+        if change is not None:
             by_hour[_local(row["start"])] = change
     top = now.replace(minute=0, second=0, microsecond=0)
     hours_back = [top - timedelta(hours=h) for h in range(24, 0, -1)]
@@ -260,9 +279,9 @@ def build_live_electricity(
 
     days = []
     for row in daily:
-        change = _number(row.get("change"))
+        change = metered_kwh(row, hours=24)
         day = _local(row["start"]).date()
-        if change is not None and change >= 0 and day < now.date():
+        if change is not None and day < now.date():
             days.append({"date": day.isoformat(), "kwh": round(change, 1)})
     days = sorted(days, key=lambda d: d["date"])[-30:]
 
@@ -349,7 +368,8 @@ class LiveEnergy:
             return json.loads(response.read())
 
     def _ws_statistics(self, statistic_id: str, start: datetime, end: datetime, period: str) -> list[dict[str, Any]]:
-        return fetch_statistics(self._base_url, self._token() or "", statistic_id, start, end, period)
+        return fetch_statistics(self._base_url, self._token() or "", statistic_id, start, end, period,
+                                ("change", "state"))
 
     def _cached(self, key: str, max_age: float, fetch: Callable[[], Any]) -> Any:
         now = self._clock()
