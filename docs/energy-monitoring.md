@@ -91,7 +91,13 @@ order:
   `unknown`, and BC Hydro's own app also 0 W - so the meter link, not this
   stack. The reset probably undid BC Hydro's join to the meter (or it never
   finished). That is BC Hydro's to redo, through their app or by phone.
-  **Open as of 2026-09-23.**
+  **Resolved 2026-09-24:** the meter started reporting at 09:20 by itself.
+- **The first reading is booked as consumption.** The register jumped from 0
+  to the meter's lifetime 104491.9 kWh, and HA counted it all in one hour
+  (104492.4 kWh "today"). Corrected in HA's statistics with
+  `recorder/adjust_sum_statistics` (−104491.9 kWh from 09:00) and guarded in
+  `metered_kwh`; details in `docs/handoff-2026-09-19-cast-lighting-energy.md`,
+  "Update 2026-09-24".
 - If BC Hydro's re-setup resets the device again, the HomeKit pairing goes with
   it; rerun `setup-ha-powerlync.py --code <code> --apply` (idempotent) with
   the code decoded from the QR on its label, as in step 2.
@@ -107,6 +113,9 @@ order:
   register (WebSocket `recorder/statistics_during_period`, `change` per hour
   and per day). Statistics survive the recorder's 10-day purge, so the 30-day
   bars fill up as the days pass. Cached 5 min.
+- **Every period goes through `metered_kwh`**: a register reading 0 is a gap,
+  not zero use, and a change above 48 kWh/hour (200 A at 240 V) is a register
+  jump. So `state` is fetched alongside `change`.
 - **A usual day** is the per-hour median of the last 14 whole days; it appears
   after three days of readings.
 - Before the sensors exist the payload is the old sample data. Once they have

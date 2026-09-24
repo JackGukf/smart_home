@@ -114,9 +114,9 @@ Start with **Open items**, then **Traps**.
   automations and three scripts (all reinstallable from `scripts/`).
 
 ## Open items
-1. **PowerLync:** done in code since the same day - pair it with
-   `scripts/setup-ha-powerlync.py --code … --apply` and the dashboard goes live
-   by itself. Gas: see `docs/energy-monitoring.md`.
+1. **PowerLync:** live since 2026-09-24 09:20 - see "Update 2026-09-24" below.
+   Still to come by themselves: the daily bars (from 2026-09-25) and the usual
+   day (after three whole days). Gas: see `docs/energy-monitoring.md`.
 2. **Test-run Movie mode** once (never run since the IR pauses and the plug).
 3. **First night of the automations** - check the logbook in the morning.
 4. **Daytime:** motion turns the accent lights on at any hour and nothing turns
@@ -129,6 +129,47 @@ Start with **Open items**, then **Traps**.
    powered it keeps pulling the stream (~1.4 cores for nobody).
 8. Still open from before: rotate the shared camera password; DHCP reservations
    for .83, .58 and .176.
+
+## Update 2026-09-24: the meter reports, and its first reading was a spike
+
+The PowerLync (paired 2026-09-23, every value 0) started reporting at
+**09:20 on 2026-09-24**. Its kWh register went from 0 straight to
+**104491.9 kWh** - the meter's lifetime total - and Home Assistant, which
+treats the register as `total_increasing`, booked all of it as consumption in
+the 09:00 hour. The Home card showed **104492.4 kWh today**.
+
+- **Fixed in Home Assistant's statistics** (the board, not git): the
+  equivalent of Developer Tools → Statistics → *Adjust sum*, WebSocket
+  `recorder/adjust_sum_statistics` on
+  `sensor.powerlync_energy_monitor_002_004cce_grid_total_energy_consumed`,
+  `start_time` 2026-09-24 09:00 local, **adjustment −104491.9 kWh**. The 09:00
+  hour now reads 0.5 kWh (09:20 to 10:00, real). HA's own Energy dashboard is
+  corrected by the same change. Undo would be the same call with +104491.9.
+- **Guarded in code** (`metered_kwh` in `src/python/energy.py`, commit
+  `dd48c61`), for the Energy view and the nightly forecast alike:
+  - a period whose register reads **0** is a gap, not a 0 kWh hour - so the
+    hours before 09:20 do not drag the usual day or the base load to zero;
+  - a change above **48 kWh per hour** (200 A at 240 V; 24x that per day) is
+    a register jump, not electricity, and is dropped.
+  The statistics are now fetched with `types: change, state` so the first rule
+  can see the register.
+- **Why it can happen again:** if BC Hydro re-joins the PowerLync, or it
+  reports 0 for a moment, HA reads a drop as a meter reset and books the next
+  real reading as consumption again. The page is protected; HA's Energy
+  dashboard is not - repeat the adjustment, using the jump size from the
+  register's history (`/api/history/period`, the first non-zero reading).
+
+### Home Energy card, bigger flow (same day)
+
+On the PC the power flow got 99 px of a 222 px card. The three figures under it
+(Today, On pace, This bill) now put label and value on one line when they fit
+(52 → 26 px; a narrow card wraps them back to two), and the compact flow's
+viewBox is cropped to `0 14 350 114` (only glow was outside it); its height cap
+is 260 px. At 1920 × 1080 the flow is now 384 × 125 px, at 2560 × 1440
+660 × 215. Values stay next to their labels, not right-aligned, because the
+card's resize handle sits in the bottom-right corner. `check-card-overlap.py
+--view home --view energy`: no findings on all 7 sizes. The iPad 13" portrait
+card is short and its flow is still small there - untouched.
 
 ## Traps found this session
 - **Chromium hangs silently in a systemd user unit here** - the user manager

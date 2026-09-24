@@ -66,9 +66,10 @@
 > Assistant; pairing is one command, `scripts/setup-ha-powerlync.py --code …
 > --apply`. Gas cannot be read locally (FortisBC's FlexNet meter); options and
 > the energy "AI mode" plan are in **`docs/energy-monitoring.md`**.
-> **Paired 2026-09-23** (`Powerlync-002-004cce`), but the meter has not reported
-> yet - every value is 0, BC Hydro's app too - so the page stays on sample data
-> until the register is above 0 kWh. Re-joining the meter is BC Hydro's side.
+> **Paired 2026-09-23** (`Powerlync-002-004cce`), **reporting since 2026-09-24
+> 09:20** - the page is live. Its first reading (0 → 104491.9 kWh) was booked by
+> HA as one hour's use; corrected in HA's statistics and guarded in
+> `metered_kwh` (see the 2026-09-19 handoff, "Update 2026-09-24").
 >
 > **Matter bridge live since 2026-09-06** (`matter-bridge.service`, a systemd
 > *user* unit), exposing 5 devices and commissioned into three fabrics —
