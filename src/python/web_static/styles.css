@@ -7403,7 +7403,7 @@ header > .header-right { flex-shrink: 0; }
 /* No reading yet: only the flow, full width, waiting; the other cards need the meter. */
 .energy-live.flow-only > .panel { display: none; }
 .energy-live.flow-only > .energy-flow-card { display: grid; grid-column: 1 / -1; }
-.energy-flow-card .home-panel-head .energy-state { margin-left: 10px !important; }
+.energy-live.flow-only .flow-full .flow-svg { max-width: 1040px; margin: 0 auto; }   /* full width, not full size */
 .energy-flow-card { background: radial-gradient(ellipse at 46% 48%, rgba(79, 142, 247, 0.09), transparent 62%), var(--card); }
 @media (max-width: 1099px) {
   .energy-live > .panel { grid-column: 1 / -1; }

@@ -11598,7 +11598,6 @@ function renderEnergyFlowCard(m) {
   if (!el) return;
   el.innerHTML = `
     <div class="home-panel-head"><span class="panel-title"><i class="ti ti-arrows-split-2"></i> Power flow · now</span>
-      ${m.kw === null ? `<span class="energy-state busy">${m.waiting ? "Waiting for the meter" : "No meter yet"}</span>` : ""}
       <span class="flow-legend"><span><i style="background:${FLOW.grid}"></i>Electricity, metered</span>
       <span><i style="background:${FLOW.gas}"></i>Gas, modelled</span><span><i class="dash"></i>Estimate</span></span></div>
     <div class="flow-full">${energyFlowSvg(m)}</div>
