@@ -5,11 +5,12 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import shutil
 import socket
 import subprocess
 import threading
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import time
 import asyncio
 import contextlib
@@ -61,6 +62,7 @@ from src.python import news_feed
 from src.python import sensor_history
 from src.python import status_overview
 from src.python import house_memory
+from src.python import motion_routine
 from src.python import tuya_ir
 from src.python import script_steps
 from src.python.automation_author import (
@@ -522,6 +524,12 @@ class HomeAssistantConfig:
 
 class AutomationDraftRequest(BaseModel):
     request: str
+
+
+class MotionRoutineRequest(BaseModel):
+    """The areas the page draws, each with its motion entities, and the day."""
+    areas: dict[str, list[str]]
+    day: str | None = None
 
 
 class HomeAlarmCardRequest(BaseModel):
@@ -1477,6 +1485,28 @@ def create_app(
         capped = max(1, min(int(limit), 1000))
         events = await asyncio.to_thread(read_motion_log, app.state.motion_log_path, capped)
         return {"events": events, "retention_days": MOTION_LOG_MAX_DAYS}
+
+    @app.post("/api/motion/routine")
+    async def motion_routine_get(body: MotionRoutineRequest) -> dict[str, Any]:
+        """The motion routine by area (src/python/motion_routine.py): the usual
+        day over 14 days, the chosen day in 5-minute steps, the last motion.
+        The page names the areas and their entities; this reads the history."""
+        if len(body.areas) > 60 or any(len(v) > 60 for v in body.areas.values()):
+            raise HTTPException(status_code=400, detail="Too many areas or entities")
+        entity = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+        if any(not entity.match(e) for v in body.areas.values() for e in v):
+            raise HTTPException(status_code=400, detail="Not an entity id")
+        try:
+            day = date.fromisoformat(body.day) if body.day else date.today()
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail="day is YYYY-MM-DD") from error
+        path = app.state.memory_service.path
+        if not Path(path).exists():
+            raise HTTPException(status_code=503, detail="The house memory has no records yet")
+        try:
+            return await asyncio.to_thread(motion_routine.routine_from_path, Path(path), body.areas, day)
+        except sqlite3.Error as error:
+            raise HTTPException(status_code=503, detail="The house memory could not be read") from error
 
     @app.get("/api/events/stream")
     async def events_stream(request: Request) -> StreamingResponse:

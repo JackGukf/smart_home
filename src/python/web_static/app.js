@@ -2707,7 +2707,246 @@ function renderMotionSensors() {
 
   motionGrid.innerHTML = banner + ordered.map((g) => renderSensorDeviceCard(g, "motion")).join("");
   renderForeignKinds("motion", ["sensor"], "#motionGrid");
+  if (routineState && routineState.data) renderMotionRoutine();
 }
+
+/* ── Motion routine ──
+   Where the house moves, by place, against its usual day - and one tap on an
+   area opens the day as a timeline. The areas are the dashboard's own (Home →
+   Areas); the page knows which motion sensors each holds, the server finds
+   the cameras' person detection in the house memory and joins them by name
+   (src/python/motion_routine.py). "Usual" is the share of the last 14 days
+   with motion in that hour; "unusual" is motion in an hour that has it on
+   fewer than one day in seven. */
+const ROUTINE_QUIET = 0.15;
+const ROUTINE_NOW_S = 180;          // a camera's last person this recent counts as "now"
+const ROUTINE_REFRESH_MS = 120000;
+const ROUTINE_PLACES = [
+  { name: "Outside", color: "#2dd4bf", test: /yard|door|garage|drive|porch|patio|deck|garden|outside|gate|fence/i },
+  { name: "Upstairs", color: "#a78bfa", test: /bed|upstairs|nursery|loft|attic/i },
+  { name: "Downstairs", color: "#fbbf24", test: /./ },
+];
+// var, not const: renderMotionSensors (above) reads it, and may run before this line has.
+var routineState = { mode: "places", day: null, focus: null, data: null, loading: false, loadedAt: 0 };
+
+function routineDayIso(offset = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/* Area name -> its motion entities, and area name -> the live sensor groups in it. */
+function routineAreaMap() {
+  const names = Object.fromEntries((areasDoc.areas || []).map((a) => [a.id, a.name]));
+  const entities = {}, groups = {};
+  Object.values(names).forEach((n) => { entities[n] = []; groups[n] = []; });
+  visibleSensorGroups("motion").forEach((g) => {
+    const area = names[(areasDoc.assignments || {})[`sensor:${areaSlug(g.name)}`]] || "Not in an area";
+    entities[area] = entities[area] || [];
+    groups[area] = groups[area] || [];
+    groups[area].push(g);
+    (g.readings || []).forEach((r) => {
+      const id = String(r.entity_id || r.id || "");
+      if (/^binary_sensor\.[a-z0-9_]+$/.test(id) && /motion|occupancy|presence/.test(`${r.device_class} ${id}`)
+          && !entities[area].includes(id)) entities[area].push(id);
+    });
+  });
+  return { entities, groups };
+}
+
+async function loadMotionRoutine() {
+  if (routineState.loading) return;
+  routineState.loading = true;
+  try {
+    routineState.data = await requestJson("/api/motion/routine", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ areas: routineAreaMap().entities, day: routineState.day || routineDayIso(0) }),
+    });
+    routineState.loadedAt = Date.now();
+  } catch (error) {
+    routineState.error = error;
+  } finally {
+    routineState.loading = false;
+  }
+  renderMotionRoutine();
+}
+
+function routineAgo(ts) {
+  if (!ts) return "no motion recorded";
+  const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+}
+
+function routineSensorsText(entities) {
+  const cams = entities.filter((e) => e.endsWith("_npu_person")).length;
+  const sensors = entities.length - cams;
+  return [cams ? (cams > 1 ? `${cams} cameras` : "camera") : "", sensors ? `${sensors} sensor${sensors > 1 ? "s" : ""}` : ""]
+    .filter(Boolean).join(" + ") || "no sensors";
+}
+
+/* The areas with data, grouped by place, each with what the page draws. */
+function routineModel() {
+  const { groups } = routineAreaMap();
+  const areas = (routineState.data && routineState.data.areas) || {};
+  const nowHour = new Date().getHours();
+  const places = ROUTINE_PLACES.map((p) => ({ ...p, areas: [] }));
+  Object.entries(areas).forEach(([name, a]) => {
+    if (!a.entities.length) return;
+    const live = (groups[name] || []).some(motionDetectedIn)
+      || (a.last && Date.now() / 1000 - a.last < ROUTINE_NOW_S && a.entities.some((e) => e.endsWith("_npu_person")));
+    const byHour = Array.from({ length: 24 }, () => 0);
+    a.day.forEach((m) => { byHour[Math.floor(m / 60)] += 1; });
+    const place = places.find((p) => p.test.test(name));
+    place.areas.push({ name, ...a, live, byHour, usualNow: a.usual[nowHour], color: place.color });
+  });
+  places.forEach((p) => p.areas.sort((x, y) => x.name.localeCompare(y.name)));
+  return places.filter((p) => p.areas.length);
+}
+
+function routineBarsSvg(area) {
+  const bars = area.usual.map((u, h) => {
+    const n = area.byHour[h];
+    const hgt = n ? Math.max(4, Math.min(12, n) / 12 * 32) : 0;
+    const odd = n && u < ROUTINE_QUIET;
+    return `<rect x="${h * 10 + 1}" y="${(34 - u * 32).toFixed(1)}" width="8" height="${Math.max(0.5, u * 32).toFixed(1)}" rx="1.5" class="routine-usual"/>`
+      + (n ? `<rect x="${h * 10 + 1}" y="${(34 - hgt).toFixed(1)}" width="8" height="${hgt.toFixed(1)}" rx="1.5" fill="${odd ? "#fb923c" : area.color}"/>` : "");
+  }).join("");
+  return `<svg class="routine-bars" viewBox="0 0 240 34" preserveAspectRatio="none" aria-hidden="true">${bars}</svg>`;
+}
+
+function renderMotionPlaces(places) {
+  const all = places.flatMap((p) => p.areas);
+  const live = all.filter((a) => a.live).map((a) => a.name);
+  const quietest = all.filter((a) => !a.live).sort((x, y) => (x.last || 0) - (y.last || 0))[0];
+  const today = routineState.day === routineDayIso(0);
+  return `
+    <div class="routine-now${live.length ? " active" : ""}">
+      <span class="routine-pulse" aria-hidden="true"></span>
+      <div><b>${live.length ? `Motion now in ${escapeHtml(live.join(", "))}` : "No motion anywhere right now"}</b>
+        <span>every sensor and camera, by its area</span></div>
+      ${quietest ? `<span class="routine-quiet">quietest: ${escapeHtml(quietest.name)}, ${escapeHtml(routineAgo(quietest.last))}</span>` : ""}
+    </div>
+    <div class="routine-places">
+      ${places.map((p) => `
+        <div class="routine-place">
+          <div class="routine-place-head"><i style="background:${p.color}"></i><b>${escapeHtml(p.name)}</b>
+            <span>${p.areas.filter((a) => a.live).length ? `${p.areas.filter((a) => a.live).length} active now` : "all quiet"}</span></div>
+          ${p.areas.map((a) => `
+            <button type="button" class="routine-area" data-routine-area="${escapeHtml(a.name)}" title="Open ${escapeHtml(a.name)}'s day">
+              <span class="routine-area-head"><i class="routine-dot${a.live ? " live" : ""}" style="${a.live ? `background:${a.color}` : ""}"></i>
+                <b>${escapeHtml(a.name)}</b><span class="mono" style="${a.live ? `color:${a.color}` : ""}">${a.live ? "now" : escapeHtml(routineAgo(a.last))}</span></span>
+              ${routineBarsSvg(a)}
+              <span class="routine-area-foot"><span>${escapeHtml(routineSensorsText(a.entities))}</span>
+                <span class="${a.live && a.usualNow < ROUTINE_QUIET ? "odd" : ""}">${a.usualNow >= 0.5 ? "usually busy now" : a.usualNow >= ROUTINE_QUIET ? "sometimes busy now" : "usually quiet now"}</span></span>
+            </button>`).join("")}
+        </div>`).join("")}
+    </div>
+    <p class="routine-note">Bars: ${today ? "today so far" : escapeHtml(energyDateLabel(routineState.day))} by hour, over the usual day in grey; orange is motion in an hour that is almost always quiet. Tap an area for its day.</p>`;
+}
+
+function renderMotionTimeline(places) {
+  const day = routineState.day;
+  const today = day === routineDayIso(0);
+  const label = today ? "Today" : day === routineDayIso(-1) ? "Yesterday" : energyDateLabel(day);
+  const all = places.flatMap((p) => p.areas);
+  const odd = [];
+  const hm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const rows = places.map((p) => `
+    <div class="routine-tl-place"><i style="background:${p.color}"></i>${escapeHtml(p.name)}</div>
+    ${p.areas.map((a) => {
+      const cells = a.usual.map((u, h) => `<rect x="${h * 40}" y="0" width="39" height="30" rx="3" class="routine-cell" fill-opacity="${(0.03 + u * 0.3).toFixed(2)}"/>`).join("");
+      const ticks = a.day.map((m) => `<rect x="${(m / 1440 * 960).toFixed(1)}" y="5" width="3.4" height="20" rx="1.5" fill="${p.color}"/>`).join("");
+      const rings = a.usual.map((u, h) => {
+        if (!(a.byHour[h] && u < ROUTINE_QUIET)) return "";
+        odd.push(`${a.name} ${String(h).padStart(2, "0")}h`);
+        return `<rect x="${h * 40 + 0.5}" y="1" width="38" height="28" rx="4" fill="none" stroke="#fb923c" stroke-width="1.5"/>`;
+      }).join("");
+      const nowLine = today ? `<line x1="${((new Date().getHours() * 60 + new Date().getMinutes()) / 1440 * 960).toFixed(1)}" x2="${((new Date().getHours() * 60 + new Date().getMinutes()) / 1440 * 960).toFixed(1)}" y1="0" y2="30" class="routine-nowline"/>` : "";
+      return `
+        <div class="routine-tl-row${a.name === routineState.focus ? " focus" : ""}">
+          <span class="routine-tl-name"><b>${escapeHtml(a.name)}</b><span>${escapeHtml(routineSensorsText(a.entities))}</span></span>
+          <svg viewBox="0 0 960 30" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(a.name)}: ${a.day.length} five-minute steps with motion">${cells}${ticks}${rings}${nowLine}</svg>
+          <span class="routine-tl-last mono${a.live ? " live" : ""}">${a.live ? "now" : escapeHtml(routineAgo(a.last))}</span>
+        </div>`;
+    }).join("")}`).join("");
+  const busiest = all.slice().sort((x, y) => y.day.length - x.day.length)[0];
+  const inside = places.filter((p) => p.name !== "Outside").flatMap((p) => p.areas.flatMap((a) => a.day)).sort((x, y) => x - y);
+  const woke = inside.filter((m) => m >= 300);
+  return `
+    <div class="routine-tl-head">
+      <button type="button" class="command" data-routine-back><i class="ti ti-arrow-left" aria-hidden="true"></i> Places</button>
+      <div class="routine-days">
+        <button type="button" data-routine-day="-1" aria-label="The day before"><i class="ti ti-chevron-left"></i></button>
+        <b>${escapeHtml(label)}</b>
+        <button type="button" data-routine-day="1" aria-label="The day after" ${today ? "disabled" : ""}><i class="ti ti-chevron-right"></i></button>
+        ${today ? "" : '<button type="button" data-routine-day="today">Today</button>'}
+      </div>
+    </div>
+    <div class="energy-tiles three">
+      <div><span>Busiest area</span><b>${busiest && busiest.day.length ? `${escapeHtml(busiest.name)} · ${(busiest.day.length * 5 / 60).toFixed(1)} h` : "–"}</b></div>
+      <div><span>First and last motion inside</span><b class="mono">${woke.length ? `${hm(woke[0])} → ${hm(inside[inside.length - 1])}` : "–"}</b></div>
+      <div><span>Out of the ordinary</span><b class="${odd.length ? "warn" : ""}">${odd.length ? `${odd.length}: ${escapeHtml(odd.slice(0, 2).join(", "))}${odd.length > 2 ? "…" : ""}` : "nothing"}</b></div>
+    </div>
+    <div class="routine-tl">
+      <div class="routine-tl-row axis"><span></span><div class="energy-axis"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div><span>last motion</span></div>
+      ${rows}
+    </div>
+    <div class="flow-legend"><span><i style="background:#fbbf24;border-radius:1px;width:3px;height:12px"></i>Motion, 5-minute steps</span>
+      <span><i style="background:rgba(221,227,240,0.25);border-radius:2px;width:14px;height:12px"></i>Usual: days of the last 14 with motion that hour</span>
+      <span><i style="border:1.5px solid #fb923c;border-radius:3px;width:14px;height:12px;background:none"></i>Motion in an hour that is almost always quiet</span></div>`;
+}
+
+function renderMotionRoutine() {
+  const box = document.querySelector("#motionRoutine");
+  if (!box) return;
+  if (!routineState.data) {
+    box.innerHTML = routineState.error
+      ? '<div class="empty">The routine needs the house memory, which did not answer. It is kept by house-memory.service on the board.</div>'
+      : '<div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>';
+    return;
+  }
+  const places = routineModel();
+  if (!places.length) {
+    box.innerHTML = '<div class="empty">No motion history yet. Assign motion sensors to areas (Home → Areas) and the routine fills in as the days are recorded.</div>';
+    return;
+  }
+  box.innerHTML = routineState.mode === "timeline" ? renderMotionTimeline(places) : renderMotionPlaces(places);
+  if (routineState.mode === "timeline" && routineState.focus) {
+    box.querySelector(".routine-tl-row.focus")?.scrollIntoView({ block: "nearest" });
+  }
+}
+
+document.querySelector("#motionRoutine")?.addEventListener("click", (event) => {
+  const area = event.target.closest("[data-routine-area]");
+  const step = event.target.closest("[data-routine-day]");
+  if (area) {
+    routineState.mode = "timeline";
+    routineState.focus = area.dataset.routineArea;
+    renderMotionRoutine();
+  } else if (event.target.closest("[data-routine-back]")) {
+    routineState.mode = "places";
+    if (routineState.day !== routineDayIso(0)) { routineState.day = routineDayIso(0); loadMotionRoutine(); }
+    else renderMotionRoutine();
+  } else if (step) {
+    const [y, m, d] = routineState.day.split("-").map(Number);
+    const next = new Date(y, m - 1, d);
+    if (step.dataset.routineDay === "today") routineState.day = routineDayIso(0);
+    else {
+      next.setDate(next.getDate() + Number(step.dataset.routineDay));
+      routineState.day = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+    }
+    loadMotionRoutine();
+  }
+});
+
+/* Load when the Motion view is open, and keep it fresh while it is. */
+setInterval(() => {
+  if (document.hidden) return;
+  const active = document.querySelector(".view-panel.active")?.dataset.viewPanel;
+  if (active !== "motion") return;
+  if (!routineState.day) routineState.day = routineDayIso(0);
+  if (Date.now() - routineState.loadedAt > ROUTINE_REFRESH_MS) loadMotionRoutine();
+}, 5000);
 
 function motionLogRowHtml(event) {
   const detected = String(event.state) === "on";
