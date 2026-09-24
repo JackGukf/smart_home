@@ -60,11 +60,16 @@ HOUSE_MEMORY_DB = Path(os.getenv("HOUSE_MEMORY_DB", str(Path.home() / "house-mem
 MAX_ACTIONS = 3
 ACTION_WINDOW = 6 * 3600
 EVENTS_KEPT = 50
+# Every restart and every give-up, kept by age rather than by count: the Status
+# view's reliability table counts them over 24 hours, 7 and 30 days.
+HISTORY_DAYS = 90
+COUNTED = ("restarted", "action_failed", "needs_person")
 
 # Zigbee: the window must be longer than the quietest real gap. Measured
 # overnight, the house's sensors send 500+ messages an hour, so fifteen
 # minutes of none is not a quiet house.
 ZIGBEE_WINDOW = "15m"
+ZIGBEE_WINDOW_S = 900
 ZIGBEE_SRSP_LIMIT = 3
 STARTUP_GRACE = 600          # a container younger than this is still starting
 HOUSE_MEMORY_STALE = 1800
@@ -159,7 +164,10 @@ def probe_zigbee() -> Result:
     running, uptime = _container("zigbee2mqtt")
     if not running:
         return Result(None, "not running - zigbee-adapter-watch brings it back")
-    out = _run(["docker", "logs", "--since", ZIGBEE_WINDOW, "zigbee2mqtt"])
+    # Only this run of the container: after a restart, the old run's timeouts
+    # are still in the last 15 minutes of the log and are not about now.
+    window = int(min(ZIGBEE_WINDOW_S, max(uptime, 1)))
+    out = _run(["docker", "logs", "--since", f"{window}s", "zigbee2mqtt"])
     return zigbee_verdict(out.stdout + out.stderr, uptime)
 
 
@@ -355,6 +363,29 @@ def _event(check: Check, kind: str, message: str, now: float) -> dict[str, Any]:
             "kind": kind, "message": message, "at": now}
 
 
+def record_history(history: list[list[Any]], events: list[dict[str, Any]], now: float) -> list[list[Any]]:
+    """[check, kind, at] for every restart and give-up, the last HISTORY_DAYS."""
+    kept = [h for h in history if now - h[2] < HISTORY_DAYS * 86400]
+    return kept + [[e["check"], e["kind"], e["at"]] for e in events if e["kind"] in COUNTED]
+
+
+def reliability(history: list[list[Any]], now: float) -> dict[str, dict[str, Any]]:
+    """Per check: restarts in the last 24 h, 7 and 30 days, the last one, and
+    how often it needed a person in 30 days."""
+    table: dict[str, dict[str, Any]] = {}
+    for check, kind, at in history:
+        row = table.setdefault(check, {"day": 0, "week": 0, "month": 0, "last": None, "needs_person": 0})
+        age = now - at
+        if kind == "needs_person":
+            row["needs_person"] += age < 30 * 86400
+            continue
+        row["day"] += age < 86400
+        row["week"] += age < 7 * 86400
+        row["month"] += age < 30 * 86400
+        row["last"] = max(row["last"] or 0, at)
+    return table
+
+
 # ── State, the dashboard's status file, and Home Assistant ──
 
 def load_status(path: Path = STATUS_PATH) -> dict[str, Any]:
@@ -403,6 +434,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         return 0
     doc["events"] = (doc.get("events", []) + outcome.events)[-EVENTS_KEPT:]
+    doc["history"] = record_history(doc.get("history", []), outcome.events, now)
+    doc.setdefault("since", now)
     doc["report"] = outcome.report
     doc["checked_at"] = now
     doc["paused"] = paused

@@ -1497,7 +1497,9 @@ def create_app(
         return {"checked_at": doc.get("checked_at"), "paused": doc.get("paused", False),
                 "report": doc.get("report", []), "events": doc.get("events", [])[-20:],
                 "checks": {name: {"failures": s.get("failures", 0), "gave_up": s.get("gave_up", False)}
-                           for name, s in (doc.get("checks") or {}).items()}}
+                           for name, s in (doc.get("checks") or {}).items()},
+                "since": doc.get("since"),
+                "reliability": service_watchdog.reliability(doc.get("history", []), time.time())}
 
     @app.post("/api/motion/routine")
     async def motion_routine_get(body: MotionRoutineRequest) -> dict[str, Any]:

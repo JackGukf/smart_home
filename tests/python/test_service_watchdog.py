@@ -136,3 +136,31 @@ def test_the_dashboard_serves_the_status_and_shows_it(tmp_path):
     assert TestClient(empty).get("/api/watchdog").json()["checked_at"] is None
     js = (ROOT / "src/python/web_static/app.js").read_text(encoding="utf-8")
     assert 'pushNotification("watchdog"' in js and 'id="watchdogCard"' in (ROOT / "src/python/web_static/index.html").read_text()
+
+
+def test_the_history_counts_restarts_by_age_and_keeps_ninety_days():
+    day = 86400
+    now = 100 * day
+    events = [{"check": "zigbee", "kind": "restarted", "at": now - 3600},
+              {"check": "zigbee", "kind": "recovered", "at": now - 3500}]      # not a restart
+    history = [["zigbee", "restarted", now - 3 * day], ["zigbee", "restarted", now - 20 * day],
+               ["zigbee", "needs_person", now - 20 * day], ["zigbee", "restarted", now - 95 * day],
+               ["home_assistant", "action_failed", now - 2 * day]]
+    kept = wd.record_history(history, events, now)
+    assert ["zigbee", "restarted", now - 95 * day] not in kept and ["zigbee", "restarted", now - 3600] in kept
+    table = wd.reliability(kept, now)
+    assert table["zigbee"] == {"day": 1, "week": 2, "month": 3, "last": now - 3600, "needs_person": 1}
+    assert table["home_assistant"]["week"] == 1                            # a failed fix is still an attempt
+
+
+def test_the_dashboard_serves_the_reliability_table(tmp_path):
+    cfg = tmp_path / "devices.local.yaml"
+    cfg.write_text(yaml.dump({}), encoding="utf-8")
+    status = tmp_path / "service_watchdog.json"
+    import time
+    wd.save_status({"checked_at": time.time(), "since": 1.0, "history": [["zigbee", "restarted", time.time() - 60]]}, status)
+    doc = TestClient(web_app.create_app(config_path=cfg, check_camera_ports=False,
+                                        watchdog_status_path=status)).get("/api/watchdog").json()
+    assert doc["reliability"]["zigbee"]["day"] == 1 and doc["since"] == 1.0
+    js = (ROOT / "src/python/web_static/app.js").read_text(encoding="utf-8")
+    assert "Last restart" in js and "doc.reliability" in js

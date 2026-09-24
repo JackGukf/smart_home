@@ -2742,21 +2742,34 @@ function renderWatchdogCard(doc) {
   if (!card) return;
   card.hidden = !doc.checked_at;
   if (!doc.checked_at) return;
+  const table = doc.reliability || {};
+  const count = (n) => `<b class="mono${n ? " hot" : ""}">${n}</b>`;
   const rows = (doc.report || []).map((line) => {
     const [name, rest] = line.split(": ");
     const state = /^ok\b/.test(rest) ? "ok" : /^FAIL/.test(rest) ? "fail" : "unknown";
     const detail = (rest || "").replace(/^(ok|FAIL|\?) - /, "").replace(/^skipped, /, "skipped: ");
-    return `<div class="watchdog-row ${state}"><i></i><b>${escapeHtml(WATCHDOG_LABELS[name] || name)}</b><span>${escapeHtml(detail)}</span></div>`;
+    const r = table[name] || { day: 0, week: 0, month: 0, last: null, needs_person: 0 };
+    return `<div class="watchdog-row ${state}">
+      <span class="watchdog-name"><i></i><b>${escapeHtml(WATCHDOG_LABELS[name] || name)}</b></span>
+      <span class="watchdog-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</span>
+      ${count(r.day)}${count(r.week)}${count(r.month)}
+      <span class="watchdog-last mono">${r.last ? escapeHtml(routineAgo(r.last)) : "never"}${r.needs_person ? ` · <em>${r.needs_person}× needed a person</em>` : ""}</span>
+    </div>`;
   }).join("");
   const events = (doc.events || []).slice(-5).reverse().map((e) => `
     <div class="watchdog-event ${e.kind}"><span class="mono">${escapeHtml(new Date(e.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</span>
       <span>${escapeHtml(e.message)}</span></div>`).join("");
   const failing = (doc.report || []).filter((l) => l.includes(": FAIL")).length;
+  const total = Object.values(table).reduce((a, r) => a + r.month, 0);
   card.innerHTML = `
     <div class="home-panel-head"><span class="panel-title"><i class="ti ti-heart-rate-monitor"></i> Service watchdog</span>
       <span class="energy-state ${doc.paused ? "busy" : failing ? "high" : "base"}">${doc.paused ? "paused" : failing ? `${failing} failing` : "all working"}</span>
-      <span class="section-meta">checked ${escapeHtml(routineAgo(doc.checked_at))} · every 2 min</span></div>
-    <div class="watchdog-rows">${rows}</div>
+      <span class="section-meta">checked ${escapeHtml(routineAgo(doc.checked_at))} · every 2 min${doc.since ? ` · counting since ${escapeHtml(new Date(doc.since * 1000).toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}</span></div>
+    <div class="watchdog-table">
+      <div class="watchdog-row head"><span>Service</span><span>Now</span><span>24 h</span><span>7 d</span><span>30 d</span><span>Last restart</span></div>
+      ${rows}
+    </div>
+    <p class="energy-gas-note">Restarts made by the watchdog: ${total} in 30 days. A service that needs restarting often is failing for a reason a restart cannot fix.</p>
     ${events ? `<div class="watchdog-events"><span class="panel-title">What it did</span>${events}</div>` : ""}`;
 }
 
