@@ -375,6 +375,8 @@ Three things that will waste a day if you do not know them:
   LLANO-S450 dongle over DLNA, switched in Settings and off by default (off costs
   nothing); `switch.tv_cast` in Home Assistant and the Voice Panel's TV cast
   remote; what the dongle cannot do, and why Chromium hangs in a user unit
+- `docs/tailscale.md` — remote access over Tailscale (`scripts/install-tailscale.sh`);
+  `--accept-dns=false` is required, because Docker copies the hand-written `/etc/resolv.conf`
 - `docs/architecture.md` — architecture notes
 - `docs/superpowers/` — dated plans and specs; historical records, do not retrofit
 
