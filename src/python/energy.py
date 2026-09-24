@@ -87,6 +87,7 @@ def snapshot(now: datetime | None = None) -> dict[str, Any]:
     days = [today - timedelta(days=30 - i) for i in range(30)]
     electric_days = [{"date": d.isoformat(), "kwh": _day_kwh(d)} for d in days]
     kw_now = last_hour[-1]
+    heat, base_nights = _heat_and_nights(lambda t: _hour_kw(t.date(), t.hour), now)
     return {
         "sample": True,
         "source": "Sample data - the PowerLync is not connected yet",
@@ -104,6 +105,8 @@ def snapshot(now: datetime | None = None) -> dict[str, Any]:
             "last_24h_start_hour": hours_back[0].hour,
             "usual_hourly_kwh": USUAL_HOURLY_KW,
             "usual_24h_hourly_kwh": [USUAL_HOURLY_KW[t.hour] for t in hours_back],
+            "heat": heat,
+            "base_nights": base_nights,
             "days": electric_days,
             "rate": ELECTRIC_RATE,
             "provider": "BC Hydro",
@@ -143,7 +146,24 @@ FETCH_TIMEOUT_S = 15
 
 
 def find_powerlync_entities(states: list[dict[str, Any]]) -> tuple[str, str] | None:
-    """(power entity, energy entity) for the house's meter, or None if not paired."""
+    """(power entity, energy entity) for the house's meter, or None if it is not
+    paired or the meter has never reported.
+
+    A PowerLync paired with Home Assistant but not joined to the meter - BC
+    Hydro's side, and undone by a factory reset - still makes every sensor and
+    reads 0 in all of them. A real register is never 0 kWh, so until it is
+    above zero this is not a meter, and the page keeps its sample data rather
+    than showing a live 0 W. Seen on the board 2026-09-23."""
+    found = powerlync_sensors(states)
+    if not found:
+        return None
+    by_id = {str(s.get("entity_id", "")): s for s in states}
+    register = _number(by_id[found[1]].get("state"))
+    return found if register and register > 0 else None
+
+
+def powerlync_sensors(states: list[dict[str, Any]]) -> tuple[str, str] | None:
+    """(power entity, energy entity) if the PowerLync is paired, reporting or not."""
     ids = [str(s.get("entity_id", "")) for s in states]
 
     def pick(suffix: str) -> str | None:
@@ -236,6 +256,7 @@ def build_live_electricity(
     if all(len(values) >= USUAL_MIN_DAYS for values in per_hour):
         usual = [round(statistics.median(values), 2) for values in per_hour]
     recent = [kwh for t, kwh in by_hour.items() if t >= midnight - timedelta(days=7)]
+    heat, base_nights = _heat_and_nights(lambda t: by_hour.get(t), now)
 
     days = []
     for row in daily:
@@ -258,10 +279,39 @@ def build_live_electricity(
         "last_24h_start_hour": hours_back[0].hour,
         "usual_hourly_kwh": usual,
         "usual_24h_hourly_kwh": [usual[t.hour] for t in hours_back] if usual else None,
+        "heat": heat,
+        "base_nights": base_nights,
         "days": days,
         "rate": ELECTRIC_RATE,
         "provider": "BC Hydro",
     }
+
+
+HEAT_DAYS = 14          # the heat map's rows, oldest first, today last
+NIGHT_HOURS = range(0, 6)  # "always on" is the quietest hour between midnight and 6
+
+
+def _heat_and_nights(kwh_at: Callable[[datetime], float | None], now: datetime
+                     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The heat map (kWh per hour, a row per day) and each night's always-on load.
+
+    An hour's kWh is its average kW, so the quietest night hour *is* the load
+    that never switches off - the fridge, the network, the Orange Pi. Hours not
+    yet over, or not recorded, are None: the page leaves them blank."""
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    heat, nights = [], []
+    for back in range(HEAT_DAYS - 1, -1, -1):
+        day = midnight - timedelta(days=back)
+        hours = []
+        for h in range(24):
+            t = day + timedelta(hours=h)
+            value = kwh_at(t) if t + timedelta(hours=1) <= now else None
+            hours.append(None if value is None else round(value, 2))
+        heat.append({"date": day.date().isoformat(), "hours": hours})
+        night = [hours[h] for h in NIGHT_HOURS if hours[h] is not None]
+        if night:
+            nights.append({"date": day.date().isoformat(), "kw": round(min(night), 3)})
+    return heat, nights
 
 
 class LiveEnergy:
@@ -288,6 +338,7 @@ class LiveEnergy:
         self._clock = clock
         self._lock = threading.Lock()
         self._entities: tuple[str, str] | None = None
+        self.waiting_for_meter = False   # paired with Home Assistant, but the meter has not reported
         self._looked_at: float | None = None
         self._cache: dict[str, tuple[float, Any]] = {}
 
@@ -319,7 +370,9 @@ class LiveEnergy:
             return None
         self._looked_at = now
         try:
-            self._entities = find_powerlync_entities(self._get_json("/api/states"))
+            states = self._get_json("/api/states")
+            self._entities = find_powerlync_entities(states)
+            self.waiting_for_meter = self._entities is None and powerlync_sensors(states) is not None
         except OSError:
             return None  # Home Assistant down, and nothing was ever paired: still sample data
         return self._entities
@@ -328,7 +381,10 @@ class LiveEnergy:
         now = now or datetime.now()
         entities = self._find() if self._token() else None
         if not entities:
-            return snapshot(now)
+            doc = snapshot(now)
+            if self.waiting_for_meter:
+                doc["meter"] = "waiting"
+            return doc
         power, energy = entities
         start = now - timedelta(minutes=61)
         history_path = (f"/api/history/period/{quote(start.astimezone().isoformat())}"
@@ -544,6 +600,9 @@ def electricity_from_records(db_path, now: datetime | None = None) -> dict[str, 
             "tier2_price": newest_priced["tier2_price"] if newest_priced else None,
             "tier2_threshold_kwh": newest_priced["tier2_threshold_kwh"] if newest_priced else None,
             "basic_per_day": newest_priced["basic_per_day"] if newest_priced else None,
+            "tier_bill_days": ((date.fromisoformat(newest_priced["period_end"])
+                                - date.fromisoformat(newest_priced["period_start"])).days
+                               if newest_priced else None),
             "year_kwh": round(sum(p["kwh"] for p in periods[-12:]), 1),
             "year_cost": round(sum(r["cost"] for r in bills[-6:] if r["cost"]), 2) if costed else None,
         }
@@ -559,3 +618,96 @@ def _same_period_last_year_kwh(periods: list[dict[str, Any]], last: dict[str, An
         return None
     change = round(100 * (last["kwh"] - nearest["kwh"]) / nearest["kwh"]) if nearest["kwh"] else None
     return {**nearest, "change_percent": change}
+
+
+# ── The power flow and the bill in progress ──
+#
+# Nothing in the house meters its own draw, so the flow is split only where
+# something real says so: the meter, the always-on load (the quietest night
+# hour), the furnace's state from the ecobee, and the gas model. The page
+# labels the last two as estimates.
+
+def furnace_state(attrs: dict[str, Any] | None) -> str | None:
+    """"heating", "fan" or "idle" from an ecobee climate entity, or None if unknown.
+
+    `equipment_running` (the cloud integration) tells a fan running on its own
+    from burning gas; `hvac_action` (HomeKit) is the fallback."""
+    from src.python.ai_data import HEATING_EQUIPMENT
+
+    if not attrs:
+        return None
+    equipment = attrs.get("equipment_running")
+    if equipment is not None:
+        names = str(equipment).lower()
+        if any(word in names for word in HEATING_EQUIPMENT):
+            return "heating"
+        return "fan" if "fan" in names else "idle"
+    action = attrs.get("hvac_action")
+    if action is None:
+        return None
+    return {"heating": "heating", "fan": "fan"}.get(str(action), "idle")
+
+
+def bill_progress(records: dict[str, Any] | None, electricity: dict[str, Any],
+                  now: datetime | None = None) -> dict[str, Any] | None:
+    """Where this BC Hydro bill stands against the Step 1 threshold.
+
+    BC Hydro bills on a fixed cycle, so the current period is the last uploaded
+    bill rolled forward by its own length. The threshold and prices are the
+    newest priced bill's, and the threshold is per bill, so it is scaled by the
+    day to this period's length. Usage is the meter's days since the period
+    began plus today; days before the first reading are not guessed - the
+    period is "counted from" the first one, and the projection uses only the
+    days that were counted."""
+    if not records or not records.get("tier2_threshold_kwh") or not records.get("tier1_price"):
+        return None
+    last = records.get("last_bill") or {}
+    try:
+        start = date.fromisoformat(last["start"])
+        end = date.fromisoformat(last["end"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    length = (end - start).days
+    if length <= 0:
+        return None
+    now = now or datetime.now()
+    today = now.date()
+    start = end
+    while start + timedelta(days=length) <= today:
+        start += timedelta(days=length)
+    end = start + timedelta(days=length)
+
+    counted = [d for d in electricity.get("days") or [] if date.fromisoformat(d["date"]) >= start]
+    used = sum(d["kwh"] for d in counted) + float(electricity.get("today_kwh") or 0)
+    counted_from = min([date.fromisoformat(d["date"]) for d in counted] + [today])
+    elapsed = (now - datetime.combine(counted_from, datetime.min.time())).total_seconds() / 86400
+    per_day = used / elapsed if elapsed > 0.25 else None
+    remaining = (datetime.combine(end, datetime.min.time()) - now).total_seconds() / 86400
+    projected = None if per_day is None else used + per_day * max(0.0, remaining)
+
+    tier_days = records.get("tier_bill_days") or length
+    threshold = records["tier2_threshold_kwh"] * length / tier_days
+    t1, t2 = records["tier1_price"], records.get("tier2_price") or records["tier1_price"]
+    basic = records.get("basic_per_day") or 0.0
+
+    def cost(kwh: float, days: float) -> float:
+        return min(kwh, threshold) * t1 + max(0.0, kwh - threshold) * t2 + basic * days
+
+    day_index = (today - start).days + 1
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "days": length,
+        "day": day_index,
+        "counted_from": counted_from.isoformat(),
+        "partial": counted_from > start,
+        "kwh": round(used, 1),
+        "threshold_kwh": round(threshold),
+        "projected_kwh": None if projected is None else round(projected),
+        "tier1_price": t1,
+        "tier2_price": t2,
+        "cost_so_far": round(cost(used, day_index), 2),
+        "projected_cost": None if projected is None else round(cost(projected, length), 2),
+        "room_kwh_per_day": (None if projected is None
+                             else round((threshold - used) / max(1, (end - today).days), 1)),
+    }

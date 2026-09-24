@@ -41,7 +41,19 @@ none of this applies to it.
    PowerLync after BC Hydro's setup and pair again.
 2. Find the 8-digit HomeKit setup code on its label. If it only has a QR code,
    scan it: it reads `X-HM://...`, and the integration's README shows how to
-   decode the code from that.
+   decode the code from that. **Ours is a "002" unit (`PLY-002-004CCE`)
+   with no printed code** - the `PLY-...` string is its name, not the code.
+   The QR text is 9 base-36 characters of payload plus a 4-character setup ID;
+   the setup code is the payload's low 27 bits:
+
+   ```python
+   s = qr_text.removeprefix("X-HM://")     # 13 characters
+   code = int(s[:9], 36) & ((1 << 27) - 1)  # 8 digits, entered as 123-45-678
+   ```
+
+   To prove a QR belongs to *this* device, compare
+   `base64(sha512(setup_id + device_id)[:4])` with the `sh=` it advertises
+   (`id=` is the device id); ours matched, which is how we knew the QR was right.
 3. On the board:
 
    ```bash
@@ -54,8 +66,38 @@ none of this applies to it.
    reading. Without `--apply` it is a dry run.
 4. Nothing else. `/api/energy` looks for the sensors once a minute and switches
    the Home card and the Energy view to live by itself; the "Sample data" pill
-   goes away. Optionally add `…_grid_total_energy_consumed` to Home Assistant's
-   own Energy dashboard (Settings -> Energy -> Electricity grid).
+   goes away - **once the meter has reported**. The sensors exist from the
+   moment of pairing and read 0 until BC Hydro's link to the meter works, so
+   `find_powerlync_entities` only counts a register above 0 kWh; until then
+   the page stays on uploaded bills or sample data rather than a live 0 W.
+   Optionally add `…_grid_total_energy_consumed` to Home Assistant's own
+   Energy dashboard (Settings -> Energy -> Electricity grid).
+
+### Pairing ours (2026-09-23)
+
+Paired with Home Assistant as `Powerlync-002-004cce` (192.168.0.103); the
+sensors are `sensor.powerlync_energy_monitor_002_004cce_*`. What it took, in
+order:
+
+- **Moved to the main Wi-Fi, it still did not advertise.** It answered ping,
+  had port 80 open and spoke HAP there (`/accessories` -> 470, `/identify` ->
+  204, which only an *unpaired* accessory answers), but sent no mDNS at all
+  over a minute of queries, while twelve other hosts did. HomeKit Controller
+  only offers accessories it has discovered, so the setup script had nothing
+  to pair. **A reset of the device fixed it**: straight after, it advertised
+  `_hap._tcp` with `sf=1`. If it is invisible again, reset before debugging
+  the network.
+- **Paired, then every value 0.** Demand, register and solar all 0, meter time
+  `unknown`, and BC Hydro's own app also 0 W - so the meter link, not this
+  stack. The reset probably undid BC Hydro's join to the meter (or it never
+  finished). That is BC Hydro's to redo, through their app or by phone.
+  **Open as of 2026-09-23.**
+- If BC Hydro's re-setup resets the device again, the HomeKit pairing goes with
+  it; rerun `setup-ha-powerlync.py --code <code> --apply` (idempotent) with
+  the code decoded from the QR on its label, as in step 2.
+- 192.168.0.204 (an Apple device, likely a home hub) caches the PowerLync's
+  announcement. Decline any "Add Accessory" offer on an iPhone - Apple Home
+  would take the one controller slot.
 
 ### How the dashboard reads it (`src/python/energy.py`)
 
@@ -71,6 +113,38 @@ none of this applies to it.
   been seen, a Home Assistant failure is a 502 and the page keeps its last
   reading - it never falls back to invented figures while claiming to be live.
 - `electricity.sample` and `gas.sample` say which half is real.
+
+### The live Energy view (2026-09-23)
+
+With a meter reading, the view is a **power flow** and five cards around it
+(`renderEnergyLive` in `app.js`); the Home card shows the same flow, small.
+Nothing in the house meters its own draw - the TP-Link switches and plugs
+have no energy module - so the flow splits the meter only where something real
+says so:
+
+| Node | From | |
+| --- | --- | --- |
+| Grid | the PowerLync's demand | measured |
+| Always on | the quietest hour between midnight and 6, each night (`base_nights`) | measured |
+| Everything else | the meter minus always on | measured |
+| Furnace | the ecobee's `equipment_running` (fan vs burner), `hvac_action` as fallback | estimate |
+| Gas: hot water & cooking, burner | the gas model's `base_gj_per_day` and `gj_per_furnace_hour` | estimate |
+
+The cards: **Right now** (last hour against a usual hour like this one),
+**Today** (measured hours, then last night's forecast, against a usual day),
+**This bill · Step 1 watch** (`bill_progress`: the last uploaded bill rolled
+forward by its own length, its Step 1 threshold and prices; days before the
+first reading are not guessed, the card says "counted from"), **Always on**
+(each night, and what it costs a year) and a 14-day **heat map**.
+
+- **`?energy=preview`** on the dashboard URL shows this layout on sample
+  electricity even where uploaded bills would otherwise take its place - the
+  way to see it before the meter reports. It is labelled as a preview.
+- When the PowerLync is paired but the meter is silent, the view says so
+  (`"meter": "waiting"`) instead of showing 0 W.
+- The flow's glow is a wide faint stroke, not an SVG blur: the particles
+  animate, and a blur re-rendered each frame is too much for the wall panel's
+  Raspberry Pi 4. A test keeps blur filters out of the flow code.
 
 Traps:
 

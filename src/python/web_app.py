@@ -1655,10 +1655,14 @@ def create_app(
                 "page": await asyncio.to_thread(_load_ir_page, app.state.ir_page_path)}
 
     @app.get("/api/energy")
-    async def energy_now() -> dict[str, Any]:
+    async def energy_now(preview: bool = False) -> dict[str, Any]:
         """Electricity and gas for the Energy card and view. Electricity is live
         once the PowerLync's sensors appear in Home Assistant, and sample data
-        until then; each section says which, and the page shows it."""
+        until then; each section says which, and the page shows it.
+
+        `?preview=1` keeps the sample electricity even where uploaded bills
+        would replace it, so the live layout can be seen before the meter
+        reports. It is labelled sample like any other sample data."""
         source = app.state.energy_source
         if source is None:
             ha_config = _load_home_assistant_config(app.state.config_path)
@@ -1675,12 +1679,14 @@ def create_app(
         if gas:
             extra["gas"] = gas
         # Electricity: the live meter wins; uploaded bills beat sample data.
-        if doc["electricity"]["sample"]:
-            records = await asyncio.to_thread(energy.electricity_from_records,
-                                              app.state.ai_data_dir / "gas.db")
-            if records:
-                extra["electricity"] = records
-        return {**doc, **extra}
+        records = await asyncio.to_thread(energy.electricity_from_records, app.state.ai_data_dir / "gas.db")
+        if doc["electricity"]["sample"] and records and not preview:
+            extra["electricity"] = records
+        else:
+            # The bill in progress, priced from the bills: live readings, or the preview's sample.
+            doc["electricity"]["bill"] = energy.bill_progress(records, doc["electricity"])
+        extra["furnace"] = await asyncio.to_thread(_furnace_now, app.state.config_path)
+        return {**doc, **extra, "preview": preview}
 
     @app.get("/api/light-scenes")
     async def light_scenes_get() -> dict[str, Any]:
@@ -5670,6 +5676,29 @@ def _home_assistant_alarm_command(path: Path, command: str) -> dict[str, Any]:
         {"entity_id": panel["entity_id"]},
     )
     return {"status": "ok", "entity_id": panel["entity_id"], "command": command, "result": payload}
+FURNACE_ENTITIES = ("climate.my_ecobee", "climate.my_ecobee_2")   # cloud first: it tells fan from heat
+
+
+def _furnace_now(config_path: Path) -> str | None:
+    """The furnace for the power flow: "heating", "fan", "idle", or None when
+    Home Assistant cannot say. Never raises - the flow draws it as unknown."""
+    try:
+        ha_config = _load_home_assistant_config(config_path)
+        token = os.getenv(ha_config.token_env)
+        if not token:
+            return None
+        for entity_id in FURNACE_ENTITIES:
+            try:
+                state = _home_assistant_get(ha_config, token, f"/api/states/{entity_id}")
+            except (OSError, ValueError):
+                continue
+            if state.get("state") not in (None, "unavailable", "unknown"):
+                return energy.furnace_state(state.get("attributes"))
+    except Exception:  # noqa: BLE001 - a missing furnace must not cost the Energy view
+        return None
+    return None
+
+
 def _home_assistant_get(config: HomeAssistantConfig, token: str, path: str) -> Any:
     request = _URLRequest(
         f"{config.base_url}{path}",

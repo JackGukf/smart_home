@@ -118,11 +118,33 @@ def test_the_house_meter_is_found_and_the_built_in_plug_is_not():
     assert energy.find_powerlync_entities(_states()) == (POWER, ENERGY)
     assert energy.find_powerlync_entities([{"entity_id": "sensor.kitchen_power", "state": "3"}]) is None
     # The README's older naming, without "grid_", still reads as the house.
-    old = [{"entity_id": "sensor.powerlync_energy_monitor_1_instantaneous_demand"},
-           {"entity_id": "sensor.powerlync_energy_monitor_1_total_energy_consumed"},
-           {"entity_id": "sensor.powerlync_energy_monitor_1_local_instantaneous_demand"}]
+    old = [{"entity_id": "sensor.powerlync_energy_monitor_1_instantaneous_demand", "state": "859.0"},
+           {"entity_id": "sensor.powerlync_energy_monitor_1_total_energy_consumed", "state": "64732.4"},
+           {"entity_id": "sensor.powerlync_energy_monitor_1_local_instantaneous_demand", "state": "0.0"}]
     assert energy.find_powerlync_entities(old) == ("sensor.powerlync_energy_monitor_1_instantaneous_demand",
                                                    "sensor.powerlync_energy_monitor_1_total_energy_consumed")
+
+
+def test_a_powerlync_the_meter_has_never_reported_to_is_not_live_yet():
+    # Paired with Home Assistant, not joined to the meter: every sensor exists and reads 0.
+    unjoined = [{**s, "state": "0.0"} for s in _states()]
+    assert energy.find_powerlync_entities(unjoined) is None
+    for register in ("unknown", "unavailable"):
+        states = [{**s, "state": register} if s["entity_id"] == ENERGY else s for s in _states()]
+        assert energy.find_powerlync_entities(states) is None
+    # A house using nothing this minute is still a live meter: only the register decides.
+    idle = [{**s, "state": "0.0"} if s["entity_id"] == POWER else s for s in _states()]
+    assert energy.find_powerlync_entities(idle) == (POWER, ENERGY)
+
+
+def test_sample_data_while_the_meter_has_not_reported_then_live_once_it_does():
+    ha = FakeHA([{**s, "state": "0.0"} for s in _states()])
+    clock = [0.0]
+    source = energy.LiveEnergy("http://ha", lambda: "token", ha.get_json, ha.statistics, clock=lambda: clock[0])
+    assert source.snapshot(NOW)["electricity"]["sample"] is True
+    ha.states = _states()
+    clock[0] += energy.DISCOVERY_SECONDS
+    assert source.snapshot(NOW)["electricity"]["sample"] is False
 
 
 def _iso(t: datetime) -> str:
@@ -499,3 +521,87 @@ def test_a_live_meter_keeps_the_kilowatts_and_the_hour():
     half = js[js.index("function homeElectricityHalf"):js.index("function homeGasHalf")]
     assert 'unit: "kW now"' in half and "energyAreaSvg(e.last_hour_kw" in half
     assert "Last 24 h" in half
+
+
+# ── The power flow and the bill in progress ──
+
+def test_a_paired_but_silent_powerlync_is_reported_as_waiting_for_the_meter():
+    silent = FakeHA([{**s, "state": "0.0"} for s in _states()])
+    doc = energy.LiveEnergy("http://ha", lambda: "t", silent.get_json, silent.statistics).snapshot(NOW)
+    assert doc["electricity"]["sample"] is True and doc["meter"] == "waiting"
+    nothing = FakeHA([])
+    assert "meter" not in energy.LiveEnergy("http://ha", lambda: "t", nothing.get_json, nothing.statistics).snapshot(NOW)
+
+
+def test_furnace_state_tells_the_fan_from_the_burner():
+    assert energy.furnace_state({"equipment_running": "fan,compHeat1"}) == "heating"
+    assert energy.furnace_state({"equipment_running": "fan"}) == "fan"
+    assert energy.furnace_state({"equipment_running": ""}) == "idle"
+    assert energy.furnace_state({"hvac_action": "heating"}) == "heating"
+    assert energy.furnace_state({"hvac_action": "idle"}) == "idle"
+    assert energy.furnace_state({}) is None and energy.furnace_state(None) is None
+
+
+def test_heat_map_and_nights_leave_unfinished_hours_blank():
+    doc = energy.snapshot(NOW)["electricity"]
+    assert len(doc["heat"]) == energy.HEAT_DAYS and all(len(r["hours"]) == 24 for r in doc["heat"])
+    today = doc["heat"][-1]
+    assert today["date"] == NOW.date().isoformat()
+    assert today["hours"][NOW.hour - 1] is not None and today["hours"][NOW.hour] is None
+    night = doc["base_nights"][-1]
+    assert night["kw"] == min(today["hours"][:6])
+
+
+RECORDS = {"tier1_price": 0.1187, "tier2_price": 0.1408, "tier2_threshold_kwh": 1354.0, "basic_per_day": 0.2344,
+           "tier_bill_days": 60, "last_bill": {"start": "2026-05-21", "end": "2026-07-20", "kwh": 920.0, "cost": 131.73}}
+
+
+def test_the_bill_rolls_forward_from_the_last_one_and_prices_by_step():
+    now = datetime(2026, 9, 28, 12, 0)             # the period after 07-20 + 60 is 09-18 .. 11-17
+    days = [{"date": f"2026-09-{d:02d}", "kwh": 15.0} for d in range(18, 28)]
+    bill = energy.bill_progress(RECORDS, {"days": days, "today_kwh": 7.5}, now)
+    assert (bill["start"], bill["end"], bill["days"], bill["day"]) == ("2026-09-18", "2026-11-17", 60, 11)
+    assert bill["kwh"] == 157.5 and bill["partial"] is False and bill["threshold_kwh"] == 1354
+    assert bill["projected_kwh"] == 900                # 15 kWh a day for 60 days
+    assert bill["projected_cost"] == round(900 * 0.1187 + 60 * 0.2344, 2)
+    heavy = energy.bill_progress(RECORDS, {"days": [{**d, "kwh": 30.0} for d in days], "today_kwh": 15.0}, now)
+    assert heavy["projected_kwh"] == 1800
+    assert heavy["projected_cost"] == round(1354 * 0.1187 + 446 * 0.1408 + 60 * 0.2344, 2)
+
+
+def test_days_before_the_first_reading_are_not_guessed():
+    now = datetime(2026, 9, 28, 12, 0)
+    days = [{"date": f"2026-09-{d:02d}", "kwh": 15.0} for d in range(24, 28)]
+    bill = energy.bill_progress(RECORDS, {"days": days, "today_kwh": 7.5}, now)
+    assert bill["partial"] is True and bill["counted_from"] == "2026-09-24"
+    assert bill["kwh"] == 67.5 and bill["projected_kwh"] == round(67.5 + 15 * (50 - 0.5))
+
+
+def test_no_priced_bill_means_no_bill_card():
+    assert energy.bill_progress(None, {"days": []}) is None
+    assert energy.bill_progress({**RECORDS, "tier2_threshold_kwh": None}, {"days": []}) is None
+
+
+def test_the_preview_keeps_sample_electricity_where_bills_would_replace_it(tmp_path, monkeypatch):
+    cfg = tmp_path / "devices.local.yaml"
+    cfg.write_text(yaml.dump({}), encoding="utf-8")
+    monkeypatch.setattr(web_app, "_furnace_now", lambda path: "fan")
+    monkeypatch.setattr(energy, "electricity_from_records", lambda path: {**RECORDS, "sample": False, "mode": "records"})
+    client = TestClient(web_app.create_app(config_path=cfg, check_camera_ports=False))
+    plain = client.get("/api/energy").json()
+    assert plain["electricity"]["mode"] == "records" and plain["preview"] is False
+    preview = client.get("/api/energy?preview=1").json()
+    assert preview["electricity"]["sample"] is True and preview["preview"] is True
+    assert preview["electricity"]["bill"]["threshold_kwh"] == 1354 and preview["furnace"] == "fan"
+
+
+def test_the_live_view_has_its_cards_and_the_flow_draws_no_blur():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    for card in ("energyStatus", "energyLive", "energyFlow", "energyNow", "energyDay", "energyBill", "energyBase", "energyHeat"):
+        assert f'id="{card}"' in html
+    flow = js[js.index("/* ── The power flow ──"):js.index("function renderEnergyView()")]
+    # The particles animate; a blur filter would be re-rendered every frame on
+    # the wall panel's Raspberry Pi 4. Glow is a wide faint stroke instead.
+    assert "feGaussianBlur" not in flow and "filter=" not in flow
+    assert "energyFlowCompactSvg(m)" in js[js.index("function renderHomeEnergy()"):]

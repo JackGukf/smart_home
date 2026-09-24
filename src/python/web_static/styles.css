@@ -7392,6 +7392,95 @@ header > .header-right { flex-shrink: 0; }
   .energy-columns { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* ── The power flow and the live Energy view (renderEnergyLive in app.js) ──
+   Twelve columns on the wall panel and the iPad; one below 1100px. Media
+   queries, not container queries: Safari before iPadOS 16 ignores those. */
+.energy-live { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-gap: 16px; margin-bottom: 16px; }
+.energy-live[hidden], .energy-status[hidden], .energy-today[hidden] { display: none; }
+.energy-flow-card, .energy-day-card, .energy-heat-card { grid-column: span 8; }
+.energy-now-card, .energy-bill-card, .energy-base-card { grid-column: span 4; }
+.energy-live > .panel { display: grid; grid-gap: 10px; align-content: start; min-width: 0; }
+.energy-flow-card { background: radial-gradient(ellipse at 46% 48%, rgba(79, 142, 247, 0.09), transparent 62%), var(--card); }
+@media (max-width: 1099px) {
+  .energy-live > .panel { grid-column: 1 / -1; }
+}
+.energy-status { display: grid; grid-gap: 10px; margin-bottom: 16px; }
+.energy-steps { display: grid; grid-gap: 10px; }
+.energy-steps > div { display: grid; grid-template-columns: 22px minmax(0, 1fr); grid-gap: 10px; align-items: start; }
+.energy-steps i { font-size: 20px; line-height: 1; }
+.energy-steps .done i { color: var(--green); }
+.energy-steps .wait i { color: var(--amber); }
+.energy-steps b { display: block; font-size: 13.5px; font-weight: 500; color: var(--t-text); }
+.energy-steps span { font-size: 12.5px; color: var(--t-text-dim); line-height: 1.5; }
+
+.flow-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.flow-svg text { font-family: var(--font); }
+.flow-name { fill: var(--t-text); font-size: 12.5px; font-weight: 600; }
+.flow-sub { fill: var(--t-text-dim); font-size: 10.5px; font-weight: 400; }
+.flow-num { fill: var(--t-text); font-family: var(--mono) !important; font-size: 15px; font-weight: 600; }
+.flow-num.big { font-size: 26px; letter-spacing: -1px; }
+.flow-num.mid { font-size: 20px; letter-spacing: -1px; }
+.flow-num.small { font-size: 12px; }
+.flow-value { fill: var(--t-text); font-family: var(--mono) !important; font-size: 14px; font-weight: 600; }
+.flow-value.dim { fill: var(--t-text-dim); }
+.flow-pill { font-size: 10.5px; font-weight: 600; }
+.flow-idle { fill: none; stroke: #4e5470; stroke-width: 2; stroke-dasharray: 3 7; stroke-linecap: round; }
+.flow-idle.gas { stroke: var(--cyan); stroke-opacity: 0.45; }
+.flow-particles { fill: none; stroke-dasharray: 0 26; stroke-linecap: round; animation: flow-run 1.6s linear infinite; }
+@keyframes flow-run { to { stroke-dashoffset: -52; } }
+@media (prefers-reduced-motion: reduce) { .flow-particles { animation: none; } }
+.flow-small { display: none; }
+@media (max-width: 699px) {
+  .flow-full { display: none; }
+  .flow-small { display: block; }
+}
+.flow-legend { display: flex; flex-wrap: wrap; font-size: 11.5px; color: var(--t-text-dim); }
+.flow-legend > span { display: inline-flex; align-items: center; margin-right: 14px; }
+.flow-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+.flow-legend i.dash { width: 14px; height: 0; border-radius: 0; border-top: 2px dashed var(--t-text-dim); }
+.flow-legend i.hollow { border-radius: 2px; border: 1px dashed var(--amber); }
+.home-panel-head .flow-legend { margin-left: auto; }
+
+.energy-kw.big { font-size: 46px; letter-spacing: -0.03em; }
+.energy-sub { font-size: 13px; color: var(--t-text-dim); line-height: 1.5; }
+.energy-headline .energy-sub { margin-left: auto !important; }
+.energy-sub b { color: var(--t-text); font-weight: 500; }
+.energy-sub b.ok, .energy-tiles b.ok { color: var(--green); font-weight: 600; }
+.energy-sub b.warn, .energy-tiles b.warn { color: var(--orange); font-weight: 600; }
+.energy-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-gap: 10px; }
+.energy-tiles.three { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-gap: 8px; }
+.energy-tiles > div { background: var(--card-2); border-radius: var(--radius-sm); padding: 9px 11px; display: grid; grid-gap: 2px; min-width: 0; }
+.energy-tiles span { font-size: 11px; color: var(--t-text-dim); }
+.energy-tiles b { font-size: 16px; font-weight: 600; color: var(--t-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.energy-tiles.three b { font-size: 14px; }
+.energy-tiles small { font-size: 11px; color: var(--t-text-dim); }
+
+.day-bar { fill: var(--amber); }
+.day-bar.ahead { fill: rgba(251, 191, 36, 0.1); stroke: var(--amber); stroke-dasharray: 3 3; }
+.day-usual { fill: none; stroke: var(--t-text); stroke-opacity: 0.5; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.day-now { stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+
+.bill-track { position: relative; height: 12px; border-radius: 6px; background: var(--card-2); margin: 6px 0 4px; }
+.bill-track i { position: absolute; top: 0; bottom: 0; }
+.bill-track i.used { left: 0; border-radius: 6px; background: var(--green); }
+.bill-track i.pace { background: repeating-linear-gradient(90deg, rgba(52, 211, 153, 0.35) 0 4px, transparent 4px 8px); }
+.bill-track i.pace.over { background: repeating-linear-gradient(90deg, rgba(251, 146, 60, 0.45) 0 4px, transparent 4px 8px); }
+.bill-track b { position: absolute; top: -6px; width: 2px; height: 24px; background: var(--t-text); }
+
+.base-fill { fill: rgba(167, 139, 250, 0.16); }
+.base-line { fill: none; stroke: var(--purple); stroke-width: 1.8; vector-effect: non-scaling-stroke; }
+.base-dot { fill: var(--purple); }
+
+.heat-body { display: grid; grid-template-columns: 50px minmax(0, 1fr); grid-gap: 8px; }
+.heat-days { display: flex; flex-direction: column; justify-content: space-between; text-align: right; font-family: var(--mono); font-size: 10.5px; color: var(--t-text-dim); padding-bottom: 18px; }
+.heat-scale { margin-left: auto; display: inline-flex; align-items: center; font-size: 11.5px; color: var(--t-text-dim); }
+.heat-scale i { display: inline-block; width: 64px; height: 8px; margin: 0 6px; border-radius: 4px; background: linear-gradient(90deg, rgba(251, 191, 36, 0.08), var(--amber)); }
+
+/* The Home card with the flow: the pill, the flow, three figures. */
+.home-flow-head { display: flex; justify-content: flex-end; min-height: 0; }
+.home-flow { min-height: 0; display: flex; align-items: center; }
+.home-flow .flow-svg { max-height: 100%; }
+
 /* The nightly energy forecast, under the last-24-hours chart (energy_forecast.py). */
 .energy-forecast {
   display: flex;

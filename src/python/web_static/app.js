@@ -11229,11 +11229,26 @@ function renderHomeEnergy() {
   const sample = document.querySelector("#homeEnergySample");
   // The pill is for a card that is entirely made up; a half that is says so itself.
   if (sample) sample.hidden = !(e.sample && g.sample);
+  if (e.mode === "records") {
+    body.innerHTML = `
+      <div class="energy-split">
+        ${homeElectricityHalf(e)}
+        <div class="energy-split-rule"></div>
+        ${homeGasHalf(g)}
+      </div>`;
+    return;
+  }
+  const m = energyFlowModel(e, g, latestEnergy.furnace);
+  const day = energyDayModel(e, latestEnergy.forecast);
+  const b = e.bill;
+  const step = b && b.projected_kwh !== null ? (b.projected_kwh > b.threshold_kwh ? "Step 2" : "Step 1") : null;
   body.innerHTML = `
-    <div class="energy-split">
-      ${homeElectricityHalf(e)}
-      <div class="energy-split-rule"></div>
-      ${homeGasHalf(g)}
+    <div class="home-flow-head">${energyUsualPill(m)}</div>
+    <div class="home-flow">${energyFlowCompactSvg(m)}</div>
+    <div class="energy-tiles three">
+      <div><span>Today</span><b class="mono">${day.soFar.toFixed(1)} kWh</b></div>
+      <div><span>On pace</span><b class="mono">${energyMoney(day.pace * m.price)}</b></div>
+      <div><span>${step ? "This bill" : "Always on"}</span><b class="mono${step === "Step 2" ? " warn" : step ? " ok" : ""}">${step || `${flowKw(m.base)} kW`}</b></div>
     </div>`;
 }
 
@@ -11375,16 +11390,367 @@ function energyForecastHtml(forecast, rate) {
     </div>`;
 }
 
+/* ── The power flow ──
+   Nothing in the house meters its own draw, so the flow splits the meter only
+   where something real says so: "always on" is the quietest night hour, the
+   furnace's state is the ecobee's, and gas comes from the model fitted to the
+   bills. The last two are estimates and are drawn dashed.
+
+   Glow is a wide faint stroke and the halos are radial gradients, not SVG
+   blur filters: the particles animate, and a blur re-rendered every frame is
+   what the wall panel's Raspberry Pi 4 cannot afford. The particles are round
+   dashes moving along the ribbon - CSS only, so old Safari runs them too. */
+const FLOW = { grid: "#fbbf24", gas: "#22d3ee", home: "#4f8ef7", base: "#a78bfa", rest: "#fb923c",
+               furnace: "#f87171", water: "#2dd4bf", idle: "#4e5470" };
+const GJ_TO_KWH = 277.8;
+let energyFlowSerial = 0;
+
+function energyFlowModel(e, g, furnace) {
+  const kw = Number.isFinite(e.kw_now) ? e.kw_now : null;
+  const base = kw === null || !Number.isFinite(e.base_kw) ? null : Math.min(e.base_kw, kw);
+  const rest = kw === null ? null : Math.max(0, kw - (base ?? 0));
+  const model = g && !g.sample ? g.model || {} : {};
+  const waterKw = Number.isFinite(model.base_gj_per_day) ? model.base_gj_per_day * GJ_TO_KWH / 24 : null;
+  const burnerKw = furnace === "heating" && Number.isFinite(model.gj_per_furnace_hour)
+    ? model.gj_per_furnace_hour * GJ_TO_KWH : null;
+  const usual = e.usual_hourly_kwh?.[new Date().getHours()];
+  const recent = (e.last_hour_kw || []).filter(Number.isFinite);
+  return {
+    kw, base, rest, waterKw, burnerKw, furnace,
+    usual: Number.isFinite(usual) ? usual : null,
+    vsUsual: kw !== null && usual ? Math.round((kw / usual - 1) * 100) : null,
+    peak: Math.max(kw ?? 0, ...recent, 0.1),
+    price: e.bill?.tier1_price ?? e.rate,
+  };
+}
+
+const flowWidth = (kw) => 3 + Math.min(Math.max(kw, 0), 3) * 4;
+const flowSpeed = (kw) => Math.max(0.8, 2.6 - kw * 0.6).toFixed(2);
+const flowKw = (kw) => (kw === null || kw === undefined ? "–" : kw.toFixed(2));
+
+function flowRibbon(d, { kw, from, to, id, estimate = false, particle = "#fff4d6" }) {
+  if (!kw || kw <= 0) {
+    return `<path d="${d}" class="flow-idle"/>`;
+  }
+  const w = flowWidth(kw);
+  const grad = `${id}-${from.slice(1)}-${to.slice(1)}`;
+  const nums = d.replace(/[A-Za-z,]/g, " ").trim().split(/\s+/).map(Number);
+  const x1 = nums[0], x2 = nums[nums.length - 2];
+  return `<linearGradient id="${grad}" gradientUnits="userSpaceOnUse" x1="${x1}" y1="0" x2="${x2}" y2="0">
+      <stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient>
+    <path d="${d}" fill="none" stroke="url(#${grad})" stroke-width="${(w * 2.4).toFixed(1)}" stroke-opacity="0.09" stroke-linecap="round"/>
+    <path d="${d}" fill="none" stroke="url(#${grad})" stroke-width="${w.toFixed(1)}" stroke-opacity="${estimate ? 0.2 : 0.38}"
+      stroke-linecap="round"${estimate ? ' stroke-dasharray="10 6"' : ""}/>
+    <path d="${d}" class="flow-particles" stroke="${particle}" stroke-width="${Math.min(5, w * 0.6).toFixed(1)}"
+      style="animation-duration:${flowSpeed(kw)}s"/>`;
+}
+
+function flowHalo(id, cx, cy, r, color, strength = 0.22) {
+  return `<radialGradient id="${id}"><stop offset="0.55" stop-color="${color}" stop-opacity="${strength}"/>
+      <stop offset="1" stop-color="${color}" stop-opacity="0"/></radialGradient>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#${id})"/>`;
+}
+
+/* A ring drawn as dashes on a circle: `parts` are [fraction, color], clockwise from the top. */
+function flowRing(cx, cy, r, width, parts, track = "#262a40") {
+  const c = 2 * Math.PI * r;
+  const gap = parts.filter(([f]) => f > 0).length > 1 ? 5 : 0;
+  let at = 0;
+  const arcs = parts.map(([f, color]) => {
+    const len = Math.max(0, c * f - gap);
+    const arc = len > 0 ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${width}"
+      stroke-linecap="${gap ? "butt" : "round"}" stroke-dasharray="${len.toFixed(1)} ${(c - len).toFixed(1)}"
+      stroke-dashoffset="${(-at).toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>` : "";
+    at += c * f;
+    return arc;
+  }).join("");
+  return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${track}" stroke-width="${width}"/>${arcs}`;
+}
+
+const FLOW_ICON = {
+  bolt: (x, y, c) => `<path d="M ${x + 3} ${y - 12} L ${x - 5} ${y + 1} L ${x} ${y + 1} L ${x - 2} ${y + 11} L ${x + 6} ${y - 2} L ${x + 1} ${y - 2} Z" fill="${c}"/>`,
+  flame: (x, y, c) => `<path d="M ${x} ${y - 12} C ${x + 8} ${y - 3}, ${x + 10} ${y + 3}, ${x + 6} ${y + 9} C ${x + 5} ${y + 3}, ${x + 2} ${y + 1}, ${x} ${y - 2} C ${x - 2} ${y + 3}, ${x - 7} ${y + 6}, ${x - 5} ${y + 11} C ${x - 10} ${y + 5}, ${x - 9} ${y - 4}, ${x} ${y - 12} Z" fill="${c}"/>`,
+  house: (x, y, c) => `<path d="M ${x - 12} ${y + 1} L ${x} ${y - 10} L ${x + 12} ${y + 1} M ${x - 9} ${y - 1} L ${x - 9} ${y + 10} L ${x + 9} ${y + 10} L ${x + 9} ${y - 1}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`,
+};
+
+function energyFlowSvg(m) {
+  const id = `flow${++energyFlowSerial}`;
+  const heating = m.furnace === "heating", fan = m.furnace === "fan";
+  const furnaceSub = { heating: "ecobee: heating", fan: "ecobee: fan only", idle: "ecobee: idle" }[m.furnace]
+    || "ecobee: no reading";
+  const chips = [
+    { name: "Always on", sub: "quietest night hour · measured", value: `${flowKw(m.base)} kW`,
+      share: m.kw ? (m.base ?? 0) / m.kw : 0, color: FLOW.base, live: m.base > 0 },
+    { name: "Everything else", sub: "the rest of the meter", value: `${flowKw(m.rest)} kW`,
+      share: m.kw ? (m.rest ?? 0) / m.kw : 0, color: FLOW.rest, live: m.rest > 0 },
+    { name: "Furnace", sub: `${furnaceSub} · fan and burner`,
+      value: heating ? (m.burnerKw ? `≈${m.burnerKw.toFixed(0)} kW` : "heating") : fan ? "fan" : "idle",
+      share: 0, color: FLOW.furnace, live: heating || fan, estimate: true },
+  ];
+  if (m.waterKw !== null) {
+    chips.push({ name: "Hot water & cooking", sub: "gas model · daily average", value: `≈${m.waterKw.toFixed(1)} kW`,
+      share: Math.min(1, m.waterKw / Math.max(m.waterKw, m.kw || 0.1)), color: FLOW.water, live: true, estimate: true });
+  }
+  const slots = chips.length === 4 ? [20, 102, 184, 270] : [34, 146, 258];
+  const mid = (i) => slots[i] + 32;
+  const exit = (i) => {
+    const y = 152 + (mid(i) - 160) * 0.42;
+    return [(400 + Math.sqrt(Math.max(0, 80 * 80 - (y - 152) ** 2))).toFixed(1), y.toFixed(1)];
+  };
+  const fromHome = (i) => { const [x, y] = exit(i); return `M ${x} ${y} C 560 ${y}, 560 ${mid(i)}, 640 ${mid(i)}`; };
+  const fromGas = (i, dy) => `M 116 ${287 + dy} C 360 ${287 + dy}, 480 ${mid(i)}, 640 ${mid(i)}`;
+  const gasOn = m.waterKw !== null || m.burnerKw;
+
+  const ribbons = [
+    flowRibbon("M 126 118 C 230 118, 240 150, 322 150", { kw: m.kw, from: FLOW.grid, to: FLOW.home, id }),
+    flowRibbon(fromHome(0), { kw: m.base, from: FLOW.home, to: FLOW.base, id, particle: "#e4dcff" }),
+    flowRibbon(fromHome(1), { kw: m.rest, from: FLOW.home, to: FLOW.rest, id, particle: "#ffe3cc" }),
+    fan || heating ? flowRibbon(fromHome(2), { kw: 0.15, from: FLOW.home, to: FLOW.furnace, id, estimate: true, particle: "#ffd6d6" })
+                   : `<path d="${fromHome(2)}" class="flow-idle"/>`,
+    gasOn ? (m.burnerKw ? flowRibbon(fromGas(2, -5), { kw: Math.min(m.burnerKw, 3), from: FLOW.gas, to: FLOW.furnace, id, estimate: true, particle: "#c9fbff" })
+                        : `<path d="${fromGas(2, -5)}" class="flow-idle gas"/>`) : "",
+    m.waterKw !== null ? flowRibbon(fromGas(3, 5), { kw: m.waterKw, from: FLOW.gas, to: FLOW.water, id, estimate: true, particle: "#c9fbff" }) : "",
+  ].join("");
+
+  const chipSvg = chips.map((c, i) => {
+    const y = slots[i], color = c.live ? c.color : FLOW.idle;
+    return `<g class="flow-chip${c.live ? "" : " idle"}">
+      <rect x="640" y="${y}" width="226" height="64" rx="14" fill="#1c1e2e" stroke="${color}" stroke-opacity="${c.live ? 0.45 : 0.8}"
+        ${c.estimate || !c.live ? 'stroke-dasharray="4 4"' : ""}/>
+      <circle cx="668" cy="${y + 32}" r="15" fill="${color}" fill-opacity="0.16"/>
+      <circle cx="668" cy="${y + 32}" r="5" fill="${color}" fill-opacity="${c.live ? 1 : 0.5}"/>
+      <text x="692" y="${y + 27}" class="flow-name">${escapeHtml(c.name)}</text>
+      <text x="692" y="${y + 43}" class="flow-sub">${escapeHtml(c.sub)}</text>
+      <text x="854" y="${y + 27}" text-anchor="end" class="flow-value${c.live ? "" : " dim"}">${escapeHtml(c.value)}</text>
+      <rect x="692" y="${y + 51}" width="160" height="3" rx="1.5" fill="#262a40"/>
+      <rect x="692" y="${y + 51}" width="${(160 * Math.min(1, c.share)).toFixed(1)}" height="3" rx="1.5" fill="${color}"/>
+    </g>`;
+  }).join("");
+
+  const vs = m.vsUsual === null ? "" : `
+    <rect x="368" y="192" width="64" height="18" rx="9" fill="${m.vsUsual > 10 ? FLOW.grid : "#34d399"}" fill-opacity="0.14"/>
+    <text x="400" y="205" text-anchor="middle" class="flow-pill" fill="${m.vsUsual > 10 ? FLOW.grid : "#34d399"}">${m.vsUsual > 0 ? "+" : ""}${m.vsUsual}% usual</text>`;
+  return `<svg class="flow-svg" viewBox="0 0 880 360" role="img"
+      aria-label="Power flow: ${flowKw(m.kw)} kW from the grid; ${flowKw(m.base)} always on, ${flowKw(m.rest)} everything else; furnace ${escapeHtml(m.furnace || "unknown")}">
+    <defs><pattern id="${id}-dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.1" fill="#dde3f0" fill-opacity="0.05"/></pattern></defs>
+    <rect width="880" height="360" fill="url(#${id}-dots)"/>
+    ${ribbons}
+    ${flowHalo(`${id}-hg`, 80, 118, 64, FLOW.grid)}
+    ${flowRing(80, 118, 44, 5, [[m.kw ? m.kw / m.peak : 0, FLOW.grid]])}
+    <circle cx="80" cy="118" r="41.5" fill="#1c1e2e"/>
+    ${FLOW_ICON.bolt(80, 101, FLOW.grid)}
+    <text x="80" y="140" text-anchor="middle" class="flow-num">${flowKw(m.kw)}</text>
+    <text x="80" y="185" text-anchor="middle" class="flow-name">Grid</text>
+    <text x="80" y="201" text-anchor="middle" class="flow-sub">last hour's peak ${flowKw(m.peak)}</text>
+    ${gasOn ? flowHalo(`${id}-hs`, 80, 287, 52, FLOW.gas, 0.14) : ""}
+    <circle cx="80" cy="287" r="36" fill="#1c1e2e" stroke="${gasOn ? FLOW.gas : FLOW.idle}" stroke-opacity="0.6" stroke-width="2" stroke-dasharray="4 5"/>
+    ${FLOW_ICON.flame(80, 287, gasOn ? FLOW.gas : FLOW.idle)}
+    <text x="80" y="342" text-anchor="middle" class="flow-name">Gas <tspan class="flow-sub">· ${gasOn ? "modelled" : "no model yet"}</tspan></text>
+    ${flowHalo(`${id}-hh`, 400, 152, 104, FLOW.home, 0.2)}
+    <circle cx="400" cy="152" r="74" fill="#131523"/>
+    ${flowRing(400, 152, 74, 12, [[m.kw ? (m.base ?? 0) / m.kw : 0, FLOW.base], [m.kw ? (m.rest ?? 0) / m.kw : 0, FLOW.rest]])}
+    ${FLOW_ICON.house(400, 124, FLOW.home)}
+    <text x="400" y="166" text-anchor="middle" class="flow-num big">${flowKw(m.kw)}</text>
+    <text x="400" y="183" text-anchor="middle" class="flow-sub">kW in use</text>
+    ${vs}
+    <text x="400" y="252" text-anchor="middle" class="flow-sub">${m.kw !== null ? `${Math.round(m.kw * m.price * 100)}¢ an hour at Step 1` : ""}</text>
+    ${chipSvg}
+  </svg>`;
+}
+
+/* The same flow at the size of the Home card, and for phones: grid, home, and the split. */
+function energyFlowCompactSvg(m) {
+  const id = `flow${++energyFlowSerial}`;
+  return `<svg class="flow-svg compact" viewBox="0 0 350 140" role="img"
+      aria-label="${flowKw(m.kw)} kW from the grid: ${flowKw(m.base)} always on, ${flowKw(m.rest)} everything else">
+    ${flowRibbon("M 56 70 L 126 70", { kw: m.kw, from: FLOW.grid, to: FLOW.home, id })}
+    ${flowRibbon("M 222 62 C 246 62, 246 32, 268 32", { kw: m.base, from: FLOW.home, to: FLOW.base, id, particle: "#e4dcff" })}
+    ${flowRibbon("M 222 78 C 246 78, 246 108, 268 108", { kw: m.rest, from: FLOW.home, to: FLOW.rest, id, particle: "#ffe3cc" })}
+    ${flowHalo(`${id}-hg`, 30, 70, 40, FLOW.grid)}
+    ${flowRing(30, 70, 26, 4, [[m.kw ? m.kw / m.peak : 0, FLOW.grid]])}
+    <circle cx="30" cy="70" r="24" fill="#1c1e2e"/>
+    ${FLOW_ICON.bolt(30, 70, FLOW.grid)}
+    <text x="30" y="112" text-anchor="middle" class="flow-sub">Grid</text>
+    ${flowHalo(`${id}-hh`, 174, 70, 66, FLOW.home, 0.2)}
+    <circle cx="174" cy="70" r="46" fill="#131523"/>
+    ${flowRing(174, 70, 46, 8, [[m.kw ? (m.base ?? 0) / m.kw : 0, FLOW.base], [m.kw ? (m.rest ?? 0) / m.kw : 0, FLOW.rest]])}
+    <text x="174" y="75" text-anchor="middle" class="flow-num mid">${flowKw(m.kw)}</text>
+    <text x="174" y="91" text-anchor="middle" class="flow-sub">kW</text>
+    <circle cx="276" cy="32" r="4" fill="${FLOW.base}"/>
+    <text x="286" y="29" class="flow-num small">${flowKw(m.base)}</text>
+    <text x="286" y="43" class="flow-sub">always on</text>
+    <circle cx="276" cy="108" r="4" fill="${FLOW.rest}"/>
+    <text x="286" y="105" class="flow-num small">${flowKw(m.rest)}</text>
+    <text x="286" y="119" class="flow-sub">everything else</text>
+  </svg>`;
+}
+
+function energyUsualPill(m) {
+  if (m.vsUsual === null) return "";
+  const high = m.vsUsual > 10;
+  return `<span class="energy-state ${high ? "busy" : "base"}">${m.vsUsual > 0 ? "+" : ""}${m.vsUsual}% vs usual</span>`;
+}
+
+/* Today: measured hours, then last night's forecast (or, without one, the
+   usual day) for the hours still to come, against a usual day. */
+function energyDayModel(e, forecast) {
+  const now = new Date();
+  const measured = (e.today_hourly_kwh || []).map((v) => (Number.isFinite(v) ? v : null));
+  const usual = e.usual_hourly_kwh || null;
+  const byHour = {};
+  (forecast?.hourly || []).forEach((p) => {
+    const t = new Date(p.at);
+    if (t.toDateString() === now.toDateString()) byHour[t.getHours()] = p.value;
+  });
+  const ahead = [];
+  for (let h = measured.length; h < 24; h += 1) {
+    const v = Number.isFinite(byHour[h]) ? byHour[h] : usual?.[h];
+    ahead.push(Number.isFinite(v) ? v : null);
+  }
+  const sum = (list) => list.reduce((a, v) => a + (v || 0), 0);
+  const soFar = Number.isFinite(e.today_kwh) ? e.today_kwh : sum(measured);
+  return { measured, ahead, usual, soFar, pace: soFar + sum(ahead), usualTotal: usual ? sum(usual) : null,
+           byForecast: Object.keys(byHour).length > 0 };
+}
+
+function energyDaySvg(day) {
+  const all = [...day.measured, ...day.ahead];
+  const hi = Math.max(...all.filter(Number.isFinite), ...(day.usual || []), 0.2) * 1.1;
+  const W = 880, H = 180, step = W / 24, bw = step * 0.78;
+  const y = (v) => H - (v / hi) * (H - 6);
+  const bars = all.map((v, h) => {
+    if (!Number.isFinite(v)) return "";
+    const ahead = h >= day.measured.length;
+    return `<rect class="day-bar${ahead ? " ahead" : ""}" x="${(h * step + (step - bw) / 2).toFixed(1)}" y="${y(v).toFixed(1)}"
+      width="${bw.toFixed(1)}" height="${Math.max(1.5, H - y(v)).toFixed(1)}" rx="3"/>`;
+  }).join("");
+  const usual = day.usual ? `<path class="day-usual" d="${day.usual.map((v, h) => `${h ? "L" : "M"}${(h * step + step / 2).toFixed(1)},${y(v).toFixed(1)}`).join("")}"/>` : "";
+  const nowX = (day.measured.length * step).toFixed(1);
+  return `<svg class="energy-chart" viewBox="0 0 ${W} ${H + 2}" preserveAspectRatio="none" style="height:190px" aria-hidden="true">
+    ${bars}${usual}<line class="day-now" x1="${nowX}" x2="${nowX}" y1="0" y2="${H}"/></svg>`;
+}
+
+function energyHeatSvg(heat) {
+  const values = heat.flatMap((row) => row.hours).filter(Number.isFinite);
+  if (!values.length) return `<p class="energy-gas-note">The map fills in as the hours are recorded.</p>`;
+  const hi = Math.max(...values, 0.1);
+  const cells = heat.map((row, r) => row.hours.map((v, h) => (Number.isFinite(v)
+    ? `<rect x="${h * 36 + 1}" y="${r * 13}" width="34" height="11" rx="2" fill="${FLOW.grid}" fill-opacity="${(0.06 + 0.94 * v / hi).toFixed(2)}"><title>${escapeHtml(row.date)} ${String(h).padStart(2, "0")}h · ${v.toFixed(2)} kWh</title></rect>`
+    : "")).join("")).join("");
+  return `<svg class="energy-chart" viewBox="0 0 864 ${heat.length * 13}" preserveAspectRatio="none" style="height:${heat.length * 13}px">${cells}</svg>`;
+}
+
+function energyStatusHtml() {
+  return `
+    <div class="home-panel-head"><span class="panel-title"><i class="ti ti-plug-connected"></i> PowerLync</span>
+      <span class="energy-state busy">Waiting for the meter</span></div>
+    <div class="energy-steps">
+      <div class="done"><i class="ti ti-circle-check"></i><div><b>Paired with Home Assistant</b><span>its sensors are there and polled every 10 s</span></div></div>
+      <div class="wait"><i class="ti ti-alert-circle"></i><div><b>No reading from the meter yet</b>
+        <span>Every value is 0 - the PowerLync is not joined to the meter. BC Hydro does that: if their app shows 0 W too, ask them to re-join it. This page goes live by itself with the first reading.</span></div></div>
+    </div>`;
+}
+
+function renderEnergyLive(e, g, furnace, forecast) {
+  const m = energyFlowModel(e, g, furnace);
+  const set = (sel, html) => { const el = document.querySelector(sel); if (el) el.innerHTML = html; };
+  set("#energyFlow", `
+    <div class="home-panel-head"><span class="panel-title"><i class="ti ti-arrows-split-2"></i> Power flow · now</span>
+      <span class="flow-legend"><span><i style="background:${FLOW.grid}"></i>Electricity, metered</span>
+      <span><i style="background:${FLOW.gas}"></i>Gas, modelled</span><span><i class="dash"></i>Estimate</span></span></div>
+    <div class="flow-full">${energyFlowSvg(m)}</div>
+    <div class="flow-small">${energyFlowCompactSvg(m)}</div>`);
+
+  const recent = (e.last_hour_kw || []).filter(Number.isFinite);
+  const hours = (e.today_hourly_kwh || []).slice(0, e.sample ? -1 : undefined);
+  const ranked = hours.map((v, h) => [v, h]).filter(([v]) => Number.isFinite(v));
+  const busiest = ranked.reduce((a, b) => (b[0] > a[0] ? b : a), [-1, -1]);
+  const quietest = ranked.reduce((a, b) => (b[0] < a[0] ? b : a), [Infinity, -1]);
+  const hh = (h) => `${String(h).padStart(2, "0")}:00`;
+  set("#energyNow", `
+    <div class="home-panel-head"><span class="panel-title"><i class="ti ti-activity"></i> Right now</span>${energyUsualPill(m)}</div>
+    <div class="energy-headline"><span class="energy-kw mono big">${flowKw(m.kw)}</span><span class="energy-unit">kW</span></div>
+    <div class="energy-sub">${m.usual !== null ? `A usual hour like this is <b class="mono">${m.usual.toFixed(2)} kW</b>.` : "A usual hour appears after three days of readings."}</div>
+    ${energyAreaSvg(recent, { compare: m.usual !== null ? recent.map(() => m.usual) : null, height: 96 })}
+    <div class="energy-axis"><span>60 min ago</span><span>${m.usual !== null ? "dashed: usual" : ""}</span><span>now</span></div>
+    <div class="energy-tiles">
+      <div><span>Busiest hour today</span><b class="mono">${busiest[1] >= 0 ? `${busiest[0].toFixed(2)} kWh` : "–"}</b><small>${busiest[1] >= 0 ? hh(busiest[1]) : ""}</small></div>
+      <div><span>Quietest hour today</span><b class="mono">${quietest[1] >= 0 ? `${quietest[0].toFixed(2)} kWh` : "–"}</b><small>${quietest[1] >= 0 ? hh(quietest[1]) : ""}</small></div>
+    </div>`);
+
+  const day = energyDayModel(e, forecast);
+  const best = (forecast?.scores || []).find((s) => s.model === forecast.model);
+  set("#energyDay", `
+    <div class="home-panel-head"><span class="panel-title"><i class="ti ti-chart-bar"></i> Today</span>
+      <span class="section-meta">${day.byForecast ? `forecast: ${escapeHtml(forecast.model)}${best && Number.isFinite(best.mae) ? ` · typically within ${best.mae.toFixed(2)} kWh an hour` : ""}` : "ahead: a usual day"}</span></div>
+    <div class="energy-headline"><span class="energy-kw mono">${day.soFar.toFixed(1)}</span>
+      <span class="energy-unit">kWh so far · ${energyMoney(day.soFar * m.price)}</span>
+      <span class="energy-sub">On pace for <b class="mono">${day.pace.toFixed(1)} kWh</b> ≈ <b class="mono">${energyMoney(day.pace * m.price)}</b>${day.usualTotal ? ` · a usual day is ${day.usualTotal.toFixed(1)}` : ""}</span></div>
+    ${energyDaySvg(day)}
+    <div class="energy-axis"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div>
+    <div class="flow-legend"><span><i style="background:${FLOW.grid}"></i>Measured</span><span><i class="hollow"></i>${day.byForecast ? "Forecast" : "Usual, ahead"}</span>${day.usual ? '<span><i class="dash"></i>A usual day</span>' : ""}</div>`);
+
+  const b = e.bill;
+  set("#energyBill", b ? `
+    <div class="home-panel-head"><span class="panel-title"><i class="ti ti-receipt"></i> This bill · Step 1 watch</span>
+      <span class="section-meta">day ${b.day} of ${b.days}</span></div>
+    <div class="energy-headline"><span class="energy-kw mono">${Math.round(b.kwh)}</span><span class="energy-unit">of ${b.threshold_kwh.toLocaleString()} kWh at Step 1</span></div>
+    <div class="bill-track"><i class="used" style="width:${Math.min(100, 100 * b.kwh / b.threshold_kwh).toFixed(1)}%"></i>
+      ${b.projected_kwh !== null ? `<i class="pace${b.projected_kwh > b.threshold_kwh ? " over" : ""}" style="left:${Math.min(100, 100 * b.kwh / b.threshold_kwh).toFixed(1)}%;width:${Math.max(0, Math.min(100, 100 * b.projected_kwh / b.threshold_kwh) - Math.min(100, 100 * b.kwh / b.threshold_kwh)).toFixed(1)}%"></i>
+      <b style="left:${Math.min(99, 100 * b.projected_kwh / b.threshold_kwh).toFixed(1)}%"></b>` : ""}</div>
+    <div class="energy-sub">${b.projected_kwh === null ? "A projection after the first few hours of readings."
+      : b.projected_kwh <= b.threshold_kwh
+        ? `On pace for <b class="mono">${b.projected_kwh}</b> kWh - stays in <b class="ok">Step 1</b> at ${(b.tier1_price * 100).toFixed(2)}¢. Past ${b.threshold_kwh.toLocaleString()} it is ${(b.tier2_price * 100).toFixed(2)}¢; room for <b class="mono">${b.room_kwh_per_day}</b> kWh a day more.`
+        : `On pace for <b class="mono">${b.projected_kwh}</b> kWh - <b class="warn">${b.projected_kwh - b.threshold_kwh} kWh into Step 2</b> at ${(b.tier2_price * 100).toFixed(2)}¢. Staying in Step 1 means <b class="mono">${b.room_kwh_per_day}</b> kWh a day from here.`}</div>
+    <div class="energy-rows">
+      <div><span>Bill so far</span><b class="mono">${energyMoney(b.cost_so_far)}</b></div>
+      <div><span>Projected bill</span><b class="mono">${b.projected_cost !== null ? energyMoney(b.projected_cost) : "–"}</b></div>
+      <div><span>This period</span><b class="mono">${escapeHtml(energyDateLabel(b.start))} – ${escapeHtml(energyDateLabel(b.end))}</b></div>
+    </div>
+    ${b.partial ? `<p class="energy-gas-note">Counted from ${escapeHtml(energyDateLabel(b.counted_from))}, the first day the meter reported; earlier days of this bill are not guessed.</p>` : ""}` : `
+    <div class="home-panel-head"><span class="panel-title"><i class="ti ti-receipt"></i> This bill · Step 1 watch</span></div>
+    <p class="energy-gas-note">Upload a BC Hydro bill on <b>AI → AI data</b>: its prices and Step 1 threshold are what this card measures against.</p>`);
+
+  const nights = e.base_nights || [];
+  const lastNight = nights.length ? nights[nights.length - 1].kw : m.base;
+  const usualDay = day.usualTotal || e.last_24h_kwh;
+  const drift = nights.length > 1 ? Math.round((nights[nights.length - 1].kw - nights[0].kw) * 1000) : null;
+  set("#energyBase", `
+    <div class="home-panel-head"><span class="panel-title"><i class="ti ti-plug"></i> Always on</span></div>
+    <div class="energy-headline"><span class="energy-kw mono">${Number.isFinite(lastNight) ? Math.round(lastNight * 1000) : "–"}</span><span class="energy-unit">W, every hour of the day</span></div>
+    <div class="energy-sub">The fridge, the network, the Orange Pi, standby${Number.isFinite(lastNight) && usualDay ? `: <b>${Math.round(100 * lastNight * 24 / usualDay)}%</b> of what the house uses, about <b class="mono">${energyMoney(lastNight * 8760 * m.price).replace(/\.\d+$/, "")}</b> a year` : ""}.</div>
+    ${nights.length > 1 ? energyAreaSvg(nights.map((n) => n.kw), { height: 70 }).replace(/energy-(fill|line|dot)/g, "base-$1") : ""}
+    <div class="energy-axis"><span>${nights.length} nights ago</span><span>${drift !== null ? `${drift >= 0 ? "up" : "down"} ${Math.abs(drift)} W` : ""}</span><span>last night</span></div>`);
+
+  set("#energyHeat", `
+    <div class="home-panel-head"><span class="panel-title"><i class="ti ti-grid-dots"></i> When the house uses it · last ${(e.heat || []).length} days</span>
+      <span class="heat-scale">less <i></i> more</span></div>
+    <div class="heat-body">
+      <div class="heat-days">${(e.heat || []).length ? `<span>${escapeHtml(energyDateLabel(e.heat[0].date))}</span><span>today</span>` : ""}</div>
+      <div>${energyHeatSvg(e.heat || [])}<div class="energy-axis"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>23h</span></div></div>
+    </div>`);
+}
+
 function renderEnergyView() {
   const columns = document.querySelector("#energyColumns");
   if (!columns || !latestEnergy) return;
   const e = latestEnergy.electricity;
   const g = latestEnergy.gas;
+  const live = e.mode !== "records";
+  const status = document.querySelector("#energyStatus");
+  if (status) {
+    status.hidden = latestEnergy.meter !== "waiting";
+    if (!status.hidden) status.innerHTML = energyStatusHtml();
+  }
+  const liveBox = document.querySelector("#energyLive");
+  if (liveBox) liveBox.hidden = !live;
+  if (live) renderEnergyLive(e, g, latestEnergy.furnace, latestEnergy.forecast);
   const note = document.querySelector("#energySampleNote");
   if (note) {
     note.hidden = !e.sample && !g.sample;
     note.textContent = [
-      e.sample ? "Electricity is sample data until the BC Hydro PowerLync is paired."
+      latestEnergy.preview ? "Preview: sample electricity in the live layout, to see it before the meter reports."
+      : e.sample ? "Electricity is sample data until the BC Hydro PowerLync is paired."
                : e.mode === "records"
                  ? "Electricity is your own BC Hydro bills - history, not live readings; the PowerLync adds those."
                  : "Electricity is live from the PowerLync.",
@@ -11402,6 +11768,7 @@ function renderEnergyView() {
     days: g.days, values: g.days.map((d) => d.gj), digits: 2, rate: g.rate,
   }) : gasColumnHtml(g));
   const today = document.querySelector("#energyToday");
+  if (today) today.hidden = live;   // live has its own Today card, with the forecast in it
   if (today && e.mode === "records") {
     // No meter yet, so no hours: show the year against the one before it,
     // which is what two years of bills can honestly answer.
@@ -11434,8 +11801,11 @@ function renderEnergyView() {
   }
 }
 
+/* ?energy=preview shows the live layout on sample data before the meter reports. */
+const ENERGY_PREVIEW = new URLSearchParams(window.location?.search || "").get("energy") === "preview";
+
 async function loadEnergy() {
-  latestEnergy = await requestJson("/api/energy");
+  latestEnergy = await requestJson(ENERGY_PREVIEW ? "/api/energy?preview=1" : "/api/energy");
   renderHomeEnergy();
   renderEnergyView();
 }

@@ -716,6 +716,18 @@
         <span class="section-meta" id="energyMeta">Last 30 days</span>
       </div>
       <p class="energy-sample-note" id="energySampleNote" hidden>Sample data: the BC Hydro PowerLync is not connected yet, so these figures are invented. They are replaced by real readings once it is paired.</p>
+      <!-- The PowerLync is paired but the meter has not reported: say so, and what to do. -->
+      <div class="panel energy-status" id="energyStatus" hidden></div>
+      <!-- Live (or the preview's sample): the power flow and what it adds up to.
+           Uploaded bills alone cannot fill these, so they stay hidden then. -->
+      <div class="energy-live" id="energyLive" hidden>
+        <div class="panel energy-flow-card" id="energyFlow"></div>
+        <div class="panel energy-now-card" id="energyNow"></div>
+        <div class="panel energy-day-card" id="energyDay"></div>
+        <div class="panel energy-bill-card" id="energyBill"></div>
+        <div class="panel energy-base-card" id="energyBase"></div>
+        <div class="panel energy-heat-card" id="energyHeat"></div>
+      </div>
       <div class="energy-columns" id="energyColumns">
         <div class="loading-msg"><i class="ti ti-loader-2 spin"></i> Loading…</div>
       </div>
