@@ -11229,6 +11229,9 @@ function renderHomeEnergy() {
   const sample = document.querySelector("#homeEnergySample");
   // The pill is for a card that is entirely made up; a half that is says so itself.
   if (sample) sample.hidden = !(e.sample && g.sample);
+  const usualPill = document.querySelector("#homeEnergyUsual");
+  if (usualPill) usualPill.innerHTML = "";
+  body.classList.toggle("with-flow", e.mode !== "records");
   if (e.mode === "records") {
     body.innerHTML = `
       <div class="energy-split">
@@ -11242,8 +11245,8 @@ function renderHomeEnergy() {
   const day = energyDayModel(e, latestEnergy.forecast);
   const b = e.bill;
   const step = b && b.projected_kwh !== null ? (b.projected_kwh > b.threshold_kwh ? "Step 2" : "Step 1") : null;
+  if (usualPill) usualPill.innerHTML = energyUsualPill(m);
   body.innerHTML = `
-    <div class="home-flow-head">${energyUsualPill(m)}</div>
     <div class="home-flow">${energyFlowCompactSvg(m)}</div>
     <div class="energy-tiles three">
       <div><span>Today</span><b class="mono">${day.soFar.toFixed(1)} kWh</b></div>
@@ -11488,7 +11491,7 @@ function energyFlowSvg(m) {
       share: 0, color: FLOW.furnace, live: heating || fan, estimate: true },
   ];
   if (m.waterKw !== null) {
-    chips.push({ name: "Hot water & cooking", sub: "gas model · daily average", value: `≈${m.waterKw.toFixed(1)} kW`,
+    chips.push({ name: "Hot water", sub: "and cooking · gas model, daily", value: `≈${m.waterKw.toFixed(1)} kW`,
       share: Math.min(1, m.waterKw / Math.max(m.waterKw, m.kw || 0.1)), color: FLOW.water, live: true, estimate: true });
   }
   const slots = chips.length === 4 ? [20, 102, 184, 270] : [34, 146, 258];
@@ -11527,9 +11530,11 @@ function energyFlowSvg(m) {
     </g>`;
   }).join("");
 
+  const vsText = m.vsUsual === null ? "" : `${m.vsUsual > 0 ? "+" : ""}${m.vsUsual}% vs usual`;
+  const vsWidth = 16 + vsText.length * 6.1;
   const vs = m.vsUsual === null ? "" : `
-    <rect x="368" y="192" width="64" height="18" rx="9" fill="${m.vsUsual > 10 ? FLOW.grid : "#34d399"}" fill-opacity="0.14"/>
-    <text x="400" y="205" text-anchor="middle" class="flow-pill" fill="${m.vsUsual > 10 ? FLOW.grid : "#34d399"}">${m.vsUsual > 0 ? "+" : ""}${m.vsUsual}% usual</text>`;
+    <rect x="${(400 - vsWidth / 2).toFixed(1)}" y="192" width="${vsWidth.toFixed(1)}" height="18" rx="9" fill="${m.vsUsual > 10 ? FLOW.grid : "#34d399"}" fill-opacity="0.14"/>
+    <text x="400" y="205" text-anchor="middle" class="flow-pill" fill="${m.vsUsual > 10 ? FLOW.grid : "#34d399"}">${vsText}</text>`;
   return `<svg class="flow-svg" viewBox="0 0 880 360" role="img"
       aria-label="Power flow: ${flowKw(m.kw)} kW from the grid; ${flowKw(m.base)} always on, ${flowKw(m.rest)} everything else; furnace ${escapeHtml(m.furnace || "unknown")}">
     <defs><pattern id="${id}-dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.1" fill="#dde3f0" fill-opacity="0.05"/></pattern></defs>
@@ -11553,7 +11558,7 @@ function energyFlowSvg(m) {
     <text x="400" y="166" text-anchor="middle" class="flow-num big">${flowKw(m.kw)}</text>
     <text x="400" y="183" text-anchor="middle" class="flow-sub">kW in use</text>
     ${vs}
-    <text x="400" y="252" text-anchor="middle" class="flow-sub">${m.kw !== null ? `${Math.round(m.kw * m.price * 100)}¢ an hour at Step 1` : ""}</text>
+    <text x="400" y="60" text-anchor="middle" class="flow-sub">${m.kw !== null ? `${Math.round(m.kw * m.price * 100)}¢ an hour at Step 1` : ""}</text>
     ${chipSvg}
   </svg>`;
 }

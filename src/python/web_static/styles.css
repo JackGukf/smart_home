@@ -7476,10 +7476,22 @@ header > .header-right { flex-shrink: 0; }
 .heat-scale { margin-left: auto; display: inline-flex; align-items: center; font-size: 11.5px; color: var(--t-text-dim); }
 .heat-scale i { display: inline-block; width: 64px; height: 8px; margin: 0 6px; border-radius: 4px; background: linear-gradient(90deg, rgba(251, 191, 36, 0.08), var(--amber)); }
 
-/* The Home card with the flow: the pill, the flow, three figures. */
-.home-flow-head { display: flex; justify-content: flex-end; min-height: 0; }
-.home-flow { min-height: 0; display: flex; align-items: center; }
-.home-flow .flow-svg { max-height: 100%; }
+/* The Home card with the flow: the flow takes the height, three figures under
+   it; the "vs usual" pill sits in the card's head. A short card (the wall
+   panel's two-row slot) shrinks the flow, never its labels into a smear. */
+.home-energy-usual { margin-left: auto; }
+.home-energy-usual .energy-state { margin-left: 0 !important; }
+.home-energy-usual:empty { display: none; }
+.home-energy-body.with-flow { grid-template-rows: minmax(0, 1fr) auto; }   /* not :has() - old Safari */
+.home-flow { min-height: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
+.home-flow .flow-svg { width: auto; height: 100%; max-width: 100%; max-height: 180px; }
+.home-flow + .energy-tiles > div { padding: 6px 10px; }
+@media (max-width: 699px) {
+  .energy-day-card .energy-headline { flex-wrap: wrap; }
+  .energy-day-card .energy-headline .energy-sub { margin-left: 0 !important; flex-basis: 100%; margin-top: 6px; }
+  .energy-flow-card .home-panel-head { flex-wrap: wrap; }
+  .energy-flow-card .flow-legend { margin-left: 0; margin-top: 6px; }
+}
 
 /* The nightly energy forecast, under the last-24-hours chart (energy_forecast.py). */
 .energy-forecast {
