@@ -6968,6 +6968,7 @@ function syncPathSlots(cameras) {
     const slot = document.createElement("div");
     slot.className = "home-camera-slot";
     slot.dataset.pathSlot = id;
+    slot.dataset.cameraName = camera.name || id;
     slot.innerHTML = homeCameraMarkup(camera);
     body.appendChild(slot);
   }
@@ -6986,6 +6987,7 @@ function applyPathSlots() {
   const showing = activePathCameraId();
   for (const slot of document.querySelectorAll("[data-path-slot]")) {
     slot.classList.toggle("showing", slot.dataset.pathSlot === showing);
+    slot.classList.toggle("companion", slot.dataset.pathSlot !== showing);
   }
   /* The picker is markup this function deliberately does not rebuild, so it
      would otherwise keep naming the camera the route started on while the card
@@ -7226,14 +7228,10 @@ function pathCameraIds() {
    Index is the step being shown; advanced records whether it ever followed. */
 const pathEpisodes = new Map();
 
-/* The cameras a live episode holds open: the one on screen, and the one they
-   are walking towards.
-
-   Not the whole route. Three 1080p WebRTC streams put this Raspberry Pi 4 at
-   80% CPU with two Chromium processes pegged at ~85% of a core each, and none
-   of them finished connecting - measured on the panel, after trying it. Two is
-   enough for the handoff to be instant, because the only stream that has to be
-   ready is the next one. */
+/* At most two live feeds: the current camera and the next one, or the
+   previous one at the door. Keeping frontyard beside the front door gives a
+   usable fallback when the door camera drops off Wi-Fi. Three simultaneous
+   1080p streams overloaded the Pi 4 in the earlier panel test. */
 function pathEpisodeCameras() {
   const cameras = [];
   for (const path of cameraPathList()) {
@@ -7241,9 +7239,10 @@ function pathEpisodeCameras() {
     /* A released episode is still tracked, so the same motion cannot start it
        again, but it no longer owns the card. */
     if (!episode || episode.released) continue;
-    for (const offset of [0, 1]) {
-      if (offset === 1 && path.prewarm_next === false) continue;
-      const step = path.steps[episode.index + offset];
+    const current = path.steps[episode.index];
+    const companion = path.prewarm_next
+      ? path.steps[episode.index + 1] || path.steps[episode.index - 1] : null;
+    for (const step of [current, companion]) {
       if (!step) continue;
       const camera = latestCameraById.get(step.camera_id);
       if (camera) cameras.push(camera);
@@ -7285,8 +7284,10 @@ function closePathEpisode(pathName, suppressUntilClear = false) {
   const episode = pathEpisodes.get(pathName);
   if (!episode || !path) return;
   const wasReleased = episode.released;
-  if (suppressUntilClear) episode.released = true;
-  else pathEpisodes.delete(pathName);
+  if (suppressUntilClear) {
+    episode.released = true;
+    episode.releaseReason = "outward";
+  } else pathEpisodes.delete(pathName);
   if (wasReleased) return;
 
   for (const step of path.steps) activeCameraIds.delete(step.camera_id);
@@ -7296,8 +7297,7 @@ function closePathEpisode(pathName, suppressUntilClear = false) {
   logActivity(`${path.name}: clear`);
 }
 
-/* Bring the card in line with what the episode wants open: the camera on
-   screen, plus the next one when prewarm_next is on. */
+/* Keep the current and companion feeds playing without rebuilding either iframe. */
 function applyPathCameras() {
   const wanted = pathEpisodeCameras();
   const wantedIds = new Set(wanted.map(cameraIdFor));
@@ -7327,9 +7327,13 @@ function updatePathWatch() {
     /* A step whose direction sensor says the person is walking away is not an
        arrival: do not open for it, and do not advance to it. Steps without a
        direction (the door PIR) count as they always did. */
+    const priorityIndex = path.steps.findIndex(
+      (step) => step.camera_id === path.priority_camera_id);
+    const prioritySeen = priorityIndex >= 0 && seen[priorityIndex];
     const seenArriving = seen.map(
-      (tripped, i) => tripped && path.steps[i].direction !== "outward");
-    const furthest = seenArriving.lastIndexOf(true);
+      (tripped, i) => tripped && (i === priorityIndex
+        || path.steps[i].direction !== "outward"));
+    const furthest = prioritySeen ? priorityIndex : seenArriving.lastIndexOf(true);
     const episode = pathEpisodes.get(path.name);
 
     /* The person on screen is walking away from the house. End now rather
@@ -7337,7 +7341,7 @@ function updatePathWatch() {
        keep watching somebody leave. */
     if (episode && !episode.released) {
       const shown = path.steps[episode.index];
-      if (shown && shown.direction === "outward") {
+      if (shown && shown.direction === "outward" && !prioritySeen) {
         if (episode.stopTimer) {
           clearTimeout(episode.stopTimer);
           episode.stopTimer = null;
@@ -7350,7 +7354,12 @@ function updatePathWatch() {
     // The detector may report "unknown" on an empty frame while its presence
     // hold still says occupied. Keep the route closed until motion truly clears.
     if (episode?.released) {
-      if (!seen.some(Boolean)) pathEpisodes.delete(path.name);
+      if (prioritySeen && episode.releaseReason === "outward") {
+        pathEpisodes.delete(path.name);
+        openPathEpisode(path, priorityIndex);
+      } else if (!seen.some(Boolean)) {
+        pathEpisodes.delete(path.name);
+      }
       continue;
     }
 

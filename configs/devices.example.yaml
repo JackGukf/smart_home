@@ -120,7 +120,8 @@ cameras:
 #   - name: Front approach
 #     linger_seconds: 300
 #     abandon_seconds: 60
-#     prewarm_next: false
+#     prewarm_next: true  # current and next camera; at the door, keep frontyard
+#     priority_camera: Front door camera
 #     cameras: [Garage camera, Frontyard camera, Front door camera]
   # Each Wyze camera gets its own RTSP username/password, set per camera when
   # you enable RTSP in the app, so give every one its own *_env pair rather

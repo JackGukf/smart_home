@@ -60,6 +60,7 @@ globalThis.latestCameraPaths = [{
   linger_seconds: 300,
   abandon_seconds: 300,
   prewarm_next: false,
+  priority_camera_id: DOOR.id,
   steps: ROUTE.map((c) => ({ camera_id: c.id, name: c.name, motion_entity: c.motion_entity, person_entity: c.person_entity })),
 }];
 globalThis.latestCameraById = new Map(ROUTE.map((c) => [c.id, c]));
@@ -638,3 +639,42 @@ updatePathWatch();
 report();
 """, tmp_path)
     assert result["showing"] == "cam-door"
+
+def test_door_person_has_priority_over_outward_frontyard(tmp_path: Path) -> None:
+    result = _run("""
+walkTo(1, { hold: false }); updatePathWatch();
+setDirection(1, 'outward');
+clearAll();
+latestCameraPaths[0].steps[2].person_state = 'on';
+updatePathWatch();
+report();
+""", tmp_path)
+    assert result["showing"] == "cam-door"
+    assert result["playing"] == ["cam-door"]
+
+
+def test_door_person_reopens_an_outward_closed_route(tmp_path: Path) -> None:
+    result = _run("""
+walkTo(1, { hold: false }); updatePathWatch();
+setDirection(1, 'outward'); updatePathWatch();
+clearAll();
+latestCameraPaths[0].steps[2].person_state = 'on';
+updatePathWatch();
+report();
+""", tmp_path)
+    assert result["showing"] == "cam-door"
+    assert result["episodes"] == 1
+
+
+def test_warmed_frontyard_stays_live_beside_door(tmp_path: Path) -> None:
+    result = _run("""
+latestCameraPaths[0].prewarm_next = true;
+walkTo(1, { hold: false }); updatePathWatch();
+const before = [...events.slots];
+walkTo(2, { hold: false }); updatePathWatch();
+report({ before });
+""", tmp_path)
+    assert result["before"] == ["cam-yard", "cam-door"]
+    assert result["slots"] == ["cam-door", "cam-yard"]
+    assert result["showing"] == "cam-door"
+    assert result["playing"] == ["cam-door", "cam-yard"]

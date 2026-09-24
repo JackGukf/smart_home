@@ -3152,8 +3152,11 @@ def _camera_paths(config_path: Path, cards: list[dict[str, Any]]) -> list[dict[s
         # and letting it through here would mean two rules driving one card.
         if len(steps) < 2:
             continue
+        priority_name = str(entry.get("priority_camera") or "")
+        priority_step = next((step for step in steps if step["name"] == priority_name), None)
         paths.append({
             "name": str(entry.get("name") or "Camera path"),
+            "priority_camera_id": priority_step["camera_id"] if priority_step else None,
             "linger_seconds": int(entry.get("linger_seconds", 300)),
             # How long the card waits when the person clears the route without
             # ever advancing past the camera that opened the episode - they

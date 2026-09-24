@@ -131,7 +131,8 @@ camera_paths:
   - name: Front approach
     linger_seconds: 300
     abandon_seconds: 60
-    prewarm_next: false
+    prewarm_next: true
+    priority_camera: Front door camera
     cameras: [Garage camera, Frontyard camera, Front door camera]
 ```
 
@@ -146,16 +147,15 @@ last one's outputs for days. What the route needs is an order, and you know it.
 
 Five things carry it, and each was measured rather than assumed:
 
-- **Only the camera the person is at plays** (`prewarm_next: false`, the
-  default since build #336). The card opens one stream when somebody trips the
-  first camera, and the next camera only when *its* sensor sees them. A person
-  who stays at the garage or leaves costs one stream, never two.
-- **Pre-warming is opt-in.** `prewarm_next: true` holds the next camera open
-  too, so the handoff is instant — a WebRTC stream takes a few seconds to come
-  up, and by then they may have walked out of frame. But it is a second stream
-  decoding for the whole episode, and holding all three put the Pi 4 at 80% CPU
-  with two Chromium processes pegged at ~85% of a core each and none of the
-  streams finished connecting. Never pre-warm more than the next one.
+- **Front door wins when its sensor trips.** The route's
+  priority_camera names it explicitly, so a simultaneous outward reading
+  from the yard cannot close the view before it reaches the door.
+- **Two feeds stay visible during an approach.** prewarm_next: true keeps
+  the next feed playing in a small window; at the front door it keeps the
+  previous frontyard feed there instead. This starts the door stream before
+  the person reaches it and preserves an approach view if that stream fails.
+  Three 1080p streams previously put the Pi 4 at 80% CPU and none finished
+  connecting, so the route never opens three simultaneously.
 - **Slots are DOM nodes, not markup.** Re-creating an `<iframe>` reloads it, so
   rebuilding the card to add the next camera would drop the stream currently on
   screen — a black gap at the exact moment somebody walks into view. The card is
@@ -168,6 +168,14 @@ Five things carry it, and each was measured rather than assumed:
   `abandon_seconds` (default: the linger) if the person never advanced past the
   camera that opened the episode — they stayed, or left — and the full
   `linger_seconds` once it has followed them along the route.
+
+On 2026-09-23 a visitor crossed the frontyard while the front-door Wyze
+camera's RTSP endpoint was unreachable. Home Assistant marked its NPU person
+sensor unavailable, and the paired Zigbee occupancy sensor did not report
+motion. The dashboard therefore had no front-door trigger or usable door
+video, and stayed on frontyard. Priority and pre-warming make a healthy door
+camera appear sooner, but cannot create video during a camera/Wi-Fi outage.
+The visible frontyard companion is the fallback during such an outage.
 
 ### Direction: an arrival is not a departure
 
