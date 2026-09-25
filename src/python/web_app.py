@@ -26,7 +26,7 @@ from urllib.error import HTTPError
 from urllib.request import Request as _URLRequest
 from urllib.request import urlopen
 
-import hashlib
+import hmac
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -50,6 +50,7 @@ from src.python.matter_device import (
     node_to_device,
 )
 from src.python import bridge_sync
+from src.python import dashboard_session
 from src.python.house_digest import read_digest
 from src.python import ai_data
 from src.python import board_desktop
@@ -377,6 +378,79 @@ def _host_is_trusted(host: str | None, networks: list[Any]) -> bool:
         # A hostname, a unix-socket peer, or TestClient's literal "testclient".
         return False
     return any(address in network for network in networks)
+
+
+# ── Dashboard login: the password check, the lockout, the audit trail ──────
+# How a session is signed lives in dashboard_session, shared with the TV cast.
+_AUDIT_LOG = logging.getLogger("smart_home.audit")
+if not _AUDIT_LOG.handlers:
+    # Nothing configures logging under uvicorn, so without its own handler only
+    # warnings would reach the journal. `journalctl --user -u
+    # smart-home-dashboard | grep audit` is the record of who did what.
+    _audit_handler = logging.StreamHandler()
+    _audit_handler.setFormatter(logging.Formatter("audit: %(message)s"))
+    _AUDIT_LOG.addHandler(_audit_handler)
+    _AUDIT_LOG.setLevel(logging.INFO)
+    _AUDIT_LOG.propagate = False
+
+
+def _credentials_match(username: str, password: str, expected_user: str, expected_pass: str) -> bool:
+    """Constant-time comparison of both fields; both are always compared."""
+    user_ok = hmac.compare_digest(username.encode("utf-8"), expected_user.encode("utf-8"))
+    pass_ok = hmac.compare_digest(password.encode("utf-8"), expected_pass.encode("utf-8"))
+    return user_ok and pass_ok
+
+
+def _audit(request: Request, what: str, action: str) -> None:
+    """One journal line per security action: who, from where, what.
+
+    The actor is the signed-in user, or the trusted host that skipped the
+    login; "anonymous" only when dashboard_auth is off altogether.
+    """
+    actor = getattr(request.state, "actor", None) or "anonymous"
+    peer = request.client.host if request.client else "unknown"
+    _AUDIT_LOG.info("%s -> %s by %s from %s", what, action, actor, peer)
+
+
+class _LoginGuard:
+    """Locks an address out after repeated wrong passwords.
+
+    LOGIN_MAX_FAILURES within LOGIN_WINDOW_S locks that address for
+    LOGIN_LOCKOUT_S. Per address rather than global, so a guessing script on
+    one machine cannot lock the owner out from another. In memory on purpose:
+    a restart forgets it, which costs an attacker a restart they cannot cause.
+    """
+
+    LOGIN_MAX_FAILURES = 5
+    LOGIN_WINDOW_S = 15 * 60
+    LOGIN_LOCKOUT_S = 15 * 60
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._failures: dict[str, list[float]] = {}
+        self._locked_until: dict[str, float] = {}
+
+    def locked(self, peer: str) -> bool:
+        until = self._locked_until.get(peer)
+        if until is None:
+            return False
+        if self._clock() >= until:
+            self._locked_until.pop(peer, None)
+            return False
+        return True
+
+    def failed(self, peer: str) -> None:
+        now = self._clock()
+        recent = [t for t in self._failures.get(peer, []) if now - t < self.LOGIN_WINDOW_S]
+        recent.append(now)
+        if len(recent) >= self.LOGIN_MAX_FAILURES:
+            self._locked_until[peer] = now + self.LOGIN_LOCKOUT_S
+            self._failures.pop(peer, None)
+        else:
+            self._failures[peer] = recent
+
+    def succeeded(self, peer: str) -> None:
+        self._failures.pop(peer, None)
 
 
 _raw_cfg: dict = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
@@ -797,9 +871,9 @@ def create_app(
     )
     _signer: URLSafeTimedSerializer | None = None
     _MAX_AGE = 30 * 24 * 3600  # 30 days
+    _login_guard = _LoginGuard()
     if _auth_cfg:
-        _secret = hashlib.sha256(f"smart-home-salt-{_auth_pass}".encode()).hexdigest()
-        _signer = URLSafeTimedSerializer(_secret)
+        _signer = dashboard_session.session_signer(config_path, _auth_user or "", _auth_pass or "")
 
         # --- Auth middleware --------------------------------------------------
         _SKIP_PATHS = {"/login", "/logout"}
@@ -813,22 +887,22 @@ def create_app(
                     return await call_next(request)
 
                 # The kiosk panel has no keyboard; its address is its credential
-                if _host_is_trusted(
-                    request.client.host if request.client else None, _trusted_hosts
-                ):
+                peer = request.client.host if request.client else None
+                if _host_is_trusted(peer, _trusted_hosts):
+                    request.state.actor = f"trusted-host {peer}"
                     return await call_next(request)
 
                 # Validate session cookie
                 token = request.cookies.get("session")
-                valid = False
+                session: Any = None
                 if token and _signer is not None:
                     try:
-                        _signer.loads(token, max_age=_MAX_AGE)
-                        valid = True
+                        session = _signer.loads(token, max_age=_MAX_AGE)
                     except (SignatureExpired, BadSignature):
-                        valid = False
+                        session = None
 
-                if valid:
+                if isinstance(session, dict):
+                    request.state.actor = str(session.get("u") or "user")
                     return await call_next(request)
 
                 # Unauthenticated: API → 401, HTML → redirect
@@ -858,10 +932,17 @@ def create_app(
 
         @app.post("/login")
         async def login_post(
+            request: Request,
             username: str = _Form(...),
             password: str = _Form(...),
         ) -> RedirectResponse:
-            if username == _auth_user and password == _auth_pass:
+            peer = request.client.host if request.client else "unknown"
+            if _login_guard.locked(peer):
+                _AUDIT_LOG.warning("login refused: %s is locked out after repeated failures", peer)
+                return RedirectResponse(url="/login?error=locked", status_code=303)
+            if _credentials_match(username, password, _auth_user or "", _auth_pass or ""):
+                _login_guard.succeeded(peer)
+                _AUDIT_LOG.info("login: %s from %s", username, peer)
                 token = _signer.dumps({"u": username})  # type: ignore[union-attr]
                 response = RedirectResponse(url="/", status_code=303)
                 response.set_cookie(
@@ -872,6 +953,9 @@ def create_app(
                     max_age=_MAX_AGE,
                 )
                 return response
+            _login_guard.failed(peer)
+            # Not the username: people type the password into it by mistake.
+            _AUDIT_LOG.warning("login failed from %s", peer)
             return RedirectResponse(url="/login?error=1", status_code=303)
 
         @app.post("/logout")
@@ -1106,7 +1190,8 @@ def create_app(
         return await asyncio.to_thread(_alarm_payload, app.state.config_path)
 
     @app.post("/api/alarm/commands/{command}")
-    async def alarm_command(command: str) -> dict[str, Any]:
+    async def alarm_command(command: str, request: Request) -> dict[str, Any]:
+        _audit(request, "alarm", command)
         return await asyncio.to_thread(_home_assistant_alarm_command, app.state.config_path, command)
 
     @app.post("/api/alerts/{alert_id}/ack")
@@ -1114,11 +1199,13 @@ def create_app(
         return await asyncio.to_thread(_alert_ack, app.state.config_path, alert_id)
 
     @app.post("/api/alarm/speaker/stop")
-    async def alarm_speaker_stop() -> dict[str, Any]:
+    async def alarm_speaker_stop(request: Request) -> dict[str, Any]:
+        _audit(request, "alarm speaker", "stop")
         return await asyncio.to_thread(_alarm_speaker_stop, app.state.config_path)
 
     @app.post("/api/house-mode/{action}")
-    async def house_mode_command(action: str) -> dict[str, Any]:
+    async def house_mode_command(action: str, request: Request) -> dict[str, Any]:
+        _audit(request, "house mode", action)
         return await asyncio.to_thread(_house_mode_command, app.state.config_path, action)
 
     @app.patch("/api/cameras/{camera_id}")

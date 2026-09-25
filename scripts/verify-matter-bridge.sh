@@ -5,8 +5,10 @@
 # scripts/test-matter-commissioning.sh, which starts a native binary inside the
 # dev container and tests that in isolation.
 #
-# Nothing here needs ssh: the bridge answers Matter on the board's port 5540,
-# the bridge sync API is on :8000, and matter-server is on :5580.
+# The bridge answers Matter on the board's port 5540 and matter-server is on
+# :5580, both over the network. The bridge sync API on :8000 answers the board
+# itself only (it has no login), so it is read over ssh unless BRIDGE_API
+# points at a tunnel: ssh -N -L 8000:127.0.0.1:8000 orangepi@<board>.
 #
 #   scripts/verify-matter-bridge.sh                  # inventory, read-only
 #   scripts/verify-matter-bridge.sh --commission     # pair this chip-tool fabric
@@ -15,6 +17,8 @@
 #
 # Environment:
 #   PI_HOST        board address              (set in configs/hosts.env)
+#   PI_USER        ssh user on the board      (default orangepi)
+#   BRIDGE_API     bridge sync API base URL   (default: over ssh, see above)
 #   CHIP_TOOL      chip-tool binary           (default: first on PATH)
 #   NODE_ID        node id in chip-tool       (default 1)
 #   STORAGE_DIR    chip-tool fabric storage   (default ~/.chip-tool-bridge)
@@ -42,8 +46,19 @@ CHIP_TOOL="${CHIP_TOOL:-$(command -v chip-tool || true)}"
 NODE_ID="${NODE_ID:-1}"
 STORAGE_DIR="${STORAGE_DIR:-$HOME/.chip-tool-bridge}"
 MATTER_PORT=5540
-BRIDGE_API="http://${PI_HOST}:8000"
+PI_USER="${PI_USER:-orangepi}"
+BRIDGE_API="${BRIDGE_API:-}"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# GET a /bridge path. The API is loopback-only, so without a tunnel the board
+# asks itself.
+bridge_get() {
+    if [[ -n "$BRIDGE_API" ]]; then
+        curl -fsS -m 20 "${BRIDGE_API}$1"
+    else
+        ssh -o BatchMode=yes "${PI_USER}@${PI_HOST}" curl -fsS -m 20 "http://127.0.0.1:8000$1"
+    fi
+}
 # Generous, because the first command in a session pays DNS-SD discovery.
 FIRST_OP_TIMEOUT="${FIRST_OP_TIMEOUT:-70}"
 OP_TIMEOUT="${OP_TIMEOUT:-20}"
@@ -67,8 +82,8 @@ done
 mkdir -p "$STORAGE_DIR"
 
 # ── The bridge's own view of what it exposes ────────────────────────────────
-echo "==> Devices the bridge is told to expose (${BRIDGE_API}/bridge/devices)"
-DEVICES_JSON="$(curl -fsS -m 20 "${BRIDGE_API}/bridge/devices")"
+echo "==> Devices the bridge is told to expose (${BRIDGE_API:-ssh ${PI_HOST}}/bridge/devices)"
+DEVICES_JSON="$(bridge_get /bridge/devices)"
 python3 - "$DEVICES_JSON" <<'PY'
 import json, sys
 devices = json.loads(sys.argv[1])
@@ -215,7 +230,7 @@ truth() {
         python3 "$PROJECT_ROOT/scripts/matter_node_state.py" "${DEVICE_ID#matter:}" \
             --host "$PI_HOST" 2>/dev/null | sed 's/^/        /' || true
     else
-        curl -fsS -m 20 "${BRIDGE_API}/bridge/state/all" \
+        bridge_get /bridge/state/all \
             | python3 -c "
 import json,sys
 print('        bridge cache:', json.load(sys.stdin).get(sys.argv[1]))" "$DEVICE_ID"

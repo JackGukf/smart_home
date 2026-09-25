@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import html
 import json
 import logging
@@ -427,19 +426,19 @@ def taken_over(uri: str, token: str) -> bool:
 # ── The picture: Chromium, ffmpeg and a small HTTP server ───────────────────
 
 def session_cookie(config_path: Path) -> str:
-    """A dashboard session, signed the way web_app.create_app signs a login.
-
-    Keep the two derivations identical; tests/python/test_dashboard_cast.py
-    checks this cookie against the real middleware.
+    """A dashboard session, signed by the signer web_app.create_app uses
+    (dashboard_session). tests/python/test_dashboard_cast.py checks this cookie
+    against the real middleware.
     """
     import yaml
-    from itsdangerous import URLSafeTimedSerializer
+
+    from src.python.dashboard_session import session_signer
 
     auth = (yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}).get("dashboard_auth")
     if not auth:
         return ""  # no login configured: the dashboard lets everyone in
-    secret = hashlib.sha256(f"smart-home-salt-{auth['password']}".encode()).hexdigest()
-    return URLSafeTimedSerializer(secret).dumps({"u": str(auth["username"])})
+    username = str(auth["username"])
+    return session_signer(config_path, username, str(auth["password"])).dumps({"u": username})
 
 
 def unit_memory_mb() -> int | None:

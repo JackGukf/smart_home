@@ -25,7 +25,8 @@ def clear_state():
 def client():
     app = FastAPI()
     app.include_router(router)
-    return TestClient(app)
+    # The bridge API answers loopback only; the C++ bridge calls localhost.
+    return TestClient(app, client=("127.0.0.1", 50000))
 
 
 def test_state_all_empty(client):
@@ -354,3 +355,34 @@ def test_running_out_of_endpoints_is_survivable(tmp_path):
 
     assert len(assigned) == web_app.BRIDGE_MAX_ENDPOINTS
     assert max(assigned.values()) == web_app.BRIDGE_FIRST_ENDPOINT + web_app.BRIDGE_MAX_ENDPOINTS - 1
+
+
+# ── Loopback only: the API has no login ──────────────────────────────────────
+
+def _client_from(host: str) -> TestClient:
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app, client=(host, 50000))
+
+
+@pytest.mark.parametrize("host", ["192.168.0.50", "100.101.102.103", "testclient"])
+def test_command_refused_from_off_board(host):
+    calls = []
+
+    async def execute(device_id, command):
+        calls.append((device_id, command))
+
+    register_handlers(get_devices_fn=None, execute_command_fn=execute)
+    resp = _client_from(host).post("/bridge/command", json={"device_id": "kasa:1", "command": "on"})
+    assert resp.status_code == 403
+    assert calls == []
+
+
+@pytest.mark.parametrize("path", ["/bridge/devices", "/bridge/state/all"])
+def test_reads_refused_from_lan(path):
+    assert _client_from("192.168.0.50").get(path).status_code == 403
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
+def test_loopback_allowed(host):
+    assert _client_from(host).get("/bridge/state/all").status_code == 200

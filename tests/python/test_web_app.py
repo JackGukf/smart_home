@@ -1584,7 +1584,7 @@ def test_bridge_allowlist_limits_state_cache_to_exposed_devices(tmp_path, monkey
 
     controller = FakeController()
     app = create_app(controller=controller)
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 50000))
 
     resp = client.get("/bridge/devices")
 

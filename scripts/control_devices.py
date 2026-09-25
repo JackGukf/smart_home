@@ -3,6 +3,13 @@
 Manual device control tool — bypasses Matter entirely.
 Talks directly to the Python bridge sync API over HTTP.
 
+The bridge sync API answers the board itself only - it has no login, so it
+must not be reachable from the LAN. Run this on the board, or open a tunnel
+first and point BRIDGE_API at it:
+
+  ssh -N -L 8000:127.0.0.1:8000 orangepi@<board>
+  BRIDGE_API=http://127.0.0.1:8000 python3 scripts/control_devices.py
+
 Usage:
   python3 scripts/control_devices.py              # list all devices
   python3 scripts/control_devices.py on  3        # turn on device #3
@@ -10,6 +17,7 @@ Usage:
   python3 scripts/control_devices.py toggle 3     # toggle device #3
   python3 scripts/control_devices.py on  "Kitchen light switch"  # by name
 """
+import os
 import sys
 from pathlib import Path
 import json
@@ -18,9 +26,9 @@ import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.python.hosts import DASHBOARD_PORT, PI_HOST  # noqa: E402
+from src.python.hosts import DASHBOARD_PORT  # noqa: E402
 
-BASE = f"http://{PI_HOST}:{DASHBOARD_PORT}"
+BASE = os.environ.get("BRIDGE_API") or f"http://127.0.0.1:{DASHBOARD_PORT}"
 
 
 def fetch(path, method="GET", body=None):

@@ -1,6 +1,10 @@
 """Bridge Sync API — internal FastAPI router for the C++ Matter bridge daemon.
 
-Mounted at /bridge on the main web app (port 8000, localhost only).
+Mounted at /bridge on the main web app (port 8000). Every endpoint answers
+loopback callers only: the dashboard listens on 0.0.0.0 and the dashboard login
+skips /bridge, so without that check anyone on the LAN or the tailnet could
+switch the bridged devices with no password. Reach it from the workstation
+through an SSH tunnel (`ssh -N -L 8000:127.0.0.1:8000 orangepi@<board>`).
 
 Endpoints the C++ bridge calls:
   GET  /bridge/devices      — list all bridgeable devices with current state
@@ -9,18 +13,37 @@ Endpoints the C++ bridge calls:
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import time
 from collections.abc import Callable, Awaitable
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/bridge", tags=["bridge-sync"])
+
+def require_loopback(request: Request) -> None:
+    """Refuse any caller that is not this board itself.
+
+    The C++ bridge runs on the board and calls http://localhost:8000. A peer
+    that is not an IP address (a unix socket, a test client's placeholder) is
+    refused too: unknown is not local.
+    """
+    host = request.client.host if request.client else None
+    try:
+        local = host is not None and ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        local = False
+    if not local:
+        logger.warning("Refused /bridge request from %s: loopback only", host)
+        raise HTTPException(status_code=403, detail="The bridge API answers this board only")
+
+
+router = APIRouter(prefix="/bridge", tags=["bridge-sync"], dependencies=[Depends(require_loopback)])
 
 # ── Callbacks registered by web_app at startup ───────────────────────────────
 # Using a registry avoids circular imports (bridge_sync ↔ web_app).

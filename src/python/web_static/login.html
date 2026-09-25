@@ -135,8 +135,13 @@
     </form>
   </div>
   <script>
-    if (new URLSearchParams(location.search).get('error')) {
-      document.getElementById('loginError').classList.add('show');
+    const loginError = new URLSearchParams(location.search).get('error');
+    if (loginError) {
+      const box = document.getElementById('loginError');
+      if (loginError === 'locked') {
+        box.textContent = 'Too many wrong passwords. Try again in 15 minutes.';
+      }
+      box.classList.add('show');
     }
   </script>
 </body>
