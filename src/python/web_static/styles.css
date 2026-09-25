@@ -4661,6 +4661,10 @@ span.house-activity-line { cursor: default; }
 .house-siren span { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
 .house-siren b { font-size: 15px; font-weight: 600; }
 .house-siren small { font-size: 12px; color: var(--t-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A house alert (the front door): amber, not the siren's red. */
+.house-siren.house-alert { border-color: var(--amber); background: rgba(251, 191, 36, 0.1); }
+.house-siren.house-alert > i { color: var(--amber); }
+.house-siren.house-alert button { background: var(--amber); color: #1a1405; }
 .house-siren button {
   padding: 9px 16px; border-radius: var(--radius-sm); border: 0; background: var(--t-alert);
   color: #fff; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;

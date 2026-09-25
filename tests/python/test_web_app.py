@@ -2070,3 +2070,20 @@ def test_the_alarm_speaker_is_on_the_security_payload_with_why_and_can_be_stoppe
     client, calls = _house_mode_client(tmp_path, monkeypatch, states)
     assert client.post("/api/alarm/speaker/stop").status_code == 200
     assert calls == [("/api/services/switch/turn_off", {"entity_id": "switch.0xa4c1382b1f1bd155_alarm"})]
+
+
+def test_a_house_alert_is_home_assistants_so_every_screen_shows_and_clears_the_same(tmp_path: Path, monkeypatch) -> None:
+    from src.python.web_app import _house_alerts
+
+    states = [
+        {"entity_id": "input_boolean.front_door_alert", "state": "on", "last_changed": "2026-09-25T16:02:00+00:00"},
+        {"entity_id": "binary_sensor.0xa4c138813abdffff_contact", "state": "on"},
+    ]
+    [alert] = _house_alerts(states)
+    assert alert["id"] == "front_door" and alert["open"] is True and "open" in alert["message"]
+    assert _house_alerts([dict(states[0], state="off"), states[1]]) == []
+
+    client, calls = _house_mode_client(tmp_path, monkeypatch, states)
+    assert client.post("/api/alerts/front_door/ack").status_code == 200
+    assert client.post("/api/alerts/garage/ack").status_code == 404
+    assert calls == [("/api/services/input_boolean/turn_off", {"entity_id": "input_boolean.front_door_alert"})]

@@ -1109,6 +1109,10 @@ def create_app(
     async def alarm_command(command: str) -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_alarm_command, app.state.config_path, command)
 
+    @app.post("/api/alerts/{alert_id}/ack")
+    async def alert_ack(alert_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(_alert_ack, app.state.config_path, alert_id)
+
     @app.post("/api/alarm/speaker/stop")
     async def alarm_speaker_stop() -> dict[str, Any]:
         return await asyncio.to_thread(_alarm_speaker_stop, app.state.config_path)
@@ -5213,6 +5217,7 @@ def _alarm_payload(path: Path) -> dict[str, Any]:
         "source": "Home Assistant",
         "house_mode": _house_mode_payload(states),
         "speaker": _alarm_speaker_payload(states),
+        "alerts": _house_alerts(states),
         "panel": panel or {
             "name": _home_assistant_alarm_panel_name(controls),
             "entity_id": None,
@@ -5768,6 +5773,52 @@ def _alarm_speaker_stop(path: Path) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Home Assistant API error: {exc}") from exc
     return {"status": "ok", "entity_id": ALARM_SPEAKER, "result": result}
+
+
+# Alerts Home Assistant holds for every screen at once (scripts/install-door-alerts.py):
+# an input_boolean is on while the alert stands, and acknowledging turns it off,
+# which also stops the reminders. The dashboard's own banners are per browser.
+HOUSE_ALERTS = {
+    "front_door": {
+        "flag": "input_boolean.front_door_alert",
+        "subject": "binary_sensor.0xa4c138813abdffff_contact",
+        "title": "Front door left open",
+        "open": "Nobody is home and the front door is open.",
+        "closed": "The front door is closed now.",
+    },
+}
+
+
+def _house_alerts(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id = {e.get("entity_id"): e for e in states}
+    alerts = []
+    for alert_id, alert in HOUSE_ALERTS.items():
+        flag = by_id.get(alert["flag"])
+        if not flag or flag.get("state") != "on":
+            continue
+        subject = by_id.get(alert["subject"]) or {}
+        still_open = subject.get("state") == "on"
+        alerts.append({
+            "id": alert_id,
+            "title": alert["title"],
+            "message": alert["open"] if still_open else alert["closed"],
+            "since": flag.get("last_changed"),
+            "open": still_open,
+        })
+    return alerts
+
+
+def _alert_ack(path: Path, alert_id: str) -> dict[str, Any]:
+    alert = HOUSE_ALERTS.get(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail=f"Unknown alert: {alert_id}")
+    config, token = _home_assistant_auth(path)
+    try:
+        result = _home_assistant_post(config, token, "/api/services/input_boolean/turn_off",
+                                      {"entity_id": alert["flag"]})
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Home Assistant API error: {exc}") from exc
+    return {"status": "ok", "alert": alert_id, "result": result}
 
 
 def _house_mode_rule(states: list[dict[str, Any]], rule_id: str) -> str | None:

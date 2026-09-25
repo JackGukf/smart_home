@@ -387,6 +387,9 @@ Three things that will waste a day if you do not know them:
 - `docs/house-modes.md` — **Away / Home again / Vacation and night arming**
   (`scripts/install-house-modes.py`, `input_select.house_mode`): the modes, the
   owner's choices, and what the iPhone needs (location *Always*, Tailscale) for them to fire
+- `docs/door-alerts.md` — **front door left open**: when it fires (A: last phone leaves,
+  B: open 10 min and the house still), the shared dashboard banner, iPhone push, and
+  Telegram setup (`scripts/install-door-alerts.py`, `input_boolean.front_door_alert`)
 - `docs/tailscale.md` — remote access over Tailscale (`scripts/install-tailscale.sh`);
   `--accept-dns=false` is required, because Docker copies the hand-written `/etc/resolv.conf`
 - `docs/architecture.md` — architecture notes

@@ -4222,10 +4222,12 @@ function notificationsMarkup(notifs) {
           <div class="notif-actions">
             ${n.type === "intruder"
               ? `<button class="notif-btn respond-urgent" data-speaker-stop>Stop alarm speaker</button>`
+              : n.type === "house_alert"
+              ? `<button class="notif-btn respond-urgent" data-alert-ack="${escapeHtml(n.alertId)}">I know</button>`
               : `<button class="notif-btn ${urgent ? "respond-urgent" : "respond-mild"}"
               data-notif-respond="${escapeHtml(n.id)}">Respond</button>`}
-            <button class="notif-btn notif-close"
-              data-notif-close="${escapeHtml(n.id)}">Close</button>
+            ${n.type === "house_alert" ? "" : `<button class="notif-btn notif-close"
+              data-notif-close="${escapeHtml(n.id)}">Close</button>`}
           </div>
         </div>
       </div>`;
@@ -4873,6 +4875,49 @@ function houseModeHtml(hm) {
   </section>`;
 }
 
+/* House alerts (scripts/install-door-alerts.py): Home Assistant holds them, so
+   every screen shows the same banner, and "I know" on any of them - or on the
+   iPhone - clears it everywhere and stops the reminders. */
+const houseAlertNotifications = new Map();   // alert id -> notification id
+const alertAcking = new Set();
+
+function syncHouseAlerts(alerts) {
+  const live = new Set((alerts || []).map((alert) => alert.id));
+  for (const alert of alerts || []) {
+    if (houseAlertNotifications.has(alert.id)) continue;
+    const id = pushNotification("house_alert", alert.title, alert.message,
+      { eventKey: `${alert.id}-${alert.since || ""}`, alertId: alert.id });
+    if (id) houseAlertNotifications.set(alert.id, id);
+  }
+  for (const [alertId, notifId] of houseAlertNotifications) {
+    if (live.has(alertId)) continue;
+    dismissNotification(notifId);
+    houseAlertNotifications.delete(alertId);
+  }
+}
+
+async function acknowledgeHouseAlert(alertId) {
+  if (alertAcking.has(alertId)) return;
+  alertAcking.add(alertId);
+  renderAlarmSection();
+  try {
+    await requestJson(`/api/alerts/${encodeURIComponent(alertId)}/ack`, { method: "POST" });
+    logActivity(`Alert acknowledged: ${alertId}`);
+    latestAlarmData = await requestJson("/api/alarm");
+  } catch (error) {
+    apiStatus.textContent = "Error";
+    console.error(error);
+  } finally {
+    alertAcking.delete(alertId);
+    renderAlarmSection();
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-alert-ack]");
+  if (button) acknowledgeHouseAlert(button.dataset.alertAck);
+});
+
 /* The alarm speaker (scripts/install-security-response.py): a banner on every
    view while it sounds, whose button stops it, gone once it is off. */
 let speakerStopping = false;
@@ -4908,6 +4953,9 @@ async function stopAlarmSpeaker() {
 }
 
 function renderAlarmSection(payload = latestAlarmData) {
+  // Banners first: they show on every view, whether or not this one is drawn.
+  syncIntruderNotification(payload?.speaker);
+  syncHouseAlerts(payload?.alerts);
   const panel = document.querySelector("#alarmPanel");
   if (!panel) return;
 
@@ -4948,11 +4996,17 @@ function renderAlarmSection(payload = latestAlarmData) {
 
   const speaker = payload?.speaker;
   const sounding = speaker?.state === "on";
-  syncIntruderNotification(speaker);
   const speakerChip = !speaker ? "" : sounding
     ? `<button class="house-chip sos" type="button" data-speaker-stop title="Stop the alarm speaker">Stop speaker</button>`
     : `<span class="house-chip muted" title="Sounds for an unexpected person downstairs while armed">Speaker · ${
         escapeHtml(formatStatus(speaker.state || "unknown").toLowerCase())}</span>`;
+  const alertBanners = (payload?.alerts || []).map((alert) => `
+    <div class="house-siren house-alert" role="alert">
+      <i class="ti ti-door" aria-hidden="true"></i>
+      <span><b>${escapeHtml(alert.title)}</b><small>${escapeHtml(alert.message)}${
+        alert.since ? ` · since ${escapeHtml(houseModeSince(alert.since))}` : ""}</small></span>
+      <button type="button" data-alert-ack="${escapeHtml(alert.id)}">${alertAcking.has(alert.id) ? "Clearing…" : "I know"}</button>
+    </div>`).join("");
   const sirenBanner = sounding ? `
     <div class="house-siren" role="alert">
       <i class="ti ti-alarm-light" aria-hidden="true"></i>
@@ -4987,6 +5041,7 @@ function renderAlarmSection(payload = latestAlarmData) {
       <span class="house-arms">${armButtons}</span>
     </div>
     ${sirenBanner}
+    ${alertBanners}
     <div class="house-stage">
       <div>
         <div class="house-scene">
@@ -13411,7 +13466,7 @@ const LIVE_REFRESH_DEBOUNCE_MS = 250;
 /* The speaker, why it sounded and the house mode re-read the Security view at once:
    a banner saying "sounding" must not wait for the 60 s poll. */
 const ALARM_LIVE_ENTITIES = new Set(["switch.0xa4c1382b1f1bd155_alarm", "input_text.security_alarm_reason",
-  "input_select.house_mode"]);
+  "input_select.house_mode", "input_boolean.front_door_alert", "binary_sensor.0xa4c138813abdffff_contact"]);
 /* Two events a second apart should give two refreshes; a burst from a bridge
    reconnect should give one. A trailing debounce does both. */
 let liveRefreshTimer = null;
