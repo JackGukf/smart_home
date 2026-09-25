@@ -251,3 +251,22 @@ def test_with_no_runtime_at_all_nothing_is_trusted(db, tmp_path):
     assert gas_model.runtime_trusted_from(db) is None
     assert not any(o.covered for o in gas_model.observations(db))
     assert gas_model.fit(db, now=datetime(2026, 9, 19)).kind == "degree_day"
+
+
+def test_the_burner_rate_survives_when_the_degree_day_model_wins(db, tmp_path, monkeypatch):
+    """2026-09-24: the furnace ran, degree-day explained the bills better (6.17%
+    against 6.4%), and the power flow drew no gas, because only the runtime model
+    carries a rate per furnace hour. The rate is the furnace's, whichever model
+    wins; the winner's own estimate is unchanged."""
+    loaded(db, tmp_path)
+    runtime = gas_model.Fit("fitted", kind="runtime", base_gj_per_day=0.04, gj_per_furnace_hour=0.09,
+                            observations=17, error_percent=6.4)
+    degree_day = gas_model.Fit("fitted", kind="degree_day", base_gj_per_day=0.037, gj_per_degree_day=0.03,
+                               balance_temp_c=16.5, observations=24, error_percent=6.17)
+    monkeypatch.setattr(gas_model, "_fit_runtime", lambda usable: runtime)
+    monkeypatch.setattr(gas_model, "_fit_degree_day", lambda usable: degree_day)
+
+    model = gas_model.fit(db, now=datetime(2026, 9, 24))
+
+    assert model.kind == "degree_day" and model.gj_per_furnace_hour == 0.09
+    assert model.estimate(furnace_hours=10, days=1, avg_temp_c=16.5) == pytest.approx(0.037)

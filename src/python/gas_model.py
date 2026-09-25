@@ -288,6 +288,14 @@ def fit(db: sqlite3.Connection, now: datetime | None = None) -> Fit:
                               "base_gj_per_day": round(f.base_gj_per_day, 4) if f.base_gj_per_day else None,
                               "observations": f.observations}
                              for f in candidates if f is not best]
+        # The burner's rate is a fact about the furnace, not about which model
+        # explains the bills better: keep it when the degree-day model wins, so
+        # the power flow can show gas going to a furnace that is burning. Its
+        # estimate() still uses only its own terms. (2026-09-24: the furnace ran,
+        # degree-day won by 6.17% to 6.4%, and the flow showed no gas at all.)
+        runtime = next((f for f in candidates if f.kind == "runtime"), None)
+        if runtime is not None and best is not runtime:
+            best.gj_per_furnace_hour = runtime.gj_per_furnace_hour
         return best
 
     # Nothing to separate the furnace from the rest: learn the base load, which

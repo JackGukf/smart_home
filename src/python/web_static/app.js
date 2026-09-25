@@ -11883,7 +11883,7 @@ function energyFlowSvg(m) {
   };
   const fromHome = (i) => { const [x, y] = exit(i); return `M ${x} ${y} C 560 ${y}, 560 ${mid(i)}, 640 ${mid(i)}`; };
   const fromGas = (i, dy) => `M 116 ${287 + dy} C 360 ${287 + dy}, 480 ${mid(i)}, 640 ${mid(i)}`;
-  const gasOn = m.waterKw !== null || m.burnerKw;
+  const gasOn = m.waterKw !== null || m.burnerKw || heating;
 
   const ribbons = [
     flowRibbon("M 126 118 C 230 118, 240 150, 322 150", { kw: m.kw, from: FLOW.grid, to: FLOW.home, id }),
@@ -11891,7 +11891,9 @@ function energyFlowSvg(m) {
     flowRibbon(fromHome(1), { kw: m.rest, from: FLOW.home, to: FLOW.rest, id, particle: "#ffe3cc" }),
     fan || heating ? flowRibbon(fromHome(2), { kw: 0.15, from: FLOW.home, to: FLOW.furnace, id, estimate: true, particle: "#ffd6d6" })
                    : `<path d="${fromHome(2)}" class="flow-idle"/>`,
-    gasOn ? (m.burnerKw ? flowRibbon(fromGas(2, -5), { kw: Math.min(m.burnerKw, 3), from: FLOW.gas, to: FLOW.furnace, id, estimate: true, particle: "#c9fbff" })
+    /* A burning furnace always draws gas, rate known or not: without a fitted
+       rate the ribbon still flows, at a nominal width, and the chip says "heating". */
+    gasOn ? (heating ? flowRibbon(fromGas(2, -5), { kw: Math.min(m.burnerKw || 1, 3), from: FLOW.gas, to: FLOW.furnace, id, estimate: true, particle: "#c9fbff" })
                         : `<path d="${fromGas(2, -5)}" class="flow-idle gas"/>`) : "",
     m.waterKw !== null ? flowRibbon(fromGas(3, 5), { kw: m.waterKw, from: FLOW.gas, to: FLOW.water, id, estimate: true, particle: "#c9fbff" }) : "",
   ].join("");
