@@ -190,8 +190,9 @@ All of it on the board and in git; details in `docs/house-modes.md`.
   dashboard, bedroom button once = stop / twice = Night arm (its old light
   automations deleted), and a **While armed · outdoors** log on Security.
 - **Garage camera counts the driveway only:** `NPU_ZONES` in the board's
-  `.env` (backup `.env.bak-2026-09-24-zones`); a person counts where their feet
-  are.
+  `.env`; a person counts where their feet are. Its top edge was moved down the
+  same night to keep people walking the sidewalk out (backups
+  `.env.bak-2026-09-24-zones` before any zone, `-zones-v1` before the smaller one).
 
 Open, in order:
 
@@ -199,9 +200,11 @@ Open, in order:
    kept connected with the app's external URL
    `http://orangepi6.tail9804d9.ts.net:8123`. Until then Away and arrival
    never fire by themselves; the dashboard buttons work.
-2. **Two night schedules.** The alarm arms itself *away* at 01:30 and disarms
-   at 07:00 (not Home Assistant - most likely the Smart Life app). Keep it or
-   ours, not both; ours arms *home*.
+2. **Two night schedules - resolved.** The alarm armed itself *away* at 01:30
+   and disarmed at 07:00 from the Smart Life app (no Home Assistant context on
+   either change). The owner deleted that schedule on 2026-09-24; ours (arm
+   *home*) is the only one. Confirm in the house memory that the night of
+   09-24/25 shows our arm and no 01:30:43 arm-away.
 3. **First real night:** the speaker has only been checked by rendering the
    banner, never sounded by the rule. Check the logbook for
    `security_intruder_siren` in the morning, and arm/disarm once by hand
@@ -210,6 +213,42 @@ Open, in order:
    household's last movement downstairs is not flagged. Pets would set it off
    on Away - there are none known.
 5. Other residents' phones, for Away to mean empty rather than "Jack is out".
+
+## Update 2026-09-25: front door left open, and gas to the furnace
+
+Details in `docs/door-alerts.md`.
+
+- **Front door alert** (`scripts/install-door-alerts.py`,
+  `script.front_door_left_open`, `input_boolean.front_door_alert`). Fires on
+  **A**: the last phone leaves with the door open, or it opens and stays open
+  2 min within 7 min of everyone leaving; or **B**: open 10 min with no indoor
+  movement (no phone needed). Reminds every 15 min while open, 3 times at most;
+  closing the door or **I know** stops it, and a "closed at" message follows.
+- **Where it goes:** a dashboard banner on every view and an amber one on
+  Security - Home Assistant's state, so one **I know** clears every screen
+  (`/api/alarm` → `alerts`, `POST /api/alerts/front_door/ack`); the iPhone,
+  time-sensitive with **Show camera** / **I know**; and **Telegram**.
+- **Telegram:** bot **Hornby_House** (@Hornby_house_bot), added through Home
+  Assistant's config flow in *broadcast* mode (send-only - nothing reaches in),
+  one allowed chat, Jack Gu → `notify.hornby_house_jack_gu`. Two test messages
+  received 2026-09-25 00:36 and 00:38. The token is `TELEGRAM_BOT_TOKEN` in the
+  board's `.env` and in HA's storage, never in git. A family member: they press
+  Start on the bot, their chat is added as an allowed chat id, and the
+  installer is run again - it finds every Telegram notify entity itself.
+- **Gas to the furnace** (fixed the same night): the power flow drew gas to the
+  furnace only from the runtime model's rate, and the degree-day model had won
+  the fit (6.17% vs 6.4%), so a burning furnace showed no gas. `gas_model.fit`
+  now keeps the runtime rate (0.069 GJ/h, ~19 kW) beside a winning degree-day
+  model; its bill estimates are unchanged.
+
+Open:
+
+1. **Rule A needs the iPhone's location on *Always*** (item 1 above); B works now.
+2. No real iPhone push has been sent yet - Telegram has. Try the door alert
+   once by day: open the door, leave the house still for 10 minutes (B).
+3. Other doors: the office window has a sensor; the back door's reads
+   `unknown`. `HOUSE_ALERTS` in `web_app.py` and a second installer block are
+   where they would go.
 
 ## Traps found this session
 - **Chromium hangs silently in a systemd user unit here** - the user manager

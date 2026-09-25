@@ -110,8 +110,11 @@
 > by presence or by hand on the Security view; while armed, an unexpected person
 > downstairs sounds the Zigbee alarm speaker (Stop on the dashboard, or the
 > bedroom button once; twice = Night arm). The alarm also arms itself at 01:30
-> from outside HA. Remote access is Tailscale. See `docs/house-modes.md` and the
-> 2026-09-19 handoff, "Update 2026-09-24 (evening)".
+> from outside HA until the owner deleted that schedule. Remote access is
+> Tailscale. **Front door left open** alerts (2026-09-25) go to the dashboard, the
+> iPhone and Telegram (bot Hornby_House, token only on the board). See
+> `docs/house-modes.md`, `docs/door-alerts.md` and the 2026-09-19 handoff,
+> "Update 2026-09-24 (evening)" and "Update 2026-09-25".
 
 > **AI view and gas from furnace runtime (2026-09-19).** The sidebar's
 > Automations is now **AI**: Automations as before, plus **AI data** - upload
