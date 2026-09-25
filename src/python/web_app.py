@@ -51,6 +51,7 @@ from src.python.matter_device import (
 )
 from src.python import bridge_sync
 from src.python import dashboard_session
+from src.python import safety_sensors
 from src.python.house_digest import read_digest
 from src.python import ai_data
 from src.python import board_desktop
@@ -5952,16 +5953,39 @@ def _alarm_speaker_stop(path: Path) -> dict[str, Any]:
     return {"status": "ok", "entity_id": ALARM_SPEAKER, "result": result}
 
 
-# Alerts Home Assistant holds for every screen at once (scripts/install-door-alerts.py):
-# an input_boolean is on while the alert stands, and acknowledging turns it off,
-# which also stops the reminders. The dashboard's own banners are per browser.
+# Alerts Home Assistant holds for every screen at once (scripts/install-door-alerts.py,
+# scripts/install-safety-alerts.py): an input_boolean is on while the alert stands,
+# and acknowledging turns it off, which also stops the reminders. The dashboard's
+# own banners are per browser. `subjects` maps each sensor to where it is; "open"
+# is said while any of them is on, with {places} naming those. "critical" alerts
+# are drawn red, the rest amber.
 HOUSE_ALERTS = {
     "front_door": {
         "flag": "input_boolean.front_door_alert",
-        "subject": "binary_sensor.0xa4c138813abdffff_contact",
+        "subjects": {"binary_sensor.0xa4c138813abdffff_contact": "the front door"},
         "title": "Front door left open",
         "open": "Nobody is home and the front door is open.",
         "closed": "The front door is closed now.",
+        "icon": "ti-door",
+        "critical": False,
+    },
+    "water_leak": {
+        "flag": "input_boolean.water_leak_alert",
+        "subjects": safety_sensors.LEAK,
+        "title": "Water leak",
+        "open": "Water at {places}.",
+        "closed": "The leak sensors read dry now - check the area.",
+        "icon": "ti-droplet",
+        "critical": True,
+    },
+    "smoke": {
+        "flag": "input_boolean.smoke_alert",
+        "subjects": safety_sensors.SMOKE,
+        "title": "Smoke detected",
+        "open": "Smoke in {places}.",
+        "closed": "The smoke detectors are clear now.",
+        "icon": "ti-flame",
+        "critical": True,
     },
 }
 
@@ -5973,14 +5997,16 @@ def _house_alerts(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
         flag = by_id.get(alert["flag"])
         if not flag or flag.get("state") != "on":
             continue
-        subject = by_id.get(alert["subject"]) or {}
-        still_open = subject.get("state") == "on"
+        places = [place for entity_id, place in alert["subjects"].items()
+                  if (by_id.get(entity_id) or {}).get("state") == "on"]
         alerts.append({
             "id": alert_id,
             "title": alert["title"],
-            "message": alert["open"] if still_open else alert["closed"],
+            "message": alert["open"].format(places=" and ".join(places)) if places else alert["closed"],
             "since": flag.get("last_changed"),
-            "open": still_open,
+            "open": bool(places),
+            "icon": alert["icon"],
+            "critical": alert["critical"],
         })
     return alerts
 
@@ -6100,7 +6126,9 @@ def _home_assistant_post(config: HomeAssistantConfig, token: str, path: str, bod
 # Domains worth waking the dashboard for. A door sensor firing must reach the
 # screen at once; a diagnostic sensor ticking its uptime must not cause a refresh
 # every few seconds. Keep this tight - every domain here costs a reload.
-_EVENT_WAKE_DOMAINS = frozenset({"binary_sensor", "light", "switch", "lock", "cover", "climate"})
+# input_boolean: the house alerts' flags, so a leak banner - or "I know" on another
+# screen - shows at once rather than at the next poll. There are only a handful.
+_EVENT_WAKE_DOMAINS = frozenset({"binary_sensor", "light", "switch", "lock", "cover", "climate", "input_boolean"})
 # A burst of state_changed events (a bridge reconnecting republishes everything)
 # would otherwise trigger a reload per event.
 _EVENT_COALESCE_SECONDS = 0.4

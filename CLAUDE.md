@@ -115,6 +115,13 @@
 > iPhone and Telegram (bot Hornby_House, token only on the board). See
 > `docs/house-modes.md`, `docs/door-alerts.md` and the 2026-09-19 handoff,
 > "Update 2026-09-24 (evening)" and "Update 2026-09-25".
+> **Water leak and smoke alerts** (2026-09-25): critical iPhone push, Telegram
+> and a red dashboard banner, plus a daily low-battery / not-reporting check -
+> `scripts/install-safety-alerts.py`, sensors in `src/python/safety_sensors.py`,
+> see `docs/safety-alerts.md`. The dashboard's **disarm PIN** is
+> `security.disarm_pin` in `devices.local.yaml`, quoted (`docs/house-modes.md`).
+> `/bridge/*` answers loopback only; sessions are signed with a random key
+> (`configs/dashboard_secret.key` or `DASHBOARD_SECRET_KEY`), never the password.
 
 > **AI view and gas from furnace runtime (2026-09-19).** The sidebar's
 > Automations is now **AI**: Automations as before, plus **AI data** - upload
@@ -393,6 +400,9 @@ Three things that will waste a day if you do not know them:
 - `docs/door-alerts.md` — **front door left open**: when it fires (A: last phone leaves,
   B: open 10 min and the house still), the shared dashboard banner, iPhone push, and
   Telegram setup (`scripts/install-door-alerts.py`, `input_boolean.front_door_alert`)
+- `docs/safety-alerts.md` — **water leak and smoke**: the six sensors, the critical
+  push / Telegram / red banner, why a Tuya flap does not re-alert but `unknown -> on`
+  does, and the daily battery and not-reporting check (`scripts/install-safety-alerts.py`)
 - `docs/tailscale.md` — remote access over Tailscale (`scripts/install-tailscale.sh`);
   `--accept-dns=false` is required, because Docker copies the hand-written `/etc/resolv.conf`
 - `docs/architecture.md` — architecture notes

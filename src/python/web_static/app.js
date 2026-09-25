@@ -5001,8 +5001,8 @@ function renderAlarmSection(payload = latestAlarmData) {
     : `<span class="house-chip muted" title="Sounds for an unexpected person downstairs while armed">Speaker · ${
         escapeHtml(formatStatus(speaker.state || "unknown").toLowerCase())}</span>`;
   const alertBanners = (payload?.alerts || []).map((alert) => `
-    <div class="house-siren house-alert" role="alert">
-      <i class="ti ti-door" aria-hidden="true"></i>
+    <div class="house-siren${alert.critical ? "" : " house-alert"}" role="alert">
+      <i class="ti ${escapeHtml(alert.icon || "ti-alert-triangle")}" aria-hidden="true"></i>
       <span><b>${escapeHtml(alert.title)}</b><small>${escapeHtml(alert.message)}${
         alert.since ? ` · since ${escapeHtml(houseModeSince(alert.since))}` : ""}</small></span>
       <button type="button" data-alert-ack="${escapeHtml(alert.id)}">${alertAcking.has(alert.id) ? "Clearing…" : "I know"}</button>

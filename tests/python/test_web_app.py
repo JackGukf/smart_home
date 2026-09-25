@@ -2087,3 +2087,35 @@ def test_a_house_alert_is_home_assistants_so_every_screen_shows_and_clears_the_s
     assert client.post("/api/alerts/front_door/ack").status_code == 200
     assert client.post("/api/alerts/garage/ack").status_code == 404
     assert calls == [("/api/services/input_boolean/turn_off", {"entity_id": "input_boolean.front_door_alert"})]
+
+
+def test_a_leak_banner_names_every_wet_place_is_red_and_stays_once_dry(tmp_path: Path, monkeypatch) -> None:
+    from src.python.web_app import _house_alerts
+
+    flag = {"entity_id": "input_boolean.water_leak_alert", "state": "on", "last_changed": "2026-09-25T16:02:00+00:00"}
+    boiler = {"entity_id": "binary_sensor.0xa4c138304954cd8d_water_leak", "state": "on"}
+    washer = {"entity_id": "binary_sensor.0xa4c138534cac048e_water_leak", "state": "on"}
+    [alert] = _house_alerts([flag, boiler, washer])
+    assert alert["id"] == "water_leak" and alert["critical"] is True and alert["icon"] == "ti-droplet"
+    assert alert["message"] == "Water at the washing machine and the boiler."
+    # Dry again: the banner stands, saying so, until someone presses I know.
+    [alert] = _house_alerts([flag, dict(boiler, state="off"), dict(washer, state="unavailable")])
+    assert alert["open"] is False and "dry" in alert["message"]
+
+    client, calls = _house_mode_client(tmp_path, monkeypatch, [flag, boiler])
+    assert client.post("/api/alerts/water_leak/ack").status_code == 200
+    assert calls == [("/api/services/input_boolean/turn_off", {"entity_id": "input_boolean.water_leak_alert"})]
+
+
+def test_the_door_alert_stays_amber() -> None:
+    from src.python.web_app import _house_alerts
+
+    [alert] = _house_alerts([
+        {"entity_id": "input_boolean.front_door_alert", "state": "on"},
+        {"entity_id": "binary_sensor.0xa4c138813abdffff_contact", "state": "on"},
+    ])
+    assert alert["critical"] is False and alert["icon"] == "ti-door"
+
+
+def test_alert_flags_wake_the_page() -> None:
+    assert "input_boolean" in web_app_module._EVENT_WAKE_DOMAINS
