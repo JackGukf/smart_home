@@ -76,6 +76,7 @@ DOWN_MOTION = "binary_sensor.0xa4c138257e0d2173_presence"    # Motion sensor and
 LR_MOTION = "binary_sensor.0xa4c1381f2015da50_presence"      # Motion sensor and TH Living room
 LR_LUX = "sensor.0xa4c1381f2015da50_illuminance"             # same device as LR_MOTION
 SWITCH = "switch.living_room_switch_2"
+HOUSE_MODE = "input_select.house_mode"                       # scripts/install-house-modes.py
 
 # Dark reads ~12 lx here; lit or in daylight it is never below 160. 50 sits
 # clear of both edges.
@@ -189,6 +190,10 @@ def automations() -> dict[str, dict]:
             ],
             "conditions": [
                 {"condition": "time", "after": "23:00:00", "before": "06:00:00"},
+                # Away or on Vacation the house modes own this light until 23:30
+                # (scripts/install-house-modes.py); a quiet room is the point then.
+                {"condition": "not", "conditions": [
+                    {"condition": "state", "entity_id": HOUSE_MODE, "state": ["Away", "Vacation"]}]},
                 {"condition": "state", "entity_id": LR_MOTION, "state": "off", "for": QUIET_FOR},
                 {"condition": "state", "entity_id": SWITCH, "state": "on"},
             ],

@@ -376,6 +376,9 @@ Three things that will waste a day if you do not know them:
   LLANO-S450 dongle over DLNA, switched in Settings and off by default (off costs
   nothing); `switch.tv_cast` in Home Assistant and the Voice Panel's TV cast
   remote; what the dongle cannot do, and why Chromium hangs in a user unit
+- `docs/house-modes.md` — **Away / Home again / Vacation and night arming**
+  (`scripts/install-house-modes.py`, `input_select.house_mode`): the modes, the
+  owner's choices, and what the iPhone needs (location *Always*, Tailscale) for them to fire
 - `docs/tailscale.md` — remote access over Tailscale (`scripts/install-tailscale.sh`);
   `--accept-dns=false` is required, because Docker copies the hand-written `/etc/resolv.conf`
 - `docs/architecture.md` — architecture notes
