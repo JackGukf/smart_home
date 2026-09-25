@@ -1046,3 +1046,27 @@ def test_a_camera_says_its_state_once_at_startup() -> None:
     # Exactly once: nothing changed after that, and a retained topic republished
     # every cycle would be noise on the broker and churn in the recorder.
     assert len(published) == 1, f"published {len(published)} times without a change"
+
+
+# The garage camera sees the street as well as the driveway (2026-09-24): only
+# someone standing on the driveway is a person worth reporting.
+GARAGE_ZONE = [(0.31, 0.17), (0.70, 0.20), (0.81, 0.48), (0.94, 1.0), (0.0, 1.0), (0.0, 0.72),
+               (0.09, 0.71), (0.16, 0.45)]
+
+
+def test_a_person_counts_where_their_feet_are_not_where_their_box_reaches():
+    from src.python.npu_detector import Detection, in_zone
+    on_driveway = Detection("person", 0.9, (280, 150, 330, 300))      # feet at y=300 of 352
+    on_street = Detection("person", 0.9, (380, 0, 420, 40))          # feet at y=40: the road
+    tall_on_pavement = Detection("person", 0.9, (240, 10, 280, 55))  # box down to the kerb only
+    assert in_zone(on_driveway, GARAGE_ZONE, 640, 352)
+    assert not in_zone(on_street, GARAGE_ZONE, 640, 352)
+    assert not in_zone(tall_on_pavement, GARAGE_ZONE, 640, 352)
+
+
+def test_zones_parse_per_camera_and_a_typo_leaves_that_camera_unzoned():
+    from src.python.npu_detector import _parse_zones
+    zones = _parse_zones("garage_camera=0.31:0.17 0.70:0.20 0.81:0.48 0:1, bad=0.1:0.2 0.3, two=0:0 1:1")
+    assert list(zones) == ["garage_camera"]
+    assert zones["garage_camera"][0] == (0.31, 0.17) and len(zones["garage_camera"]) == 4
+    assert _parse_zones("") == {}

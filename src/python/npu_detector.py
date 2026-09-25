@@ -366,6 +366,43 @@ def _parse_conf_overrides(raw: str) -> dict[str, float]:
     return overrides
 
 
+def _parse_zones(raw: str) -> dict[str, list[tuple[float, float]]]:
+    """"garage_camera=0.31:0.17 0.70:0.20 0.81:0.48" -> a polygon per camera,
+    in fractions of the frame (0..1), so it survives a change of resolution.
+
+    Several cameras are separated by commas. A bad entry is dropped with a
+    warning - the camera then watches its whole view, as it did before zones.
+    """
+    zones: dict[str, list[tuple[float, float]]] = {}
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        camera, _, points = chunk.partition("=")
+        try:
+            polygon = [(float(x), float(y)) for x, y in (p.split(":") for p in points.split())]
+            if not camera.strip() or len(polygon) < 3:
+                raise ValueError
+        except ValueError:
+            LOG.warning("NPU_ZONES: ignoring %r, expected camera=x:y x:y x:y ...", chunk)
+            continue
+        zones[camera.strip()] = polygon
+    return zones
+
+
+def in_zone(det: "Detection", polygon: Sequence[tuple[float, float]], width: int, height: int) -> bool:
+    """Where the person stands - the bottom middle of their box - is inside the
+    polygon. The feet, not the box: someone on the pavement is tall enough for
+    their box to reach into the driveway, but they are not standing in it."""
+    x = (det.box[0] + det.box[2]) / 2 / width
+    y = det.box[3] / height
+    inside = False
+    for (x1, y1), (x2, y2) in zip(polygon, list(polygon[1:]) + [polygon[0]]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            inside = not inside
+    return inside
+
+
 def _parse_confirm_overrides(raw: str) -> dict[str, int]:
     """Parse camera=number settings for repeated person-frame confirmation."""
     overrides: dict[str, int] = {}
@@ -404,6 +441,9 @@ class Config:
     motion_confirm_cameras: set[str] = field(default_factory=set)
     iou: float = 0.45
     classes: set[str] = field(default_factory=lambda: {"person"})
+    # Per-camera area that counts, e.g. the garage camera's driveway without
+    # the street it also sees (2026-09-24). Cameras without one count everything.
+    zones: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     # Per-camera inward axis, "camera=x+" style; see _parse_inward. Cameras
     # without an entry report direction "unknown".
     inward: dict[str, tuple[str, int]] = field(default_factory=dict)
@@ -456,6 +496,7 @@ class Config:
             iou=float(os.getenv("NPU_IOU", "0.45")),
             classes=classes,
             inward=_parse_inward(os.getenv("NPU_INWARD", "")),
+            zones=_parse_zones(os.getenv("NPU_ZONES", "")),
             min_motion=float(os.getenv("NPU_MIN_MOTION", "24")),
             mqtt_host=os.getenv("MQTT_HOST", "127.0.0.1"),
             mqtt_port=int(os.getenv("MQTT_PORT", "1883")),
@@ -618,13 +659,15 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
     wanting one every couple of seconds.
     """
     conf = cfg.conf_for(camera)
-    LOG.info("%s: watching every %.1fs (presence hold %.0fs, conf %.2f, confirm %d frames)",
-             camera, cfg.interval, cfg.presence_hold, conf, cfg.confirm_for(camera))
+    LOG.info("%s: watching every %.1fs (presence hold %.0fs, conf %.2f, confirm %d frames%s)",
+             camera, cfg.interval, cfg.presence_hold, conf, cfg.confirm_for(camera),
+             f", zone of {len(cfg.zones[camera])} points" if camera in cfg.zones else "")
     # One hold per watched class, per camera: a car appearing must not be able
     # to keep "person" alive, and vice versa.
     holds = {label: PresenceHold(cfg.presence_hold, cfg.confirm_for(camera))
              for label in cfg.classes}
     motion_gate = PersonMotionGate() if camera in cfg.motion_confirm_cameras else None
+    zone = cfg.zones.get(camera)
     tracker = SingleCameraTracker(cfg.inward.get(camera), cfg.min_motion)
     last_direction: str | None = None
     source = FrameSource(camera, cfg.rtsp_url, cfg.fetch_timeout)
@@ -656,6 +699,9 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
                     detections = detector.detect(frame, camera_cfg)
                 if frame_ok is not None:
                     frame_ok(camera)
+                if zone is not None:
+                    height, width = frame.shape[:2]
+                    detections = [d for d in detections if in_zone(d, zone, width, height)]
                 if motion_gate is not None:
                     detections = motion_gate.filter(frame, detections)
 
