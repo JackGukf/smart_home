@@ -1109,6 +1109,10 @@ def create_app(
     async def alarm_command(command: str) -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_alarm_command, app.state.config_path, command)
 
+    @app.post("/api/house-mode/{action}")
+    async def house_mode_command(action: str) -> dict[str, Any]:
+        return await asyncio.to_thread(_house_mode_command, app.state.config_path, action)
+
     @app.patch("/api/cameras/{camera_id}")
     async def update_camera(camera_id: str, update: CameraUpdateRequest) -> dict[str, Any]:
         name = update.name.strip()
@@ -5203,6 +5207,7 @@ def _alarm_payload(path: Path) -> dict[str, Any]:
     return {
         "status": "ok",
         "source": "Home Assistant",
+        "house_mode": _house_mode_payload(states),
         "panel": panel or {
             "name": _home_assistant_alarm_panel_name(controls),
             "entity_id": None,
@@ -5721,6 +5726,63 @@ def _home_assistant_alarm_command(path: Path, command: str) -> dict[str, Any]:
         {"entity_id": panel["entity_id"]},
     )
     return {"status": "ok", "entity_id": panel["entity_id"], "command": command, "result": payload}
+# The house modes (scripts/install-house-modes.py). The mode's own changes carry
+# the actions, so picking one here does what presence would; the alarm's two
+# timed rules are run by hand through automation.trigger, conditions skipped.
+HOUSE_MODE_ENTITY = "input_select.house_mode"
+HOUSE_MODES = {"home": "Home", "away": "Away", "vacation": "Vacation"}
+HOUSE_MODE_RULES = {"night_arm": "house_mode_night_arm", "morning_disarm": "house_mode_morning_disarm"}
+
+
+def _house_mode_rule(states: list[dict[str, Any]], rule_id: str) -> str | None:
+    """An automation's entity id from its config id, which does not change when
+    Home Assistant renames the entity after its alias."""
+    for entity in states:
+        entity_id = str(entity.get("entity_id", ""))
+        if entity_id.startswith("automation.") and (entity.get("attributes") or {}).get("id") == rule_id:
+            return entity_id
+    return None
+
+
+def _house_mode_payload(states: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The mode for the Security view, or None before install-house-modes.py ran."""
+    mode = next((e for e in states if e.get("entity_id") == HOUSE_MODE_ENTITY), None)
+    if not mode or mode.get("state") in (None, "unavailable", "unknown"):
+        return None
+    context = mode.get("context") or {}
+    return {
+        "mode": mode.get("state"),
+        "options": list((mode.get("attributes") or {}).get("options") or HOUSE_MODES.values()),
+        "since": mode.get("last_changed"),
+        # A change a person made carries their user id; one an automation made does not.
+        "by_hand": bool(context.get("user_id")),
+        "rules": {key: _house_mode_rule(states, rule_id) is not None
+                  for key, rule_id in HOUSE_MODE_RULES.items()},
+    }
+
+
+def _house_mode_command(path: Path, action: str) -> dict[str, Any]:
+    if action not in HOUSE_MODES and action not in HOUSE_MODE_RULES:
+        raise HTTPException(status_code=400, detail=f"Unsupported house mode action: {action}")
+    config, token = _home_assistant_auth(path)
+    try:
+        if action in HOUSE_MODES:
+            result = _home_assistant_post(config, token, "/api/services/input_select/select_option",
+                                          {"entity_id": HOUSE_MODE_ENTITY, "option": HOUSE_MODES[action]})
+            return {"status": "ok", "action": action, "mode": HOUSE_MODES[action], "result": result}
+        rule = _house_mode_rule(_home_assistant_get(config, token, "/api/states"), HOUSE_MODE_RULES[action])
+        if not rule:
+            raise HTTPException(status_code=404, detail="The house modes are not installed "
+                                                        "(scripts/install-house-modes.py --apply)")
+        result = _home_assistant_post(config, token, "/api/services/automation/trigger",
+                                      {"entity_id": rule, "skip_condition": True})
+        return {"status": "ok", "action": action, "automation": rule, "result": result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Home Assistant API error: {exc}") from exc
+
+
 FURNACE_ENTITIES = ("climate.my_ecobee", "climate.my_ecobee_2")   # cloud first: it tells fan from heat
 
 

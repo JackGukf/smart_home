@@ -1982,3 +1982,74 @@ def test_unavailable_alarm_zone_reports_unknown_not_clear(tmp_path: Path, monkey
     # Live sensors keep their existing vocabulary.
     assert zones["binary_sensor.live_motion"] == "clear"
     assert zones["binary_sensor.open_door"] == "open"
+
+
+def _house_mode_client(tmp_path: Path, monkeypatch, states):
+    discovery = tmp_path / "tplink_switches.json"
+    config = tmp_path / "devices.local.yaml"
+    _write_discovery(discovery)
+    _write_home_assistant_config(config)
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN", "token")
+    calls = []
+
+    def fake_home_assistant_post(home_assistant_config, token, path, body):
+        calls.append((path, body))
+        return []
+
+    monkeypatch.setattr("src.python.web_app._home_assistant_get", lambda *args: states)
+    monkeypatch.setattr("src.python.web_app._home_assistant_post", fake_home_assistant_post)
+    return TestClient(create_app(discovery_path=discovery, config_path=config, controller=FakeController())), calls
+
+
+HOUSE_MODE_STATES = [
+    {"entity_id": "input_select.house_mode", "state": "Away", "last_changed": "2026-09-24T21:05:00+00:00",
+     "attributes": {"options": ["Home", "Away", "Vacation"]}, "context": {"user_id": None}},
+    # Home Assistant names the entity after the alias; the config id is what stays put.
+    {"entity_id": "automation.security_arm_at_night_once_the_first_floor_is_empty", "state": "on",
+     "attributes": {"id": "house_mode_night_arm"}},
+    {"entity_id": "automation.security_disarm_at_07_00", "state": "on",
+     "attributes": {"id": "house_mode_morning_disarm"}},
+]
+
+
+def test_a_house_mode_picked_on_the_dashboard_is_the_helper_in_home_assistant(tmp_path: Path, monkeypatch) -> None:
+    client, calls = _house_mode_client(tmp_path, monkeypatch, HOUSE_MODE_STATES)
+
+    response = client.post("/api/house-mode/vacation")
+
+    assert response.status_code == 200
+    assert calls == [("/api/services/input_select/select_option",
+                      {"entity_id": "input_select.house_mode", "option": "Vacation"})]
+
+
+def test_night_arm_by_hand_runs_the_rule_itself_without_its_conditions(tmp_path: Path, monkeypatch) -> None:
+    client, calls = _house_mode_client(tmp_path, monkeypatch, HOUSE_MODE_STATES)
+
+    assert client.post("/api/house-mode/night_arm").status_code == 200
+    assert client.post("/api/house-mode/morning_disarm").status_code == 200
+    assert calls == [
+        ("/api/services/automation/trigger",
+         {"entity_id": "automation.security_arm_at_night_once_the_first_floor_is_empty", "skip_condition": True}),
+        ("/api/services/automation/trigger",
+         {"entity_id": "automation.security_disarm_at_07_00", "skip_condition": True}),
+    ]
+
+
+def test_house_mode_refuses_what_it_does_not_know_and_says_when_it_is_not_installed(tmp_path: Path, monkeypatch) -> None:
+    client, calls = _house_mode_client(tmp_path, monkeypatch, [])
+
+    assert client.post("/api/house-mode/party").status_code == 400
+    missing = client.post("/api/house-mode/night_arm")
+    assert missing.status_code == 404 and "install-house-modes" in missing.json()["detail"]
+    assert calls == []
+
+
+def test_the_security_payload_carries_the_house_mode_and_who_set_it() -> None:
+    from src.python.web_app import _house_mode_payload
+
+    mode = _house_mode_payload(HOUSE_MODE_STATES)
+    assert mode["mode"] == "Away" and mode["options"] == ["Home", "Away", "Vacation"]
+    assert mode["by_hand"] is False and mode["rules"] == {"night_arm": True, "morning_disarm": True}
+    by_hand = [dict(HOUSE_MODE_STATES[0], context={"user_id": "abc"})]
+    assert _house_mode_payload(by_hand)["by_hand"] is True and _house_mode_payload(by_hand)["rules"]["night_arm"] is False
+    assert _house_mode_payload([]) is None

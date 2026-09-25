@@ -80,16 +80,28 @@ def test_a_person_home_without_a_phone_is_never_ended_on_vacation_by_motion():
     body = BY_ID["house_mode_arrival"]
     either = next(c for c in body["conditions"] if c["condition"] == "or")
     assert {"condition": "trigger", "id": "phone"} in either["conditions"]
-    assert modes.mode_is(modes.AWAY) in either["conditions"]
+    motion_path = next(c for c in either["conditions"] if c["condition"] == "and")
+    assert modes.mode_is(modes.AWAY) in motion_path["conditions"]
+    assert modes.mode_is(modes.VACATION) not in motion_path["conditions"]
     motion = next(t for t in body["triggers"] if t.get("id") == "motion")
     # Radar sensors hold "occupied" on nothing; only PIR ends an Away.
     assert not set(motion["entity_id"]) & set(modes.RADAR_FIRST_FLOOR + modes.RADAR_UPSTAIRS)
 
 
-def test_arrival_lights_are_the_ambient_ones_and_only_in_the_dark():
-    lights = next(a for a in BY_ID["house_mode_arrival"]["actions"] if "if" in a)
-    assert lights["if"] == [modes.dark()]
-    assert lights["then"] == [modes.turn_on_if_off(e) for e in modes.AMBIENT_LIGHTS]
+def test_home_again_lights_follow_the_mode_so_picking_home_by_hand_does_the_same():
+    body = BY_ID["house_mode_coming_home"]
+    assert body["triggers"] == [{"trigger": "state", "entity_id": modes.MODE,
+                                 "from": [modes.AWAY, modes.VACATION], "to": modes.HOME}]
+    assert body["conditions"] == [modes.dark()]
+    assert body["actions"] == [modes.turn_on_if_off(e) for e in modes.AMBIENT_LIGHTS]
+    # Arrival only changes the mode; the lights are the mode's.
+    assert BY_ID["house_mode_arrival"]["actions"] == [modes.set_mode(modes.HOME)]
+
+
+def test_motion_does_not_undo_an_away_picked_by_hand_on_the_way_out():
+    either = next(c for c in BY_ID["house_mode_arrival"]["conditions"] if c["condition"] == "or")
+    motion_path = next(c for c in either["conditions"] if c["condition"] == "and")
+    assert modes.away_for(600) in motion_path["conditions"]
 
 
 def test_vacation_arms_away_and_its_end_disarms_only_armed_away():

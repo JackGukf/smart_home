@@ -4817,6 +4817,60 @@ function houseDetailHtml(room, list, controls) {
     ${controls}`;
 }
 
+/* ── House mode (scripts/install-house-modes.py) ──
+   Home, Away and Vacation are set by presence and can be picked here: the
+   actions ride on the change of mode in Home Assistant, so a mode picked by
+   hand does what arriving or leaving would. Night arm and Morning disarm run
+   the alarm's two timed rules now, their conditions skipped. */
+const HOUSE_MODE_ICONS = { Home: "ti-home", Away: "ti-walk", Vacation: "ti-plane-departure" };
+const HOUSE_MODE_WHAT = {
+  Home: "Automatic: Away when every phone is out and the house is still.",
+  Away: "All lights off; the living room light from sunset to 23:30. Vacation after 24 hours.",
+  Vacation: "As Away, with the alarm armed away and the ecobee on vacation.",
+};
+const HOUSE_MODE_ASK = {
+  away: "Set the house to Away?\nAll lights go off.",
+  vacation: "Start Vacation?\nAll lights go off, the alarm is armed away and the ecobee goes on vacation.",
+  night_arm: "Arm the alarm (home) now?",
+  morning_disarm: "Disarm the alarm now?",
+};
+let houseModeSending = null;
+
+function houseModeSince(iso) {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const time = at.toTimeString().slice(0, 5);
+  return Date.now() - at.getTime() < 20 * 3600 * 1000
+    ? time : `${at.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
+}
+
+function houseModeHtml(hm) {
+  if (!hm) return "";
+  const since = hm.since ? houseModeSince(hm.since) : "";
+  const buttons = hm.options.map((option) => {
+    const action = option.toLowerCase();
+    const current = option === hm.mode;
+    return `<button type="button" class="house-mode-btn${current ? " active" : ""}" data-house-mode-action="${escapeHtml(action)}"
+        aria-pressed="${current}"${current || houseModeSending ? " disabled" : ""}>
+      <i class="ti ${HOUSE_MODE_ICONS[option] || "ti-circle"}" aria-hidden="true"></i><span>${
+        houseModeSending === action ? "Setting…" : escapeHtml(option)}</span></button>`;
+  }).join("");
+  const rule = (action, label, title) => hm.rules?.[action]
+    ? `<button class="house-chip" type="button" data-house-mode-action="${action}" title="${title}"${
+        houseModeSending ? " disabled" : ""}>${houseModeSending === action ? "Sending…" : label}</button>` : "";
+  return `<section class="house-mode" aria-label="House mode">
+    <div class="house-mode-head"><h3>House mode</h3>${
+      since ? `<small>${hm.by_hand ? "Set by hand" : "Automatic"} · since ${escapeHtml(since)}</small>` : ""}</div>
+    <div class="house-mode-seg" role="group" aria-label="Pick a mode">${buttons}</div>
+    <p class="house-mode-what">${escapeHtml(HOUSE_MODE_WHAT[hm.mode] || "")}</p>
+    <div class="house-mode-rules">
+      ${rule("night_arm", "Night arm", "Arm home now - automatic from 01:30 once downstairs is quiet")}
+      ${rule("morning_disarm", "Morning disarm", "Disarm now - automatic at 07:00")}
+      <small>Auto: arms 01:30 · disarms 07:00</small>
+    </div>
+  </section>`;
+}
+
 function renderAlarmSection(payload = latestAlarmData) {
   const panel = document.querySelector("#alarmPanel");
   if (!panel) return;
@@ -4897,6 +4951,7 @@ function renderAlarmSection(payload = latestAlarmData) {
         </div>
       </div>
       <div class="house-side">
+        ${houseModeHtml(payload?.house_mode)}
         ${loose.length ? `<button class="house-loose" type="button" data-house-room="Not placed">${loose.length} sensor${loose.length === 1 ? "" : "s"} not in a room</button>` : ""}
         <section class="house-detail" aria-label="The selected room">${houseDetailHtml(selectedHouseRoom, detailZones, controlsHtml)}</section>
         <section class="house-activity" id="houseActivity" aria-label="Recent activity">${houseActivityHtml()}</section>
@@ -12543,6 +12598,27 @@ document.addEventListener("click", (event) => {
     sirenTesting = true;
     renderAlarmSection();
     setTimeout(() => { sirenTesting = false; renderAlarmSection(); }, 2000);
+  }
+});
+
+/* ── House mode actions ── */
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-house-mode-action]");
+  if (!button || houseModeSending) return;
+  const action = button.dataset.houseModeAction;
+  if (HOUSE_MODE_ASK[action] && !window.confirm(HOUSE_MODE_ASK[action])) return;
+  houseModeSending = action;
+  renderAlarmSection();
+  try {
+    await requestJson(`/api/house-mode/${encodeURIComponent(action)}`, { method: "POST" });
+    logActivity(`House mode → ${button.textContent.trim()}`);
+    await loadDevices();
+  } catch (error) {
+    apiStatus.textContent = "Error";
+    console.error(error);
+  } finally {
+    houseModeSending = null;
+    renderAlarmSection();
   }
 });
 

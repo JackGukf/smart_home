@@ -4564,6 +4564,30 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
 }
 .house-loose:hover { color: var(--t-text); border-color: var(--t-accent); }
 
+/* House mode (houseModeHtml in app.js): three modes and the alarm's two timed rules. */
+.house-mode { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.house-mode-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; row-gap: 2px; margin-bottom: 10px; }
+.house-mode-head h3 { font-size: 16px; font-weight: 600; margin-right: auto; white-space: nowrap; }
+.house-mode-head small { font-size: 12px; color: var(--t-text-dim); white-space: nowrap; }
+.house-mode-seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.house-mode-btn {
+  /* Icon above the label: fits the iPad's 250px column without clipping, and the three match. */
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  padding: 8px 4px; border-radius: var(--radius-sm); border: 1px solid var(--border-hover);
+  background: var(--card-2); color: var(--t-text); font: inherit; font-size: 13px; cursor: pointer; min-width: 0;
+}
+.house-mode-btn span { white-space: nowrap; }
+.house-mode-btn i { font-size: 17px; }
+.house-mode-btn:hover:not(:disabled) { border-color: var(--t-accent); }
+.house-mode-btn.active {
+  border-color: var(--t-accent); color: var(--t-accent); cursor: default;
+  background: color-mix(in srgb, var(--t-accent) 12%, var(--card-2));
+}
+.house-mode-btn:disabled:not(.active) { opacity: 0.6; cursor: progress; }
+.house-mode-what { font-size: 12px; color: var(--t-text-dim); margin: 8px 0 0; }
+.house-mode-rules { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.house-mode-rules small { font-size: 11px; color: var(--muted); margin-left: auto; }
+
 .house-detail {
   padding: 12px 14px;
   border: 1px solid var(--border);

@@ -17,8 +17,10 @@ Vacation by hand before a trip does exactly what 24 hours away would.
                    then turned back on, and while away it goes on at sunset and
                    off at 23:30 every evening, so the house looks lived in.
     Home again  Away or Vacation, and a phone enters the home zone - or, when
-                only Away, indoor motion (the PIR sensors only: the radar ones
-                can hold "occupied" for half an hour on nothing).
+                only Away and for 10 minutes at least, indoor motion (the PIR
+                sensors only: the radar ones can hold "occupied" for half an
+                hour on nothing; and a fresh Away was likely picked by hand on
+                the way out, past the entry sensor).
                 -> Ambient lights on, only those that are off and only when the
                    sun is down. Mode back to Home.
     Vacation    Away for 24 hours (checked every 10 minutes against
@@ -101,6 +103,7 @@ AMBIENT_LIGHTS = [
 EMPTY_FOR = {"minutes": 15}
 PHONES_GONE_FOR = {"minutes": 5}
 VACATION_AFTER_HOURS = 24
+MOTION_ENDS_AWAY_AFTER_S = 600
 EVENING_OFF = "23:30:00"
 NIGHT_ARM_AT = "01:30:00"
 NIGHT_ARM_UNTIL = "06:30:00"
@@ -155,6 +158,15 @@ def dark() -> dict:
         {"condition": "sun", "after": "sunset"},
         {"condition": "sun", "before": "sunrise"},
     ]}
+
+
+def away_for(seconds: int) -> dict:
+    """The house has been left at least this long, by the helper's own timestamp
+    attribute: no parsing, none if never set, and it survives a restart where a
+    trigger's "for" does not."""
+    return {"condition": "template", "value_template": (
+        "{% set since = state_attr('" + AWAY_SINCE + "', 'timestamp') %}"
+        "{{ since is not none and now().timestamp() - since > " + str(seconds) + " }}")}
 
 
 def _desc(text: str) -> str:
@@ -219,11 +231,7 @@ def automations() -> list[dict]:
             "triggers": [{"trigger": "time_pattern", "minutes": "/10"}],
             "conditions": [
                 mode_is(AWAY),
-                # The helper's own timestamp attribute: no parsing, and none if never set.
-                {"condition": "template", "value_template": (
-                    "{% set since = state_attr('" + AWAY_SINCE + "', 'timestamp') %}"
-                    "{{ since is not none and now().timestamp() - since > "
-                    + str(VACATION_AFTER_HOURS * 3600) + " }}")},
+                away_for(VACATION_AFTER_HOURS * 3600),
             ],
             "actions": [set_mode(VACATION)],
         },
@@ -267,10 +275,11 @@ def automations() -> list[dict]:
         },
         {
             "id": "house_mode_arrival",
-            "alias": "House mode - first person home: ambient lights on in the dark",
+            "alias": "House mode - first person home",
             "description": _desc("Away or Vacation, and a phone enters the home zone (or, when "
-                                 "only Away, a PIR sensor sees someone): the ambient lights that "
-                                 "are off go on if the sun is down, and the mode becomes Home."),
+                                 "only Away and for 10 minutes at least, a PIR sensor sees "
+                                 "someone): the mode becomes Home. What Home does is "
+                                 "house_mode_coming_home, so picking Home by hand does the same."),
             "mode": "single",
             "triggers": [
                 {"trigger": "numeric_state", "entity_id": PEOPLE_HOME, "above": 0, "id": "phone"},
@@ -278,16 +287,25 @@ def automations() -> list[dict]:
             ],
             "conditions": [
                 mode_is(AWAY, VACATION),
-                # Motion alone never ends a Vacation: on an armed house that is the alarm's business.
+                # Motion alone never ends a Vacation: on an armed house that is the
+                # alarm's business. Nor a fresh Away: picked by hand on the way out,
+                # the entry sensor would see you reach the door and undo it.
                 {"condition": "or", "conditions": [
                     {"condition": "trigger", "id": "phone"},
-                    mode_is(AWAY),
+                    {"condition": "and", "conditions": [mode_is(AWAY), away_for(MOTION_ENDS_AWAY_AFTER_S)]},
                 ]},
             ],
-            "actions": [
-                {"if": [dark()], "then": [turn_on_if_off(e) for e in AMBIENT_LIGHTS]},
-                set_mode(HOME),
-            ],
+            "actions": [set_mode(HOME)],
+        },
+        {
+            "id": "house_mode_coming_home",
+            "alias": "House mode - home again: ambient lights on in the dark",
+            "description": _desc("Away or Vacation -> Home, by arrival or by hand: the ambient "
+                                 "lights that are off go on if the sun is down."),
+            "mode": "single",
+            "triggers": [{"trigger": "state", "entity_id": MODE, "from": [AWAY, VACATION], "to": HOME}],
+            "conditions": [dark()],
+            "actions": [turn_on_if_off(e) for e in AMBIENT_LIGHTS],
         },
         {
             "id": "house_mode_night_arm",
