@@ -1278,7 +1278,8 @@ def create_app(
         return await asyncio.to_thread(_home_assistant_alarm_command, app.state.config_path, command)
 
     @app.post("/api/alerts/{alert_id}/ack")
-    async def alert_ack(alert_id: str) -> dict[str, Any]:
+    async def alert_ack(alert_id: str, request: Request) -> dict[str, Any]:
+        _audit(request, "house alert", f"{alert_id} acknowledged")
         return await asyncio.to_thread(_alert_ack, app.state.config_path, alert_id)
 
     @app.post("/api/alarm/speaker/stop")

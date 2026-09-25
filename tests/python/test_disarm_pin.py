@@ -168,3 +168,22 @@ def test_the_keypad_is_on_the_page():
     assert 'id="pinModal"' in html and 'data-pin-key="ok"' in html
     assert "postWithDisarmPin" in js and "JSON.stringify({ pin })" in js
     assert 'refusal.pin === "misconfigured"' in js
+
+
+def test_acknowledging_a_house_alert_is_audited(tmp_path, monkeypatch):
+    """Who silenced a smoke or leak alert, and from which screen."""
+    monkeypatch.setattr(web_app_module, "_alert_ack", lambda path, alert_id: {"status": "ok"})
+    records = []
+
+    class _Capture(web_app_module.logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = _Capture()
+    web_app_module._AUDIT_LOG.addHandler(handler)
+    try:
+        client, _ = _client(tmp_path, monkeypatch, peer="192.168.0.176", trusted=True)
+        assert client.post("/api/alerts/smoke/ack").status_code == 200
+    finally:
+        web_app_module._AUDIT_LOG.removeHandler(handler)
+    assert "house alert -> smoke acknowledged by trusted-host 192.168.0.176 from 192.168.0.176" in records
