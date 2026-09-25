@@ -2053,3 +2053,20 @@ def test_the_security_payload_carries_the_house_mode_and_who_set_it() -> None:
     by_hand = [dict(HOUSE_MODE_STATES[0], context={"user_id": "abc"})]
     assert _house_mode_payload(by_hand)["by_hand"] is True and _house_mode_payload(by_hand)["rules"]["night_arm"] is False
     assert _house_mode_payload([]) is None
+
+
+def test_the_alarm_speaker_is_on_the_security_payload_with_why_and_can_be_stopped(tmp_path: Path, monkeypatch) -> None:
+    from src.python.web_app import _alarm_speaker_payload
+
+    states = [
+        {"entity_id": "switch.0xa4c1382b1f1bd155_alarm", "state": "on", "last_changed": "2026-09-25T09:14:00+00:00"},
+        {"entity_id": "input_text.security_alarm_reason", "state": "Motion sensor and TH Living room Occupancy · 02:14"},
+    ]
+    speaker = _alarm_speaker_payload(states)
+    assert speaker["state"] == "on" and speaker["reason"].endswith("02:14")
+    assert _alarm_speaker_payload(states[:1])["reason"] is None
+    assert _alarm_speaker_payload([]) is None
+
+    client, calls = _house_mode_client(tmp_path, monkeypatch, states)
+    assert client.post("/api/alarm/speaker/stop").status_code == 200
+    assert calls == [("/api/services/switch/turn_off", {"entity_id": "switch.0xa4c1382b1f1bd155_alarm"})]

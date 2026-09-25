@@ -4220,8 +4220,10 @@ function notificationsMarkup(notifs) {
           <p class="notif-title">${escapeHtml(n.title)}</p>
           <p class="notif-message">${escapeHtml(n.message)}</p>
           <div class="notif-actions">
-            <button class="notif-btn ${urgent ? "respond-urgent" : "respond-mild"}"
-              data-notif-respond="${escapeHtml(n.id)}">Respond</button>
+            ${n.type === "intruder"
+              ? `<button class="notif-btn respond-urgent" data-speaker-stop>Stop alarm speaker</button>`
+              : `<button class="notif-btn ${urgent ? "respond-urgent" : "respond-mild"}"
+              data-notif-respond="${escapeHtml(n.id)}">Respond</button>`}
             <button class="notif-btn notif-close"
               data-notif-close="${escapeHtml(n.id)}">Close</button>
           </div>
@@ -4871,6 +4873,40 @@ function houseModeHtml(hm) {
   </section>`;
 }
 
+/* The alarm speaker (scripts/install-security-response.py): a banner on every
+   view while it sounds, whose button stops it, gone once it is off. */
+let speakerStopping = false;
+let intruderNotificationId = null;
+
+function syncIntruderNotification(speaker) {
+  if (speaker?.state === "on") {
+    const id = pushNotification("intruder", "Alarm speaker sounding",
+      speaker.reason || "Set off while armed", { eventKey: speaker.since || "" });
+    if (id) intruderNotificationId = id;
+  } else if (intruderNotificationId) {
+    dismissNotification(intruderNotificationId);
+    intruderNotificationId = null;
+  }
+}
+
+async function stopAlarmSpeaker() {
+  if (speakerStopping) return;
+  speakerStopping = true;
+  renderAlarmSection();
+  try {
+    await requestJson("/api/alarm/speaker/stop", { method: "POST" });
+    logActivity("Alarm speaker stopped");
+    latestAlarmData = await requestJson("/api/alarm");
+  } catch (error) {
+    apiStatus.textContent = "Error";
+    console.error(error);
+  } finally {
+    speakerStopping = false;
+    renderAlarmSection();
+    renderHomeAlarmCard(latestAlarmData);
+  }
+}
+
 function renderAlarmSection(payload = latestAlarmData) {
   const panel = document.querySelector("#alarmPanel");
   if (!panel) return;
@@ -4910,8 +4946,23 @@ function renderAlarmSection(payload = latestAlarmData) {
       : `<span class="house-chip muted" title="${escapeHtml(control.name)}">${escapeHtml(label)}</span>`;
   }).join("");
 
+  const speaker = payload?.speaker;
+  const sounding = speaker?.state === "on";
+  syncIntruderNotification(speaker);
+  const speakerChip = !speaker ? "" : sounding
+    ? `<button class="house-chip sos" type="button" data-speaker-stop title="Stop the alarm speaker">Stop speaker</button>`
+    : `<span class="house-chip muted" title="Sounds for an unexpected person downstairs while armed">Speaker · ${
+        escapeHtml(formatStatus(speaker.state || "unknown").toLowerCase())}</span>`;
+  const sirenBanner = sounding ? `
+    <div class="house-siren" role="alert">
+      <i class="ti ti-alarm-light" aria-hidden="true"></i>
+      <span><b>Alarm speaker sounding</b><small>${escapeHtml(speaker.reason || "Set off while armed")}</small></span>
+      <button type="button" data-speaker-stop>${speakerStopping ? "Stopping…" : "Stop alarm speaker"}</button>
+    </div>` : "";
+
   const controlsHtml = `
     <div class="house-controls">
+      ${speakerChip}
       ${haControls}
       <button class="house-chip ${sirenTesting ? "testing" : ""}" type="button" id="sirenTestBtn" title="Sounds for two seconds">${sirenTesting ? "Testing…" : "Test siren"}</button>
       <button class="house-chip sos" type="button" id="sosTriggerBtn" title="Sound the alarm now">SOS</button>
@@ -4935,6 +4986,7 @@ function renderAlarmSection(payload = latestAlarmData) {
       </span>
       <span class="house-arms">${armButtons}</span>
     </div>
+    ${sirenBanner}
     <div class="house-stage">
       <div>
         <div class="house-scene">
@@ -4954,6 +5006,7 @@ function renderAlarmSection(payload = latestAlarmData) {
         ${houseModeHtml(payload?.house_mode)}
         ${loose.length ? `<button class="house-loose" type="button" data-house-room="Not placed">${loose.length} sensor${loose.length === 1 ? "" : "s"} not in a room</button>` : ""}
         <section class="house-detail" aria-label="The selected room">${houseDetailHtml(selectedHouseRoom, detailZones, controlsHtml)}</section>
+        <section class="house-activity house-armed-log" id="houseArmedLog" aria-label="Outdoors while armed">${houseArmedLogHtml()}</section>
         <section class="house-activity" id="houseActivity" aria-label="Recent activity">${houseActivityHtml()}</section>
       </div>
     </div>`;
@@ -4993,6 +5046,29 @@ function houseActivityHtml(data = latestSecurityActivity) {
   }).join("")}</ol>`;
 }
 
+/* While armed: people outdoors while the alarm was armed, and every time the
+   alarm speaker sounded, over the last week (house_memory.armed_log). */
+const ARMED_WORDS = { camera: "person", motion: "motion", speaker: "sounded" };
+
+function houseArmedLogHtml(data = latestSecurityActivity) {
+  const log = data?.armed;
+  const head = `<div class="house-activity-head"><h3>While armed · outdoors</h3>${
+    log ? `<small>${log.armed_now ? "armed now" : `last ${log.days} days`}</small>` : ""}</div>`;
+  if (!data) return `${head}<p class="house-activity-empty">Loading…</p>`;
+  if (!data.available || !log) return `${head}<p class="house-activity-empty">The house memory is not running yet.</p>`;
+  if (!log.recent.length) return `${head}<p class="house-activity-empty">Nobody outdoors while armed in the last ${log.days} days.</p>`;
+  const today = new Date().toDateString();
+  return head + `<ol class="house-activity-list">${log.recent.map((line) => {
+    const at = new Date(line.ts * 1000);
+    const day = at.toDateString() === today ? "" : ` · ${at.toLocaleDateString(undefined, { weekday: "short" })}`;
+    const more = line.count > 1 ? `, ${line.count} times since ${activityTime(line.first_ts)}` : "";
+    return `<li><span class="house-activity-line kind-${escapeHtml(line.kind)}">
+      <time>${activityTime(line.ts)}</time><i aria-hidden="true"></i>
+      <span>${escapeHtml(line.kind === "speaker" ? line.name : shortZoneName(line.name))}<small> · ${
+        escapeHtml((ARMED_WORDS[line.kind] || line.kind) + more + day)}</small></span></span></li>`;
+  }).join("")}</ol>`;
+}
+
 /* Today at a glance, on Status: three counts and the day so far, by hour. */
 function statusTodayHtml(data = latestSecurityActivity) {
   const today = data?.today;
@@ -5018,6 +5094,8 @@ function statusTodayHtml(data = latestSecurityActivity) {
 function renderSecurityActivity() {
   const activity = document.querySelector("#houseActivity");
   if (activity) activity.innerHTML = houseActivityHtml();
+  const armedLog = document.querySelector("#houseArmedLog");
+  if (armedLog) armedLog.innerHTML = houseArmedLogHtml();
   const today = document.querySelector("#statusToday");
   if (today) today.innerHTML = statusTodayHtml();
 }
@@ -12601,6 +12679,11 @@ document.addEventListener("click", (event) => {
   }
 });
 
+/* ── Alarm speaker: Stop, from the banner, the Security view or its chip ── */
+document.addEventListener("click", (event) => {
+  if (event.target.closest("button[data-speaker-stop]")) stopAlarmSpeaker();
+});
+
 /* ── House mode actions ── */
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-house-mode-action]");
@@ -13323,6 +13406,10 @@ setInterval(() => {
    Everything here is best-effort. If the stream never opens, the 60 s poll above
    still runs and the dashboard is exactly as live as it was before. */
 const LIVE_REFRESH_DEBOUNCE_MS = 250;
+/* The speaker, why it sounded and the house mode re-read the Security view at once:
+   a banner saying "sounding" must not wait for the 60 s poll. */
+const ALARM_LIVE_ENTITIES = new Set(["switch.0xa4c1382b1f1bd155_alarm", "input_text.security_alarm_reason",
+  "input_select.house_mode"]);
 /* Two events a second apart should give two refreshes; a burst from a bridge
    reconnect should give one. A trailing debounce does both. */
 let liveRefreshTimer = null;
@@ -13382,6 +13469,7 @@ function scheduleLiveRefresh(event) {
         refreshLiveCameraTriggers(entityIds),
         entityIds.some((id) =>
           id === latestAlarmData?.panel?.entity_id
+          || ALARM_LIVE_ENTITIES.has(id)
           || (latestAlarmData?.zones || []).some((zone) => zone.id === id))
           ? requestJson("/api/alarm").then((data) => {
               latestAlarmData = data;

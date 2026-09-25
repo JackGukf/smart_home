@@ -4646,6 +4646,26 @@ html.no-aspect-ratio .house-scene { height: 0; padding-top: 91.39%; }
   background: var(--card);
   overflow: hidden;
 }
+/* Two logs share the column: while armed (a week, usually short) above recent activity. */
+.house-armed-log { flex: 1 1 0; min-height: 120px; }
+.house-activity-line.kind-speaker i { background: var(--t-alert); }
+span.house-activity-line { cursor: default; }
+
+/* The alarm speaker is sounding: above the house, with its Stop. */
+.house-siren {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 10px 14px;
+  border: 1px solid var(--t-alert); border-radius: var(--radius);
+  background: rgba(239, 68, 68, 0.12); color: var(--t-text);
+}
+.house-siren > i { font-size: 22px; color: var(--t-alert); }
+.house-siren span { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
+.house-siren b { font-size: 15px; font-weight: 600; }
+.house-siren small { font-size: 12px; color: var(--t-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.house-siren button {
+  padding: 9px 16px; border-radius: var(--radius-sm); border: 0; background: var(--t-alert);
+  color: #fff; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+
 .house-activity-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
 .house-activity-head h3 { font-size: 14px; font-weight: 600; margin: 0; }
 .house-activity-head small { margin-left: auto; font-size: 11px; color: var(--muted); }

@@ -452,6 +452,76 @@ def security_activity(conn: sqlite3.Connection, tz_name: str, now: float,
     }
 
 
+# While the alarm is armed, people outdoors are worth a log of their own
+# (asked for 2026-09-24): the outdoor cameras' NPU person detection - the
+# garage camera counts its driveway only (NPU_ZONES) - and the outdoor motion
+# sensors, which see a person or an animal and cannot tell which.
+OUTDOOR_PEOPLE = {
+    "binary_sensor.front_door_camera_npu_person": "camera",
+    "binary_sensor.frontyard_camera_npu_person": "camera",
+    "binary_sensor.garage_camera_npu_person": "camera",
+    "binary_sensor.0xa4c138f3061bad8d_presence": "motion",   # front door TH
+    "binary_sensor.0xa4c1382ad5555219_presence": "motion",   # backyard
+    "binary_sensor.0xa4c138b9f255ff1b_presence": "motion",   # fence south
+}
+ALARM_SPEAKER = "switch.0xa4c1382b1f1bd155_alarm"
+ARMED_LOG_DAYS = 7
+ARMED_LOG_LIMIT = 10
+
+
+def _armed(state: str | None) -> bool:
+    # Triggered and pending happen only on an armed panel.
+    return bool(state) and (state.startswith("armed_") or state in ("triggered", "pending"))
+
+
+def armed_spans(conn: sqlite3.Connection, since: float, now: float) -> list[tuple[float, float]]:
+    """When the alarm was armed between `since` and `now`, from its own state changes."""
+    before = conn.execute(
+        """SELECT state FROM events WHERE entity_id LIKE 'alarm_control_panel.%' AND ts < ?
+           ORDER BY ts DESC LIMIT 1""", (since,)).fetchone()
+    start = since if before and _armed(before[0]) else None
+    spans: list[tuple[float, float]] = []
+    for ts, state in conn.execute(
+            """SELECT ts, state FROM events WHERE entity_id LIKE 'alarm_control_panel.%' AND ts >= ?
+               ORDER BY ts""", (since,)):
+        if _armed(state) and start is None:
+            start = ts
+        elif not _armed(state) and start is not None:
+            spans.append((start, ts))
+            start = None
+    if start is not None:
+        spans.append((start, now))
+    return spans
+
+
+def armed_log(conn: sqlite3.Connection, now: float, days: int = ARMED_LOG_DAYS,
+              limit: int = ARMED_LOG_LIMIT) -> dict[str, Any]:
+    """People outdoors while the alarm was armed, and every time the alarm
+    speaker sounded, newest first and folded like the activity list."""
+    since = now - days * 86400
+    spans = armed_spans(conn, since, now)
+    watched = list(OUTDOOR_PEOPLE) + [ALARM_SPEAKER]
+    marks = ",".join("?" * len(watched))
+    rows = conn.execute(
+        f"""SELECT e.id, e.ts, e.entity_id, n.name FROM events e
+            LEFT JOIN entities n ON n.entity_id = e.entity_id
+            WHERE e.ts >= ? AND e.entity_id IN ({marks}) AND e.state = 'on' AND e.old_state = 'off'
+            ORDER BY e.ts DESC""", (since, *watched)).fetchall()
+    events = []
+    for event_id, ts, entity_id, name in rows:
+        speaker = entity_id == ALARM_SPEAKER
+        if not speaker and not any(start <= ts <= end for start, end in spans):
+            continue
+        events.append({"id": event_id, "ts": ts, "entity_id": entity_id,
+                       "name": "Alarm speaker" if speaker else (name or entity_id),
+                       "kind": "speaker" if speaker else OUTDOOR_PEOPLE[entity_id]})
+    return {
+        "recent": fold_bursts(events)[:limit],
+        "armed_now": bool(spans) and spans[-1][1] == now,
+        "days": days,
+    }
+
+
 class SummaryCache:
     """The dashboard's view of the store: read-only, cached briefly.
 
@@ -500,7 +570,8 @@ class SummaryCache:
             if store is None:
                 return {"available": False}
             with store._lock:
-                result = {"available": True, **security_activity(store._conn, tz_name, now)}
+                result = {"available": True, **security_activity(store._conn, tz_name, now),
+                          "armed": armed_log(store._conn, now)}
             self._security_cache = (now, tz_name, result)
             return result
 

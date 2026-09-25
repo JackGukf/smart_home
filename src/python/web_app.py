@@ -1109,6 +1109,10 @@ def create_app(
     async def alarm_command(command: str) -> dict[str, Any]:
         return await asyncio.to_thread(_home_assistant_alarm_command, app.state.config_path, command)
 
+    @app.post("/api/alarm/speaker/stop")
+    async def alarm_speaker_stop() -> dict[str, Any]:
+        return await asyncio.to_thread(_alarm_speaker_stop, app.state.config_path)
+
     @app.post("/api/house-mode/{action}")
     async def house_mode_command(action: str) -> dict[str, Any]:
         return await asyncio.to_thread(_house_mode_command, app.state.config_path, action)
@@ -5208,6 +5212,7 @@ def _alarm_payload(path: Path) -> dict[str, Any]:
         "status": "ok",
         "source": "Home Assistant",
         "house_mode": _house_mode_payload(states),
+        "speaker": _alarm_speaker_payload(states),
         "panel": panel or {
             "name": _home_assistant_alarm_panel_name(controls),
             "entity_id": None,
@@ -5732,6 +5737,37 @@ def _home_assistant_alarm_command(path: Path, command: str) -> dict[str, Any]:
 HOUSE_MODE_ENTITY = "input_select.house_mode"
 HOUSE_MODES = {"home": "Home", "away": "Away", "vacation": "Vacation"}
 HOUSE_MODE_RULES = {"night_arm": "house_mode_night_arm", "morning_disarm": "house_mode_morning_disarm"}
+
+
+# The Zigbee alarm speaker, and why it last sounded (scripts/install-security-response.py).
+ALARM_SPEAKER = "switch.0xa4c1382b1f1bd155_alarm"
+ALARM_SPEAKER_REASON = "input_text.security_alarm_reason"
+
+
+def _alarm_speaker_payload(states: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The speaker for the Security view: on or off, since when, and what set it
+    off. None when the speaker is not in Home Assistant."""
+    by_id = {e.get("entity_id"): e for e in states}
+    speaker = by_id.get(ALARM_SPEAKER)
+    if not speaker:
+        return None
+    reason = (by_id.get(ALARM_SPEAKER_REASON) or {}).get("state")
+    return {
+        "entity_id": ALARM_SPEAKER,
+        "state": speaker.get("state"),
+        "since": speaker.get("last_changed"),
+        "reason": None if reason in (None, "", "unknown", "unavailable") else reason,
+    }
+
+
+def _alarm_speaker_stop(path: Path) -> dict[str, Any]:
+    config, token = _home_assistant_auth(path)
+    try:
+        result = _home_assistant_post(config, token, "/api/services/switch/turn_off",
+                                      {"entity_id": ALARM_SPEAKER})
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Home Assistant API error: {exc}") from exc
+    return {"status": "ok", "entity_id": ALARM_SPEAKER, "result": result}
 
 
 def _house_mode_rule(states: list[dict[str, Any]], rule_id: str) -> str | None:

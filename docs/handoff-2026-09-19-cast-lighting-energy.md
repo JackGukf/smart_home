@@ -171,6 +171,46 @@ card's resize handle sits in the bottom-right corner. `check-card-overlap.py
 --view home --view energy`: no findings on all 7 sizes. The iPad 13" portrait
 card is short and its flow is still small there - untouched.
 
+## Update 2026-09-24 (evening): house modes, the armed house, remote access
+
+All of it on the board and in git; details in `docs/house-modes.md`.
+
+- **Remote access:** Tailscale on the board (`orangepi6`, `100.110.87.106`,
+  `docs/tailscale.md`), `--accept-dns=false` so `/etc/resolv.conf` - which
+  Docker copies into containers - is left alone.
+- **House modes** (`scripts/install-house-modes.py`, `input_select.house_mode`):
+  Away when every phone is out *and* the house is still (all lights off, living
+  room sunset-23:30), Home again (ambient lights in the dark), Vacation after
+  24 h or by hand (alarm armed away, ecobee vacation), night arm from 01:30 and
+  disarm at 07:00. The actions follow the change of mode, so the Security
+  view's **House mode** card picks any mode by hand and does what presence would.
+  The living room late-off rule now skips Away/Vacation.
+- **Armed house** (`scripts/install-security-response.py`): the Zigbee alarm
+  speaker for an unexpected person downstairs, a red banner with Stop on the
+  dashboard, bedroom button once = stop / twice = Night arm (its old light
+  automations deleted), and a **While armed · outdoors** log on Security.
+- **Garage camera counts the driveway only:** `NPU_ZONES` in the board's
+  `.env` (backup `.env.bak-2026-09-24-zones`); a person counts where their feet
+  are.
+
+Open, in order:
+
+1. **The iPhone:** HA app location *Always* (it is *When in use*), and Tailscale
+   kept connected with the app's external URL
+   `http://orangepi6.tail9804d9.ts.net:8123`. Until then Away and arrival
+   never fire by themselves; the dashboard buttons work.
+2. **Two night schedules.** The alarm arms itself *away* at 01:30 and disarms
+   at 07:00 (not Home Assistant - most likely the Smart Life app). Keep it or
+   ours, not both; ours arms *home*.
+3. **First real night:** the speaker has only been checked by rendering the
+   banner, never sounded by the rule. Check the logbook for
+   `security_intruder_siren` in the morning, and arm/disarm once by hand
+   through the Tuya cloud.
+4. The "unexpected" rule's trade-off: an intruder within 30 minutes of the
+   household's last movement downstairs is not flagged. Pets would set it off
+   on Away - there are none known.
+5. Other residents' phones, for Away to mean empty rather than "Jack is out".
+
 ## Traps found this session
 - **Chromium hangs silently in a systemd user unit here** - the user manager
   carries the desktop session and Chromium waits on the GNOME keyring. Pass

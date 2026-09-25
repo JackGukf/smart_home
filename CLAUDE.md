@@ -105,6 +105,14 @@
 > ~80 s with no kernel panic. That is the prime suspect for the 2026-09-02 reset
 > loop. The default password is also still `orangepi`.
 
+> **House modes and the armed house (2026-09-24).** `input_select.house_mode`
+> (Home / Away / Vacation) drives lights, the alarm and an ecobee vacation, set
+> by presence or by hand on the Security view; while armed, an unexpected person
+> downstairs sounds the Zigbee alarm speaker (Stop on the dashboard, or the
+> bedroom button once; twice = Night arm). The alarm also arms itself at 01:30
+> from outside HA. Remote access is Tailscale. See `docs/house-modes.md` and the
+> 2026-09-19 handoff, "Update 2026-09-24 (evening)".
+
 > **AI view and gas from furnace runtime (2026-09-19).** The sidebar's
 > Automations is now **AI**: Automations as before, plus **AI data** - upload
 > FortisBC bills (PDF) and exports (CSV), type meter readings, and see the gas

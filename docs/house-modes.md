@@ -82,3 +82,35 @@ on the way out would otherwise be undone by the entry sensor at the door.
 - Arrival by motion uses the PIR sensors only - the radar ones can report
   someone for half an hour after nobody. Motion never ends a Vacation: an
   armed house seeing someone is the alarm's business.
+
+## While the alarm is armed (`scripts/install-security-response.py`)
+
+Installed 2026-09-24, beside the modes.
+
+- **The alarm speaker** (`switch.0xa4c1382b1f1bd155_alarm`, Zigbee, living
+  room) sounds for 300 s when, while armed, a first-floor PIR or the family
+  room / office camera sees someone **unexpected**. Away or Vacation: anyone.
+  Home: not someone who came down the stairs (upstairs sensor in the last 3
+  min) or was downstairs when the alarm armed - they stay expected for 30 min
+  after their last movement downstairs (`input_datetime.security_expected_until`).
+  Not in the first 2 min after arming. Never the radar sensors.
+  What set it off goes to `input_text.security_alarm_reason`.
+- **Stopping it:** the dashboard shows a red banner on every view and on the
+  Security view (`POST /api/alarm/speaker/stop`); one press of the bedroom smart
+  button; or the speaker's own timeout.
+- **Bedroom button:** once = stop the speaker, twice = Night arm. The two
+  automations that used it for the master bedroom light
+  (`npu_bedroom_button_single_on` / `_double_off`) were deleted.
+- **While armed · outdoors**, a log on the Security view
+  (`house_memory.armed_log`): the outdoor cameras' person detection and the
+  outdoor motion sensors, only while the alarm was armed, plus every time the
+  speaker sounded; the last 7 days. The garage camera counts its **driveway
+  only** (`NPU_ZONES` in the board's `.env`, `docs/local-ai.md`) - it also sees
+  the street.
+
+**The alarm has its own schedule.** The house memory shows it armed *away* at
+01:30 and disarmed at 07:00 on 2026-09-22, 23 and 24, from outside Home
+Assistant (most likely the Smart Life app). So at night the panel says
+"armed away" with the family asleep upstairs - the reason "unexpected" follows
+the house mode, not the arm type. Our Night arm (arm *home*) then finds the
+alarm already armed and does nothing. Keep one of the two schedules.

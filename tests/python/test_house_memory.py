@@ -241,3 +241,42 @@ def test_the_countdown_to_phase_one(tmp_path: Path) -> None:
     out = subprocess.run(["node", str(harness), str(APP_JS)], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == [0, 1, 2, 5, 28]
+
+
+def test_the_armed_log_keeps_people_outdoors_only_while_the_alarm_was_armed(tmp_path: Path) -> None:
+    memory = hm.HouseMemory(tmp_path / "events.db")
+    t = 1_790_000_000.0
+    alarm = "alarm_control_panel.duo_gong_neng_bao_jing_zhu_ji"
+    garage = "binary_sensor.garage_camera_npu_person"
+    backyard = "binary_sensor.0xa4c1382ad5555219_presence"
+    office = "binary_sensor.office_camera_npu_person"           # indoors: never in this log
+    ev = lambda ts, entity, state, old: hm.Event(t + ts, entity, state, old, None, None)
+    memory.add_events([
+        ev(0, garage, "on", "off"),                  # disarmed: not logged
+        ev(100, alarm, "armed_away", "disarmed"),
+        ev(200, garage, "on", "off"),
+        ev(300, backyard, "on", "off"),
+        ev(350, office, "on", "off"),
+        ev(400, hm.ALARM_SPEAKER, "on", "off"),
+        ev(500, alarm, "disarmed", "armed_away"),
+        ev(600, backyard, "on", "off"),              # disarmed again: not logged
+    ], "live")
+
+    log = hm.armed_log(memory._conn, t + 700)
+
+    assert [(line["entity_id"], line["kind"]) for line in log["recent"]] == [
+        (hm.ALARM_SPEAKER, "speaker"), (backyard, "motion"), (garage, "camera")]
+    assert log["armed_now"] is False
+
+
+def test_an_alarm_armed_before_the_window_opens_counts_from_its_start(tmp_path: Path) -> None:
+    memory = hm.HouseMemory(tmp_path / "events.db")
+    t = 1_790_000_000.0
+    memory.add_events([
+        hm.Event(t, "alarm_control_panel.panel", "armed_home", "disarmed", None, None),
+        hm.Event(t + 8 * 86400, "binary_sensor.frontyard_camera_npu_person", "on", "off", None, None),
+    ], "live")
+    now = t + 8 * 86400 + 60
+    assert hm.armed_spans(memory._conn, now - 7 * 86400, now) == [(now - 7 * 86400, now)]
+    log = hm.armed_log(memory._conn, now)
+    assert log["armed_now"] is True and len(log["recent"]) == 1
