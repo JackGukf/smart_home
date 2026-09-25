@@ -51,6 +51,33 @@ its own; it is absent until `install-house-modes.py --apply` has run.
 Motion ends an Away only after it has lasted 10 minutes: Away picked by hand
 on the way out would otherwise be undone by the entry sensor at the door.
 
+## The disarm PIN (2026-09-25)
+
+Signing in - or being the wall panel, whose address is its login - was enough
+to disarm the house. With `security.disarm_pin` in `devices.local.yaml`
+(4-8 digits, **quoted**: YAML reads `0123` unquoted as the octal number 83), the
+dashboard asks for it on a keypad before anything that lowers the alarm:
+
+| Asks | Never asks |
+| --- | --- |
+| Disarm | Arm home, Arm away, Night arm |
+| Morning disarm | Away, Vacation |
+| Home, while the mode is Vacation (it disarms), or when HA cannot say the mode | Home from Away; Stop on the alarm speaker (the bedroom button stops it without one) |
+
+- **The board checks it** (`_check_disarm_pin` in `web_app.py`); the page is told only
+  *whether* one is needed (`disarm_pin` in `/api/alarm`). Read at every request, so
+  setting or changing it needs no restart.
+- **Five wrong PINs** from one address lock that address out for 15 minutes. That
+  includes the wall panel: an intruder at the panel cannot guess, and the owner
+  still has the phone.
+- A PIN set wrongly (unquoted, too short, not digits) **refuses to disarm** with a
+  message saying so, rather than quietly switching the check off.
+- Every attempt is in the audit log, never the digits:
+  `journalctl --user -u smart-home-dashboard | grep audit`.
+- **Not covered:** Home Assistant itself, the Smart Life app and the Tuya panel's own
+  keypad can still disarm without it. The PIN guards the dashboard, which is where
+  the wall panel and the trusted address are.
+
 ## What it needs to work
 
 - **The iPhone must report in the background.** The HA app's location

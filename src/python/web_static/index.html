@@ -1371,6 +1371,28 @@
 </main>
 
 <!-- ── MATTER COMMISSIONING MODAL ── -->
+<!-- Disarm PIN (security.disarm_pin): asked before anything that lowers the alarm -->
+<div class="modal-overlay" id="pinModal" hidden aria-modal="true" role="dialog" aria-labelledby="pinModalTitle">
+  <div class="modal-card pin-card">
+    <div class="modal-header">
+      <span class="modal-title" id="pinModalTitle">Enter PIN</span>
+      <button class="modal-close" id="pinClose" type="button" aria-label="Cancel">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+    <div class="pin-dots" id="pinDots" aria-live="polite" aria-label="PIN digits entered"></div>
+    <div class="pin-message" id="pinMessage" role="alert"></div>
+    <div class="pin-pad" role="group" aria-label="Keypad">
+      <button type="button" data-pin-key="1">1</button><button type="button" data-pin-key="2">2</button><button type="button" data-pin-key="3">3</button>
+      <button type="button" data-pin-key="4">4</button><button type="button" data-pin-key="5">5</button><button type="button" data-pin-key="6">6</button>
+      <button type="button" data-pin-key="7">7</button><button type="button" data-pin-key="8">8</button><button type="button" data-pin-key="9">9</button>
+      <button type="button" data-pin-key="back" aria-label="Delete"><i class="ti ti-backspace" aria-hidden="true"></i></button>
+      <button type="button" data-pin-key="0">0</button>
+      <button type="button" data-pin-key="ok" class="pin-ok" aria-label="OK"><i class="ti ti-check" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="matterModal" hidden aria-modal="true" role="dialog" aria-labelledby="matterModalTitle">
   <div class="modal-card">
     <div class="modal-header">

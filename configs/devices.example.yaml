@@ -11,6 +11,15 @@ dashboard_auth:
   # DHCP lease: whatever holds that address next inherits its access.
   # trusted_hosts:
   #   - 192.168.1.50
+  # Sessions are signed with DASHBOARD_SECRET_KEY from .env when set, otherwise
+  # with configs/dashboard_secret.key, generated on first start (keep it 0600).
+
+# Disarm PIN. When set, Disarm, Morning disarm and Home-while-on-Vacation ask
+# for it on every screen, the wall panel included; arming and the alarm
+# speaker's Stop never do. 4-8 digits, IN QUOTES: YAML reads 0123 unquoted as
+# the octal number 83. Five wrong tries lock that screen out for 15 minutes.
+# security:
+#   disarm_pin: "4821"
 
 tplink:
   switches:

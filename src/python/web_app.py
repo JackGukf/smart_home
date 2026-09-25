@@ -453,6 +453,74 @@ class _LoginGuard:
         self._failures.pop(peer, None)
 
 
+# ── Disarm PIN ───────────────────────────────────────────────────────────────
+# Signing in - or standing at the wall panel, whose address is its credential -
+# used to be enough to disarm the house. With `security.disarm_pin` set in
+# devices.local.yaml, whatever lowers the alarm asks for the PIN as well: Disarm,
+# Morning disarm, and Home while the house is on Vacation (the mode change
+# disarms). Arming never asks, and neither does Stop on the alarm speaker - the
+# bedroom button stops it without one, and a siren nobody can silence is its
+# own hazard. Off until a PIN is set. It stays on the board: the page is only
+# told whether one is needed.
+DISARM_PIN_PATTERN = re.compile(r"[0-9]{4,8}")
+
+
+class _PinBody(BaseModel):
+    pin: str | None = None
+
+
+def _configured_disarm_pin(path: Path) -> str | None:
+    """The PIN, or None when none is set. Raises when it is set wrongly: a
+    misconfigured PIN must not quietly turn the check off."""
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        raw = {}
+    security = raw.get("security") if isinstance(raw, dict) else None
+    pin = security.get("disarm_pin") if isinstance(security, dict) else None
+    if pin is None or pin == "":
+        return None
+    # YAML reads an unquoted 0123 as the octal number 83, so only a string is
+    # trusted to be the digits the owner typed.
+    if not isinstance(pin, str) or not DISARM_PIN_PATTERN.fullmatch(pin):
+        raise HTTPException(
+            status_code=500,
+            detail="security.disarm_pin in devices.local.yaml must be 4-8 digits in quotes, e.g. \"4821\"",
+        )
+    return pin
+
+
+def _house_mode_now(path: Path) -> str | None:
+    """The current house mode, or None when Home Assistant cannot say."""
+    try:
+        config, token = _home_assistant_auth(path)
+        return _home_assistant_get(config, token, f"/api/states/{HOUSE_MODE_ENTITY}").get("state")
+    except Exception:  # noqa: BLE001 - unknown is handled by the caller, closed
+        return None
+
+
+def _check_disarm_pin(request: Request, pin: str | None, expected: str,
+                      guard: _LoginGuard, what: str) -> None:
+    """Raise 403 unless `pin` is right. The detail's `pin` says why, for the page:
+    required (ask), wrong (ask again), locked (too many wrong tries)."""
+    peer = request.client.host if request.client else "unknown"
+    actor = getattr(request.state, "actor", None) or "anonymous"
+    if guard.locked(peer):
+        _AUDIT_LOG.warning("%s refused: %s is locked out after wrong PINs", what, peer)
+        raise HTTPException(status_code=403, detail={
+            "pin": "locked", "message": "Too many wrong PINs. Try again in 15 minutes."})
+    if not pin:
+        raise HTTPException(status_code=403, detail={"pin": "required", "message": "Enter the PIN."})
+    if not hmac.compare_digest(pin.encode("utf-8"), expected.encode("utf-8")):
+        guard.failed(peer)
+        _AUDIT_LOG.warning("%s refused: wrong PIN by %s from %s", what, actor, peer)
+        if guard.locked(peer):
+            raise HTTPException(status_code=403, detail={
+                "pin": "locked", "message": "Too many wrong PINs. Try again in 15 minutes."})
+        raise HTTPException(status_code=403, detail={"pin": "wrong", "message": "Wrong PIN."})
+    guard.succeeded(peer)
+
+
 _raw_cfg: dict = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {} if DEFAULT_CONFIG_PATH.exists() else {}
 _matter_cfg: dict = _raw_cfg.get("matter") or {}
 _matter_server_url: str = _matter_cfg.get("server_url", "ws://localhost:5580/ws")
@@ -872,6 +940,7 @@ def create_app(
     _signer: URLSafeTimedSerializer | None = None
     _MAX_AGE = 30 * 24 * 3600  # 30 days
     _login_guard = _LoginGuard()
+    _pin_guard = _LoginGuard()
     if _auth_cfg:
         _signer = dashboard_session.session_signer(config_path, _auth_user or "", _auth_pass or "")
 
@@ -1187,11 +1256,22 @@ def create_app(
 
     @app.get("/api/alarm")
     async def alarm() -> dict[str, Any]:
-        return await asyncio.to_thread(_alarm_payload, app.state.config_path)
+        payload = await asyncio.to_thread(_alarm_payload, app.state.config_path)
+        # Whether to ask for the PIN before sending - never the PIN itself. A
+        # misconfigured PIN counts as set: the server refuses, and says why.
+        try:
+            payload["disarm_pin"] = bool(_configured_disarm_pin(app.state.config_path))
+        except HTTPException:
+            payload["disarm_pin"] = True
+        return payload
 
     @app.post("/api/alarm/commands/{command}")
-    async def alarm_command(command: str, request: Request) -> dict[str, Any]:
+    async def alarm_command(command: str, request: Request, body: _PinBody | None = None) -> dict[str, Any]:
         _audit(request, "alarm", command)
+        if command in {"disarm", "disarmed"}:
+            expected = await asyncio.to_thread(_configured_disarm_pin, app.state.config_path)
+            if expected:
+                _check_disarm_pin(request, body.pin if body else None, expected, _pin_guard, "alarm disarm")
         return await asyncio.to_thread(_home_assistant_alarm_command, app.state.config_path, command)
 
     @app.post("/api/alerts/{alert_id}/ack")
@@ -1204,8 +1284,16 @@ def create_app(
         return await asyncio.to_thread(_alarm_speaker_stop, app.state.config_path)
 
     @app.post("/api/house-mode/{action}")
-    async def house_mode_command(action: str, request: Request) -> dict[str, Any]:
+    async def house_mode_command(action: str, request: Request, body: _PinBody | None = None) -> dict[str, Any]:
         _audit(request, "house mode", action)
+        if action in {"morning_disarm", "home"}:
+            expected = await asyncio.to_thread(_configured_disarm_pin, app.state.config_path)
+            # Home disarms only when it ends a Vacation. A mode Home Assistant
+            # cannot report counts as Vacation: unknown fails closed.
+            if expected and (action == "morning_disarm" or await asyncio.to_thread(
+                    _house_mode_now, app.state.config_path) in {None, "Vacation"}):
+                _check_disarm_pin(request, body.pin if body else None, expected, _pin_guard,
+                                  f"house mode {action}")
         return await asyncio.to_thread(_house_mode_command, app.state.config_path, action)
 
     @app.patch("/api/cameras/{camera_id}")

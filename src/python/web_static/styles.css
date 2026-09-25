@@ -3423,6 +3423,53 @@ aside {
 
 .modal-overlay[hidden] { display: none; }
 
+/* Disarm PIN keypad. Sized for a finger on the wall panel; no aspect-ratio or
+   inset, which older iPad Safari does not know. */
+.modal-card.pin-card { width: min(340px, calc(100vw - 32px)); gap: 14px; }
+.pin-dots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  height: 28px;
+}
+.pin-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--t-text);
+}
+.pin-hint { color: var(--t-text-dim2); font-size: 13px; letter-spacing: 0.12em; }
+.pin-message {
+  min-height: 18px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--red, #ef4444);
+}
+.pin-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.pin-pad button {
+  height: 64px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--t-card-border);
+  background: var(--card-2, rgba(255, 255, 255, 0.04));
+  color: var(--t-text);
+  font: inherit;
+  font-size: 24px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.pin-pad button:active { background: var(--accent-dim); border-color: var(--accent-border); }
+.pin-pad button.pin-ok { background: var(--t-accent); border-color: transparent; }
+@media (max-height: 560px) {
+  .pin-pad button { height: 48px; font-size: 20px; }
+}
+
 .modal-card {
   background: var(--card);
   border: 1px solid var(--t-card-border);

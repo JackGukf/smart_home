@@ -5187,9 +5187,106 @@ function normalizeAlarmPanelState(state) {
   return null;
 }
 
+/* ── Disarm PIN (security.disarm_pin on the board) ──
+   Whatever lowers the alarm - Disarm, Morning disarm, Home while on Vacation -
+   asks for the PIN when the board says one is set (latestAlarmData.disarm_pin).
+   The board checks it; the page never knows it. A 403 with detail.pin still
+   opens the keypad, so a PIN set since the last refresh is asked for too. */
+const PIN_MAX_DIGITS = 8;
+
+function askDisarmPin(title, message = "") {
+  const modal = document.querySelector("#pinModal");
+  if (!modal) return Promise.resolve(null);
+  const dots = modal.querySelector("#pinDots");
+  const note = modal.querySelector("#pinMessage");
+  modal.querySelector("#pinModalTitle").textContent = title;
+  let digits = "";
+  const paint = () => {
+    dots.innerHTML = digits ? Array.from(digits, () => '<span class="pin-dot"></span>').join("")
+      : '<span class="pin-hint">PIN</span>';
+    note.textContent = message;
+  };
+  paint();
+  modal.hidden = false;
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      modal.hidden = true;
+      modal.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey, true);
+      digits = "";
+      resolve(value);
+    };
+    const press = (key) => {
+      if (key === "ok") { if (digits) finish(digits); return; }
+      if (key === "back") digits = digits.slice(0, -1);
+      else if (/^[0-9]$/.test(key) && digits.length < PIN_MAX_DIGITS) digits += key;
+      message = "";
+      paint();
+    };
+    const onClick = (event) => {
+      if (event.target === modal || event.target.closest("#pinClose")) { finish(null); return; }
+      const key = event.target.closest("button[data-pin-key]");
+      if (key) press(key.dataset.pinKey);
+    };
+    const onKey = (event) => {
+      // A phone or a desk keyboard types it; the wall panel taps it.
+      if (/^[0-9]$/.test(event.key)) press(event.key);
+      else if (event.key === "Backspace") press("back");
+      else if (event.key === "Enter") press("ok");
+      else if (event.key === "Escape") finish(null);
+      else return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    modal.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKey, true);
+  });
+}
+
+function pinRefusal(error) {
+  try {
+    const detail = JSON.parse(error.message)?.detail;
+    return detail && typeof detail === "object" && detail.pin ? detail : null;
+  } catch { return null; }
+}
+
+/* POST `url`, asking for the PIN first when `needsPin`, and again after a
+   wrong one. Resolves to the response, or null when the keypad was cancelled. */
+async function postWithDisarmPin(url, title, needsPin) {
+  let pin = null;
+  let message = "";
+  if (needsPin) {
+    pin = await askDisarmPin(title);
+    if (pin === null) return null;
+  }
+  for (;;) {
+    try {
+      return await requestJson(url, pin === null ? { method: "POST" } : {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin }),
+      });
+    } catch (error) {
+      const refusal = pinRefusal(error);
+      if (!refusal) throw error;
+      if (refusal.pin === "locked") {
+        await askDisarmPin(title, refusal.message);   // shows why; any answer ends it
+        return null;
+      }
+      message = refusal.pin === "wrong" ? refusal.message : message;
+      pin = await askDisarmPin(title, message);
+      if (pin === null) return null;
+    }
+  }
+}
+
 async function sendAlarmCommand(mode) {
   apiStatus.textContent = "Sending";
-  await requestJson(`/api/alarm/commands/${encodeURIComponent(mode)}`, { method: "POST" });
+  const url = `/api/alarm/commands/${encodeURIComponent(mode)}`;
+  if (mode === "disarmed" || mode === "disarm") {
+    const done = await postWithDisarmPin(url, "PIN to disarm", Boolean(latestAlarmData?.disarm_pin));
+    if (!done) { apiStatus.textContent = "Online"; return; }
+  } else {
+    await requestJson(url, { method: "POST" });
+  }
   logActivity(`Alarm → ${mode}`);
   await loadDevices();
 }
@@ -12746,12 +12843,20 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-house-mode-action]");
   if (!button || houseModeSending) return;
   const action = button.dataset.houseModeAction;
-  if (HOUSE_MODE_ASK[action] && !window.confirm(HOUSE_MODE_ASK[action])) return;
+  const label = button.textContent.trim();
+  // Morning disarm disarms; Home disarms when it ends a Vacation. With a PIN
+  // set, the keypad is the confirmation.
+  const disarms = action === "morning_disarm"
+    || (action === "home" && latestAlarmData?.house_mode?.mode === "Vacation");
+  const needsPin = disarms && Boolean(latestAlarmData?.disarm_pin);
+  if (!needsPin && HOUSE_MODE_ASK[action] && !window.confirm(HOUSE_MODE_ASK[action])) return;
   houseModeSending = action;
   renderAlarmSection();
   try {
-    await requestJson(`/api/house-mode/${encodeURIComponent(action)}`, { method: "POST" });
-    logActivity(`House mode → ${button.textContent.trim()}`);
+    const done = await postWithDisarmPin(`/api/house-mode/${encodeURIComponent(action)}`,
+      action === "home" ? "PIN to end Vacation" : "PIN to disarm", needsPin);
+    if (!done) return;
+    logActivity(`House mode → ${label}`);
     await loadDevices();
   } catch (error) {
     apiStatus.textContent = "Error";
