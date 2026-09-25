@@ -125,7 +125,9 @@ def test_a_badly_set_pin_refuses_rather_than_turning_the_check_off(tmp_path, mon
     client, sent = _client(tmp_path, monkeypatch, pin_yaml=pin_yaml)
     resp = client.post("/api/alarm/commands/disarmed", json={"pin": pin_yaml.strip('"')})
     assert resp.status_code == 500
-    assert "in quotes" in resp.json()["detail"]
+    # Shaped as a PIN refusal, so the keypad shows it instead of failing silently.
+    assert _pin_reason(resp) == "misconfigured"
+    assert "in quotes" in resp.json()["detail"]["message"]
     assert sent == []
     assert client.get("/api/alarm").json()["disarm_pin"] is True
 
@@ -165,3 +167,4 @@ def test_the_keypad_is_on_the_page():
     js = (root / "app.js").read_text(encoding="utf-8")
     assert 'id="pinModal"' in html and 'data-pin-key="ok"' in html
     assert "postWithDisarmPin" in js and "JSON.stringify({ pin })" in js
+    assert 'refusal.pin === "misconfigured"' in js

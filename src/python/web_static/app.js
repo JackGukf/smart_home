@@ -5267,7 +5267,7 @@ async function postWithDisarmPin(url, title, needsPin) {
     } catch (error) {
       const refusal = pinRefusal(error);
       if (!refusal) throw error;
-      if (refusal.pin === "locked") {
+      if (refusal.pin === "locked" || refusal.pin === "misconfigured") {
         await askDisarmPin(title, refusal.message);   // shows why; any answer ends it
         return null;
       }

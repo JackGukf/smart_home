@@ -483,10 +483,12 @@ def _configured_disarm_pin(path: Path) -> str | None:
     # YAML reads an unquoted 0123 as the octal number 83, so only a string is
     # trusted to be the digits the owner typed.
     if not isinstance(pin, str) or not DISARM_PIN_PATTERN.fullmatch(pin):
-        raise HTTPException(
-            status_code=500,
-            detail="security.disarm_pin in devices.local.yaml must be 4-8 digits in quotes, e.g. \"4821\"",
-        )
+        # Shaped like the other PIN refusals, so the keypad shows the reason.
+        raise HTTPException(status_code=500, detail={
+            "pin": "misconfigured",
+            "message": "The disarm PIN is set wrongly on the board: security.disarm_pin in "
+                       "devices.local.yaml must be 4-8 digits in quotes, e.g. \"4821\".",
+        })
     return pin
 
 
