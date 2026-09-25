@@ -277,7 +277,7 @@ provider that corrupts the heap on inputs it dislikes.
 | `NPU_MOTION_CONFIRM_CAMERAS` | cameras that require local image change for weak person-class boxes |
 | `NPU_FETCH_TIMEOUT` | drop a dead camera faster than the 8s default |
 | `NPU_INWARD` | per-camera inward axis, e.g. `garage_camera=x-,frontyard_camera=x+`; cameras without an entry publish `direction: unknown` |
-| `NPU_ZONES` | per-camera polygon that counts, in fractions of the frame: `garage_camera=0.31:0.17 0.70:0.20 …` (quote it in `.env`, it has spaces). A person counts where their feet are - the bottom middle of the box. Set since 2026-09-24 so the garage camera reports the driveway, not the street |
+| `NPU_ZONES` | per-camera polygon that counts, in fractions of the frame: `garage_camera=0.26:0.27 0.73:0.28 …` (quote it in `.env`, it has spaces). A person counts where their feet are - the bottom middle of the box. Set since 2026-09-24 so the garage camera reports the driveway, not the street or the people walking along the sidewalk |
 | `NPU_MIN_MOTION` | pixels of travel (default 24) before a track counts as moving rather than `still` |
 | `NPU_DISCOVERY` | `0` disables Home Assistant discovery |
 | `NPU_ENTITY_CATEGORY` | `diagnostic` by default; `""` puts entities on the main dashboard |
