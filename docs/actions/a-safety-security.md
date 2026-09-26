@@ -1,13 +1,17 @@
 # A. Safety and security
 
 ## A1 External heartbeat
-◐ · both · S
+☑ 2026-09-25 · both · S
 
-**Progress 2026-09-25.** Service chosen: healthchecks.io, alerting on its own Telegram bot.
+**Done 2026-09-25.** Service chosen: healthchecks.io, alerting on its own Telegram bot.
 `heartbeat.timer` (every 5 min) runs `src/python/heartbeat.py` with the system python3:
 a normal ping with the service watchdog's report, or `/fail` when the watchdog gave up
-on something or stopped running. Installed and enabled on the board; sends nothing until
-`HEALTHCHECKS_PING_URL` is in the board's `.env`.
+on something or stopped running. `HEALTHCHECKS_PING_URL` is in the board's `.env` only
+(check "Orange Pi board", period 5 min, grace 5 min). Tested: a `/fail` ping and a normal
+one produced DOWN and UP on Telegram. Restore: copy `heartbeat.service` and `.timer` to
+`~/.config/systemd/user/`, `systemctl --user enable --now heartbeat.timer`; the URL comes
+back with `.env` from the backup. Trap: pasting into a hidden `read -s` prompt can paste
+the URL several times over - the first save held four copies.
 
 **Why.** Everything that watches the house runs on the board: the service
 watchdog, the alerts, Telegram. If the board dies, loses power or loses the
@@ -83,7 +87,11 @@ called for an hour without the temperature rising. Same channels as the leak ale
 documented; `waiting_for_heating` in September is not a false alarm.
 
 ## A6 SSH hardening
-☐ · Owner · S
+☑ 2026-09-25 · Owner · S
+
+**Done 2026-09-25** by the owner: `/etc/ssh/sshd_config.d/10-hardening.conf`. Only one key
+is authorised - the workstation's WSL - and Windows has none, so a second key (Windows or
+phone) is still wanted: losing that one environment means a monitor and keyboard on the board.
 
 `PermitRootLogin yes` is set and passwords are accepted. On the board:
 `/etc/ssh/sshd_config.d/10-hardening.conf` with `PermitRootLogin no` and

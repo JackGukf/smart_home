@@ -12,7 +12,7 @@ the board), *Owner* (needs a person: hardware, accounts, a phone, a decision), o
 
 | # | Item | Owner | Size | Status |
 |---|---|---|---|---|
-| 1 | [A1 External heartbeat](a-safety-security.md#a1-external-heartbeat) | both | S | ◐ board side installed; waiting for the ping URL |
+| 1 | [A1 External heartbeat](a-safety-security.md#a1-external-heartbeat) | both | S | ☑ 2026-09-25 |
 | 2 | [C1 Deploy everything a commit changes](c-deploy-quality.md#c1-deploy-everything-a-commit-changes) | Claude | M | ☐ |
 | 3 | [C2 A green test suite](c-deploy-quality.md#c2-a-green-test-suite) | Claude | M | ☐ |
 | 4 | [C3 CI on GitHub](c-deploy-quality.md#c3-ci-on-github) | Claude | S | ☐ |
@@ -37,7 +37,7 @@ the board), *Owner* (needs a person: hardware, accounts, a phone, a decision), o
 | 23 | [E4 Energy that acts](e-features.md#e4-energy-that-acts) | Claude | M | ☐ |
 | 24 | [E5 Air quality actions](e-features.md#e5-air-quality-actions) | Claude | S | ☐ |
 
-Owner-only items, done whenever convenient: [A6 SSH hardening](a-safety-security.md#a6-ssh-hardening),
+Owner-only items, done whenever convenient: ~~[A6 SSH hardening](a-safety-security.md#a6-ssh-hardening)~~ ☑ 2026-09-25,
 [B5 UPS, Zigbee routers, DHCP reservations](b-resilience.md#b5-ups-zigbee-routers-dhcp-reservations),
 [E6 Locks](e-features.md#e6-locks).
 
@@ -56,3 +56,5 @@ Dated follow-ups and questions for the owner: [f-follow-ups.md](f-follow-ups.md)
 | §3.4 (part) | Night clips and Telegram photos | `32412dd` |
 | presence | Phone location *Always* (owner); garage camera leaving / arriving, watch-only | `e2b48ec`, `7903b8f` |
 | cameras | Office camera motion gate; cars on the garage camera only | `32412dd`, `7903b8f` |
+| A1 | External heartbeat: healthchecks.io every 5 min, `/fail` when the watchdog gives up; Telegram DOWN/UP tested | `f452e24` |
+| A6 | SSH: `PermitRootLogin no`, `PasswordAuthentication no` (owner) | - |
