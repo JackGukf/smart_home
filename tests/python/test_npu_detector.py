@@ -492,6 +492,7 @@ def test_npu_vision_entities_are_recognised() -> None:
 # ------------------------------------------------- per-camera independent loops
 
 def test_static_person_lookalike_cannot_trigger_without_local_change() -> None:
+    pytest.importorskip("cv2")      # requirements-dev.txt; the board's npu-venv has it
     from src.python.npu_detector import PersonMotionGate
 
     gate = PersonMotionGate()
@@ -508,6 +509,7 @@ def test_static_person_lookalike_cannot_trigger_without_local_change() -> None:
 
 
 def test_global_brightness_change_is_not_person_motion() -> None:
+    pytest.importorskip("cv2")      # requirements-dev.txt; the board's npu-venv has it
     from src.python.npu_detector import PersonMotionGate
 
     gate = PersonMotionGate()
@@ -519,6 +521,7 @@ def test_global_brightness_change_is_not_person_motion() -> None:
 
 
 def test_strong_person_detection_does_not_require_motion() -> None:
+    pytest.importorskip("cv2")      # requirements-dev.txt; the board's npu-venv has it
     from src.python.npu_detector import PersonMotionGate
 
     gate = PersonMotionGate()

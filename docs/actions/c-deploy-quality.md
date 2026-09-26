@@ -29,7 +29,20 @@ nothing else; a commit touching a unit file installs it; a board-side edit stops
 the deploy with a diff.
 
 ## C2 A green test suite
-☐ · Claude · M
+☑ 2026-09-25 · Claude · M
+
+**Done 2026-09-25: 2,999 passed, 4 skipped, 0 failed.** What each failure was:
+- 3 camera-grid tests: stale fakes - `cameraCardHasRoomForGrid` reads `classList` since the
+  approach-camera slots (14eb7c0, 09-23). Fakes updated; a test for hidden vs showing slots added.
+- `inset` without longhands on `.environment-air-orb::after` (6dde319, 09-21): **a real
+  regression** for Safari before 14.5 - longhands added.
+- The refresh fallback: the Node sandbox lacked `AbortController` (added to
+  `refreshDashboardSource` in 57136b5, 09-23), and the load-time refresh stayed in flight. The
+  fallback itself works.
+- The watchdog-guidance check: one Windows-1252 byte in `handoff-2026-09-20-dashboard-zigbee.md`.
+- 3 motion-gate tests: OpenCV missing on the workstation. Now `importorskip`, and
+  `requirements-dev.txt` (jinja2, Pillow, opencv-python-headless) for the workstation and the
+  Docker dev image. The dev image was not rebuilt here; C3's CI run is the clean-machine check.
 
 **Why.** 9 tests have failed since before 2026-09-25, so a new failure hides among
 them and CI would always be red.

@@ -84,11 +84,14 @@ RUN groupadd --gid "${USER_GID}" "${USERNAME}" \
 WORKDIR /workspace/smart_home_AI
 
 COPY src/python/requirements.txt /tmp/requirements.txt
+COPY requirements-dev.txt /tmp/requirements-dev.txt
 # Matter CHIP SDK build tools: IDL codegen (lark, jinja2, stringcase) and matter_idl package
 COPY third_party/connectedhomeip/scripts/setup/requirements.build.txt /tmp/requirements.build.txt
 COPY third_party/connectedhomeip/scripts/py_matter_idl /tmp/py_matter_idl
 RUN python3 -m pip install --no-cache-dir --upgrade pip \
     && if [ -s /tmp/requirements.txt ]; then python3 -m pip install --no-cache-dir -r /tmp/requirements.txt; fi \
+    && sed 's#^-r src/python/requirements.txt#-r /tmp/requirements.txt#' /tmp/requirements-dev.txt > /tmp/requirements-dev.resolved.txt \
+    && python3 -m pip install --no-cache-dir -r /tmp/requirements-dev.resolved.txt \
     && python3 -m pip install --no-cache-dir -r /tmp/requirements.build.txt \
     && python3 -m pip install --no-cache-dir /tmp/py_matter_idl
 

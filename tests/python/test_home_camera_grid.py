@@ -22,14 +22,24 @@ def _pick(source: str, name: str) -> str:
     raise AssertionError(name)
 
 
-def _fits(tmp_path, body_h, content_h, extra_h, width) -> bool:
+def _child(height: int, *classes: str) -> str:
+    """A fake element with the classList the function reads."""
+    return ("{ offsetHeight: %d, classList: { contains: (c) => %s.includes(c) } }"
+            % (height, json.dumps(list(classes))))
+
+
+def _fits(tmp_path, body_h, content_h, extra_h, width, slots=()) -> bool:
+    """`slots`: extra (height, showing) camera slots in the body - since
+    2026-09-23 a hidden approach-camera slot does not count."""
     if not shutil.which("node"):
         pytest.skip("node is not installed")
     source = APP_JS.read_text(encoding="utf-8")
+    children = [_child(content_h)] + [
+        _child(h, "home-camera-slot", *(["showing"] if showing else [])) for h, showing in slots]
     script = f"""
 const CAMERA_GRID_GAP = 8, CAMERA_EXTRA_MARGIN = 10;
 const els = {{
-  '#homeCameraBody': {{ clientHeight: {body_h}, children: [{{ offsetHeight: {content_h} }}] }},
+  '#homeCameraBody': {{ clientHeight: {body_h}, children: [{", ".join(children)}] }},
   '#homeCameraExtra': {{ clientWidth: {width}, offsetHeight: {extra_h} }},
 }};
 const document = {{ querySelector: (q) => els[q] }};
@@ -76,3 +86,12 @@ def test_the_check_runs_again_after_the_camera_draws():
     resize observer alone measured only the loading placeholder (2026-09-19)."""
     extra = _pick(APP_JS.read_text(encoding="utf-8"), "renderHomeCameraExtra")
     assert "requestAnimationFrame(updateCameraGridMode)" in extra
+
+
+def test_a_hidden_approach_camera_slot_does_not_take_room(tmp_path):
+    """14eb7c0 (2026-09-23): the approach camera plays in a slot that is hidden
+    until someone approaches; only a showing slot counts toward the height."""
+    assert _fits(tmp_path, body_h=498, content_h=323, extra_h=138, width=503,
+                 slots=[(283, False)]) is True
+    assert _fits(tmp_path, body_h=498, content_h=323, extra_h=138, width=503,
+                 slots=[(283, True)]) is False

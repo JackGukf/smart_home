@@ -56,6 +56,9 @@ const ctx = {
   navigator: { userAgent: "node" }, CSS: { escape: (s) => s, supports: () => true },
   Node: { TEXT_NODE: 3 }, EventSource: function () {}, WebSocket: function () {},
   URL, URLSearchParams, Image: function () {}, Date,
+  // refreshDashboardSource times each source out with one; without it every
+  // source of loadDevices() threw before asking, and the fallback looked missing.
+  AbortController,
 };
 ctx.globalThis = ctx; ctx.self = ctx;
 vm.createContext(ctx);
@@ -81,6 +84,11 @@ for (const fn of ["renderDevices", "renderDevicesOverview", "renderHomeView",
 }
 
 const scenario = process.argv[3];
+// app.js starts its first full refresh on load; under this stub it never
+// settles, and loadDevices() rightly joins a refresh already in flight rather
+// than starting another. These scenarios are about a command later on, when
+// nothing is in flight.
+vm.runInContext("dashboardRefreshInFlight = null;", ctx);
 (async () => {
   if (scenario === "matter") {
     await ctx.refreshDeviceSource("matter:1");

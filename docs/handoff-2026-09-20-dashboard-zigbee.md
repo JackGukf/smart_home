@@ -19,7 +19,7 @@ visible state.
   Home Assistant-backed card through
   `/api/home-assistant/entities/{entity_id}/card`.
 - The normal 60-second full refresh remains as a reconciliation path.
-- The Zigbee control under **Discovery!’ Add Zigbee** controls both
+- The Zigbee control under **Discovery â†’ Add Zigbee** controls both
   Zigbee2MQTT and its USB-adapter watchdog. It is enabled by default.
 
 ## Result

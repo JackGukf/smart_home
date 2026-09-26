@@ -1,0 +1,8 @@
+# What the tests need beyond the board's runtime (src/python/requirements.txt).
+# Workstation:     python3 -m pip install --user -r requirements-dev.txt
+# The Docker dev image installs it too.
+-r src/python/requirements.txt
+jinja2               # the Home Assistant templates are rendered in the tests
+Pillow               # the Security view's house picture
+opencv-python-headless  # the NPU detector's motion gate, the night watch's boxes
+# onnx is optional: the NPU model pipeline tests skip without it (large, board-only).

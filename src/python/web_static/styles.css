@@ -2555,6 +2555,7 @@ aside {
 .environment-air-orb::after {
   content: "";
   position: absolute;
+  top: -7px; right: -7px; bottom: -7px; left: -7px;
   inset: -7px;
   border: 1px solid color-mix(in srgb, var(--air-tint) 62%, transparent);
   border-right-color: transparent;
