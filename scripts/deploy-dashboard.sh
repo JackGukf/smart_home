@@ -144,7 +144,11 @@ restart_unit() {
 }
 
 echo "==> Installing and restarting smart-home-dashboard.service..."
-ssh "${PI_TARGET}" "cd ${REMOTE_PATH} && HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) bash scripts/install-dashboard-service.sh >/tmp/smart-home-dashboard-install.log 2>&1"
+# With --skip-go2rtc the installer only installs: it would otherwise restart
+# go2rtc and the house memory too, whatever this script decides.
+INSTALL_ONLY=0
+[[ "${RESTART_GO2RTC}" == "1" ]] || INSTALL_ONLY=1
+ssh "${PI_TARGET}" "cd ${REMOTE_PATH} && INSTALL_ONLY=${INSTALL_ONLY} HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) bash scripts/install-dashboard-service.sh >/tmp/smart-home-dashboard-install.log 2>&1"
 if [[ "${RESTART_GO2RTC}" == "1" ]]; then
     restart_unit go2rtc.service
 fi

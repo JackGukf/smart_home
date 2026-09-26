@@ -163,3 +163,14 @@ def test_build_metadata_commits_are_not_changes(tmp_path, monkeypatch):
     monkeypatch.setattr(deploy.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0})())
     changed, deleted = deploy.changed_files("abc..HEAD")
     assert changed == ["src/python/npu_detector.py"] and deleted == ["scripts/old.sh"]
+
+
+def test_the_dashboard_installer_leaves_restarts_to_the_new_deploy():
+    """--skip-go2rtc alone did not stop go2rtc restarting: the installer
+    restarted it (and the house memory) on every dashboard deploy."""
+    installer = (ROOT / "scripts" / "install-dashboard-service.sh").read_text(encoding="utf-8")
+    dashboard = (ROOT / "scripts" / "deploy-dashboard.sh").read_text(encoding="utf-8")
+    only = installer.index('if [[ "${INSTALL_ONLY:-0}" == "1" ]]')
+    assert only < installer.index('systemctl --user restart "${service_name}"')
+    assert '[[ "${RESTART_GO2RTC}" == "1" ]] || INSTALL_ONLY=1' in dashboard
+    assert "INSTALL_ONLY=${INSTALL_ONLY}" in dashboard

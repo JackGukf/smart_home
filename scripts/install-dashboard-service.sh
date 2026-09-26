@@ -57,6 +57,15 @@ for service_name in "${SERVICE_NAMES[@]}"; do
   systemctl --user enable "${service_name}"
 done
 
+# INSTALL_ONLY=1 (deploy-dashboard.sh --skip-go2rtc, i.e. scripts/deploy.py):
+# restarts are the caller's. Restarting all three here on every dashboard deploy
+# reconnected every camera (go2rtc) and the house memory for a CSS change -
+# found 2026-09-25, after --skip-go2rtc alone left go2rtc restarting anyway.
+if [[ "${INSTALL_ONLY:-0}" == "1" ]]; then
+  echo "units installed and enabled; restarts left to the caller"
+  exit 0
+fi
+
 systemctl --user stop smart-home-dashboard.service 2>/dev/null || true
 if pgrep -u "$(id -u)" -f "uvicorn src.python.web_app:app.*--port 8000" >/dev/null; then
   pkill -u "$(id -u)" -f "uvicorn src.python.web_app:app.*--port 8000"
