@@ -44,7 +44,12 @@ PY
 
 fail() { echo "offsite backup FAILED: $1" >&2; status false "$1"; exit 1; }
 
-[[ -n "${RESTIC_PASSWORD:-}" && -n "${RESTIC_REPOSITORY:-}" ]] || fail "RESTIC_PASSWORD / RESTIC_REPOSITORY not in .env"
+# Not set up yet (docs/offsite-backup.md) is not a failure: no status is written,
+# so the heartbeat stays quiet until the first real run.
+if [[ -z "${RESTIC_PASSWORD:-}" || -z "${RESTIC_REPOSITORY:-}" ]]; then
+    echo "offsite backup not set up yet (RESTIC_PASSWORD / RESTIC_REPOSITORY not in .env) - skipped"
+    exit 0
+fi
 
 bash "${PROJECT_ROOT}/scripts/backup-smart-home.sh" --local --out "${BACKUPS}" </dev/null \
     || fail "the local archive failed (backup-smart-home.sh)"

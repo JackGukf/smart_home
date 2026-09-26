@@ -145,3 +145,12 @@ def test_the_nightly_backup_units():
     job = (ROOT / "scripts/offsite-backup.sh").read_text(encoding="utf-8")
     assert "--keep-daily 14 --keep-weekly 8 --keep-monthly 12" in job
     assert "backup-smart-home.sh\" --local" in job and "</dev/null" in job
+
+
+def test_an_unconfigured_backup_skips_quietly_rather_than_failing():
+    """The timer was enabled before Google Drive was connected; a first 02:40
+    run must not write a failure and page the owner."""
+    job = (ROOT / "scripts/offsite-backup.sh").read_text(encoding="utf-8")
+    skip = job.index("not set up yet")
+    assert "exit 0" in job[skip:skip + 200]
+    assert job.index("status()") < skip < job.index("backup-smart-home.sh\" --local")
