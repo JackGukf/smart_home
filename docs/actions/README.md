@@ -16,7 +16,7 @@ the board), *Owner* (needs a person: hardware, accounts, a phone, a decision), o
 | 2 | [C1 Deploy everything a commit changes](c-deploy-quality.md#c1-deploy-everything-a-commit-changes) | Claude | M | ☑ 2026-09-25 |
 | 3 | [C2 A green test suite](c-deploy-quality.md#c2-a-green-test-suite) | Claude | M | ☑ 2026-09-25 (clean-machine run: C3) |
 | 4 | [C3 CI on GitHub](c-deploy-quality.md#c3-ci-on-github) | Claude | S | ☑ 2026-09-25 |
-| 5 | [A2 Intrusion: critical push and escalation](a-safety-security.md#a2-intrusion-critical-push-and-escalation) | Claude | S | ☐ |
+| 5 | [A2 Intrusion: critical push and escalation](a-safety-security.md#a2-intrusion-critical-push-and-escalation) | Claude | S | ◐ installed; live test pending |
 | 6 | [B1 Automatic off-site backups](b-resilience.md#b1-automatic-off-site-backups) | both | M | ☐ |
 | 7 | [B4 Watchdog for the new services](b-resilience.md#b4-watchdog-for-the-new-services) | Claude | S | ☐ |
 | 8 | [A4 The stairs sensor](a-safety-security.md#a4-the-stairs-sensor) | both | S | ☐ |

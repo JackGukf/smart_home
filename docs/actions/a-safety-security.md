@@ -30,7 +30,14 @@ within ~10 minutes, and plugging it back in a "back up" message; the setup is in
 **Owner.** Pick the service and create the account (it gives the ping URL).
 
 ## A2 Intrusion: critical push and escalation
-☐ · Claude · S
+◐ · Claude · S
+
+**Installed 2026-09-25** (`c384253`, `install-security-response.py --apply`): when the alarm speaker
+starts, `script.intrusion_alert` - critical push naming the cause with Stop and I know, Telegram,
+then both every 2 minutes for up to 30 until answered (also after the speaker stops by itself).
+Owner's choices: **no second person**; Stop silences and answers, I know answers and lets it
+sound. The dashboard's Stop and I know and the bedroom button answer too; an unanswered alert
+stays as a red banner once the speaker has stopped. Live test pending.
 
 **Why.** When the intruder rule sounds the alarm speaker, the only messages are
 the night watch's Telegram photos. There is no critical iPhone push (smoke and
