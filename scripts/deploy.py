@@ -415,6 +415,23 @@ def rollback(board: Board, units: dict[str, Unit], dry_run: bool) -> int:
     return execute(plan, board, force=True, board_hashes={})
 
 
+def add_missing(board: Board, dry_run: bool) -> int:
+    """Files that never changed after the board was restored never reach it by
+    a per-commit deploy (scripts/lib/hosts.sh, found 2026-09-25). Copy what is
+    absent; leave everything present alone."""
+    tracked = [p for p in git("ls-files", *DEPLOYABLE).splitlines() if deployable(p)]
+    hashes, _, _ = board.state(tracked)
+    missing = [p for p in tracked if hashes.get(p) is None]
+    print(f"{len(missing)} tracked file(s) absent on the board" + (":" if missing else ""))
+    for path in missing:
+        print(f"    {path}")
+    if missing and not dry_run:
+        subprocess.run(["rsync", "-a", "--files-from=-", f"{PROJECT_ROOT}/", f"{board.target}:{board.path}/"],
+                       input="\n".join(missing).encode(), check=True)
+        print(f"==> Copied {len(missing)} file(s); nothing restarted")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     from src.python.hosts import host
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -422,6 +439,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="show the plan; change nothing")
     ap.add_argument("--force", action="store_true", help="overwrite board-side edits")
     ap.add_argument("--rollback", action="store_true", help="undo the last deploy on the board")
+    ap.add_argument("--add-missing", action="store_true",
+                    help="copy tracked files the board does not have at all; overwrite and restart nothing")
     ap.add_argument("--no-tests", action="store_true",
                     help="skip the related tests (also DEPLOY_SKIP_TESTS=1)")
     args = ap.parse_args(argv)
@@ -430,6 +449,8 @@ def main(argv: list[str] | None = None) -> int:
     units = read_units(PROJECT_ROOT)
     if args.rollback:
         return rollback(board, units, args.dry_run)
+    if args.add_missing:
+        return add_missing(board, args.dry_run)
 
     rev_range = args.range or default_range(board)
     changed, deleted = changed_files(rev_range)

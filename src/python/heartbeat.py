@@ -16,6 +16,11 @@ The ping also carries the service watchdog's verdict:
 While the watchdog is paused (deploy/watchdog/.paused, during maintenance) a
 give-up does not fail the ping; a stale watchdog still does.
 
+It also fails when the nightly off-site backup (scripts/offsite-backup.sh) has
+not succeeded for 36 hours - one missed night is a warning in the body, two
+are an alert. Before the backup is set up there is no status file, and that is
+not a failure.
+
 Standard library only, run by the system python3: a broken project virtualenv
 must not silence the one thing that reports breakage. And if this stops, the
 pings stop, which is itself the alert.
@@ -38,6 +43,8 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATUS_PATH = PROJECT_ROOT / "service_watchdog.json"
 WATCHDOG_STALE_S = 15 * 60
+BACKUP_STATUS_PATH = Path.home() / "backups" / "offsite-status.json"
+BACKUP_STALE_S = 36 * 3600
 ATTEMPTS = 3
 
 
@@ -71,6 +78,19 @@ def verdict(status: dict[str, Any] | None, now: float) -> tuple[bool, str]:
     return True, head + f"All {len(report)} checks reported.\n" + "\n".join(report)
 
 
+def backup_verdict(doc: dict[str, Any] | None, now: float) -> tuple[bool, str]:
+    """(healthy, one line) for the off-site backup."""
+    if doc is None:
+        return True, "Off-site backup: not set up yet."
+    last_ok = doc.get("last_ok")
+    if last_ok and now - float(last_ok) <= BACKUP_STALE_S:
+        hours = (now - float(last_ok)) / 3600
+        warn = "" if doc.get("ok", True) else f" (last night failed: {doc.get('message', '?')})"
+        return True, f"Off-site backup: last success {hours:.0f} h ago{warn}."
+    since = f"{(now - float(last_ok)) / 3600:.0f} h" if last_ok else "ever"
+    return False, f"Off-site backup has not succeeded for {since}: {doc.get('message', 'no message')}"
+
+
 def ping(url: str, healthy: bool, body: str, timeout: float = 10.0,
          sleep=time.sleep, opener=urllib.request.urlopen) -> bool:
     target = url.rstrip("/") + ("" if healthy else "/fail")
@@ -100,7 +120,18 @@ def main(argv: list[str] | None = None) -> int:
         status = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         status = None
-    healthy, body = verdict(status, time.time())
+    now = time.time()
+    healthy, body = verdict(status, now)
+    try:
+        backup = json.loads(BACKUP_STATUS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        backup = None
+    backup_ok, backup_line = backup_verdict(backup, now)
+    if not backup_ok and healthy:
+        body = backup_line + "\n" + body
+    else:
+        body = body + "\n" + backup_line
+    healthy = healthy and backup_ok
     if args.dry_run:
         print(("OK" if healthy else "FAIL") + "\n" + body)
         return 0

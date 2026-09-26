@@ -101,3 +101,47 @@ def test_standard_library_only():
     imports = [line.split()[1] for line in source.splitlines() if line.startswith(("import ", "from "))]
     assert all(name.split(".")[0] in {"__future__", "argparse", "json", "os", "sys", "time", "urllib",
                                       "pathlib", "typing"} for name in imports)
+
+
+def test_no_backup_set_up_yet_is_not_a_failure():
+    ok, line = hb.backup_verdict(None, NOW)
+    assert ok and "not set up" in line
+
+
+def test_one_missed_night_warns_two_fail():
+    last_night = {"last_ok": NOW - 20 * 3600, "ok": True}
+    ok, line = hb.backup_verdict(last_night, NOW)
+    assert ok and "20 h ago" in line
+    failed_tonight = {"last_ok": NOW - 30 * 3600, "ok": False, "message": "restic backup failed"}
+    ok, line = hb.backup_verdict(failed_tonight, NOW)
+    assert ok and "last night failed: restic backup failed" in line
+    two_nights = {"last_ok": NOW - 50 * 3600, "ok": False, "message": "restic backup failed"}
+    ok, line = hb.backup_verdict(two_nights, NOW)
+    assert not ok and line.startswith("Off-site backup has not succeeded for 50 h")
+    never = {"ok": False, "message": "RESTIC_PASSWORD not in .env"}
+    assert hb.backup_verdict(never, NOW)[0] is False
+
+
+def test_a_stale_backup_fails_the_ping_through_main(monkeypatch, tmp_path, capsys):
+    import json as _json
+    status = tmp_path / "watchdog.json"
+    status.write_text(_json.dumps(_status()), encoding="utf-8")
+    backup = tmp_path / "offsite.json"
+    backup.write_text(_json.dumps({"last_ok": 1.0, "ok": False, "message": "boom"}), encoding="utf-8")
+    monkeypatch.setattr(hb, "STATUS_PATH", status)
+    monkeypatch.setattr(hb, "BACKUP_STATUS_PATH", backup)
+    monkeypatch.setattr(hb.time, "time", lambda: NOW)
+    monkeypatch.setattr(hb, "load_dotenv", lambda path: None)
+    assert hb.main(["--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("FAIL\nOff-site backup has not succeeded")
+
+
+def test_the_nightly_backup_units():
+    unit = (ROOT / "deploy/systemd/user/offsite-backup.service").read_text(encoding="utf-8")
+    timer = (ROOT / "deploy/systemd/user/offsite-backup.timer").read_text(encoding="utf-8")
+    assert "ExecStart=/home/orangepi/smart_home_AI/scripts/offsite-backup.sh" in unit and "Type=oneshot" in unit
+    assert "OnCalendar=*-*-* 02:40:00 America/Vancouver" in timer and "Persistent=true" in timer
+    job = (ROOT / "scripts/offsite-backup.sh").read_text(encoding="utf-8")
+    assert "--keep-daily 14 --keep-weekly 8 --keep-monthly 12" in job
+    assert "backup-smart-home.sh\" --local" in job and "</dev/null" in job

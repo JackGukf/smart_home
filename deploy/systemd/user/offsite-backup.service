@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly encrypted off-site backup to Google Drive (scripts/offsite-backup.sh)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/scripts/offsite-backup.sh
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=idle

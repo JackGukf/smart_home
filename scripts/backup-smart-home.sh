@@ -213,10 +213,18 @@ echo "==> Collecting on ${PI_HOST} (HA config read as root so .storage is comple
 COLLECT=$(cat <<EOF
 set -euo pipefail
 export SUDO_ASKPASS="${ASKPASS}"
+# Unattended (the nightly off-site backup) there is nobody to type a sudo
+# password; then Home Assistant's config is copied out through Docker, whose
+# daemon reads the root-owned .storage files for us. The login user is in the
+# docker group; the verifier still checks .storage/auth arrived.
+HA_VIA_DOCKER=0
 if sudo -n true 2>/dev/null; then
     SUDO="sudo -n"
 elif [ -n "\${SUDO_ASKPASS:-}" ] && [ -x "\${SUDO_ASKPASS}" ]; then
     SUDO="sudo -A"
+elif [ ! -t 0 ] && docker inspect "${HA_CONTAINER}" >/dev/null 2>&1; then
+    SUDO=""
+    HA_VIA_DOCKER=1
 else
     SUDO="sudo"
 fi
@@ -262,8 +270,13 @@ fi
 
 # Home Assistant config, as root.  .storage/auth is mode 600 root-owned; read
 # as the login user it is skipped and the restore loses every token.
-\$SUDO cp -a "${HA_CONFIG}" "\$STAGE/homeassistant-config"
-\$SUDO chown -R "\$(id -u):\$(id -g)" "\$STAGE/homeassistant-config"
+if [ "\$HA_VIA_DOCKER" = "1" ]; then
+    mkdir -p "\$STAGE/homeassistant-config"
+    docker cp "${HA_CONTAINER}:/config/." - | tar -x -C "\$STAGE/homeassistant-config"
+else
+    \$SUDO cp -a "${HA_CONFIG}" "\$STAGE/homeassistant-config"
+    \$SUDO chown -R "\$(id -u):\$(id -g)" "\$STAGE/homeassistant-config"
+fi
 
 # Matter controller fabric. /var/lib/matter holds the operational credentials
 # for every commissioned Matter device; without it a rebuilt controller cannot
@@ -271,8 +284,13 @@ fi
 # root-owned and lives on the root filesystem, so it does not survive a reflash
 # and is not covered by anything else here.
 if [ -d "${MATTER_STORAGE}" ]; then
-    \$SUDO cp -a "${MATTER_STORAGE}" "\$STAGE/matter-server"
-    \$SUDO chown -R "\$(id -u):\$(id -g)" "\$STAGE/matter-server"
+    # Owned by the login user on this board; sudo only where it is not.
+    if [ -r "${MATTER_STORAGE}" ] && [ -z "\$(find "${MATTER_STORAGE}" ! -readable -print -quit 2>/dev/null)" ]; then
+        cp -a "${MATTER_STORAGE}" "\$STAGE/matter-server"
+    else
+        \$SUDO cp -a "${MATTER_STORAGE}" "\$STAGE/matter-server"
+        \$SUDO chown -R "\$(id -u):\$(id -g)" "\$STAGE/matter-server"
+    fi
 else
     # Recorded so the verifier can tell "this host has no Matter controller",
     # which is fine, from "the controller is here and its credentials did not

@@ -1,0 +1,12 @@
+[Unit]
+Description=Off-site backup at 02:40
+
+[Timer]
+# Before the other night jobs (ecobee 03:20, learning 03:30, forecast 03:45,
+# digest 04:00), so they never run at once on a swapless board.
+OnCalendar=*-*-* 02:40:00 America/Vancouver
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
