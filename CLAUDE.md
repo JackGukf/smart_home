@@ -121,6 +121,7 @@
 > `scripts/install-safety-alerts.py`, sensors in `src/python/safety_sensors.py`,
 > see `docs/safety-alerts.md`. The dashboard's **disarm PIN** is
 > `security.disarm_pin` in `devices.local.yaml`, quoted (`docs/house-modes.md`).
+> **House rules** (2026-09-26): the thresholds, delays and counts written that week are settings, edited on Settings -> House rules - `src/python/house_settings.py` is the registry (label, range, default, and whether it is a Home Assistant helper the rules read in their templates or a board value the services read each time). Put a new tunable number there, not in a constant; `scripts/install-house-settings.py` creates the helpers.
 > `/bridge/*` answers loopback only; sessions are signed with a random key
 > (`configs/dashboard_secret.key` or `DASHBOARD_SECRET_KEY`), never the password.
 > **Night watch** (2026-09-25, `night-watch.service`): at night, outdoor motion
