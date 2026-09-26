@@ -92,7 +92,14 @@ add a second sensor or use the bedroom radar as a second witness.
 **Done when.** Ten walks down the stairs are ten detections.
 
 ## A5 Freeze and furnace-failure alert
-☐ · Claude · S
+☑ 2026-09-26 · Claude · S
+
+**Done 2026-09-26** (`scripts/install-heating-alerts.py`): below **Too cold below** (12 °C) for 10
+minutes, or heat called for **Furnace failing after** (60 min) without the house 0.3 °C warmer,
+runs `script.heating_alert` - a time-sensitive push (through Focus, not silent mode), Telegram and
+a red banner naming the temperatures, hourly until "I know". Cloud ecobee first, the local one if
+the internet is down. Both numbers are on **Settings -> House rules** (the owner asked for them
+and every other number of that week to be settable there - `src/python/house_settings.py`).
 
 **Why.** A furnace that fails in a Vancouver winter is found when the house is
 cold. The ecobee already reports `equipment_running` and the temperatures.

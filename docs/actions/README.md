@@ -20,7 +20,7 @@ the board), *Owner* (needs a person: hardware, accounts, a phone, a decision), o
 | 6 | [B1 Automatic off-site backups](b-resilience.md#b1-automatic-off-site-backups) | both | M | ☑ 2026-09-26 |
 | 7 | [B4 Watchdog for the new services](b-resilience.md#b4-watchdog-for-the-new-services) | Claude | S | ☑ 2026-09-26 |
 | 8 | [A4 The stairs sensor](a-safety-security.md#a4-the-stairs-sensor) | both | S | ☑ 2026-09-26 (no change needed) |
-| 9 | [A5 Freeze and furnace-failure alert](a-safety-security.md#a5-freeze-and-furnace-failure-alert) | Claude | S | ☐ |
+| 9 | [A5 Freeze and furnace-failure alert](a-safety-security.md#a5-freeze-and-furnace-failure-alert) | Claude | S | ☑ 2026-09-26 |
 | 10 | [B2 Pinned image versions](b-resilience.md#b2-pinned-image-versions) | Claude | S | ☐ |
 | 11 | [B3 Memory safety](b-resilience.md#b3-memory-safety) | Claude | S | ☐ |
 | 12 | [C4 Drift check and board-only config](c-deploy-quality.md#c4-drift-check-and-board-only-config) | Claude | M | ☐ |
@@ -58,6 +58,7 @@ Dated follow-ups and questions for the owner: [f-follow-ups.md](f-follow-ups.md)
 | cameras | Office camera motion gate; cars on the garage camera only | `32412dd`, `7903b8f` |
 | A1 | External heartbeat: healthchecks.io every 5 min, `/fail` when the watchdog gives up; Telegram DOWN/UP tested | `f452e24` |
 | A6 | SSH: `PermitRootLogin no`, `PasswordAuthentication no` (owner) | - |
+| A5 | Too cold (12 °C) / furnace not heating (60 min): time-sensitive push, Telegram, banner; both numbers on the new Settings -> House rules page | this commit |
 | A4 | Stairs sensor measured: 92% of trips up, 93% down, none missed at night; the 09-25 "miss" was the office camera's false person misread - no change | - |
 | B4 | Watchdog: night watch alive, camera detection, 18 alert rules + 4 scripts enabled, 6 timers; tested by switching a rule off and stopping a timer (restarted by itself) | this commit |
 | B1 | Nightly encrypted backup to Backblaze B2 (02:40; 14/8/12 kept); no sudo needed; heartbeat pages after 36 h; restore tested byte-identical | this commit |
