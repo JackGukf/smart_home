@@ -19,7 +19,7 @@ board was rebuilt, the watchdog finding). This file is the *procedure*.
 | Boots from | NVMe in the PCIe slot (`/dev/nvme0n1p2`) |
 | Backup | newest `~/orangepi-recovery/smart-home-backup-*.tgz` on the workstation |
 | Repo | `git@github.com:JackGukf/smart_home.git`, branch `main` |
-| Password | `orangepi` (still the default — see Open risks) |
+| Password | the owner's (changed from the image default 2026-09-25, `orangepi` and root; not written here). A **freshly flashed** board is back to `orangepi` — see Open risks |
 
 **Use the newest `smart-home-backup-*.tgz`, not `nvme-recovery-2026-09-03.tgz`.**
 The older archive is missing `.storage/auth` and will cost you every Home
@@ -281,8 +281,11 @@ Ordered by how much time they cost.
 
 ## 4. Open risks
 
-- **Default password.** Still `orangepi/orangepi` on a host running Home
-  Assistant on the LAN. Change it.
+- **Default password after a reflash.** The running board's `orangepi` and root
+  passwords were changed on 2026-09-25, but a freshly flashed image comes back
+  as `orangepi/orangepi` - on a host that is about to hold the Home Assistant
+  token, the Zigbee network key and the Telegram bot token. Change both
+  (`passwd`, `sudo passwd root`) before step 1.2 restores any of those.
 - **`North bedroom light switch`** is not commissioned on the current Matter
   fabric. Factory reset it, re-pair, then re-run the backup.
 - **Stale Tuya devices linger after a sensor moves to the Zigbee dongle.**

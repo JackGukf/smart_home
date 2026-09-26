@@ -103,7 +103,8 @@
 > **Never set `RuntimeWatchdogSec` on this board.** Its SBSA watchdog has a fixed
 > 10 s timeout that cannot be raised, so a 60 s setting resets the board every
 > ~80 s with no kernel panic. That is the prime suspect for the 2026-09-02 reset
-> loop. The default password is also still `orangepi`.
+> loop. The `orangepi` and root passwords were changed from the image default
+> on 2026-09-25; a freshly flashed board is back to `orangepi` until changed.
 
 > **House modes and the armed house (2026-09-24).** `input_select.house_mode`
 > (Home / Away / Vacation) drives lights, the alarm and an ecobee vacation, set
