@@ -96,7 +96,13 @@ It should say `ARM aarch64`.
 
 ## Deploy
 
-From WSL:
+**Python services, scripts and user units deploy on every commit** (2026-09-25): the post-commit
+hook runs `scripts/deploy.py`, which copies what the commit changed, refreshes changed unit files
+where installed, and restarts only the running services that use the changed code. `--dry-run`
+shows its plan, `--rollback` undoes the last deploy, `--force` overwrites board-side edits it
+refused. Install the hook once per clone with `scripts/install-git-hooks.sh`.
+
+The C++ controller binary still deploys with `deploy-to-pi.sh`. From WSL:
 
 ```bash
 cd ~/workspace/smart_home_AI

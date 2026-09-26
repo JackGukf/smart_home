@@ -2,21 +2,27 @@
 # Deploy dashboard files to the Orange Pi 6 Plus and restart the systemd
 # dashboard service. Pass --host/--user to target a different board (e.g. the
 # secondary Raspberry Pi 4 install).
-# Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER] [--remote-path PATH]
+# Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER] [--remote-path PATH] [--skip-go2rtc]
+#
+# --skip-go2rtc: scripts/deploy.py passes it and restarts go2rtc itself only when
+# go2rtc's own files changed. A go2rtc restart reconnects every camera at once -
+# on 2026-09-25 about a dozen dashboard deploys did that for nothing.
 set -euo pipefail
 
 # Addresses come from configs/hosts.env - the only place they are written down.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/hosts.sh"
 PI_USER="${PI_USER:-orangepi}"
 REMOTE_PATH="${REMOTE_PATH:-}"
+RESTART_GO2RTC=1
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)  PI_HOST="$2"; shift 2 ;;
         --user)  PI_USER="$2"; shift 2 ;;
         --remote-path) REMOTE_PATH="$2"; shift 2 ;;
+        --skip-go2rtc) RESTART_GO2RTC=0; shift ;;
         -h|--help)
-            echo "Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER] [--remote-path PATH]"
+            echo "Usage: scripts/deploy-dashboard.sh [--host HOST] [--user USER] [--remote-path PATH] [--skip-go2rtc]"
             exit 0 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -139,7 +145,9 @@ restart_unit() {
 
 echo "==> Installing and restarting smart-home-dashboard.service..."
 ssh "${PI_TARGET}" "cd ${REMOTE_PATH} && HOME=${REMOTE_HOME} XDG_RUNTIME_DIR=/run/user/\$(id -u) bash scripts/install-dashboard-service.sh >/tmp/smart-home-dashboard-install.log 2>&1"
-restart_unit go2rtc.service
+if [[ "${RESTART_GO2RTC}" == "1" ]]; then
+    restart_unit go2rtc.service
+fi
 restart_unit smart-home-dashboard.service
 
 # Only now do open browsers learn there is a new build.

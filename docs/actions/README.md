@@ -13,7 +13,7 @@ the board), *Owner* (needs a person: hardware, accounts, a phone, a decision), o
 | # | Item | Owner | Size | Status |
 |---|---|---|---|---|
 | 1 | [A1 External heartbeat](a-safety-security.md#a1-external-heartbeat) | both | S | ☑ 2026-09-25 |
-| 2 | [C1 Deploy everything a commit changes](c-deploy-quality.md#c1-deploy-everything-a-commit-changes) | Claude | M | ☐ |
+| 2 | [C1 Deploy everything a commit changes](c-deploy-quality.md#c1-deploy-everything-a-commit-changes) | Claude | M | ◐ built; first live deploys pending |
 | 3 | [C2 A green test suite](c-deploy-quality.md#c2-a-green-test-suite) | Claude | M | ☐ |
 | 4 | [C3 CI on GitHub](c-deploy-quality.md#c3-ci-on-github) | Claude | S | ☐ |
 | 5 | [A2 Intrusion: critical push and escalation](a-safety-security.md#a2-intrusion-critical-push-and-escalation) | Claude | S | ☐ |
