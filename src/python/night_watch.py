@@ -19,6 +19,12 @@ What it does, at night (NIGHT_WATCH_HOURS, default 22:00-06:30):
     re-encoding) under ~/night-clips/<date>/.
   * Sends the snapshot to Telegram, at most once per trigger per 5 minutes, so a
     sensor firing every two minutes on a windy night is one message, not five.
+  * A motion or vibration sensor on its own is **not** believed: its clip is
+    checked, and the photo is sent only if the camera saw something move - the
+    moment of most movement, boxed. The front door's outdoor sensor fired 437
+    times in the week to 2026-09-25, 88 of them at night, and at night a camera
+    or the door agreed 3 times; the five of that evening showed nothing moving
+    in 20 s of video. The clip and snapshot are kept either way.
 
 It also keeps an *evidence* snapshot, locally and without Telegram, whenever an
 indoor camera's person detection rises at night. That exists because the office
@@ -283,6 +289,11 @@ class NightWatch:
                 self.snapshot(trigger, at)
             return
         clip = trigger.records_clip and self.clip_cooldown.ready(trigger.camera)
+        if trigger.kind == "sensor":
+            image = self.snapshot(trigger, at)
+            if clip:
+                self.pool.submit(self.confirm_by_camera, trigger, at, key, image)
+            return
         if clip:
             self.pool.submit(self.record, trigger, at)
         image = self.snapshot(trigger, at)
@@ -310,10 +321,11 @@ class NightWatch:
         LOG.info("%s: %s -> %s", trigger.camera, trigger.reason, path.name)
         return jpeg
 
-    def record(self, trigger: Trigger, at: datetime) -> None:
+    def record(self, trigger: Trigger, at: datetime) -> Path | None:
+        """The clip's path, or None when there is none."""
         if not self.clips.acquire(blocking=False):
             LOG.warning("%s: clip skipped, %d already recording", trigger.camera, 3)
-            return
+            return None
         try:
             path = self._path(trigger, at, ".mp4")
             command = ["ffmpeg", "-nostdin", "-loglevel", "error", "-rtsp_transport", "tcp",
@@ -326,10 +338,28 @@ class NightWatch:
                 LOG.warning("%s: clip failed: %s", trigger.camera,
                             result.stderr.decode("utf-8", "replace").strip()[-300:])
                 path.unlink(missing_ok=True)
+                return None
+            return path
         except subprocess.TimeoutExpired:
             LOG.warning("%s: clip timed out", trigger.camera)
+            return None
         finally:
             self.clips.release()
+
+    def confirm_by_camera(self, trigger: Trigger, at: datetime, key: str, snapshot: bytes | None) -> None:
+        """A sensor alone is not believed: send only if its clip shows movement."""
+        path = self.record(trigger, at)
+        if path is None:
+            # No clip to judge by - better the snapshot than silence.
+            if snapshot and self.telegram_cooldown.ready(key):
+                self.send_photo(snapshot, caption(trigger, at, False) + "\n(no clip to confirm it)")
+            return
+        moved, frame = movement_in_clip(path)
+        if not moved:
+            LOG.info("%s: %s - nothing moved on camera, not sent", trigger.camera, trigger.reason)
+            return
+        if self.telegram_cooldown.ready(key):
+            self.send_photo(frame or snapshot or b"", caption(trigger, at, True) + "\nThe camera saw movement.")
 
     def send_photo(self, jpeg: bytes, text: str) -> None:
         if not self.s.telegram_token or not self.s.telegram_chats:
@@ -366,6 +396,56 @@ class NightWatch:
                 day.rmdir()
         if doomed:
             LOG.info("tidied %d old file(s)", len(doomed))
+
+
+# Movement worth a message, on a 480x270 copy: a blob of at least 0.8% of the
+# picture (a cat is several times that; the camera's ticking clock ~0.03%), and
+# not a change of most of it (headlights, the camera switching to night mode).
+MOVING_BLOB = 0.008
+LIGHTING_CHANGE = 0.25
+
+
+def movement_in_clip(path: Path, samples_per_s: float = 4.0) -> tuple[bool, bytes | None]:
+    """(moved, the frame with the most movement, boxed, as JPEG)."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return True, None                   # cannot judge: do not swallow the alert
+    cap = cv2.VideoCapture(str(path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 15
+    step = max(1, int(round(fps / samples_per_s)))
+    area = 480 * 270
+    prev, index, best = None, 0, (0, None, None)
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        index += 1
+        if index % step:
+            continue
+        small = cv2.resize(frame, (480, 270))
+        gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+        if prev is not None:
+            changed = cv2.absdiff(gray, prev) > 25
+            if changed.mean() < LIGHTING_CHANGE:
+                mask = cv2.dilate(changed.astype(np.uint8), np.ones((5, 5), np.uint8))
+                n, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+                if n > 1:
+                    i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+                    blob = int(stats[i, cv2.CC_STAT_AREA])
+                    if blob > best[0]:
+                        scale = [frame.shape[1] / 480, frame.shape[0] / 270] * 2   # x, y, w, h
+                        best = (blob, frame, stats[i, :4] * scale)
+        prev = gray
+    cap.release()
+    blob, frame, box = best
+    if blob < MOVING_BLOB * area or frame is None:
+        return False, None
+    x, y, w, h = (int(v) for v in box)
+    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 200, 255), 3)
+    ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    return True, (jpeg.tobytes() if ok else None)
 
 
 def annotate(jpeg: bytes, detections: Iterable[dict[str, Any]]) -> bytes:

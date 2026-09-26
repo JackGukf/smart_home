@@ -12,9 +12,9 @@ nothing was kept.
 
 | Trigger (MQTT) | Camera recorded | Telegram photo |
 | --- | --- | --- |
-| Motion sensor and TH front door (`presence`) | `front_door_camera` | yes |
-| Motion sensor and TH Backyard, ... fence south (`presence`) | `wyze_camera` (backyard) | yes |
-| Vibration sensor backdoor (`vibration`) | `wyze_camera` | yes |
+| Motion sensor and TH front door (`presence`) | `front_door_camera` | only if the clip shows movement |
+| Motion sensor and TH Backyard, ... fence south (`presence`) | `wyze_camera` (backyard) | only if the clip shows movement |
+| Vibration sensor backdoor (`vibration`) | `wyze_camera` | only if the clip shows movement |
 | A person rising on `front_door_camera`, `frontyard_camera`, `garage_camera` | that camera, with the detector's boxes drawn | yes |
 | **Alarm speaker** starts (`alarm`) - **day or night** | `office_camera` and `family_room_camera` | yes |
 | A person rising on `office_camera` / `family_room_camera` | snapshot only, boxes drawn - **evidence**, see below | no |
@@ -22,6 +22,20 @@ nothing was kept.
 Night is `NIGHT_WATCH_HOURS` in `.env` (default `22:00-06:30`). The first message
 on a topic after (re)connecting is a baseline, not an event: retained messages
 arrive on connect.
+
+## A sensor alone is not believed (2026-09-25)
+
+The front door's outdoor motion sensor fired **437 times in the week to 2026-09-25**, 88 of them
+at night - and at night a camera person or the door opening agreed with it **3 times**. That
+evening it sent five Telegram photos of an empty porch; the five clips show nothing moving in
+20 s (only the camera's clock). A PIR by the door sees heat down the walkway and beyond what
+the camera shows clearly, and weather.
+
+So a motion or vibration sensor's trigger records the snapshot and clip as before, then
+`movement_in_clip` checks the clip: the photo goes to Telegram only if the camera saw
+something move (a moving blob of at least 0.8% of the picture, not a change of most of it -
+headlights, night mode), and it is the frame of most movement, boxed. Without a clip the
+snapshot is sent. A person seen by the camera's own detection is sent at once, as before.
 
 ## What it does
 

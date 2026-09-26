@@ -124,12 +124,15 @@ def test_multipart_carries_the_fields_and_the_photo():
 
 
 class _Recording(NightWatch):
-    """handle() without cameras, ffmpeg or Telegram."""
+    """handle() without cameras, ffmpeg or Telegram. `moved` is what the clip
+    check says; `clip_ok` whether a clip could be recorded."""
 
-    def __init__(self):
+    def __init__(self, moved=True, clip_ok=True):
         super().__init__(Settings(telegram_token="t", telegram_chats=["1"]))
         self.snaps, self.clips_made, self.photos = [], [], []
         self.pool.submit = lambda fn, *a: fn(*a)          # run inline
+        self.moved, self.clip_ok = moved, clip_ok
+        nw.movement_in_clip = lambda path: (self.moved, b"boxed" if self.moved else None)
 
     def snapshot(self, trigger, at):
         self.snaps.append(trigger.camera)
@@ -137,13 +140,14 @@ class _Recording(NightWatch):
 
     def record(self, trigger, at):
         self.clips_made.append(trigger.camera)
+        return Path("clip.mp4") if self.clip_ok else None
 
     def send_photo(self, jpeg, text):
         self.photos.append(text)
 
 
 def test_a_sensor_firing_every_two_minutes_is_one_message_not_five():
-    watch = _Recording()
+    watch = _Recording(moved=True)
     trigger = Trigger("front_door_camera", "Front door motion", "sensor")
     for _ in range(5):
         watch.handle(trigger)
@@ -223,3 +227,89 @@ def test_the_token_never_reaches_the_log(monkeypatch, caplog):
     monkeypatch.setattr(nw.time, "sleep", lambda s: None)
     NightWatch(Settings(telegram_token="SECRET123", telegram_chats=["1"])).send_photo(b"j", "hi")
     assert "SECRET123" not in caplog.text and "not sent" in caplog.text
+
+
+@pytest.fixture(autouse=True)
+def _restore_movement_check(monkeypatch):
+    monkeypatch.setattr(nw, "movement_in_clip", nw.movement_in_clip)
+
+
+def test_a_sensor_alone_is_not_believed_when_nothing_moved_on_camera():
+    """2026-09-25: the front door's sensor fired five times in 90 minutes; the
+    clips showed nothing moving - and each one was a Telegram message."""
+    watch = _Recording(moved=False)
+    watch.handle(Trigger("front_door_camera", "Front door motion", "sensor"))
+    assert watch.snaps == ["front_door_camera"] and watch.clips_made == ["front_door_camera"]
+    assert watch.photos == []
+
+
+def test_a_sensor_confirmed_by_the_camera_sends_the_boxed_frame(monkeypatch):
+    watch = _Recording(moved=True)
+    sent = []
+    monkeypatch.setattr(watch, "send_photo", lambda jpeg, text: sent.append((jpeg, text)))
+    watch.handle(Trigger("front_door_camera", "Front door motion", "sensor"))
+    assert sent and sent[0][0] == b"boxed" and "saw movement" in sent[0][1]
+
+
+def test_without_a_clip_the_snapshot_is_sent_rather_than_nothing(monkeypatch):
+    watch = _Recording(clip_ok=False)
+    sent = []
+    monkeypatch.setattr(watch, "send_photo", lambda jpeg, text: sent.append((jpeg, text)))
+    watch.handle(Trigger("front_door_camera", "Front door motion", "sensor"))
+    assert sent == [(b"jpeg", sent[0][1])] and "no clip" in sent[0][1]
+
+
+def test_a_person_on_camera_is_still_sent_at_once(monkeypatch):
+    watch = _Recording(moved=False)
+    sent = []
+    monkeypatch.setattr(watch, "send_photo", lambda jpeg, text: sent.append(text))
+    watch.handle(Trigger("front_door_camera", "Person at the front door", "person"))
+    assert len(sent) == 1
+
+
+def _video(tmp_path, frames):
+    cv2 = pytest.importorskip("cv2")
+    path = tmp_path / "clip.avi"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 8, (480, 270))
+    for frame in frames:
+        writer.write(frame)
+    writer.release()
+    return path
+
+
+def _frames(n, draw):
+    import numpy as np
+    out = []
+    for i in range(n):
+        frame = np.full((270, 480, 3), 90, np.uint8)
+        draw(frame, i)
+        out.append(frame)
+    return out
+
+
+def test_a_ticking_clock_is_not_movement(tmp_path):
+    def clock(frame, i):
+        frame[250:258, 440:448] = 255 if i % 2 else 0          # the timestamp's digits
+    moved, _ = nw.movement_in_clip(_video(tmp_path, _frames(24, clock)))
+    assert not moved
+
+
+def test_something_walking_across_is_movement_and_is_boxed(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    def walker(frame, i):
+        x = 20 + i * 18
+        frame[100:180, x:x + 40] = 230                        # 40x80 px, ~2.5% of the picture
+    moved, jpeg = nw.movement_in_clip(_video(tmp_path, _frames(24, walker)))
+    assert moved and jpeg
+    image = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    assert image.shape[:2] == (270, 480)
+
+
+def test_headlights_sweeping_the_whole_picture_are_not_movement(tmp_path):
+    def lights(frame, i):
+        if i >= 12:
+            frame[:] = 200                                    # everything brighter at once
+    moved, _ = nw.movement_in_clip(_video(tmp_path, _frames(24, lights)))
+    assert not moved
