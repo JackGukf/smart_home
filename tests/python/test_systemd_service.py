@@ -253,7 +253,7 @@ def test_ai_services_are_memory_capped_because_the_board_has_no_swap() -> None:
     Enforceable here: the board runs cgroup v2 with the memory controller
     delegated to user.slice, checked before these were added.
     """
-    for name in ("llama-server.service", "npu-detector.service"):
+    for name in ("llama-server.service", "npu-detector.service", "night-watch.service"):
         unit = (PROJECT_ROOT / "deploy" / "systemd" / "user" / name).read_text(encoding="utf-8")
 
         assert "MemoryMax=" in unit, f"{name} has no memory cap"
@@ -416,3 +416,12 @@ def test_ecobee_runtime_is_fetched_every_morning_before_the_forecast() -> None:
     assert "ExecStart=/home/orangepi/smart_home_AI/.venv/bin/python -m src.python.ecobee_runtime --fetch --days 3" in service
     assert "Type=oneshot" in service and "WorkingDirectory=/home/orangepi/smart_home_AI" in service
     assert "OnCalendar=*-*-* 03:20:00 America/Vancouver" in timer and "Persistent=true" in timer
+
+
+def test_night_watch_runs_the_project_launcher_and_restarts() -> None:
+    unit = (PROJECT_ROOT / "deploy" / "systemd" / "user" / "night-watch.service").read_text(encoding="utf-8")
+    assert "ExecStart=/home/orangepi/smart_home_AI/scripts/run-night-watch.sh" in unit
+    assert "WorkingDirectory=/home/orangepi/smart_home_AI" in unit
+    assert "Restart=always" in unit
+    launcher = (PROJECT_ROOT / "scripts" / "run-night-watch.sh").read_text(encoding="utf-8")
+    assert "-m src.python.night_watch" in launcher and "secret.yaml" in launcher

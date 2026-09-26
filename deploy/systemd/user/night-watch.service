@@ -1,0 +1,18 @@
+[Unit]
+Description=Night watch - clips and Telegram photos of night-time motion outside
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/orangepi/smart_home_AI
+ExecStart=/home/orangepi/smart_home_AI/scripts/run-night-watch.sh
+Restart=always
+RestartSec=10
+# No swap on this board: bounded, so a runaway process fails alone. It holds a
+# JPEG at a time and up to three ffmpeg stream copies.
+MemoryMax=512M
+OOMPolicy=stop
+
+[Install]
+WantedBy=default.target

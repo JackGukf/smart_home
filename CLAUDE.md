@@ -123,6 +123,12 @@
 > `security.disarm_pin` in `devices.local.yaml`, quoted (`docs/house-modes.md`).
 > `/bridge/*` answers loopback only; sessions are signed with a random key
 > (`configs/dashboard_secret.key` or `DASHBOARD_SECRET_KEY`), never the password.
+> **Night watch** (2026-09-25, `night-watch.service`): at night, outdoor motion
+> or an outdoor camera's person -> 20 s clip + snapshot in `~/night-clips/`, photo
+> to Telegram; the siren records the indoor cameras day or night. The office
+> camera saw false "people" at night (chair/photos), so it now has the motion
+> gate; night evidence snapshots show its boxes. See `docs/night-watch.md`.
+> The garage camera also counts leaving/arriving (watch-only), `docs/house-modes.md`.
 
 > **AI view and gas from furnace runtime (2026-09-19).** The sidebar's
 > Automations is now **AI**: Automations as before, plus **AI data** - upload
@@ -401,6 +407,8 @@ Three things that will waste a day if you do not know them:
 - `docs/door-alerts.md` — **front door left open**: when it fires (A: last phone leaves,
   B: open 10 min and the house still), the shared dashboard banner, iPhone push, and
   Telegram setup (`scripts/install-door-alerts.py`, `input_boolean.front_door_alert`)
+- `docs/night-watch.md` — **night clips and Telegram photos**: triggers and cameras,
+  retention, the office camera's false "person" and the motion gate
 - `docs/safety-alerts.md` — **water leak and smoke**: the six sensors, the critical
   push / Telegram / red banner, why a Tuya flap does not re-alert but `unknown -> on`
   does, and the daily battery and not-reporting check (`scripts/install-safety-alerts.py`)
