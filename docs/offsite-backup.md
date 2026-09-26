@@ -40,7 +40,7 @@ key limited to one bucket cannot expire.
    manager too**: without it the backups cannot be restored, and the only other
    copy is on the board the backup exists to replace.
 
-## Restore from Drive
+## Restore from B2
 
 On any machine with restic, with the B2 key (Backblaze -> Application Keys; make a
 new one if the board is gone) and the passphrase from the password manager:
