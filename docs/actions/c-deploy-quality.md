@@ -1,14 +1,17 @@
 # C. Deploy and code quality
 
 ## C1 Deploy everything a commit changes
-◐ · Claude · M
+☑ 2026-09-25 · Claude · M
 
-**Progress 2026-09-25.** `scripts/deploy.py` and the tracked hook `scripts/git-hooks/post-commit`.
+**Done 2026-09-25.** `scripts/deploy.py` and the tracked hook `scripts/git-hooks/post-commit`.
 Two things the first live run taught: the guard now accepts a board file that matches *any*
 earlier version in git (stale, never deployed - `deploy-dashboard.sh` on the board was the
 09-12 version), refusing only content the repo never had; and the board records the last
 commit it received (`.deployed_commit`), so a refused or failed deploy is caught up by the
 next commit rather than leaving a hole. Build-metadata commits are not counted as changes.
+Verified live: the catch-up deploy of `00fdd79` + `85d09f0` (stale file noted and updated,
+backup kept, nothing restarted), `--rollback --dry-run`, and dry-runs of the detector and
+night-watch commits (restart exactly `npu-detector` / `night-watch`).
 
 **Why.** The post-commit hook deploys only when dashboard files change. On
 2026-09-25 the detector, the installers, the night watch and its unit were all

@@ -13,7 +13,7 @@ the board), *Owner* (needs a person: hardware, accounts, a phone, a decision), o
 | # | Item | Owner | Size | Status |
 |---|---|---|---|---|
 | 1 | [A1 External heartbeat](a-safety-security.md#a1-external-heartbeat) | both | S | ☑ 2026-09-25 |
-| 2 | [C1 Deploy everything a commit changes](c-deploy-quality.md#c1-deploy-everything-a-commit-changes) | Claude | M | ◐ built; first live deploys pending |
+| 2 | [C1 Deploy everything a commit changes](c-deploy-quality.md#c1-deploy-everything-a-commit-changes) | Claude | M | ☑ 2026-09-25 |
 | 3 | [C2 A green test suite](c-deploy-quality.md#c2-a-green-test-suite) | Claude | M | ☐ |
 | 4 | [C3 CI on GitHub](c-deploy-quality.md#c3-ci-on-github) | Claude | S | ☐ |
 | 5 | [A2 Intrusion: critical push and escalation](a-safety-security.md#a2-intrusion-critical-push-and-escalation) | Claude | S | ☐ |
@@ -58,3 +58,4 @@ Dated follow-ups and questions for the owner: [f-follow-ups.md](f-follow-ups.md)
 | cameras | Office camera motion gate; cars on the garage camera only | `32412dd`, `7903b8f` |
 | A1 | External heartbeat: healthchecks.io every 5 min, `/fail` when the watchdog gives up; Telegram DOWN/UP tested | `f452e24` |
 | A6 | SSH: `PermitRootLogin no`, `PasswordAuthentication no` (owner) | - |
+| C1 | Every commit deploys itself: changed files, unit files, only the services that use them; stale vs edited guard, catch-up, rollback; go2rtc no longer restarted by every dashboard deploy | `00fdd79`, `85d09f0` |

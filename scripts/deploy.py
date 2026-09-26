@@ -362,7 +362,10 @@ def rollback(board: Board, units: dict[str, Unit], dry_run: bool) -> int:
     new_files = [l for l in new.splitlines() if l.strip()]
     _, installed, active = board.state([])
     plan = make_plan(restored_files + new_files, units, installed, active)
-    print(f"Rolling back {newest}: restore {len(restored_files)} file(s), remove {len(new_files)} new one(s)")
+    plan.copy = []                                 # put back from the backup, not copied from here
+    print(f"Rolling back {newest}:")
+    print("  restore:   " + (", ".join(restored_files) or "-"))
+    print("  remove:    " + (", ".join(new_files) or "-") + "  (new in that deploy)")
     show(plan)
     if dry_run:
         return 0
@@ -370,7 +373,7 @@ def rollback(board: Board, units: dict[str, Unit], dry_run: bool) -> int:
               + (f"cp -p -r {newest}. ./ && rm -f ./NEW_FILES && " if restored_files else "")
               + (f"rm -f {' '.join(shlex.quote(p) for p in new_files)} && " if new_files else "")
               + f"rm -rf {newest}")
-    plan.copy = []                                 # already put back on the board
+    board.ssh(f"rm -f {shlex.quote(board.path)}/{DEPLOYED_MARK}")    # the next deploy starts from HEAD~1
     return execute(plan, board, force=True, board_hashes={})
 
 
