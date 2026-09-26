@@ -174,3 +174,21 @@ def test_the_dashboard_installer_leaves_restarts_to_the_new_deploy():
     assert only < installer.index('systemctl --user restart "${service_name}"')
     assert '[[ "${RESTART_GO2RTC}" == "1" ]] || INSTALL_ONLY=1' in dashboard
     assert "INSTALL_ONLY=${INSTALL_ONLY}" in dashboard
+
+
+def test_related_tests_are_the_ones_naming_what_changed(tmp_path):
+    root = _repo(tmp_path)
+    tests = root / "tests" / "python"
+    tests.mkdir(parents=True)
+    (tests / "test_detector.py").write_text("from src.python import detector\n")
+    (tests / "test_other.py").write_text("from src.python import beat\n")
+    (tests / "test_install.py").write_text("SCRIPT = 'install-ai-services.sh'\n")
+    assert deploy.related_tests(root, ["src/python/detector.py"]) == ["tests/python/test_detector.py"]
+    assert deploy.related_tests(root, ["scripts/install-ai-services.sh"]) == ["tests/python/test_install.py"]
+    assert deploy.related_tests(root, ["docs/x.md"]) == []
+
+
+def test_a_failing_related_test_stops_the_deploy():
+    source = (ROOT / "scripts" / "deploy.py").read_text(encoding="utf-8")
+    gate = source.index("not run_tests(related_tests(PROJECT_ROOT, changed))")
+    assert gate < source.index("result = 0 if plan.empty else execute(")

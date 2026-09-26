@@ -255,6 +255,7 @@ docker compose run --rm dev sh -lc \
 ./scripts/deploy.py                   # what the last commit changed; the post-commit hook runs it
 ./scripts/deploy.py --dry-run         # its plan: copy, unit files, restarts
 ./scripts/deploy.py --rollback        # put the board's previous copies back
+DEPLOY_SKIP_TESTS=1 git commit ...     # skip the related tests the deploy runs first
 ./scripts/deploy-dashboard.sh         # dashboard + systemd user services
 ./scripts/connect-pi.sh [--check]
 ./scripts/backup-smart-home.sh        # Zigbee key, HA config, .env -> ~/orangepi-recovery
@@ -269,7 +270,7 @@ Deploy scripts default to `orangepi@192.168.0.83` and `/home/orangepi/smart_home
 ./scripts/enable-kiosk-autologin.py --kiosk-ip 192.168.0.176 --dry-run
 ```
 
-**Every commit deploys itself** (since 2026-09-25, `scripts/git-hooks/post-commit`, installed by `scripts/install-git-hooks.sh`): `scripts/deploy.py` copies the changed files under `src/python/`, `scripts/` and `deploy/systemd/user/`, and restarts only the running services that use them - worked out from each unit's ExecStart, its run script and the Python imports, not a table. It refuses when a board file is neither the old nor the new version (an edit made on the board), keeps the board's previous copies in `.deploy-backups/` for `--rollback`, never restarts a timer's oneshot job or starts a stopped service, and hands dashboard changes to `deploy-dashboard.sh --skip-go2rtc` (go2rtc restarts only when its own files change: a restart reconnects every camera).
+**Every commit deploys itself** (since 2026-09-25, `scripts/git-hooks/post-commit`, installed by `scripts/install-git-hooks.sh`): `scripts/deploy.py` copies the changed files under `src/python/`, `scripts/` and `deploy/systemd/user/`, and restarts only the running services that use them - worked out from each unit's ExecStart, its run script and the Python imports, not a table. It refuses when a board file is neither the old nor the new version (an edit made on the board), keeps the board's previous copies in `.deploy-backups/` for `--rollback`, never restarts a timer's oneshot job or starts a stopped service, and runs the tests that mention what changed first and refuses on a failure (the full suite runs on GitHub, `.github/workflows/ci.yml`, on every push), and hands dashboard changes to `deploy-dashboard.sh --skip-go2rtc` (go2rtc restarts only when its own files change: a restart reconnects every camera).
 
 `deploy-dashboard.sh` increments `BUILD_COUNT`, rewrites static cache-busting versions and `web_static/build_info.json`. It mutates the source tree; review the resulting diff. Open browsers pick the new build up by themselves: the dashboard polls `build_info.json` once a minute and reloads when it changes, waiting for `/api/health` first so a reload cannot land mid-restart.
 

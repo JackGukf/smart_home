@@ -58,7 +58,20 @@ them and CI would always be red.
 dev container.
 
 ## C3 CI on GitHub
-☐ · Claude · S
+☑ 2026-09-25 · Claude · S
+
+**Done 2026-09-25.** `.github/workflows/ci.yml`: Python 3.12 and `TZ=America/Vancouver` as on the
+board, Node for the `app.js` tests plus `node --check`, `requirements-dev.txt`, no Matter
+submodule; each failed test becomes an annotation (readable without signing in, unlike logs).
+Green since `f1a4819`. The first runs found **a real bug**: the switch rescan limiter started at
+0.0 on the monotonic clock, so a machine up under 5 minutes - a fresh runner, or the board after a
+power cut - could not rescan for a moved switch.
+
+The deploy cannot wait for CI (it runs at commit time, before the push), so the gate is local:
+`deploy.py` runs the tests that mention what changed and refuses on a failure (`--no-tests` /
+`DEPLOY_SKIP_TESTS=1` to skip). Worst case, a `web_app.py` change: 62 files, ~70 s.
+
+**Note:** the GitHub repository is **public** - see the question in `f-follow-ups.md`.
 
 **Do.** A GitHub Actions workflow: Python tests and `node --check` on every push
 and pull request; the C++ build later. The deploy (C1) refuses to run when the

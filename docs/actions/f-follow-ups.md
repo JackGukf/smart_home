@@ -13,6 +13,11 @@ questions only the owner can answer.
 
 ## Questions
 
+- **Q0** The GitHub repository `JackGukf/smart_home` is **public**. No secrets are in it, but it
+  documents the alarm schedule, the intruder rule's blind spot, camera placement and - in
+  `docs/actions/` - the open security gaps. Make it private (Settings -> General -> Danger Zone)?
+  CI keeps working; anonymous API access to runs stops.
+
 - **Q1** Which of the six leak and smoke sensors physically exist? Two smoke
   detectors (family room Zigbee, kitchen Tuya), four leak sensors (washing
   machine and boiler Zigbee, two utility room Tuya). Old Tuya copies of sensors

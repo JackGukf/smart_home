@@ -28,6 +28,9 @@ the board's copy was not something newer. This does all of that:
     scripts/deploy.py --range A..B        # a range of commits
     scripts/deploy.py --dry-run           # show the plan, change nothing
     scripts/deploy.py --rollback          # undo the last deploy on the board
+
+Before copying anything it runs the tests that mention what changed (the full
+suite is CI's, on push) and refuses when they fail; --no-tests skips them.
 """
 from __future__ import annotations
 
@@ -35,6 +38,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -190,6 +194,40 @@ def conflicts(paths: list[str], board: dict[str, str | None], old: dict[str, str
               new: dict[str, str | None]) -> list[str]:
     """Files on the board that are neither the version before nor after the change."""
     return [p for p in paths if board.get(p) is not None and board[p] not in {old.get(p), new.get(p)}]
+
+
+# ───────────────────────────────────────────────────── tests before a deploy
+
+def related_tests(root: Path, changed: list[str]) -> list[str]:
+    """Test files that mention a changed module or script by name - the tests
+    worth running before code reaches the board. The full suite is CI's job."""
+    names = set()
+    for path in changed:
+        if not deployable(path) or not path.endswith((".py", ".sh")):
+            continue
+        stem = Path(path).stem
+        names.add(stem)
+        names.add(stem.replace("-", "_"))
+    if not names:
+        return []
+    found = []
+    for test in sorted((root / "tests" / "python").glob("test_*.py")):
+        text = test.read_text(encoding="utf-8", errors="replace")
+        if any(name in text for name in names):
+            found.append(str(test.relative_to(root)))
+    return found
+
+
+def run_tests(tests: list[str]) -> bool:
+    if not tests:
+        return True
+    print(f"==> Tests first: {len(tests)} file(s) that mention what changed")
+    result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *tests],
+                            cwd=PROJECT_ROOT, capture_output=True, text=True)
+    lines = (result.stdout or result.stderr).strip().splitlines()
+    shown = lines[-1:] if result.returncode == 0 else lines[-25:]
+    print("    " + "\n    ".join(shown))
+    return result.returncode == 0
 
 
 # ─────────────────────────────────────────────────────────────── the board
@@ -384,6 +422,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="show the plan; change nothing")
     ap.add_argument("--force", action="store_true", help="overwrite board-side edits")
     ap.add_argument("--rollback", action="store_true", help="undo the last deploy on the board")
+    ap.add_argument("--no-tests", action="store_true",
+                    help="skip the related tests (also DEPLOY_SKIP_TESTS=1)")
     args = ap.parse_args(argv)
 
     board = Board(f"{host('PI_USER')}@{host('PI_HOST')}", host("REMOTE_PATH"), args.dry_run)
@@ -422,7 +462,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"    {path}", file=sys.stderr)
         return 2
     if args.dry_run:
+        tests = related_tests(PROJECT_ROOT, changed)
+        print(f"  tests:     {len(tests)} related file(s)" if tests else "  tests:     -")
         return 0
+    skip_tests = args.no_tests or os.environ.get("DEPLOY_SKIP_TESTS") == "1"
+    if not plan.empty and not skip_tests and not run_tests(related_tests(PROJECT_ROOT, changed)):
+        print("\nREFUSED: the tests for what changed fail - fix them, or deploy anyway with --no-tests.",
+              file=sys.stderr)
+        return 3
     result = 0 if plan.empty else execute(plan, board, args.force, board_hashes)
     if result == 0 and rev_range.endswith("..HEAD"):
         mark_deployed(board, head)
