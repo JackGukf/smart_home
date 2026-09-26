@@ -244,7 +244,7 @@ mkdir -p "\$STAGE/smart_home_AI"
 # discovery, but cost nothing to carry.
 for rel in .env configs/devices.local.yaml go2rtc/go2rtc.yaml \
            dashboard_areas.json dashboard_device_groups.json \
-           bridge_endpoints.json \
+           bridge_endpoints.json house_settings.json \
            home_assistant_known_entities.json tplink_switches.json; do
     if [ -e "${REMOTE_PATH}/\$rel" ]; then
         mkdir -p "\$STAGE/smart_home_AI/\$(dirname "\$rel")"

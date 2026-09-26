@@ -186,13 +186,15 @@ def test_every_watched_rule_is_one_an_installer_creates():
     doors = _installer("install-door-alerts")
     security = _installer("install-security-response")
     modes = _installer("install-house-modes")
+    heating = _installer("install-heating-alerts")
     installed = ({a["id"] for a in safety.everything([])["automations"]}
+                 | {a["id"] for a in heating.automations()}
                  | {a["id"] for a in doors.automations([])}
                  | {a["id"] for a in security.automations()}
                  | {a["id"] for a in modes.automations()})
     assert set(wd.ALERT_RULES) <= installed, set(wd.ALERT_RULES) - installed
     scripts = ({f"script.{k}" for k in safety.everything([])["scripts"]}
-               | {doors.SCRIPT, security.INTRUSION_SCRIPT})
+               | {doors.SCRIPT, security.INTRUSION_SCRIPT, heating.SCRIPT})
     assert set(wd.ALERT_SCRIPTS) <= scripts
 
 

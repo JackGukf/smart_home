@@ -84,7 +84,7 @@ HOUSE_MEMORY_STALE = 1800
 # Action list B4 (2026-09-26): what was added that week must not stop silently.
 NIGHT_WATCH_STATUS = Path.home() / "night-clips" / ".night-watch-status.json"
 NIGHT_WATCH_STALE = 300
-# Installed by scripts/install-{safety-alerts,door-alerts,security-response,house-modes}.py;
+# Installed by scripts/install-{safety-alerts,door-alerts,security-response,house-modes,heating-alerts}.py;
 # tests/python/test_service_watchdog.py checks this list against those installers.
 ALERT_RULES = (
     "water_leak_detected", "water_leak_acknowledged", "smoke_detected", "smoke_acknowledged",
@@ -94,9 +94,10 @@ ALERT_RULES = (
     "security_intruder_siren", "security_expected_at_arming", "security_intrusion_alert",
     "security_intrusion_push_stop", "security_intrusion_push_ack", "security_bedroom_button_stops_speaker",
     "house_mode_goes_away", "house_mode_arrival", "house_mode_night_arm",
+    "heating_call_started", "heating_furnace_not_heating", "heating_too_cold", "heating_alert_acknowledged",
 )
 ALERT_SCRIPTS = ("script.water_leak_alert", "script.smoke_alert", "script.intrusion_alert",
-                 "script.front_door_left_open")
+                 "script.front_door_left_open", "script.heating_alert")
 TIMERS = ("heartbeat.timer", "offsite-backup.timer", "house-learning.timer", "house-digest.timer",
           "energy-forecast.timer", "ecobee-runtime.timer")
 

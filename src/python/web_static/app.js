@@ -9805,6 +9805,12 @@ function activateView(viewName) {
   if (viewName === "energy") {
     loadEnergy().catch((error) => console.error(error));
   }
+  if (viewName === "houserules") {
+    loadHouseRules().catch((error) => {
+      const status = document.querySelector("#houseRulesStatus");
+      if (status) status.textContent = `Not available: ${apiErrorDetail(error)}`;
+    });
+  }
   if (viewName === "nightlights") {
     loadNightLights().catch((error) => {
       const status = document.querySelector("#nightLightsStatus");
@@ -11302,7 +11308,7 @@ function setYoutubeCovering(on) {
 /* An app's page keeps its launcher lit in the sidebar. */
 const PAGE_PARENTS = {
   discovery: "discover", zigbee: "discover", bluetooth: "discover",
-  theme: "settings", startup: "settings", news: "settings", cast: "settings", desktop: "settings", nightlights: "settings", about: "settings", homecards: "settings",
+  theme: "settings", startup: "settings", news: "settings", cast: "settings", desktop: "settings", nightlights: "settings", houserules: "settings", about: "settings", homecards: "settings",
   automations: "ai", aidata: "ai",
   youtube: "media", music: "media",
   ir: "devices",
@@ -12410,6 +12416,67 @@ async function loadNightLights() {
     }
   });
 })();
+
+/* ── House rules: the tunable numbers (src/python/house_settings.py) ──
+   Rendered from the server's list, so a new setting needs no page change. Saved on
+   change; ↺ puts the default back. A Home Assistant setting whose helper is not
+   installed shows its default and cannot be edited. */
+function formatSettingValue(setting, value) {
+  return setting.kind === "time" ? String(value) : `${Number(value)} ${setting.unit}`;
+}
+
+function houseRuleRow(setting) {
+  const changed = String(setting.value) !== String(setting.default);
+  const input = setting.kind === "time"
+    ? `<input type="time" class="settings-time" data-house-setting="${escapeHtml(setting.key)}" value="${escapeHtml(String(setting.value))}"${setting.available ? "" : " disabled"}>`
+    : `<input type="number" class="settings-number" data-house-setting="${escapeHtml(setting.key)}"
+         value="${escapeHtml(String(setting.value))}" min="${setting.min}" max="${setting.max}" step="${setting.step}"
+         inputmode="decimal"${setting.available ? "" : " disabled"}><span class="settings-unit">${escapeHtml(setting.unit)}</span>`;
+  return `<div class="settings-row">
+      <div class="settings-label"><strong>${escapeHtml(setting.label)}</strong><small>${escapeHtml(setting.help)}${
+        setting.available ? "" : " (not installed yet)"} Default ${escapeHtml(formatSettingValue(setting, setting.default))}.</small></div>
+      <span class="settings-control">${input}<button type="button" class="settings-reset" data-house-setting-reset="${escapeHtml(setting.key)}"
+        title="Back to ${escapeHtml(formatSettingValue(setting, setting.default))}"${changed && setting.available ? "" : " hidden"}>↺</button></span>
+    </div>`;
+}
+
+let houseRules = [];
+
+async function loadHouseRules() {
+  const doc = await requestJson("/api/house-settings");
+  houseRules = doc.groups || [];
+  const host = document.querySelector("#houseRules");
+  if (!host) return;
+  host.innerHTML = houseRules.map((group) => `
+    <h3 class="settings-group-title">${escapeHtml(group.name)}</h3>
+    <div class="settings-group">${group.settings.map(houseRuleRow).join("")}</div>`).join("");
+}
+
+async function saveHouseSetting(key, value) {
+  const status = document.querySelector("#houseRulesStatus");
+  const setting = houseRules.flatMap((g) => g.settings).find((s) => s.key === key);
+  if (status) status.textContent = "Saving…";
+  try {
+    const doc = await requestJson(`/api/house-settings/${encodeURIComponent(key)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }),
+    });
+    if (status) status.textContent = `Saved: ${setting ? setting.label : key} ${setting ? formatSettingValue(setting, doc.value) : doc.value}.`;
+  } catch (error) {
+    if (status) status.textContent = `Not saved: ${apiErrorDetail(error)}`;
+  }
+  await loadHouseRules().catch(() => {});
+}
+
+document.addEventListener("change", (event) => {
+  const input = event.target.closest("input[data-house-setting]");
+  if (input) saveHouseSetting(input.dataset.houseSetting, input.value);
+});
+document.addEventListener("click", (event) => {
+  const reset = event.target.closest("button[data-house-setting-reset]");
+  if (!reset) return;
+  const setting = houseRules.flatMap((g) => g.settings).find((s) => s.key === reset.dataset.houseSettingReset);
+  if (setting) saveHouseSetting(setting.key, setting.default);
+});
 
 /* ── Startup (default) view ── */
 const DEFAULT_VIEW_KEY = "default_view";

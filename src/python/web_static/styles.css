@@ -6884,6 +6884,21 @@ header > .header-right { flex-shrink: 0; }
 .settings-label small { font-size: 12px; color: var(--t-text-dim); }
 
 .settings-value { font-family: var(--mono); font-size: 13px; color: var(--t-text); text-align: right; }
+/* House rules: a number with its unit, and a reset beside it. */
+.settings-control { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.settings-number {
+  width: 84px; padding: 6px 8px; border-radius: var(--radius-sm); border: 1px solid var(--t-card-border);
+  background: var(--card-2, transparent); color: var(--t-text); font: inherit; font-family: var(--mono);
+  font-size: 14px; text-align: right;
+}
+.settings-number:disabled { opacity: 0.5; }
+.settings-unit { font-size: 12px; color: var(--t-text-dim); min-width: 28px; }
+.settings-reset {
+  border: 0; background: none; color: var(--t-text-dim); font-size: 16px; cursor: pointer; padding: 4px 6px;
+}
+.settings-reset:hover { color: var(--t-text); }
+.settings-reset[hidden] { display: none; }
+.settings-group-title { font-size: 13px; font-weight: 600; color: var(--t-text-dim); margin: 18px 4px 6px; }
 
 .settings-chips { display: flex; flex-wrap: wrap; margin-top: 8px; }
 .settings-chip {

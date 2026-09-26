@@ -1046,6 +1046,11 @@
           <span class="app-tile-name">Night lights</span>
           <span class="app-tile-sub" id="settingsNightSub">Family room</span>
         </button>
+        <button type="button" class="app-tile" data-goto-view="houserules" style="--app-a:#f97316;--app-b:#7c2d12">
+          <span class="app-tile-icon"><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i></span>
+          <span class="app-tile-name">House rules</span>
+          <span class="app-tile-sub">Thresholds and delays</span>
+        </button>
         <button type="button" class="app-tile" data-goto-view="desktop" style="--app-a:#0ea5e9;--app-b:#1e3a8a">
           <span class="app-tile-icon"><i class="ti ti-device-desktop" aria-hidden="true"></i></span>
           <span class="app-tile-name">Desktop</span>
@@ -1266,6 +1271,18 @@
         </div>
       </div>
       <p class="settings-status" id="nightLightsStatus" aria-live="polite"></p>
+    </div>
+
+    <!-- ── HOUSE RULES ──
+         The house's tunable numbers (src/python/house_settings.py): Home Assistant
+         helpers the rules read at run time, or board settings the services read. -->
+    <div class="view-panel" data-view-panel="houserules">
+      <div class="section-header">
+        <span class="page-title"><button type="button" class="page-back" data-goto-view="settings" title="Back to Settings"><i class="ti ti-chevron-left" aria-hidden="true"></i><span class="sr-only">Back to </span>Settings</button><span class="section-title">House rules</span></span>
+        <span class="section-meta">Thresholds and delays · take effect at once</span>
+      </div>
+      <div id="houseRules"></div>
+      <p class="settings-status" id="houseRulesStatus" aria-live="polite"></p>
     </div>
 
     <!-- ── ABOUT VIEW ── -->

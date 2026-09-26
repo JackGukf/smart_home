@@ -52,6 +52,7 @@ from src.python.matter_device import (
 from src.python import bridge_sync
 from src.python import dashboard_session
 from src.python import safety_sensors
+from src.python import house_settings
 from src.python.house_digest import read_digest
 from src.python import ai_data
 from src.python import board_desktop
@@ -468,6 +469,10 @@ DISARM_PIN_PATTERN = re.compile(r"[0-9]{4,8}")
 
 class _PinBody(BaseModel):
     pin: str | None = None
+
+
+class HouseSettingBody(BaseModel):
+    value: float | str
 
 
 def _configured_disarm_pin(path: Path) -> str | None:
@@ -1517,6 +1522,51 @@ def create_app(
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=502, detail="Home Assistant did not take the time") from error
         return {"after": request.after, "until": NIGHT_LIGHTS_UNTIL, "entity": NIGHT_LIGHTS_AFTER_ENTITY}
+
+    @app.get("/api/house-settings")
+    async def house_settings_get() -> dict[str, Any]:
+        """Settings -> House rules: every tunable number, grouped, with its value
+        (src/python/house_settings.py). Home Assistant's may be unavailable, and
+        then show their default greyed out."""
+        states: dict[str, Any] = {}
+        ha_config = _load_home_assistant_config(app.state.config_path)
+        token = os.getenv(ha_config.token_env)
+        if token:
+            try:
+                wanted = {s.entity for s in house_settings.SETTINGS if s.home == "ha"}
+                for state in await asyncio.to_thread(_home_assistant_get, ha_config, token, "/api/states"):
+                    if state.get("entity_id") in wanted:
+                        states[state["entity_id"]] = state.get("state")
+            except (OSError, ValueError):
+                pass
+        return {"groups": house_settings.describe(states)}
+
+    @app.put("/api/house-settings/{key}")
+    async def house_settings_put(key: str, body: HouseSettingBody, request: Request) -> dict[str, Any]:
+        setting = house_settings.BY_KEY.get(key)
+        if setting is None:
+            raise HTTPException(status_code=404, detail=f"No setting {key}")
+        try:
+            clean = house_settings.validate(key, body.value)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        _audit(request, "house setting", f"{key} = {clean}")
+        if setting.home == "board":
+            await asyncio.to_thread(house_settings.save_board, key, clean)
+            return {"key": key, "value": clean}
+        ha_config = _load_home_assistant_config(app.state.config_path)
+        token = os.getenv(ha_config.token_env)
+        if not token:
+            raise HTTPException(status_code=503, detail="No Home Assistant token")
+        service, data = (("input_datetime/set_datetime", {"time": f"{clean}:00"}) if setting.kind == "time"
+                         else ("input_number/set_value", {"value": clean}))
+        try:
+            await asyncio.to_thread(_home_assistant_post, ha_config, token, f"/api/services/{service}",
+                                    {"entity_id": setting.entity, **data})
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Home Assistant did not take it - is "
+                                f"{setting.entity} installed (scripts/install-house-settings.py)?") from error
+        return {"key": key, "value": clean}
 
     @app.get("/api/cast")
     async def cast_state() -> dict[str, Any]:
@@ -6003,6 +6053,17 @@ HOUSE_ALERTS = {
         "critical": True,
         "only_when_closed": True,
     },
+    # No sensor to name: the reason (with the temperatures) is the message.
+    "heating": {
+        "flag": "input_boolean.heating_alert",
+        "subjects": {},
+        "title": "Heating",
+        "open": "",
+        "closed": "Check the thermostat and the furnace.",
+        "message_from": "input_text.heating_alert_reason",
+        "icon": "ti-temperature-snow",
+        "critical": True,
+    },
     "smoke": {
         "flag": "input_boolean.smoke_alert",
         "subjects": safety_sensors.SMOKE,
@@ -6026,10 +6087,15 @@ def _house_alerts(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
                   if (by_id.get(entity_id) or {}).get("state") == "on"]
         if places and alert.get("only_when_closed"):
             continue
+        message = alert["open"].format(places=" and ".join(places)) if places else alert["closed"]
+        if alert.get("message_from"):
+            said = (by_id.get(alert["message_from"]) or {}).get("state")
+            if said not in (None, "", "unknown", "unavailable"):
+                message = said
         alerts.append({
             "id": alert_id,
             "title": alert["title"],
-            "message": alert["open"].format(places=" and ".join(places)) if places else alert["closed"],
+            "message": message,
             "since": flag.get("last_changed"),
             "open": bool(places),
             "icon": alert["icon"],
