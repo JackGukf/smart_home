@@ -9,6 +9,8 @@ questions only the owner can answer.
 | F2 | 2026-09-28 | The garage camera's watch-only log (`input_text.house_camera_would_have`, logbook "House mode (watch-only)") against the phone's arrivals and departures; car detection at night | Turn on `input_boolean.house_camera_signals`, or tune |
 | F3 | first walk out past the garage | The log says "someone walked out past the garage" | If not, the direction axis is reversed: `NPU_INWARD=garage_camera=y-` |
 | F4 | tonight onwards | Telegram photos from the outdoor cameras at night: any false "person" | That camera's zone or threshold |
+| F6 | 2026-09-26, daytime | A2 live test: run `script.intrusion_alert` without the speaker - critical push and Telegram, a "Still no answer" reminder after 2 min, then I know clears it | Tick A2 |
+| F7 | the next nights | Night photos now need the camera to confirm a motion sensor (`78c77ba`); count how many sensor triggers were kept quiet (`journalctl --user -u night-watch \| grep "not sent"`) and whether any real visitor was missed | Tune `MOVING_BLOB` |
 | F5 | watch | Camera Wi-Fi: streams broke up 17:30-17:34 on 2026-09-25 (timeouts, corrupt frames) | If it recurs: the cameras' Wi-Fi (channel, signal, access point) |
 
 ## Questions
