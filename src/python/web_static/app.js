@@ -2722,6 +2722,8 @@ const WATCHDOG_LABELS = {
   docker: "Docker", mosquitto: "MQTT broker", zigbee: "Zigbee", home_assistant: "Home Assistant",
   ha_mqtt: "Home Assistant's Zigbee link", dashboard: "Dashboard", go2rtc: "Cameras (go2rtc)",
   house_memory: "House memory", matter_server: "Matter controller", disk: "Disk space",
+  night_watch: "Night watch", cameras: "Camera detection", alert_rules: "Alert rules",
+  timers: "Scheduled jobs",
 };
 const watchdogOpenedAt = Date.now() / 1000;
 

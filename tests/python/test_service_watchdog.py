@@ -164,3 +164,108 @@ def test_the_dashboard_serves_the_reliability_table(tmp_path):
     assert doc["reliability"]["zigbee"]["day"] == 1 and doc["since"] == 1.0
     js = (ROOT / "src/python/web_static/app.js").read_text(encoding="utf-8")
     assert "Last restart" in js and "doc.reliability" in js
+
+
+# ── Action list B4: what was added that week must not stop silently ─────────
+
+import importlib.util  # noqa: E402
+import json  # noqa: E402
+
+ROOT_B4 = Path(__file__).resolve().parents[2]
+
+
+def _installer(name: str):
+    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), ROOT_B4 / "scripts" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_watched_rule_is_one_an_installer_creates():
+    safety = _installer("install-safety-alerts")
+    doors = _installer("install-door-alerts")
+    security = _installer("install-security-response")
+    modes = _installer("install-house-modes")
+    installed = ({a["id"] for a in safety.everything([])["automations"]}
+                 | {a["id"] for a in doors.automations([])}
+                 | {a["id"] for a in security.automations()}
+                 | {a["id"] for a in modes.automations()})
+    assert set(wd.ALERT_RULES) <= installed, set(wd.ALERT_RULES) - installed
+    scripts = ({f"script.{k}" for k in safety.everything([])["scripts"]}
+               | {doors.SCRIPT, security.INTRUSION_SCRIPT})
+    assert set(wd.ALERT_SCRIPTS) <= scripts
+
+
+def _rule(rule_id, state="on"):
+    return {"entity_id": f"automation.{rule_id}", "state": state, "attributes": {"id": rule_id}}
+
+
+def test_a_switched_off_or_missing_rule_asks_for_a_person():
+    states = [_rule(r) for r in wd.ALERT_RULES] + [{"entity_id": s, "state": "off"} for s in wd.ALERT_SCRIPTS]
+    assert wd.alert_rules_verdict(states).healthy is True
+    states[0] = _rule(wd.ALERT_RULES[0], "off")
+    result = wd.alert_rules_verdict(states)
+    assert result.healthy is False and f"switched off: {wd.ALERT_RULES[0]}" in result.detail
+    result = wd.alert_rules_verdict(states[1:])
+    assert "missing" in result.detail
+    check = next(c for c in wd.build_checks("tok") if c.name == "alert_rules")
+    assert check.action is None and check.needed == 1          # never switched back on by itself
+
+
+def _cam(name, state):
+    return {"entity_id": f"binary_sensor.{name}_npu_person", "state": state}
+
+
+def test_one_camera_down_is_a_person_all_down_is_the_detector():
+    ok, _ = wd.cameras_verdict([_cam("garage_camera", "off"), _cam("office_camera", "on")])
+    assert ok.healthy is True
+    some, everything = wd.cameras_verdict([_cam("garage_camera", "unavailable"), _cam("office_camera", "off")])
+    assert some.healthy is False and "garage_camera" in some.detail and not everything
+    alld, everything = wd.cameras_verdict([_cam("garage_camera", "unavailable"), _cam("office_camera", "unavailable")])
+    assert alld.healthy is False and everything
+    assert wd.cameras_verdict([{"entity_id": "light.x", "state": "on"}])[0].healthy is None
+
+
+def test_a_camera_blip_is_not_a_fault():
+    """Streams broke up for 3.5 minutes on 2026-09-25: five passes (10 min) first."""
+    check = next(c for c in wd.build_checks("tok") if c.name == "cameras")
+    assert check.needed * 2 >= 10
+
+
+def test_the_detector_is_restarted_only_when_every_camera_is_down(monkeypatch):
+    restarted = []
+    monkeypatch.setattr(wd, "restart_unit", lambda unit, user=True: lambda: restarted.append(unit) or "ok")
+    monkeypatch.setattr(wd, "_ha", lambda path, token: [_cam("a", "unavailable"), _cam("b", "on")])
+    try:
+        wd.restart_detector_if_all_down("tok")
+        raise AssertionError("should have refused")
+    except RuntimeError as error:
+        assert "need a person" in str(error)
+    monkeypatch.setattr(wd, "_ha", lambda path, token: [_cam("a", "unavailable"), _cam("b", "unavailable")])
+    wd.restart_detector_if_all_down("tok")
+    assert restarted == ["npu-detector.service"]
+
+
+def test_night_watch_stale_or_disconnected_is_restarted():
+    now = 1_000_000.0
+    assert wd.night_watch_verdict(None, now).healthy is None
+    assert wd.night_watch_verdict({"alive_at": now - 30, "mqtt_connected": True}, now).healthy is True
+    assert wd.night_watch_verdict({"alive_at": now - 600, "mqtt_connected": True}, now).healthy is False
+    assert wd.night_watch_verdict({"alive_at": now - 30, "mqtt_connected": False}, now).healthy is False
+    check = next(c for c in wd.build_checks("tok") if c.name == "night_watch")
+    assert check.action is not None
+
+
+def test_only_installed_timers_count_and_stopped_ones_are_started():
+    enabled = {t: "enabled" for t in wd.TIMERS} | {"energy-forecast.timer": "not-found"}
+    active = {t: "active" for t in wd.TIMERS} | {"offsite-backup.timer": "inactive", "energy-forecast.timer": "inactive"}
+    result = wd.timers_verdict(enabled, active)
+    assert result.healthy is False and result.detail == "stopped: offsite-backup.timer"
+    assert wd.timers_verdict(enabled, {t: "active" for t in wd.TIMERS}).healthy is True
+
+
+def test_the_dashboard_names_every_check():
+    app_js = (ROOT_B4 / "src/python/web_static/app.js").read_text(encoding="utf-8")
+    labels = app_js[app_js.index("const WATCHDOG_LABELS"):app_js.index("};", app_js.index("const WATCHDOG_LABELS"))]
+    for check in wd.build_checks("tok"):
+        assert f"{check.name}:" in labels, check.name

@@ -81,6 +81,10 @@ INDOOR_CAMERAS: dict[str, str] = {
     "family_room_camera": "Family room",
 }
 SPEAKER = "Alarm speaker"          # zigbee2mqtt friendly name; property "alarm"
+# Written every minute; the service watchdog restarts the night watch when it
+# goes stale or says MQTT is down (action list B4).
+STATUS_NAME = ".night-watch-status.json"
+STATUS_EVERY_S = 60
 
 
 @dataclass(frozen=True)
@@ -384,6 +388,13 @@ class NightWatch:
                         time.sleep(5)
 
     # Housekeeping ----------------------------------------------------------
+    def write_status(self, connected: bool) -> None:
+        self.s.out_dir.mkdir(parents=True, exist_ok=True)
+        path = self.s.out_dir / STATUS_NAME
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"alive_at": time.time(), "mqtt_connected": connected}), encoding="utf-8")
+        tmp.replace(path)
+
     def tidy(self) -> None:
         if not self.s.out_dir.exists():
             return
@@ -502,22 +513,34 @@ def main(argv: list[str] | None = None) -> int:
     topics = ([f"zigbee2mqtt/{name}" for name in (*SENSORS, SPEAKER)]
               + [f"{settings.vision_topic}/{camera}" for camera in (*OUTDOOR_CAMERAS, *INDOOR_CAMERAS)])
 
+    connected = threading.Event()
+
     def on_connect(client, _userdata, _flags, reason, _properties=None):
         LOG.info("connected to MQTT (%s); watching %d topics, night %s-%s", reason, len(topics),
                  settings.hours[0].strftime("%H:%M"), settings.hours[1].strftime("%H:%M"))
         for topic in topics:
             client.subscribe(topic)
+        connected.set()
+
+    def on_disconnect(_client, _userdata, _flags=None, reason=None, _properties=None):
+        LOG.warning("MQTT disconnected (%s)", reason)
+        connected.clear()
 
     client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
     client.on_message = lambda _c, _u, message: watch.on_message(message.topic, message.payload)
     client.connect(settings.mqtt_host, settings.mqtt_port, keepalive=60)
     client.loop_start()
     LOG.info("clips to %s, kept %g days / %.0f GB; Telegram %s", settings.out_dir, settings.keep_days,
              settings.max_bytes / 1024 ** 3, "on" if settings.telegram_token and settings.telegram_chats else "off")
     try:
+        last_tidy = 0.0
         while True:
-            watch.tidy()
-            time.sleep(3600)
+            watch.write_status(connected.is_set())
+            if time.monotonic() - last_tidy > 3600:
+                watch.tidy()
+                last_tidy = time.monotonic()
+            time.sleep(STATUS_EVERY_S)
     except KeyboardInterrupt:
         pass
     finally:

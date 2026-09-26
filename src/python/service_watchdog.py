@@ -19,6 +19,13 @@ So each check here asks the working question, not "is it running":
   matter_server   the Matter controller accepts a connection
   docker          the Docker daemon answers        (tells a person; needs root)
   disk            the NVMe has room                (tells a person)
+  night_watch     the night watch wrote its status in 5 min, MQTT connected
+  cameras         every camera's detection is available (all down: restart
+                  the detector; some down: tells a person - power or Wi-Fi)
+  alert_rules     the leak, smoke, door, intrusion and house-mode rules and
+                  scripts exist and are enabled   (tells a person: a rule may
+                  have been switched off on purpose)
+  timers          the scheduled jobs' timers are running (starts them)
 
 A check acts only after `needed` failures in a row (one run is two minutes),
 at most once per `cooldown`, and at most MAX_ACTIONS times in ACTION_WINDOW.
@@ -73,6 +80,25 @@ ZIGBEE_WINDOW_S = 900
 ZIGBEE_SRSP_LIMIT = 3
 STARTUP_GRACE = 600          # a container younger than this is still starting
 HOUSE_MEMORY_STALE = 1800
+
+# Action list B4 (2026-09-26): what was added that week must not stop silently.
+NIGHT_WATCH_STATUS = Path.home() / "night-clips" / ".night-watch-status.json"
+NIGHT_WATCH_STALE = 300
+# Installed by scripts/install-{safety-alerts,door-alerts,security-response,house-modes}.py;
+# tests/python/test_service_watchdog.py checks this list against those installers.
+ALERT_RULES = (
+    "water_leak_detected", "water_leak_acknowledged", "smoke_detected", "smoke_acknowledged",
+    "safety_sensors_need_attention",
+    "front_door_open_when_everyone_left", "front_door_opened_just_after_leaving",
+    "front_door_open_house_still", "front_door_alert_acknowledged",
+    "security_intruder_siren", "security_expected_at_arming", "security_intrusion_alert",
+    "security_intrusion_push_stop", "security_intrusion_push_ack", "security_bedroom_button_stops_speaker",
+    "house_mode_goes_away", "house_mode_arrival", "house_mode_night_arm",
+)
+ALERT_SCRIPTS = ("script.water_leak_alert", "script.smoke_alert", "script.intrusion_alert",
+                 "script.front_door_left_open")
+TIMERS = ("heartbeat.timer", "offsite-backup.timer", "house-learning.timer", "house-digest.timer",
+          "energy-forecast.timer", "ecobee-runtime.timer")
 
 
 @dataclass
@@ -248,6 +274,96 @@ def probe_disk(path: str = "/", min_free_gb: float = 10.0) -> Result:
     return Result(ok, f"{free:.0f} GB free of {total:.0f} GB")
 
 
+def night_watch_verdict(status: dict | None, now: float) -> Result:
+    if status is None:
+        return Result(None, "no status yet (night-watch not updated?)")
+    age = now - float(status.get("alive_at") or 0)
+    if age > NIGHT_WATCH_STALE:
+        return Result(False, f"no sign of life for {age / 60:.0f} min")
+    if not status.get("mqtt_connected"):
+        return Result(False, "running but not connected to MQTT")
+    return Result(True, f"alive {age:.0f} s ago, MQTT connected")
+
+
+def probe_night_watch() -> Result:
+    try:
+        status = json.loads(NIGHT_WATCH_STATUS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        status = None
+    return night_watch_verdict(status, time.time())
+
+
+def cameras_verdict(states: list[dict]) -> tuple[Result, bool]:
+    """(result, all of them down). The person sensors are the detector's own
+    per-camera availability: unavailable means no frames from that camera."""
+    cams = {s["entity_id"]: s.get("state") for s in states
+            if s.get("entity_id", "").startswith("binary_sensor.") and s["entity_id"].endswith("_npu_person")}
+    if not cams:
+        return Result(None, "no camera detection sensors in Home Assistant"), False
+    down = sorted(e.split(".", 1)[1].removesuffix("_npu_person") for e, st in cams.items() if st == "unavailable")
+    if not down:
+        return Result(True, f"all {len(cams)} cameras detecting"), False
+    return Result(False, f"{len(down)} of {len(cams)} not detecting: {', '.join(down)}"), len(down) == len(cams)
+
+
+def probe_cameras(token: str) -> Result:
+    result, _ = cameras_verdict(_ha("/api/states", token))
+    return result
+
+
+def restart_detector_if_all_down(token: str) -> str:
+    """Only when every camera is down is the detector itself the likely fault; one
+    camera down is its power or Wi-Fi, which a restart does not fix."""
+    _, everything = cameras_verdict(_ha("/api/states", token))
+    if not everything:
+        raise RuntimeError("some cameras are detecting - the ones that are not need a person")
+    return restart_unit("npu-detector.service")()
+
+
+def alert_rules_verdict(states: list[dict]) -> Result:
+    by_rule = {s.get("attributes", {}).get("id"): s for s in states if s.get("entity_id", "").startswith("automation.")}
+    have = {s.get("entity_id") for s in states}
+    missing = [r for r in ALERT_RULES if r not in by_rule] + [x for x in ALERT_SCRIPTS if x not in have]
+    off = [r for r in ALERT_RULES if r in by_rule and by_rule[r].get("state") == "off"]
+    if missing or off:
+        parts = ([f"switched off: {', '.join(off)}"] if off else []) + ([f"missing: {', '.join(missing)}"] if missing else [])
+        return Result(False, "; ".join(parts))
+    return Result(True, f"all {len(ALERT_RULES)} rules on, {len(ALERT_SCRIPTS)} scripts present")
+
+
+def probe_alert_rules(token: str) -> Result:
+    return alert_rules_verdict(_ha("/api/states", token))
+
+
+def timers_verdict(enabled: dict[str, str], active: dict[str, str]) -> Result:
+    """Only timers that are installed (enabled) count: a timer never set up is not a fault."""
+    watched = [t for t in TIMERS if enabled.get(t) == "enabled"]
+    stopped = [t for t in watched if active.get(t) != "active"]
+    if stopped:
+        return Result(False, f"stopped: {', '.join(stopped)}")
+    return Result(True, f"{len(watched)} timers running")
+
+
+def _systemctl_each(verb: str, units: tuple[str, ...]) -> dict[str, str]:
+    """One call per unit: for a unit that does not exist systemctl prints nothing
+    on stdout, so one call for all of them would shift every answer after it."""
+    return {unit: (_run(["systemctl", "--user", verb, unit]).stdout.strip() or "not-found") for unit in units}
+
+
+def probe_timers() -> Result:
+    return timers_verdict(_systemctl_each("is-enabled", TIMERS), _systemctl_each("is-active", TIMERS))
+
+
+def start_stopped_timers() -> str:
+    enabled, active = _systemctl_each("is-enabled", TIMERS), _systemctl_each("is-active", TIMERS)
+    stopped = [t for t in TIMERS if enabled.get(t) == "enabled" and active.get(t) != "active"]
+    if stopped:
+        out = _run(["systemctl", "--user", "start", *stopped])
+        if out.returncode:
+            raise RuntimeError(out.stderr.strip() or f"exit {out.returncode}")
+    return f"started {', '.join(stopped)}"
+
+
 def restart_container(name: str) -> Callable[[], str]:
     def act() -> str:
         out = _run(["docker", "restart", name], timeout=120)
@@ -290,6 +406,18 @@ def build_checks(token: str) -> list[Check]:
               advice="It is a system service: if restarting it is refused, run scripts/install-service-watchdog.sh once with sudo."),
         Check("disk", "Disk space", probe_disk, None, needed=1,
               advice="Free space on the NVMe: old camera recordings, Docker images (docker system prune)."),
+        Check("night_watch", "Night watch", probe_night_watch, restart_unit("night-watch.service"),
+              depends=("mosquitto",)),
+        # 5 passes = 10 minutes: camera Wi-Fi blips (3.5 min on 2026-09-25) must not count.
+        Check("cameras", "Camera detection", lambda: probe_cameras(token),
+              lambda: restart_detector_if_all_down(token), needed=5, cooldown=3600,
+              depends=("home_assistant", "go2rtc"),
+              advice="A camera that stays off is usually its power or Wi-Fi."),
+        Check("alert_rules", "Alert rules", lambda: probe_alert_rules(token), None, needed=1,
+              depends=("home_assistant",),
+              advice="Turn them back on in Home Assistant (Settings > Automations), or re-run their "
+                     "installer (scripts/install-*-alerts.py, install-security-response.py, install-house-modes.py)."),
+        Check("timers", "Scheduled jobs", probe_timers, start_stopped_timers, needed=1),
     ]
 
 
