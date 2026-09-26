@@ -3,16 +3,16 @@
 #
 #  1. scripts/backup-smart-home.sh --local: the verified archive, as by hand -
 #     unattended, Home Assistant's config comes out through Docker (no sudo).
-#  2. restic backs up its unpacked contents to Google Drive through rclone:
-#     encrypted on the board (Google sees only restic's scrambled packs) and
-#     deduplicated, so a night uploads what changed, not 40 MB.
+#  2. restic backs up its unpacked contents to Backblaze B2: encrypted on the
+#     board (B2 sees only restic's scrambled packs) and deduplicated, so a night
+#     uploads what changed, not 40 MB.
 #  3. Keeps 14 daily, 8 weekly and 12 monthly snapshots; prunes on Sundays.
 #  4. Writes ~/backups/offsite-status.json. The heartbeat (heartbeat.py) fails
 #     its ping when the last success is over 36 h old, so a failing backup
 #     reaches the owner through healthchecks.io's Telegram bot.
 #
-# Needs in .env: RESTIC_PASSWORD, RESTIC_REPOSITORY (rclone:gdrive:smart-home-backup),
-# and an rclone remote "gdrive" (docs/offsite-backup.md).
+# Needs in .env: RESTIC_PASSWORD, RESTIC_REPOSITORY (b2:<bucket>:smart-home), and
+# B2_ACCOUNT_ID / B2_ACCOUNT_KEY - a key limited to that bucket (docs/offsite-backup.md).
 set -uo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -415,6 +415,8 @@ Three things that will waste a day if you do not know them:
 - `docs/door-alerts.md` — **front door left open**: when it fires (A: last phone leaves,
   B: open 10 min and the house still), the shared dashboard banner, iPhone push, and
   Telegram setup (`scripts/install-door-alerts.py`, `input_boolean.front_door_alert`)
+- `docs/offsite-backup.md` — **nightly encrypted backup to Backblaze B2**: what runs at 02:40,
+  retention, the heartbeat alert, and how to restore from B2 on any machine
 - `docs/night-watch.md` — **night clips and Telegram photos**: triggers and cameras,
   retention, the office camera's false "person" and the motion gate
 - `docs/safety-alerts.md` — **water leak and smoke**: the six sensors, the critical

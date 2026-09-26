@@ -3,8 +3,9 @@
 #
 # Puts pinned restic and rclone in ~/.local/bin - release binaries, checksums
 # verified, no sudo - and installs offsite-backup.service/.timer (02:40). It
-# does not set up Google Drive or the encryption passphrase; see
-# docs/offsite-backup.md for those one-time steps.
+# does not set up the B2 bucket or the encryption passphrase; see
+# docs/offsite-backup.md for those one-time steps. (rclone is kept for moving
+# to another store later; restic reaches B2 by itself.)
 set -euo pipefail
 
 RESTIC_VERSION="0.19.1"

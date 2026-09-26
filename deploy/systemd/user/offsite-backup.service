@@ -1,5 +1,5 @@
 [Unit]
-Description=Nightly encrypted off-site backup to Google Drive (scripts/offsite-backup.sh)
+Description=Nightly encrypted off-site backup to Backblaze B2 (scripts/offsite-backup.sh)
 After=network-online.target
 
 [Service]

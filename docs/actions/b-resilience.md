@@ -1,7 +1,15 @@
 # B. Resilience
 
 ## B1 Automatic off-site backups
-☐ · both · M
+☑ 2026-09-26 · both · M
+
+**Done 2026-09-26** - see `docs/offsite-backup.md`. Nightly at 02:40 to Backblaze B2 (Google
+Drive was tried: rclone's shared Google app is being retired, and an own app stalled on
+Google's Branding page), encrypted on the board with restic, 14 daily / 8 weekly / 12 monthly.
+Unattended without sudo (Home Assistant's config through `docker cp`). The heartbeat fails
+after 36 h without a success. Restore tested byte-identical. The passphrase is in the owner's
+password manager and the board's `.env`. Previous backup before this: 2026-09-08.
+Still to do: a quarterly restore drill against `docs/restore-runbook.md`.
 
 **Why.** `scripts/backup-smart-home.sh` runs only when someone runs it. The
 Zigbee network key and the Matter fabric cannot be recreated; losing the NVMe
