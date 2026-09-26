@@ -67,7 +67,17 @@ the Smart Life schedule.
 Panel and the house modes all use; no arming or disarming happens outside it.
 
 ## A4 The stairs sensor
-☐ · both · S
+☑ 2026-09-26 · both · S - **no change needed**
+
+**Result 2026-09-26.** The premise was wrong: nobody went upstairs at ~02:33 on 09-25 - that
+was read off the office camera's *false* person ending at 02:33. The owner's real trip up
+was seen: entry and living room, **stairs 00:58:18**, bedroom 00:58:23, master bedroom 00:59:13
+(the office "person" that stayed on after 00:58 was the false one). Over 14 days of floor
+changes in the house memory (first floor -> bedroom within 3 min, and back) the stairs sensor
+saw **92% going up and 93% coming down, none missed at night**; the daytime rest is most likely
+two people moving at once. Settings: fading time 30 s, sensitivity 12, battery 100%.
+Not done on purpose: counting the bedroom sensors as "came down" - a sleeper turning over
+would then make anyone downstairs within 3 minutes "expected".
 
 **Why.** On 2026-09-25 someone went upstairs at ~02:33 and the stairs sensor
 (`binary_sensor.0xa4c138ae6a275f0f_presence`) did not see it (last change 00:59).
