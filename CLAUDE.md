@@ -349,6 +349,8 @@ Three things that will waste a day if you do not know them:
 
 ## Docs
 
+- **`docs/actions/`** — **the action list** from the 2026-09-25 review, worked one item at a
+  time in the order of its README; tick items there as they are done
 - `docs/setup-orangepi6.md` — verified board facts and first-time setup
 - `docs/orangepi6-cross-compile-deploy.md` — build and deploy workflow (both boards)
 - `docs/docker-development.md`, `docs/WSL_DEVELOPMENT.md` — dev environment
