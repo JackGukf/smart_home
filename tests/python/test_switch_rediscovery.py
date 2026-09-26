@@ -184,3 +184,40 @@ def test_rediscovery_is_skipped_when_no_macs_are_recorded(tmp_path: Path, monkey
     # Nothing to match on, so scanning could only guess. It must not.
     assert scans == []
     assert json.loads(discovery.read_text(encoding="utf-8"))["switches"][0]["host"] == OLD_HOST
+
+
+def test_a_board_just_booted_can_still_rediscover(tmp_path: Path, monkeypatch) -> None:
+    """The monotonic clock counts from boot. With the last scan recorded as 0.0,
+    a machine up less than SWITCH_REDISCOVER_MIN_INTERVAL could not scan at all -
+    found by CI on a fresh runner, and true of the board after a power cut."""
+    discovery = tmp_path / "tplink_switches.json"
+    _write_discovery(discovery)
+    app = create_app(discovery_path=discovery, controller=MovedSwitchController(reachable=NEW_HOST))
+    scans = []
+
+    async def fake_scan(timeout: int = 8) -> dict[str, str]:
+        scans.append(timeout)
+        return {MAC: NEW_HOST}
+
+    monkeypatch.setattr(web_app_module, "discover_hosts_by_mac", fake_scan)
+    monkeypatch.setattr(web_app_module, "SWITCH_STATUS_TIMEOUT", 0.05)
+    # Only web_app's clock: patching time.monotonic itself freezes asyncio's too.
+    real_time = web_app_module.time
+
+    class _JustBooted:
+        def __getattr__(self, name):
+            return getattr(real_time, name)
+
+        @staticmethod
+        def monotonic() -> float:
+            return 42.0                                   # up 42 seconds
+
+    monkeypatch.setattr(web_app_module, "time", _JustBooted())
+
+    async def scenario() -> None:
+        for _ in range(SWITCH_REDISCOVER_AFTER_FAILURES):
+            await _device_cards(app)
+        await app.state.rediscovery["task"]
+
+    asyncio.run(scenario())
+    assert scans, "a freshly booted board never rescanned"

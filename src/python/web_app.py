@@ -926,7 +926,10 @@ def create_app(
     # Consecutive status failures per switch host, used to retire dead sockets
     # and to notice a switch that may have moved to a new address.
     app.state.switch_failures = {}
-    app.state.rediscovery = {"task": None, "at": 0.0}
+    # "at": None is "never scanned". 0.0 read as a scan at boot time on the
+    # monotonic clock, so for the first 5 minutes after a reboot - just when a
+    # switch may have come back on a new DHCP address - no scan could start.
+    app.state.rediscovery = {"task": None, "at": None}
     _load_ambient_runtime_state(config_path)
 
     # app.js and styles.css are ~380KB of text served uncompressed otherwise.
@@ -2768,7 +2771,8 @@ def _schedule_switch_rediscovery(app: FastAPI) -> None:
     task = rediscovery.get("task")
     if task is not None and not task.done():
         return
-    if time.monotonic() - rediscovery["at"] < SWITCH_REDISCOVER_MIN_INTERVAL:
+    last = rediscovery["at"]
+    if last is not None and time.monotonic() - last < SWITCH_REDISCOVER_MIN_INTERVAL:
         return
     rediscovery["at"] = time.monotonic()
     rediscovery["task"] = asyncio.create_task(_rediscover_switch_hosts(app))
