@@ -1,0 +1,10 @@
+[Unit]
+Description=Heartbeat to healthchecks.io - the one watcher outside the house (src/python/heartbeat.py)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/orangepi/smart_home_AI
+# The system python3, not the project venv: standard library only, so a broken
+# venv cannot silence the thing that reports breakage.
+ExecStart=/usr/bin/python3 -m src.python.heartbeat
+TimeoutStartSec=90

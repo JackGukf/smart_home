@@ -1,0 +1,11 @@
+[Unit]
+Description=Ping healthchecks.io every five minutes
+
+[Timer]
+# Soon after boot: after a power cut, the first ping is the "back up" message.
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

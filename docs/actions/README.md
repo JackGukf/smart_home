@@ -12,7 +12,7 @@ the board), *Owner* (needs a person: hardware, accounts, a phone, a decision), o
 
 | # | Item | Owner | Size | Status |
 |---|---|---|---|---|
-| 1 | [A1 External heartbeat](a-safety-security.md#a1-external-heartbeat) | both | S | ☐ |
+| 1 | [A1 External heartbeat](a-safety-security.md#a1-external-heartbeat) | both | S | ◐ board side installed; waiting for the ping URL |
 | 2 | [C1 Deploy everything a commit changes](c-deploy-quality.md#c1-deploy-everything-a-commit-changes) | Claude | M | ☐ |
 | 3 | [C2 A green test suite](c-deploy-quality.md#c2-a-green-test-suite) | Claude | M | ☐ |
 | 4 | [C3 CI on GitHub](c-deploy-quality.md#c3-ci-on-github) | Claude | S | ☐ |

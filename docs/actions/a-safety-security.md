@@ -1,7 +1,13 @@
 # A. Safety and security
 
 ## A1 External heartbeat
-☐ · both · S
+◐ · both · S
+
+**Progress 2026-09-25.** Service chosen: healthchecks.io, alerting on its own Telegram bot.
+`heartbeat.timer` (every 5 min) runs `src/python/heartbeat.py` with the system python3:
+a normal ping with the service watchdog's report, or `/fail` when the watchdog gave up
+on something or stopped running. Installed and enabled on the board; sends nothing until
+`HEALTHCHECKS_PING_URL` is in the board's `.env`.
 
 **Why.** Everything that watches the house runs on the board: the service
 watchdog, the alerts, Telegram. If the board dies, loses power or loses the
