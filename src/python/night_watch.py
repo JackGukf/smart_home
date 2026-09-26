@@ -545,6 +545,9 @@ def main(argv: list[str] | None = None) -> int:
     LOG.info("clips to %s, kept %s days / %s GB (House rules); Telegram %s", settings.out_dir,
              house_settings.value("keep_days"), house_settings.value("max_gb"),
              "on" if settings.telegram_token and settings.telegram_chats else "off")
+    # The first status must not say "not connected" just because it was written
+    # a moment before the connection finished (seen 2026-09-26 after a restart).
+    connected.wait(15)
     try:
         last_tidy = 0.0
         while True:
