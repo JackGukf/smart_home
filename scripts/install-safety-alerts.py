@@ -37,7 +37,8 @@ A leak or smoke sensor that dies says nothing, so the rule
 safety_sensors_need_attention sends an ordinary push and Telegram listing each
 sensor whose battery is under 20% (or says it is low), or that has been
 unavailable for 6 hours - when one crosses the line, and again every morning at
-10:00 until fixed. "unknown" does not count: that is how the Zigbee ones rest.
+10:00 until fixed (those three numbers, and the reminders above, are defaults:
+Settings -> House rules changes them, src/python/house_settings.py). "unknown" does not count: that is how the Zigbee ones rest.
 
     python3 scripts/install-safety-alerts.py            # show it
     python3 scripts/install-safety-alerts.py --apply    # install (on the board)
@@ -57,6 +58,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.python import safety_sensors  # noqa: E402
+from src.python.house_settings import BY_KEY as SETTINGS, ha_value  # noqa: E402
 
 
 def _door_alerts():
@@ -73,10 +75,11 @@ PHONE = _doors.PHONE
 
 # How far back an alert makes an "unavailable -> on" a flap rather than news.
 FLAP_WINDOW_S = 3 * 3600
-LOW_BATTERY = 20
-UNAVAILABLE_FOR = {"hours": 6}
-UNAVAILABLE_FOR_S = 6 * 3600
-HEALTH_AT = "10:00:00"
+# Settings -> House rules (src/python/house_settings.py): read by the rules at run time.
+LOW_BATTERY = ha_value("low_battery_pct")
+UNAVAILABLE_H = ha_value("sensor_silent_h")
+HEALTH_AT = SETTINGS["health_check_at"].entity            # a time trigger can take the helper itself
+LOW_BATTERY_ENTITY = SETTINGS["low_battery_pct"].entity   # and so can a numeric_state threshold
 HEALTH_TAG = "safety-sensors"
 
 HAZARDS = {
@@ -94,8 +97,8 @@ HAZARDS = {
         "emoji": "💧",
         "tag": "water-leak",
         "ack": "WATER_LEAK_ACK",
-        "remind_every": {"minutes": 10},
-        "reminders": 3,
+        "remind_min": "leak_remind_min",
+        "reminders": "leak_reminders",
     },
     "smoke": {
         "sensors": safety_sensors.SMOKE,
@@ -111,8 +114,8 @@ HAZARDS = {
         "emoji": "🔥",
         "tag": "smoke",
         "ack": "SMOKE_ACK",
-        "remind_every": {"minutes": 3},
-        "reminders": 5,
+        "remind_min": "smoke_remind_min",
+        "reminders": "smoke_reminders",
     },
 }
 
@@ -176,14 +179,15 @@ def script(key: str, telegram: list[str]) -> dict:
     hazard = HAZARDS[key]
     sensors = hazard["sensors"]
     first = hazard["found"] + places_now(sensors, "where") + "."
-    minutes = str(hazard["remind_every"]["minutes"])
+    minutes = "(" + ha_value(hazard["remind_min"]) + " | int)"
+    count = "(" + ha_value(hazard["reminders"]) + " | int)"
     reminder = (hazard["still"] + places_now(sensors, "where")
                 + " - {{ repeat.index * " + minutes + " }} minutes since the first message.")
     return {
         "alias": f"{hazard['alias']} alert",
         "description": (f"{hazard['title']}: {hazard['flag']} for the dashboard, a critical iPhone push and "
-                        f"Telegram, then a reminder every {minutes} minutes while it stands "
-                        f"({hazard['reminders']} at most). Installed by scripts/install-safety-alerts.py."),
+                        "Telegram, then reminders while it stands - how often and how many are on "
+                        "Settings -> House rules. Installed by scripts/install-safety-alerts.py."),
         # A second sensor setting it off starts it again, so the message names both.
         "mode": "restart",
         "fields": {"where": {"description": "The sensor that set it off", "example": "the boiler"}},
@@ -195,11 +199,11 @@ def script(key: str, telegram: list[str]) -> dict:
                 "while": [
                     {"condition": "state", "entity_id": hazard["flag"], "state": "on"},
                     {"condition": "template",
-                     "value_template": "{{ repeat.index <= " + str(hazard["reminders"]) + " }}"},
+                     "value_template": "{{ repeat.index <= " + count + " }}"},
                 ],
                 "sequence": [
                     {"wait_for_trigger": [{"trigger": "state", "entity_id": hazard["flag"], "to": "off"}],
-                     "timeout": hazard["remind_every"], "continue_on_timeout": True},
+                     "timeout": {"minutes": "{{ " + minutes + " }}"}, "continue_on_timeout": True},
                     {"if": [
                         {"condition": "state", "entity_id": hazard["flag"], "state": "on"},
                         {"condition": "template", "value_template": any_on(sensors)},
@@ -274,7 +278,7 @@ def health_problems() -> str:
     return ("{% set ns = namespace(out=[]) %}"
             "{% set batteries = " + batteries + " %}"
             "{% for id in batteries %}{% set level = states(id) | float(101) %}"
-            "{% if level < " + str(LOW_BATTERY) + " %}"
+            "{% if level < " + LOW_BATTERY + " %}"
             "{% set ns.out = ns.out + [batteries[id] ~ ': battery ' ~ (level | round(0) | int) ~ '%'] %}"
             "{% endif %}{% endfor %}"
             "{% set lows = " + lows + " %}"
@@ -283,7 +287,7 @@ def health_problems() -> str:
             "{% set watched = " + watched + " %}"
             "{% for id in watched %}{% set s = states[id] %}"
             "{% if s is not none and s.state == 'unavailable' and "
-            "(now() - s.last_changed).total_seconds() > " + str(UNAVAILABLE_FOR_S) + " %}"
+            "(now() - s.last_changed).total_seconds() > " + UNAVAILABLE_H + " * 3600 %}"
             "{% set ns.out = ns.out + [watched[id] ~ ': not reporting for ' ~ "
             "(((now() - s.last_changed).total_seconds() / 3600) | round(0) | int) ~ ' h'] %}"
             "{% endif %}{% endfor %}"
@@ -295,14 +299,15 @@ def health_automation(telegram: list[str]) -> dict:
     return {
         "id": "safety_sensors_need_attention",
         "alias": "Safety sensors - need attention",
-        "description": (f"A leak or smoke sensor with a battery under {LOW_BATTERY}% (or saying low), or "
-                        "unavailable for 6 hours: when it happens and every morning at 10:00 until fixed. "
-                        "Installed by scripts/install-safety-alerts.py."),
+        "description": ("A leak or smoke sensor with a low battery (or saying low), or unavailable too long: "
+                        "when it happens and every day at the check time until fixed - the three numbers are "
+                        "on Settings -> House rules. Installed by scripts/install-safety-alerts.py."),
         "mode": "single",
         "triggers": [
-            {"trigger": "numeric_state", "entity_id": list(safety_sensors.BATTERIES), "below": LOW_BATTERY},
+            {"trigger": "numeric_state", "entity_id": list(safety_sensors.BATTERIES), "below": LOW_BATTERY_ENTITY},
             {"trigger": "state", "entity_id": list(safety_sensors.BATTERY_LOW), "to": "on"},
-            {"trigger": "state", "entity_id": watched, "to": "unavailable", "for": UNAVAILABLE_FOR},
+            {"trigger": "state", "entity_id": watched, "to": "unavailable",
+             "for": {"hours": "{{ " + UNAVAILABLE_H + " | int }}"}},
             {"trigger": "time", "at": HEALTH_AT},
         ],
         "actions": [

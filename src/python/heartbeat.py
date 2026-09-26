@@ -17,7 +17,7 @@ While the watchdog is paused (deploy/watchdog/.paused, during maintenance) a
 give-up does not fail the ping; a stale watchdog still does.
 
 It also fails when the nightly off-site backup (scripts/offsite-backup.sh) has
-not succeeded for 36 hours - one missed night is a warning in the body, two
+not succeeded for 36 hours (House rules -> "Alert when no backup for") - one missed night is a warning in the body, two
 are an alert. Before the backup is set up there is no status file, and that is
 not a failure.
 
@@ -44,7 +44,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATUS_PATH = PROJECT_ROOT / "service_watchdog.json"
 WATCHDOG_STALE_S = 15 * 60
 BACKUP_STATUS_PATH = Path.home() / "backups" / "offsite-status.json"
-BACKUP_STALE_S = 36 * 3600
+BACKUP_STALE_S = 36 * 3600      # default; the live value is House rules -> "Alert when no backup for"
 ATTEMPTS = 3
 
 
@@ -78,12 +78,21 @@ def verdict(status: dict[str, Any] | None, now: float) -> tuple[bool, str]:
     return True, head + f"All {len(report)} checks reported.\n" + "\n".join(report)
 
 
-def backup_verdict(doc: dict[str, Any] | None, now: float) -> tuple[bool, str]:
+def _backup_stale_s() -> float:
+    try:
+        from src.python import house_settings
+        return float(house_settings.value("backup_alert_h")) * 3600
+    except Exception:  # noqa: BLE001 - a settings problem must not silence the heartbeat
+        return BACKUP_STALE_S
+
+
+def backup_verdict(doc: dict[str, Any] | None, now: float, stale_s: float | None = None) -> tuple[bool, str]:
     """(healthy, one line) for the off-site backup."""
+    stale_s = _backup_stale_s() if stale_s is None else stale_s
     if doc is None:
         return True, "Off-site backup: not set up yet."
     last_ok = doc.get("last_ok")
-    if last_ok and now - float(last_ok) <= BACKUP_STALE_S:
+    if last_ok and now - float(last_ok) <= stale_s:
         hours = (now - float(last_ok)) / 3600
         warn = "" if doc.get("ok", True) else f" (last night failed: {doc.get('message', '?')})"
         return True, f"Off-site backup: last success {hours:.0f} h ago{warn}."

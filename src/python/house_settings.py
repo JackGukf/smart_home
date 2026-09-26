@@ -56,9 +56,73 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("furnace_fail_min", "Freeze and furnace", "Furnace failing after",
             "Alert when heat has been called for this long and the house has not warmed "
             "by at least 0.3 °C.", "min", 60, 20, 240, 5),
+
+    Setting("leak_remind_min", "Leak and smoke", "Leak reminder every",
+            "While a leak alert stands and nobody said I know.", "min", 10, 2, 60, 1),
+    Setting("leak_reminders", "Leak and smoke", "Leak reminders",
+            "How many reminders at most after the first message.", "times", 3, 0, 20, 1),
+    Setting("smoke_remind_min", "Leak and smoke", "Smoke reminder every",
+            "While a smoke alert stands and nobody said I know.", "min", 3, 1, 30, 1),
+    Setting("smoke_reminders", "Leak and smoke", "Smoke reminders",
+            "How many reminders at most after the first message.", "times", 5, 0, 20, 1),
+    Setting("low_battery_pct", "Leak and smoke", "Low battery below",
+            "A leak or smoke sensor's battery under this is reported.", "%", 20, 5, 50, 1),
+    Setting("sensor_silent_h", "Leak and smoke", "Not reporting after",
+            "A leak or smoke sensor unavailable this long is reported. \"Unknown\" does not count: "
+            "that is how the Zigbee ones rest.", "h", 6, 1, 48, 1),
+    Setting("health_check_at", "Leak and smoke", "Daily sensor check at",
+            "Low batteries and silent sensors are listed again every day at this time until fixed.",
+            "", "10:00", kind="time"),
+
+    Setting("intrusion_remind_min", "Intrusion", "Reminder every",
+            "After the alarm speaker starts, until somebody presses Stop or I know - also after the "
+            "speaker stops by itself.", "min", 2, 1, 15, 1),
+    Setting("intrusion_reminders", "Intrusion", "Reminders",
+            "How many reminders at most.", "times", 15, 0, 60, 1),
+
+    Setting("car_parked_min", "Garage camera", "Car parked at least",
+            "A car leaving counts as someone leaving only after it was parked this long - not one "
+            "turning round in the driveway.", "min", 10, 1, 60, 1),
+    Setting("car_gone_min", "Garage camera", "Driveway empty at least",
+            "A car arriving ends Away only after the driveway was empty this long.", "min", 5, 1, 60, 1),
+    Setting("left_recently_min", "Garage camera", "\"Someone just left\" lasts",
+            "How long the camera's sighting of someone leaving can combine with a still house to "
+            "make the house Away.", "min", 30, 5, 120, 5),
+
+    Setting("night_start", "Night recorder", "Night starts", "When clips and Telegram photos begin.",
+            "", "22:00", home="board", kind="time"),
+    Setting("night_end", "Night recorder", "Night ends", "When they stop.", "", "06:30", home="board", kind="time"),
+    Setting("clip_s", "Night recorder", "Clip length", "Each clip's length.", "s", 20, 5, 60, 1, home="board"),
+    Setting("photo_every_min", "Night recorder", "One photo per trigger per",
+            "A sensor firing every two minutes sends one message, not five; every picture is still kept.",
+            "min", 5, 1, 60, 1, home="board"),
+    Setting("moving_pct", "Night recorder", "Movement needed",
+            "How much of the picture must move for a motion sensor's photo to be sent - a cat is several "
+            "times the default, the camera's ticking clock far less.", "%", 0.8, 0.1, 10, 0.1, home="board"),
+    Setting("keep_days", "Night recorder", "Keep clips for", "Older clips and photos are deleted.",
+            "days", 14, 1, 90, 1, home="board"),
+    Setting("max_gb", "Night recorder", "Keep at most", "The oldest go first when this is exceeded.",
+            "GB", 20, 1, 200, 1, home="board"),
+
+    Setting("login_max_failures", "Sign-in", "Lock out after",
+            "Wrong dashboard passwords - or wrong disarm PINs - from one screen before it is locked out.",
+            "tries", 5, 3, 20, 1, home="board"),
+    Setting("login_lockout_min", "Sign-in", "Locked out for", "How long that screen is locked out.",
+            "min", 15, 1, 120, 1, home="board"),
+
+    Setting("backup_alert_h", "Backup and watchdog", "Alert when no backup for",
+            "The heartbeat fails its ping when the nightly off-site backup has not succeeded this long.",
+            "h", 36, 24, 168, 1, home="board"),
+    Setting("backup_keep_daily", "Backup and watchdog", "Daily backups kept", "", "", 14, 1, 60, 1, home="board"),
+    Setting("backup_keep_weekly", "Backup and watchdog", "Weekly backups kept", "", "", 8, 0, 52, 1, home="board"),
+    Setting("backup_keep_monthly", "Backup and watchdog", "Monthly backups kept", "", "", 12, 0, 60, 1, home="board"),
+    Setting("camera_outage_min", "Backup and watchdog", "Camera down before it counts",
+            "A camera's detection unavailable this long is reported; shorter Wi-Fi blips are not.",
+            "min", 10, 4, 60, 2, home="board"),
 )
 
-GROUP_ORDER = ("Freeze and furnace",)
+GROUP_ORDER = ("Freeze and furnace", "Leak and smoke", "Intrusion", "Garage camera", "Night recorder",
+               "Sign-in", "Backup and watchdog")
 BY_KEY = {s.key: s for s in SETTINGS}
 
 

@@ -132,7 +132,7 @@ class _Recording(NightWatch):
         self.snaps, self.clips_made, self.photos = [], [], []
         self.pool.submit = lambda fn, *a: fn(*a)          # run inline
         self.moved, self.clip_ok = moved, clip_ok
-        nw.movement_in_clip = lambda path: (self.moved, b"boxed" if self.moved else None)
+        nw.movement_in_clip = lambda path, **kw: (self.moved, b"boxed" if self.moved else None)
 
     def snapshot(self, trigger, at):
         self.snaps.append(trigger.camera)
@@ -313,3 +313,23 @@ def test_headlights_sweeping_the_whole_picture_are_not_movement(tmp_path):
             frame[:] = 200                                    # everything brighter at once
     moved, _ = nw.movement_in_clip(_video(tmp_path, _frames(24, lights)))
     assert not moved
+
+
+def test_the_numbers_come_from_house_rules(monkeypatch):
+    """Settings -> House rules changes them without a restart (house_settings.py)."""
+    values = {"night_start": "23:30", "night_end": "05:00", "clip_s": 45, "photo_every_min": 1}
+    monkeypatch.setattr(nw.house_settings, "value", lambda key: values[key])
+    assert NightWatch.night_hours() == (dtime(23, 30), dtime(5, 0))
+    assert NightWatch.clip_seconds() == 45
+    watch = NightWatch(Settings())
+    assert watch.telegram_cooldown.ready("a") and not watch.telegram_cooldown.ready("a")
+    values["photo_every_min"] = 0                   # a change applies at once
+    assert watch.telegram_cooldown.ready("a")
+
+
+def test_the_movement_threshold_is_passed_through(tmp_path):
+    def walker(frame, i):
+        frame[100:130, 20 + i * 18:40 + i * 18] = 230           # 20x30 px, ~0.46% of the picture
+    path = _video(tmp_path, _frames(24, walker))
+    assert nw.movement_in_clip(path, moving=0.008)[0] is False     # below the default
+    assert nw.movement_in_clip(path, moving=0.003)[0] is True      # the owner lowered it

@@ -37,7 +37,8 @@ The intrusion alert (2026-09-25, action list A2)
 When the alarm speaker starts - whatever started it - script.intrusion_alert
 turns input_boolean.intrusion_alert on and sends a *critical* push (through the
 mute switch and every Focus) naming what set it off, with Stop and I know, and a
-Telegram message. Then every 2 minutes, for up to 30, both again until somebody
+Telegram message. Then every 2 minutes, 15 times (defaults - Settings -> House
+rules), both again until somebody
 answers - even after the speaker stops by itself: the siren giving up is not
 somebody answering. No second person (the owner's choice).
 
@@ -69,6 +70,9 @@ import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.python.house_settings import ha_value  # noqa: E402
 
 
 def _door_alerts():
@@ -101,8 +105,9 @@ INTRUSION_SCRIPT = f"script.{INTRUSION_SCRIPT_ID}"
 STOP_ACTION = "INTRUSION_STOP"
 ACK_ACTION = "INTRUSION_ACK"
 INTRUSION_TAG = "intrusion"
-REMIND_EVERY = {"minutes": 2}
-REMINDERS = 15                                          # 30 minutes
+# Settings -> House rules (src/python/house_settings.py), read at run time.
+REMIND_MIN = "(" + ha_value("intrusion_remind_min") + " | int)"
+REMINDERS = "(" + ha_value("intrusion_reminders") + " | int)"
 
 UPSTAIRS = "binary_sensor.0xa4c138ae6a275f0f_presence"  # Motion sensor and TH Upstairs (the stairs)
 FIRST_FLOOR_PIR = [
@@ -187,7 +192,7 @@ def _critical_push(title: str, message: str) -> dict:
 
 
 def intrusion_script(telegram: list[str]) -> dict:
-    still = ("Still no answer - {{ repeat.index * " + str(REMIND_EVERY["minutes"]) + " }} min. {{ why }}. "
+    still = ("Still no answer - {{ repeat.index * " + REMIND_MIN + " }} min. {{ why }}. "
              "The speaker is {{ 'sounding' if is_state('" + SPEAKER + "', 'on') else 'silent now' }}.")
     return {
         "alias": "Intrusion alert",
@@ -205,11 +210,11 @@ def intrusion_script(telegram: list[str]) -> dict:
             {"repeat": {
                 "while": [
                     {"condition": "state", "entity_id": INTRUSION, "state": "on"},
-                    {"condition": "template", "value_template": "{{ repeat.index <= " + str(REMINDERS) + " }}"},
+                    {"condition": "template", "value_template": "{{ repeat.index <= " + REMINDERS + " }}"},
                 ],
                 "sequence": [
                     {"wait_for_trigger": [{"trigger": "state", "entity_id": INTRUSION, "to": "off"}],
-                     "timeout": REMIND_EVERY, "continue_on_timeout": True},
+                     "timeout": {"minutes": "{{ " + REMIND_MIN + " }}"}, "continue_on_timeout": True},
                     {"if": [{"condition": "state", "entity_id": INTRUSION, "state": "on"}], "then": [
                         _critical_push("🚨 Intruder alarm", still),
                         *_doors._telegram(telegram, "🚨 " + still),

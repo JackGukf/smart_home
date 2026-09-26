@@ -143,7 +143,7 @@ def test_the_nightly_backup_units():
     assert "ExecStart=/home/orangepi/smart_home_AI/scripts/offsite-backup.sh" in unit and "Type=oneshot" in unit
     assert "OnCalendar=*-*-* 02:40:00 America/Vancouver" in timer and "Persistent=true" in timer
     job = (ROOT / "scripts/offsite-backup.sh").read_text(encoding="utf-8")
-    assert "--keep-daily 14 --keep-weekly 8 --keep-monthly 12" in job
+    assert "backup_keep_daily" in job and '--keep-daily "${DAILY:-14}"' in job
     assert "backup-smart-home.sh\" --local" in job and "</dev/null" in job
 
 

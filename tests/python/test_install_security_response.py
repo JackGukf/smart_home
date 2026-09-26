@@ -131,10 +131,18 @@ def test_the_first_message_is_critical_names_the_cause_and_has_both_buttons():
 def test_it_repeats_every_two_minutes_until_answered_even_after_the_speaker_stops():
     loop = SCRIPT_BODY["sequence"][4]["repeat"]
     assert {"condition": "state", "entity_id": sec.INTRUSION, "state": "on"} in loop["while"]
-    assert "repeat.index <= 15" in loop["while"][1]["value_template"]
+    # Settings -> House rules; the defaults are 15 reminders every 2 minutes.
+    count = loop["while"][1]["value_template"]
+    assert "house_intrusion_reminders" in count
+
+    class _R:
+        index = 15
+    assert _render(count, {}, repeat=_R) == "True"
+    _R.index = 16
+    assert _render(count, {}, repeat=_R) == "False"
     wait = loop["sequence"][0]
     assert wait["wait_for_trigger"] == [{"trigger": "state", "entity_id": sec.INTRUSION, "to": "off"}]
-    assert wait["timeout"] == {"minutes": 2}
+    assert _render(wait["timeout"]["minutes"], {}) == "2"
     reminder = loop["sequence"][1]
     # Only the flag gates a reminder - not the speaker, which stops by itself after 5 minutes.
     assert reminder["if"] == [{"condition": "state", "entity_id": sec.INTRUSION, "state": "on"}]

@@ -163,7 +163,13 @@ def test_reminders_stop_on_i_know_and_only_while_it_stands(key):
     assert {"condition": "state", "entity_id": hazard["flag"], "state": "on"} in loop["while"]
     wait = loop["sequence"][0]
     assert wait["wait_for_trigger"] == [{"trigger": "state", "entity_id": hazard["flag"], "to": "off"}]
-    assert wait["timeout"] == hazard["remind_every"]
+    # Settings -> House rules: the helper's value, the default when there is none.
+    minutes = wait["timeout"]["minutes"]
+    assert f"house_{hazard['remind_min']}" in minutes
+    assert render(minutes, {}) == {"water_leak": "10", "smoke": "3"}[key]
+    assert render(minutes, {f"input_number.house_{hazard['remind_min']}": ("7", NOW)}) == "7"
+    count = loop["while"][1]["value_template"]
+    assert f"house_{hazard['reminders']}" in count
     reminder_if = loop["sequence"][1]["if"]
     still_on = reminder_if[1]["value_template"]
     sensor = next(iter(hazard["sensors"]))
@@ -245,3 +251,16 @@ def test_dry_run_prints_the_plan(capsys):
     plan = json.loads(out[: out.rindex("}") + 1])
     assert set(plan["scripts"]) == {"water_leak_alert", "smoke_alert"}
     assert "Nothing was written" in out
+
+
+def test_the_health_check_reads_house_rules():
+    body = BY_ID["safety_sensors_need_attention"]
+    by_kind = {t["trigger"]: t for t in body["triggers"] if t["trigger"] != "state" or "for" in t}
+    assert by_kind["numeric_state"]["below"] == "input_number.house_low_battery_pct"
+    assert by_kind["time"]["at"] == "input_datetime.house_health_check_at"
+    assert render(by_kind["state"]["for"]["hours"], {}) == "6"
+    lines = render(safety.health_problems(), {
+        "sensor.shui_jin_chuan_gan_qi_battery": ("26.0", NOW),
+        "input_number.house_low_battery_pct": ("30", NOW),       # the owner raised it to 30%
+    }).splitlines()
+    assert lines == ["Leak sensor, utility room: battery 26%"]

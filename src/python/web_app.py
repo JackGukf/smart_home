@@ -423,9 +423,17 @@ class _LoginGuard:
     a restart forgets it, which costs an attacker a restart they cannot cause.
     """
 
+    # Defaults; the live numbers are Settings -> House rules -> Sign-in
+    # (house_settings.py), read on every failure so a change applies at once.
     LOGIN_MAX_FAILURES = 5
     LOGIN_WINDOW_S = 15 * 60
     LOGIN_LOCKOUT_S = 15 * 60
+
+    @staticmethod
+    def _limits() -> tuple[int, float]:
+        """(failures allowed, lockout and window in seconds)."""
+        return (int(house_settings.value("login_max_failures")),
+                float(house_settings.value("login_lockout_min")) * 60)
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
@@ -443,10 +451,11 @@ class _LoginGuard:
 
     def failed(self, peer: str) -> None:
         now = self._clock()
-        recent = [t for t in self._failures.get(peer, []) if now - t < self.LOGIN_WINDOW_S]
+        allowed, lockout = self._limits()
+        recent = [t for t in self._failures.get(peer, []) if now - t < lockout]
         recent.append(now)
-        if len(recent) >= self.LOGIN_MAX_FAILURES:
-            self._locked_until[peer] = now + self.LOGIN_LOCKOUT_S
+        if len(recent) >= allowed:
+            self._locked_until[peer] = now + lockout
             self._failures.pop(peer, None)
         else:
             self._failures[peer] = recent

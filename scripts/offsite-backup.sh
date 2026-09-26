@@ -63,7 +63,12 @@ tar xzf "${ARCHIVE}" -C "${UNPACKED}" || fail "could not unpack ${ARCHIVE}"
 
 restic backup --quiet --host orangepi6plus --tag nightly "${UNPACKED}" \
     || fail "restic backup to ${RESTIC_REPOSITORY} failed"
-KEEP=(--keep-daily 14 --keep-weekly 8 --keep-monthly 12)
+# How many to keep: Settings -> House rules -> Backup and watchdog (defaults 14 / 8 / 12).
+read -r DAILY WEEKLY MONTHLY < <(cd "${PROJECT_ROOT}" && python3 -c "
+from src.python.house_settings import value
+print(*(int(value(k)) for k in ('backup_keep_daily', 'backup_keep_weekly', 'backup_keep_monthly')))" \
+    || echo "14 8 12")
+KEEP=(--keep-daily "${DAILY:-14}" --keep-weekly "${WEEKLY:-8}" --keep-monthly "${MONTHLY:-12}")
 if [[ "$(date +%u)" == "7" ]]; then
     restic forget --quiet --host orangepi6plus "${KEEP[@]}" --prune || fail "restic forget/prune failed"
 else

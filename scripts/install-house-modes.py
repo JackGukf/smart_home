@@ -71,6 +71,9 @@ import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.python.house_settings import ha_value  # noqa: E402
 
 MODE = "input_select.house_mode"
 HOME, AWAY, VACATION = "Home", "Away", "Vacation"
@@ -118,9 +121,10 @@ LEFT_AT = "input_datetime.house_left_seen"        # when the camera last saw som
 LEFT_HOW = "input_text.house_left_how"            # how - and "" once it has been acted on
 CAMERA_LIVE = "input_boolean.house_camera_signals"  # off: watch-only
 WOULD_HAVE = "input_text.house_camera_would_have"   # what watch-only would have done
-CAR_PARKED_S = 600      # a car must have been parked this long before its leaving counts
-CAR_GONE_S = 300        # and the driveway empty this long before a car's arrival counts
-LEFT_RECENTLY_S = 1800  # "someone just left" lasts this long
+# Settings -> House rules (src/python/house_settings.py), as seconds, read at run time:
+CAR_PARKED_S = "(" + ha_value("car_parked_min") + " * 60)"     # parked this long before its leaving counts
+CAR_GONE_S = "(" + ha_value("car_gone_min") + " * 60)"         # driveway empty this long before an arrival counts
+LEFT_RECENTLY_S = "(" + ha_value("left_recently_min") + " * 60)"  # "someone just left" lasts this long
 
 EMPTY_FOR = {"minutes": 15}
 PHONES_GONE_FOR = {"minutes": 5}
@@ -191,7 +195,7 @@ def away_for(seconds: int) -> dict:
         "{{ since is not none and now().timestamp() - since > " + str(seconds) + " }}")}
 
 
-def held_for(seconds: int) -> dict:
+def held_for(seconds: str) -> dict:
     """The sensor had been in its previous state at least this long - a car that
     was parked, not one turning round in the driveway."""
     return {"condition": "template", "value_template": (

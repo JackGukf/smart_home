@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import socket
 import sqlite3
@@ -384,6 +385,16 @@ def restart_unit(unit: str, user: bool = True) -> Callable[[], str]:
     return act
 
 
+def _camera_passes() -> int:
+    """Failed passes (two minutes each) before a camera outage counts."""
+    try:
+        from src.python import house_settings
+        minutes = float(house_settings.value("camera_outage_min"))
+    except Exception:  # noqa: BLE001 - a settings problem must not stop the watchdog
+        minutes = 10
+    return max(2, math.ceil(minutes / 2))
+
+
 def build_checks(token: str) -> list[Check]:
     return [
         Check("docker", "Docker", probe_docker, None, needed=2,
@@ -409,9 +420,10 @@ def build_checks(token: str) -> list[Check]:
               advice="Free space on the NVMe: old camera recordings, Docker images (docker system prune)."),
         Check("night_watch", "Night watch", probe_night_watch, restart_unit("night-watch.service"),
               depends=("mosquitto",)),
-        # 5 passes = 10 minutes: camera Wi-Fi blips (3.5 min on 2026-09-25) must not count.
+        # House rules -> "Camera down before it counts" (10 min = 5 passes): camera
+        # Wi-Fi blips (3.5 min on 2026-09-25) must not count.
         Check("cameras", "Camera detection", lambda: probe_cameras(token),
-              lambda: restart_detector_if_all_down(token), needed=5, cooldown=3600,
+              lambda: restart_detector_if_all_down(token), needed=_camera_passes(), cooldown=3600,
               depends=("home_assistant", "go2rtc"),
               advice="A camera that stays off is usually its power or Wi-Fi."),
         Check("alert_rules", "Alert rules", lambda: probe_alert_rules(token), None, needed=1,

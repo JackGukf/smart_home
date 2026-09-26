@@ -12,7 +12,7 @@ What it listens to (MQTT - the Zigbee stack and the NPU detector publish there):
   * The alarm speaker starting to sound - day or night - which records both
     indoor cameras: that is the moment a picture matters most.
 
-What it does, at night (NIGHT_WATCH_HOURS, default 22:00-06:30):
+What it does, at night (Settings -> House rules -> Night recorder; default 22:00-06:30):
 
   * Saves a snapshot, with the detector's boxes and confidences drawn on it when
     the trigger was the detector, and a 20 s clip (ffmpeg, stream copy - no
@@ -35,8 +35,10 @@ Clips read go2rtc's local RTSP re-stream. For the cameras the detector already
 watches, go2rtc shares its one camera connection, so a clip adds no Wi-Fi
 traffic; the backyard camera is pulled only for the length of its clip.
 
-Kept 14 days (NIGHT_WATCH_KEEP_DAYS) and at most 20 GB (NIGHT_WATCH_MAX_GB),
-oldest first.
+Kept 14 days and at most 20 GB, oldest first. Every number here - the night's
+hours, the clip length, one photo per trigger per 5 minutes, the movement
+needed, the retention - is a House rules setting (src/python/house_settings.py),
+read each time it is needed, so a change on the dashboard applies at once.
 
     python -m src.python.night_watch            # run (the systemd unit does this)
     python -m src.python.night_watch --test front_door_camera   # one snapshot + clip now
@@ -58,6 +60,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, time as dtime
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+from src.python import house_settings
 
 LOG = logging.getLogger("night_watch")
 
@@ -118,7 +122,7 @@ def parse_hours(raw: str) -> tuple[dtime, dtime]:
         a, b = (datetime.strptime(x.strip(), "%H:%M").time() for x in (start, end))
         return a, b
     except ValueError:
-        LOG.warning("NIGHT_WATCH_HOURS=%r is not HH:MM-HH:MM; using 22:00-06:30", raw)
+        LOG.warning("night hours %r are not HH:MM-HH:MM; using 22:00-06:30", raw)
         return dtime(22, 0), dtime(6, 30)
 
 
@@ -170,16 +174,18 @@ def triggers_for(topic: str, payload: dict[str, Any], edges: EdgeDetector) -> li
 
 
 class Cooldown:
-    """At most one action per key per `seconds`."""
+    """At most one action per key per `seconds` - a number, or a callable read each
+    time (a House rules setting)."""
 
-    def __init__(self, seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, seconds: float | Callable[[], float], clock: Callable[[], float] = time.monotonic) -> None:
         self.seconds = seconds
         self.clock = clock
         self._last: dict[str, float] = {}
 
     def ready(self, key: str) -> bool:
         now = self.clock()
-        if now - self._last.get(key, float("-inf")) < self.seconds:
+        seconds = self.seconds() if callable(self.seconds) else self.seconds
+        if now - self._last.get(key, float("-inf")) < seconds:
             return False
         self._last[key] = now
         return True
@@ -227,11 +233,9 @@ def multipart(fields: dict[str, str], file_field: str, filename: str, data: byte
 
 @dataclass
 class Settings:
-    hours: tuple[dtime, dtime] = (dtime(22, 0), dtime(6, 30))
+    """Where things are and how to reach them. The numbers - the night's hours,
+    the clip length, retention - are House rules settings, read live (below)."""
     out_dir: Path = Path.home() / "night-clips"
-    clip_seconds: int = 20
-    keep_days: float = 14
-    max_bytes: int = 20 * 1024 ** 3
     go2rtc_url: str = "http://127.0.0.1:1984"
     rtsp_url: str = "rtsp://127.0.0.1:8554"
     telegram_token: str = ""
@@ -245,11 +249,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            hours=parse_hours(os.getenv("NIGHT_WATCH_HOURS", "22:00-06:30")),
             out_dir=Path(os.path.expanduser(os.getenv("NIGHT_WATCH_DIR", "~/night-clips"))),
-            clip_seconds=int(os.getenv("NIGHT_WATCH_CLIP_S", "20")),
-            keep_days=float(os.getenv("NIGHT_WATCH_KEEP_DAYS", "14")),
-            max_bytes=int(float(os.getenv("NIGHT_WATCH_MAX_GB", "20")) * 1024 ** 3),
             go2rtc_url=os.getenv("GO2RTC_URL", "http://127.0.0.1:1984"),
             rtsp_url=os.getenv("GO2RTC_RTSP_URL", "rtsp://127.0.0.1:8554"),
             telegram_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
@@ -266,11 +266,20 @@ class NightWatch:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
         self.edges = EdgeDetector()
-        self.telegram_cooldown = Cooldown(300)
+        self.telegram_cooldown = Cooldown(lambda: float(house_settings.value("photo_every_min")) * 60)
         self.clip_cooldown = Cooldown(60)
         self.evidence_cooldown = Cooldown(60)
         self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="nw")
         self.clips = threading.BoundedSemaphore(3)     # ffmpeg processes at once
+
+    # House rules, read each time ----------------------------------------------
+    @staticmethod
+    def night_hours() -> tuple[dtime, dtime]:
+        return parse_hours(f"{house_settings.value('night_start')}-{house_settings.value('night_end')}")
+
+    @staticmethod
+    def clip_seconds() -> int:
+        return int(house_settings.value("clip_s"))
 
     # MQTT ------------------------------------------------------------------
     def on_message(self, topic: str, raw: bytes) -> None:
@@ -281,7 +290,7 @@ class NightWatch:
         if not isinstance(payload, dict):
             return
         for trigger in triggers_for(topic, payload, self.edges):
-            if trigger.any_time or is_night(datetime.now(), self.s.hours):
+            if trigger.any_time or is_night(datetime.now(), self.night_hours()):
                 self.pool.submit(self.handle, trigger)
 
     # One trigger -----------------------------------------------------------
@@ -333,9 +342,9 @@ class NightWatch:
         try:
             path = self._path(trigger, at, ".mp4")
             command = ["ffmpeg", "-nostdin", "-loglevel", "error", "-rtsp_transport", "tcp",
-                       "-i", f"{self.s.rtsp_url}/{trigger.camera}", "-t", str(self.s.clip_seconds),
+                       "-i", f"{self.s.rtsp_url}/{trigger.camera}", "-t", str(self.clip_seconds()),
                        "-map", "0:v:0", "-c", "copy", "-an", "-movflags", "+faststart", "-y", str(path)]
-            result = subprocess.run(command, capture_output=True, timeout=self.s.clip_seconds + 40)
+            result = subprocess.run(command, capture_output=True, timeout=self.clip_seconds() + 40)
             if result.returncode != 0 or not path.exists() or path.stat().st_size == 0:
                 # ffmpeg's own message, not the command: the URL is local, but
                 # keep the habit of never logging a stream command line.
@@ -358,7 +367,7 @@ class NightWatch:
             if snapshot and self.telegram_cooldown.ready(key):
                 self.send_photo(snapshot, caption(trigger, at, False) + "\n(no clip to confirm it)")
             return
-        moved, frame = movement_in_clip(path)
+        moved, frame = movement_in_clip(path, moving=float(house_settings.value("moving_pct")) / 100)
         if not moved:
             LOG.info("%s: %s - nothing moved on camera, not sent", trigger.camera, trigger.reason)
             return
@@ -399,7 +408,8 @@ class NightWatch:
         if not self.s.out_dir.exists():
             return
         files = [(p, p.stat().st_mtime, p.stat().st_size) for p in self.s.out_dir.rglob("*") if p.is_file()]
-        doomed = files_to_delete(files, time.time(), self.s.keep_days, self.s.max_bytes)
+        doomed = files_to_delete(files, time.time(), float(house_settings.value("keep_days")),
+                                 int(float(house_settings.value("max_gb")) * 1024 ** 3))
         for path in doomed:
             path.unlink(missing_ok=True)
         for day in self.s.out_dir.iterdir():
@@ -416,7 +426,7 @@ MOVING_BLOB = 0.008
 LIGHTING_CHANGE = 0.25
 
 
-def movement_in_clip(path: Path, samples_per_s: float = 4.0) -> tuple[bool, bytes | None]:
+def movement_in_clip(path: Path, samples_per_s: float = 4.0, moving: float = MOVING_BLOB) -> tuple[bool, bytes | None]:
     """(moved, the frame with the most movement, boxed, as JPEG)."""
     try:
         import cv2
@@ -451,7 +461,7 @@ def movement_in_clip(path: Path, samples_per_s: float = 4.0) -> tuple[bool, byte
         prev = gray
     cap.release()
     blob, frame, box = best
-    if blob < MOVING_BLOB * area or frame is None:
+    if blob < moving * area or frame is None:
         return False, None
     x, y, w, h = (int(v) for v in box)
     cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 200, 255), 3)
@@ -516,8 +526,9 @@ def main(argv: list[str] | None = None) -> int:
     connected = threading.Event()
 
     def on_connect(client, _userdata, _flags, reason, _properties=None):
+        start, end = NightWatch.night_hours()
         LOG.info("connected to MQTT (%s); watching %d topics, night %s-%s", reason, len(topics),
-                 settings.hours[0].strftime("%H:%M"), settings.hours[1].strftime("%H:%M"))
+                 start.strftime("%H:%M"), end.strftime("%H:%M"))
         for topic in topics:
             client.subscribe(topic)
         connected.set()
@@ -531,8 +542,9 @@ def main(argv: list[str] | None = None) -> int:
     client.on_message = lambda _c, _u, message: watch.on_message(message.topic, message.payload)
     client.connect(settings.mqtt_host, settings.mqtt_port, keepalive=60)
     client.loop_start()
-    LOG.info("clips to %s, kept %g days / %.0f GB; Telegram %s", settings.out_dir, settings.keep_days,
-             settings.max_bytes / 1024 ** 3, "on" if settings.telegram_token and settings.telegram_chats else "off")
+    LOG.info("clips to %s, kept %s days / %s GB (House rules); Telegram %s", settings.out_dir,
+             house_settings.value("keep_days"), house_settings.value("max_gb"),
+             "on" if settings.telegram_token and settings.telegram_chats else "off")
     try:
         last_tidy = 0.0
         while True:
