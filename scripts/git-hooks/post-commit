@@ -8,6 +8,8 @@
 # that deploy-dashboard.sh leaves behind is made with hooks off:
 #   git -c core.hooksPath=/dev/null commit -m "chore: record dashboard build cache-busting metadata"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-python3 "${REPO_ROOT}/scripts/deploy.py" --range HEAD~1..HEAD || {
+# No --range: deploy.py starts from the last commit the board received, so a
+# refused or failed deploy is caught up by the next commit.
+python3 "${REPO_ROOT}/scripts/deploy.py" || {
     echo "[post-commit] Deploy did not finish (the commit stands). See above; re-run: scripts/deploy.py" >&2
 }

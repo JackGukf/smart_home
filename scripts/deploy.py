@@ -24,7 +24,7 @@ the board's copy was not something newer. This does all of that:
      the assets and bumps the build), with --skip-go2rtc: go2rtc restarts only
      when its own files change, since a restart reconnects every camera.
 
-    scripts/deploy.py                     # deploy HEAD~1..HEAD (the hook runs this)
+    scripts/deploy.py                     # since the last commit the board got (the hook runs this)
     scripts/deploy.py --range A..B        # a range of commits
     scripts/deploy.py --dry-run           # show the plan, change nothing
     scripts/deploy.py --rollback          # undo the last deploy on the board
@@ -237,18 +237,56 @@ def git_blob_hash(rev: str, path: str) -> str | None:
     return hashlib.sha256(result.stdout).hexdigest() if result.returncode == 0 else None
 
 
+def version_in_history(path: str, digest: str) -> str | None:
+    """Which commit had this exact file, if any: the board holding an *older*
+    version is stale (never deployed since), not edited. Found on the first
+    live run - deploy-dashboard.sh on the board was the 2026-09-12 version,
+    because it was never in its own sync list."""
+    log = git("log", "--format=%h %ad", "--date=short", "--", path)
+    for line in log.splitlines():
+        commit = line.split()[0]
+        if git_blob_hash(commit, path) == digest:
+            return line
+    return None
+
+
+# deploy-dashboard.sh's own output, committed with hooks off. Counting it would
+# make every later deploy rebuild the dashboard.
+METADATA_SUBJECT = "chore: record dashboard build cache-busting metadata"
+DEPLOYED_MARK = ".deployed_commit"
+
+
 def changed_files(rev_range: str) -> tuple[list[str], list[str]]:
-    """(added or modified, deleted) in the range."""
+    """(added or modified, deleted) across the range's commits, leaving out the
+    build-metadata commits."""
     old, _, new = rev_range.partition("..")
+    new = new or "HEAD"
     if subprocess.run(["git", "rev-parse", "--verify", "--quiet", old], cwd=PROJECT_ROOT,
                       capture_output=True).returncode != 0:
-        old = git("hash-object", "-t", "tree", "/dev/null").strip()        # the first commit
-    out = git("diff", "--name-status", "--no-renames", old, new or "HEAD")
-    changed, deleted = [], []
-    for line in out.splitlines():
-        status, _, path = line.partition("\t")
-        (deleted if status.startswith("D") else changed).append(path)
+        spec = new                                                   # the first commit: everything
+    else:
+        spec = f"{old}..{new}"
+    status: dict[str, str] = {}
+    for commit in git("rev-list", "--reverse", spec).split():
+        if git("log", "-1", "--format=%s", commit).strip() == METADATA_SUBJECT:
+            continue
+        for line in git("diff-tree", "--no-commit-id", "-r", "--name-status", "--no-renames", "--root",
+                        commit).splitlines():
+            kind, _, path = line.partition("\t")
+            status[path] = kind
+    changed = sorted(p for p, k in status.items() if not k.startswith("D"))
+    deleted = sorted(p for p, k in status.items() if k.startswith("D"))
     return changed, deleted
+
+
+def default_range(board: "Board") -> str:
+    """From the last commit the board received to HEAD, so a refused or failed
+    deploy is caught up by the next one instead of leaving a hole."""
+    mark = board.ssh(f"cat {shlex.quote(board.path)}/{DEPLOYED_MARK} 2>/dev/null", check=False).strip()
+    if mark and subprocess.run(["git", "merge-base", "--is-ancestor", mark, "HEAD"], cwd=PROJECT_ROOT,
+                               capture_output=True).returncode == 0:
+        return f"{mark}..HEAD"
+    return "HEAD~1..HEAD"
 
 
 def restart(board: Board, unit: str) -> bool:
@@ -339,7 +377,7 @@ def rollback(board: Board, units: dict[str, Unit], dry_run: bool) -> int:
 def main(argv: list[str] | None = None) -> int:
     from src.python.hosts import host
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--range", default="HEAD~1..HEAD", help="commits to deploy (default HEAD~1..HEAD)")
+    ap.add_argument("--range", help="commits to deploy (default: from the last commit the board received)")
     ap.add_argument("--dry-run", action="store_true", help="show the plan; change nothing")
     ap.add_argument("--force", action="store_true", help="overwrite board-side edits")
     ap.add_argument("--rollback", action="store_true", help="undo the last deploy on the board")
@@ -350,12 +388,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.rollback:
         return rollback(board, units, args.dry_run)
 
-    changed, deleted = changed_files(args.range)
+    rev_range = args.range or default_range(board)
+    changed, deleted = changed_files(rev_range)
+    head = git("rev-parse", "HEAD").strip()
     relevant = [p for p in changed if deployable(p) or p.startswith(DASHBOARD_ONLY)]
     if not relevant and not [p for p in deleted if deployable(p)]:
-        print("deploy: nothing in this commit runs on the board")
+        print(f"deploy: nothing in {rev_range} runs on the board")
+        if not args.dry_run and rev_range.endswith("..HEAD"):
+            mark_deployed(board, head)
         return 0
-    old_rev, _, new_rev = args.range.partition("..")
+    print(f"deploy: {rev_range}")
+    old_rev, _, new_rev = rev_range.partition("..")
     copyable = [p for p in changed if deployable(p)]
     board_hashes, installed, active = board.state(copyable)
     plan = make_plan(changed, units, installed, active, deleted)
@@ -364,15 +407,27 @@ def main(argv: list[str] | None = None) -> int:
     old = {p: git_blob_hash(old_rev, p) for p in copyable}
     new = {p: git_blob_hash(new_rev or "HEAD", p) for p in copyable}
     clash = conflicts(copyable, board_hashes, old, new)
+    for path in list(clash):
+        older = version_in_history(path, board_hashes[path])
+        if older:
+            print(f"  note:      {path} on the board is the older version from {older} - updating it")
+            clash.remove(path)
     if clash and not args.force:
-        print("\nREFUSED: these files on the board are neither the old nor the new version -"
-              "\nan edit made on the board the repo does not have. Compare, then re-run with --force:", file=sys.stderr)
+        print("\nREFUSED: these files on the board match no version the repo ever had -"
+              "\nan edit made on the board. Compare, then re-run with --force:", file=sys.stderr)
         for path in clash:
             print(f"    {path}", file=sys.stderr)
         return 2
-    if args.dry_run or plan.empty:
+    if args.dry_run:
         return 0
-    return execute(plan, board, args.force, board_hashes)
+    result = 0 if plan.empty else execute(plan, board, args.force, board_hashes)
+    if result == 0 and rev_range.endswith("..HEAD"):
+        mark_deployed(board, head)
+    return result
+
+
+def mark_deployed(board: Board, commit: str) -> None:
+    board.ssh(f"echo {commit} > {shlex.quote(board.path)}/{DEPLOYED_MARK}")
 
 
 if __name__ == "__main__":

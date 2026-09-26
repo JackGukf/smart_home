@@ -130,3 +130,36 @@ def test_the_dashboard_deploy_is_asked_not_to_restart_go2rtc():
     assert '"--skip-go2rtc"' in source
     dashboard = (ROOT / "scripts" / "deploy-dashboard.sh").read_text(encoding="utf-8")
     assert "--skip-go2rtc) RESTART_GO2RTC=0" in dashboard
+
+
+def test_an_older_version_from_history_is_stale_not_an_edit(monkeypatch):
+    """The first live run: the board's deploy-dashboard.sh was the 2026-09-12
+    version. Anything the repo once had is safe to update; only content the
+    repo never had is refused."""
+    blobs = {("aaa1111", "f.sh"): "V3", ("bbb2222", "f.sh"): "V2", ("ccc3333", "f.sh"): "V1"}
+    monkeypatch.setattr(deploy, "git", lambda *a: "aaa1111 2026-09-25\nbbb2222 2026-09-20\nccc3333 2026-09-12\n")
+    monkeypatch.setattr(deploy, "git_blob_hash", lambda rev, path: blobs.get((rev, path)))
+    assert deploy.version_in_history("f.sh", "V1") == "ccc3333 2026-09-12"
+    assert deploy.version_in_history("f.sh", "EDITED-ON-BOARD") is None
+
+
+def test_build_metadata_commits_are_not_changes(tmp_path, monkeypatch):
+    """They are made with hooks off; counting them would rebuild the dashboard
+    on every later deploy."""
+    commits = {"c1": ("feat: detector", "M\tsrc/python/npu_detector.py"),
+               "c2": (deploy.METADATA_SUBJECT, "M\tBUILD_COUNT\nM\tsrc/python/web_static/index.html"),
+               "c3": ("docs", "D\tscripts/old.sh")}
+
+    def fake_git(*args):
+        if args[0] == "rev-list":
+            return "c1\nc2\nc3\n"
+        if args[0] == "log":
+            return commits[args[-1]][0]
+        if args[0] == "diff-tree":
+            return commits[args[-1]][1]
+        raise AssertionError(args)
+
+    monkeypatch.setattr(deploy, "git", fake_git)
+    monkeypatch.setattr(deploy.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0})())
+    changed, deleted = deploy.changed_files("abc..HEAD")
+    assert changed == ["src/python/npu_detector.py"] and deleted == ["scripts/old.sh"]
