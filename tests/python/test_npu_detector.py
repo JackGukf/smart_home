@@ -1095,3 +1095,43 @@ def test_only_people_are_occupancy_sensors() -> None:
     assert person["device_class"] == "occupancy"
     assert "device_class" not in car
     assert car["value_template"] == "{{ value_json.car | tojson }}"
+
+
+def test_class_overrides_give_a_camera_its_own_classes(monkeypatch) -> None:
+    """Cars only where they park: the garage camera's driveway, not the street
+    the front yard camera sees."""
+    from src.python.npu_detector import Config
+
+    monkeypatch.setenv("NPU_CAMERAS", "garage_camera,frontyard_camera")
+    monkeypatch.setenv("NPU_CLASSES", "person")
+    monkeypatch.setenv("NPU_CLASS_OVERRIDES", "garage_camera=person+car")
+    cfg = Config.from_env()
+    assert cfg.classes_for("garage_camera") == {"person", "car"}
+    assert cfg.classes_for("frontyard_camera") == {"person"}
+    assert cfg.all_classes == {"person", "car"}
+
+
+@pytest.mark.parametrize("raw", ["garage_camera=", "=person", "garage_camera=person+spaceship"])
+def test_a_bad_class_override_is_dropped_not_fatal(raw) -> None:
+    from src.python.npu_detector import _parse_class_overrides
+
+    assert _parse_class_overrides(raw) == {}
+
+
+def test_retired_topics_are_exactly_what_discovery_published() -> None:
+    """Retracting a class must empty the very topics that created its entities,
+    or Home Assistant keeps them as "unavailable" for ever."""
+    from src.python.npu_detector import discovery_messages, retired_discovery_topics
+
+    published = {topic for topic, _ in discovery_messages(
+        "frontyard_camera", ["car"], "smarthome/vision", "smarthome/vision/status")}
+    retired = set(retired_discovery_topics("frontyard_camera", ["car"]))
+    assert retired == {t for t in published if "/car" in t}
+    assert len(retired) == 2
+    assert not any(t.endswith("/direction/config") for t in retired)   # the person direction stays
+
+
+def test_a_camera_without_cars_publishes_no_car_field() -> None:
+    detections = [Detection("car", 0.9, (1, 2, 3, 4)), Detection("person", 0.8, (5, 6, 7, 8))]
+    payload = json.loads(build_payload("frontyard_camera", detections, {"person"}, {"person": 1}))
+    assert payload["person"] is True and "car" not in payload

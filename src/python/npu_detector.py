@@ -427,6 +427,29 @@ def _parse_confirm_overrides(raw: str) -> dict[str, int]:
     return overrides
 
 
+def _parse_class_overrides(raw: str) -> dict[str, set[str]]:
+    """"garage_camera=person+car" -> {"garage_camera": {"person", "car"}}.
+
+    A camera listed here watches exactly these classes instead of NPU_CLASSES.
+    Cars matter only where they park (the garage camera's driveway); the front
+    yard's view of the street would otherwise log every passing car.
+    """
+    overrides: dict[str, set[str]] = {}
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        camera, _, value = chunk.partition("=")
+        classes = {c.strip() for c in value.split("+") if c.strip()}
+        unknown = classes - set(COCO_NAMES)
+        if not camera.strip() or not classes or unknown:
+            LOG.warning("NPU_CLASS_OVERRIDES: ignoring %r, expected camera=class+class of COCO names",
+                        chunk)
+            continue
+        overrides[camera.strip()] = classes
+    return overrides
+
+
 @dataclass
 class Config:
     model: Path
@@ -445,6 +468,9 @@ class Config:
     motion_confirm_cameras: set[str] = field(default_factory=set)
     iou: float = 0.45
     classes: set[str] = field(default_factory=lambda: {"person"})
+    # Per-camera classes, replacing `classes` for that camera; see
+    # _parse_class_overrides.
+    class_overrides: dict[str, set[str]] = field(default_factory=dict)
     # Per-camera area that counts, e.g. the garage camera's driveway without
     # the street it also sees (2026-09-24). Cameras without one count everything.
     zones: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
@@ -475,6 +501,15 @@ class Config:
     def confirm_for(self, camera: str) -> int:
         return self.confirm_overrides.get(camera, 1)
 
+    def classes_for(self, camera: str) -> set[str]:
+        return self.class_overrides.get(camera, self.classes)
+
+    @property
+    def all_classes(self) -> set[str]:
+        """Every class some camera watches: what a camera not watching one of
+        them must retract from Home Assistant."""
+        return set(self.classes).union(*self.class_overrides.values())
+
     @classmethod
     def from_env(cls) -> "Config":
         cameras = [c.strip() for c in os.getenv("NPU_CAMERAS", "").split(",") if c.strip()]
@@ -499,6 +534,7 @@ class Config:
             presence_hold=float(os.getenv("NPU_PRESENCE_HOLD", "60")),
             iou=float(os.getenv("NPU_IOU", "0.45")),
             classes=classes,
+            class_overrides=_parse_class_overrides(os.getenv("NPU_CLASS_OVERRIDES", "")),
             inward=_parse_inward(os.getenv("NPU_INWARD", "")),
             zones=_parse_zones(os.getenv("NPU_ZONES", "")),
             min_motion=float(os.getenv("NPU_MIN_MOTION", "24")),
@@ -663,19 +699,21 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
     wanting one every couple of seconds.
     """
     conf = cfg.conf_for(camera)
-    LOG.info("%s: watching every %.1fs (presence hold %.0fs, conf %.2f, confirm %d frames%s)",
-             camera, cfg.interval, cfg.presence_hold, conf, cfg.confirm_for(camera),
+    LOG.info("%s: watching %s every %.1fs (presence hold %.0fs, conf %.2f, confirm %d frames%s)",
+             camera, "+".join(sorted(cfg.classes_for(camera))), cfg.interval, cfg.presence_hold,
+             conf, cfg.confirm_for(camera),
              f", zone of {len(cfg.zones[camera])} points" if camera in cfg.zones else "")
     # One hold per watched class, per camera: a car appearing must not be able
     # to keep "person" alive, and vice versa.
+    classes = cfg.classes_for(camera)
     holds = {label: PresenceHold(cfg.presence_hold, cfg.confirm_for(camera))
-             for label in cfg.classes}
+             for label in classes}
     motion_gate = PersonMotionGate() if camera in cfg.motion_confirm_cameras else None
     zone = cfg.zones.get(camera)
     tracker = SingleCameraTracker(cfg.inward.get(camera), cfg.min_motion)
     last_direction: str | None = None
     source = FrameSource(camera, cfg.rtsp_url, cfg.fetch_timeout)
-    camera_cfg = replace(cfg, conf=conf)
+    camera_cfg = replace(cfg, conf=conf, classes=classes)
     last_inference = 0.0
     # Publishes are on change, which leaves a newly added camera's entities
     # "unknown" in Home Assistant until somebody happens to walk past it. Say
@@ -713,13 +751,13 @@ def run_camera(camera: str, detector: "Detector", npu_lock: "threading.Lock", cf
                 for det, direction in zip(detections, directions):
                     det.direction = direction
 
-                held, changed = _apply_holds(holds, detections, cfg.classes,
+                held, changed = _apply_holds(holds, detections, classes,
                                              time.monotonic())
                 direction = summarize_direction(detections)
                 # Direction flips without any presence change - somebody turns
                 # around at the garage - and the dashboard needs to know.
                 if changed or not said_anything or direction != last_direction:
-                    publish(camera, build_payload(camera, detections, cfg.classes, held))
+                    publish(camera, build_payload(camera, detections, classes, held))
                     said_anything = True
                     last_direction = direction
                 LOG.debug("%s: %d detection(s)%s  infer %.0fms",
@@ -933,6 +971,19 @@ def discovery_messages(
     return messages
 
 
+def retired_discovery_topics(camera: str, classes: Iterable[str],
+                             discovery_prefix: str = "homeassistant") -> list[str]:
+    """The config topics discovery_messages would publish for these classes -
+    to be emptied when the camera stops watching them."""
+    node = f"npu_vision_{camera}"
+    topics = []
+    for label in sorted(classes):
+        slug = label.replace(" ", "_")
+        topics.append(f"{discovery_prefix}/binary_sensor/{node}/{slug}/config")
+        topics.append(f"{discovery_prefix}/sensor/{node}/{slug}_count/config")
+    return topics
+
+
 class PresenceHold:
     """Turn per-frame detections into an enter/leave signal, per camera.
 
@@ -1089,17 +1140,25 @@ def main(argv: list[str] | None = None) -> int:
 
         if cfg.discovery:
             published = 0
+            retracted = 0
             for camera in cfg.cameras:
                 for topic, payload in discovery_messages(
-                    camera, cfg.classes, cfg.base_topic, cfg.availability_topic,
+                    camera, cfg.classes_for(camera), cfg.base_topic, cfg.availability_topic,
                     cfg.discovery_prefix, cfg.entity_category,
                 ):
                     # Retained: Home Assistant reads these when it starts, which
                     # is usually long after this service did.
                     client.publish(topic, payload, retain=True)
                     published += 1
-            LOG.info("published %d Home Assistant discovery configs under %s/",
-                     published, cfg.discovery_prefix)
+                # A class another camera watches, but this one does not (any
+                # more): an empty retained config makes Home Assistant drop the
+                # entity rather than leave it "unavailable" for ever.
+                for topic in retired_discovery_topics(
+                        camera, cfg.all_classes - cfg.classes_for(camera), cfg.discovery_prefix):
+                    client.publish(topic, "", retain=True)
+                    retracted += 1
+            LOG.info("published %d Home Assistant discovery configs under %s/ (%d retracted)",
+                     published, cfg.discovery_prefix, retracted)
 
     def publish(camera: str, payload: str) -> None:
         if client is not None:
@@ -1126,7 +1185,9 @@ def main(argv: list[str] | None = None) -> int:
             frame = grab_frame(cfg.go2rtc_url, camera, cfg.fetch_timeout)
             if frame is None:
                 continue
-            publish(camera, build_payload(camera, detector.detect(frame, cfg), cfg.classes))
+            camera_cfg = replace(cfg, classes=cfg.classes_for(camera))
+            publish(camera, build_payload(camera, detector.detect(frame, camera_cfg),
+                                          camera_cfg.classes))
     else:
         stop_event = threading.Event()
 
@@ -1136,8 +1197,10 @@ def main(argv: list[str] | None = None) -> int:
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
 
-        LOG.info("watching %d camera(s) on independent %.1fs cycles for %s",
-                 len(cfg.cameras), cfg.interval, ", ".join(sorted(cfg.classes)))
+        LOG.info("watching %d camera(s) on independent %.1fs cycles for %s%s",
+                 len(cfg.cameras), cfg.interval, ", ".join(sorted(cfg.classes)),
+                 "".join(f"; {camera}: {'+'.join(sorted(classes))}"
+                         for camera, classes in sorted(cfg.class_overrides.items())))
         threads = [
             threading.Thread(
                 target=run_camera,

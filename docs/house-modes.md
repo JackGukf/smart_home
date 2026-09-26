@@ -67,8 +67,11 @@ became Away. The garage camera now counts too, **OR** with the phones:
   the camera cannot tell who left (one of several driving off, a guest walking out).
 - A car arriving ends **Away, never Vacation** - ending a Vacation disarms the alarm,
   and any car can pull into the driveway.
-- The detector watches `car` as well as `person` (`NPU_CLASSES=person,car` in the
-  board's `.env`), and knows the street is up the frame (`NPU_INWARD=garage_camera=y+`).
+- Only the garage camera watches `car` (`NPU_CLASS_OVERRIDES=garage_camera=person+car`
+  in the board's `.env`; every other camera keeps `NPU_CLASSES=person`, so the front
+  yard's view of the street logs no passing cars). A camera that stops watching a class
+  has that class's entities removed from Home Assistant when the detector starts.
+  The detector knows the street is up the frame (`NPU_INWARD=garage_camera=y+`).
   Only `person` is an occupancy sensor, so a parked car never reads as someone home on
   the Security or Status views or in the house learning.
 - **Watch-only** until `input_boolean.house_camera_signals` is turned on (the owner's
