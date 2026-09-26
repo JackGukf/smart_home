@@ -1070,3 +1070,28 @@ def test_zones_parse_per_camera_and_a_typo_leaves_that_camera_unzoned():
     assert list(zones) == ["garage_camera"]
     assert zones["garage_camera"][0] == (0.31, 0.17) and len(zones["garage_camera"]) == 4
     assert _parse_zones("") == {}
+
+
+def test_direction_is_about_people_not_cars() -> None:
+    """A parked car is "still" and one pulling out is "outward"; neither is
+    somebody walking out of the house."""
+    parked = Detection("car", 0.9, (1, 2, 3, 4), direction="still")
+    leaving = Detection("car", 0.9, (1, 2, 3, 4), direction="outward")
+    assert summarize_direction([parked]) == "unknown"
+    assert summarize_direction([leaving]) == "unknown"
+    walking = Detection("person", 0.8, (5, 6, 7, 8), direction="outward")
+    assert summarize_direction([parked, walking]) == "outward"
+
+
+def test_only_people_are_occupancy_sensors() -> None:
+    """The Security view, the Status view and the house learning pick up any
+    occupancy sensor; a car in the driveway must not read as someone home."""
+    from src.python.npu_detector import discovery_messages
+
+    messages = dict(discovery_messages("garage_camera", ["person", "car"], "smarthome/vision",
+                                       "smarthome/vision/status"))
+    person = json.loads(messages["homeassistant/binary_sensor/npu_vision_garage_camera/person/config"])
+    car = json.loads(messages["homeassistant/binary_sensor/npu_vision_garage_camera/car/config"])
+    assert person["device_class"] == "occupancy"
+    assert "device_class" not in car
+    assert car["value_template"] == "{{ value_json.car | tojson }}"

@@ -12,6 +12,14 @@ Vacation by hand before a trip does exactly what 24 hours away would.
                 15 minutes. The phones alone are not enough: only one phone is
                 tracked, and anyone at home without one would have their lights
                 turned off. The owner chose this (2026-09-24).
+                Since 2026-09-25 the garage camera can stand in for the phones
+                (OR): the car leaving the driveway, or someone walking out past
+                the garage, counts as "someone just left" for 30 minutes - and
+                the house must still be still for 15. The camera cannot tell who
+                left, which is why the stillness stays. WATCH-ONLY until
+                input_boolean.house_camera_signals is turned on: until then it
+                only writes what it would have done to
+                input_text.house_camera_would_have (and the logbook).
                 -> All lights off (script.panel_all_lights_off, which follows
                    Manage). Between sunset and 23:30 the living room light is
                    then turned back on, and while away it goes on at sunset and
@@ -21,6 +29,9 @@ Vacation by hand before a trip does exactly what 24 hours away would.
                 sensors only: the radar ones can hold "occupied" for half an
                 hour on nothing; and a fresh Away was likely picked by hand on
                 the way out, past the entry sensor).
+                Also (same watch-only switch): a car parking in the empty
+                driveway, when Away for 10 minutes at least. Never a Vacation:
+                ending one disarms the alarm, and any car can pull in.
                 -> Ambient lights on, only those that are off and only when the
                    sun is down. Mode back to Home.
     Vacation    Away for 24 hours (checked every 10 minutes against
@@ -100,6 +111,17 @@ AMBIENT_LIGHTS = [
     "switch.family_room_cabinet_led",
 ]
 
+# The garage camera (npu-detector: NPU_CLASSES=person,car, NPU_INWARD=garage_camera=y+).
+GARAGE_CAR = "binary_sensor.garage_camera_npu_car"                 # a car parked in the driveway
+GARAGE_WALKING = "sensor.garage_camera_npu_person_direction"       # inward / outward / still
+LEFT_AT = "input_datetime.house_left_seen"        # when the camera last saw someone leave
+LEFT_HOW = "input_text.house_left_how"            # how - and "" once it has been acted on
+CAMERA_LIVE = "input_boolean.house_camera_signals"  # off: watch-only
+WOULD_HAVE = "input_text.house_camera_would_have"   # what watch-only would have done
+CAR_PARKED_S = 600      # a car must have been parked this long before its leaving counts
+CAR_GONE_S = 300        # and the driveway empty this long before a car's arrival counts
+LEFT_RECENTLY_S = 1800  # "someone just left" lasts this long
+
 EMPTY_FOR = {"minutes": 15}
 PHONES_GONE_FOR = {"minutes": 5}
 VACATION_AFTER_HOURS = 24
@@ -169,6 +191,45 @@ def away_for(seconds: int) -> dict:
         "{{ since is not none and now().timestamp() - since > " + str(seconds) + " }}")}
 
 
+def held_for(seconds: int) -> dict:
+    """The sensor had been in its previous state at least this long - a car that
+    was parked, not one turning round in the driveway."""
+    return {"condition": "template", "value_template": (
+        "{{ (trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() > "
+        + str(seconds) + " }}")}
+
+
+def left_recently() -> dict:
+    """The camera saw someone leave in the last 30 minutes, and that has not been
+    acted on yet."""
+    return {"condition": "template", "value_template": (
+        "{% set at = state_attr('" + LEFT_AT + "', 'timestamp') %}"
+        "{{ at is not none and now().timestamp() - at < " + str(LEFT_RECENTLY_S)
+        + " and states('" + LEFT_HOW + "') not in ['', 'unknown', 'unavailable'] }}")}
+
+
+def record_leaving(how: str) -> list[dict]:
+    return [
+        {"action": "input_datetime.set_datetime", "target": {"entity_id": LEFT_AT},
+         "data": {"timestamp": "{{ now().timestamp() }}"}},
+        {"action": "input_text.set_value", "target": {"entity_id": LEFT_HOW}, "data": {"value": how}},
+    ]
+
+
+def camera_decides(option: str, why: str) -> dict:
+    """Live: change the mode. Watch-only: write down what would have happened."""
+    said = "{{ now().strftime('%a %H:%M') }} " + option + " - " + why
+    return {"if": [{"condition": "state", "entity_id": CAMERA_LIVE, "state": "on"}],
+            "then": [set_mode(option),
+                     {"action": "logbook.log", "data": {"name": "House mode", "message": option + ": " + why,
+                                                        "entity_id": MODE}}],
+            "else": [{"action": "input_text.set_value", "target": {"entity_id": WOULD_HAVE},
+                      "data": {"value": said}},
+                     {"action": "logbook.log", "data": {"name": "House mode (watch-only)",
+                                                        "message": "would have gone " + option + ": " + why,
+                                                        "entity_id": MODE}}]}
+
+
 def _desc(text: str) -> str:
     return f"{text} Installed by scripts/install-house-modes.py."
 
@@ -187,6 +248,47 @@ def automations() -> list[dict]:
             ],
             "conditions": [mode_is(HOME), nobody_home(), still(INDOOR)],
             "actions": [set_mode(AWAY)],
+        },
+        {
+            "id": "house_mode_left_by_car",
+            "alias": "House mode - the car left the driveway",
+            "description": _desc("The garage camera's car sensor goes from parked (10 minutes at "
+                                 "least) to an empty driveway: someone just left."),
+            "mode": "single",
+            "triggers": [{"trigger": "state", "entity_id": GARAGE_CAR, "from": "on", "to": "off"}],
+            "conditions": [mode_is(HOME), held_for(CAR_PARKED_S)],
+            "actions": record_leaving("the car left the driveway"),
+        },
+        {
+            "id": "house_mode_left_on_foot",
+            "alias": "House mode - someone walked out past the garage",
+            "description": _desc("The garage camera sees a person walking away from the house, "
+                                 "towards the street: someone just left."),
+            "mode": "single",
+            "triggers": [{"trigger": "state", "entity_id": GARAGE_WALKING, "to": "outward"}],
+            "conditions": [mode_is(HOME)],
+            "actions": record_leaving("someone walked out past the garage"),
+        },
+        {
+            "id": "house_mode_away_by_camera",
+            "alias": "House mode - Away when the camera saw us leave and the house is still",
+            "description": _desc("OR with the phones: the garage camera saw someone leave in the "
+                                 "last 30 minutes AND no indoor sensor has seen anyone for 15. "
+                                 "Watch-only until input_boolean.house_camera_signals is on."),
+            "mode": "single",
+            "triggers": [
+                {"trigger": "state", "entity_id": LEFT_AT},
+                {"trigger": "state", "entity_id": INDOOR, "to": "off", "for": EMPTY_FOR},
+                # "for" does not survive a restart; this does.
+                {"trigger": "time_pattern", "minutes": "/5"},
+            ],
+            "conditions": [mode_is(HOME), left_recently(), still(INDOOR)],
+            "actions": [
+                {"variables": {"why": "{{ states('" + LEFT_HOW + "') }}"}},
+                # Acted on: the same leaving must not decide again in 5 minutes.
+                {"action": "input_text.set_value", "target": {"entity_id": LEFT_HOW}, "data": {"value": ""}},
+                camera_decides(AWAY, "{{ why }}"),
+            ],
         },
         {
             "id": "house_mode_leaving",
@@ -298,6 +400,18 @@ def automations() -> list[dict]:
             "actions": [set_mode(HOME)],
         },
         {
+            "id": "house_mode_home_by_car",
+            "alias": "House mode - a car parked in the empty driveway",
+            "description": _desc("Away for 10 minutes at least, and a car parks in a driveway that "
+                                 "was empty for 5: the mode becomes Home. Never ends a Vacation - "
+                                 "that disarms the alarm, and any car can pull in. Watch-only until "
+                                 "input_boolean.house_camera_signals is on."),
+            "mode": "single",
+            "triggers": [{"trigger": "state", "entity_id": GARAGE_CAR, "from": "off", "to": "on"}],
+            "conditions": [mode_is(AWAY), away_for(MOTION_ENDS_AWAY_AFTER_S), held_for(CAR_GONE_S)],
+            "actions": [camera_decides(HOME, "a car parked in the driveway")],
+        },
+        {
             "id": "house_mode_coming_home",
             "alias": "House mode - home again: ambient lights on in the dark",
             "description": _desc("Away or Vacation -> Home, by arrival or by hand: the ambient "
@@ -345,6 +459,13 @@ HELPERS = [
             "initial": HOME, "icon": "mdi:home-account"}),
     (AWAY_SINCE, {"type": "input_datetime/create", "name": "House away since",
                   "has_date": True, "has_time": True, "icon": "mdi:home-export-outline"}),
+    (LEFT_AT, {"type": "input_datetime/create", "name": "House left seen",
+               "has_date": True, "has_time": True, "icon": "mdi:exit-run"}),
+    (LEFT_HOW, {"type": "input_text/create", "name": "House left how", "max": 100, "icon": "mdi:exit-run"}),
+    (WOULD_HAVE, {"type": "input_text/create", "name": "House camera would have", "max": 200,
+                  "icon": "mdi:eye-outline"}),
+    # Created off: the camera signals start watch-only (the owner's choice, 2026-09-25).
+    (CAMERA_LIVE, {"type": "input_boolean/create", "name": "House camera signals", "icon": "mdi:cctv"}),
 ]
 
 

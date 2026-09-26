@@ -157,3 +157,97 @@ def test_the_living_room_late_off_leaves_the_away_light_to_the_modes():
 def test_the_script_writes_nothing_without_apply(capsys):
     assert modes.main([]) == 0
     assert "Nothing was written" in capsys.readouterr().out
+
+
+# ── The garage camera as a second way to see the house left (2026-09-25) ─────
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+import jinja2  # noqa: E402
+
+NOW = datetime(2026, 9, 25, 16, 0, tzinfo=timezone.utc)
+
+
+def _render(template: str, *, attrs: dict | None = None, states: dict | None = None, **variables) -> str:
+    attrs, states = attrs or {}, states or {}
+    env = jinja2.Environment()
+    return env.from_string(template).render(
+        now=lambda: NOW,
+        state_attr=lambda entity_id, name: attrs.get((entity_id, name)),
+        states=lambda entity_id: states.get(entity_id, "unknown"),
+        **variables).strip()
+
+
+def _change(minutes_before: float):
+    return SimpleNamespace(from_state=SimpleNamespace(last_changed=NOW - timedelta(minutes=minutes_before)),
+                           to_state=SimpleNamespace(last_changed=NOW))
+
+
+def test_a_car_counts_as_leaving_only_after_it_was_parked():
+    body = BY_ID["house_mode_left_by_car"]
+    assert body["triggers"] == [{"trigger": "state", "entity_id": modes.GARAGE_CAR, "from": "on", "to": "off"}]
+    held = next(c for c in body["conditions"] if c["condition"] == "template")["value_template"]
+    assert _render(held, trigger=_change(45)) == "True"      # parked all afternoon
+    assert _render(held, trigger=_change(3)) == "False"      # turned round in the driveway
+    actions = {a["action"] for a in body["actions"]}
+    assert actions == {"input_datetime.set_datetime", "input_text.set_value"}
+
+
+def test_walking_out_counts_as_leaving():
+    body = BY_ID["house_mode_left_on_foot"]
+    assert body["triggers"] == [{"trigger": "state", "entity_id": modes.GARAGE_WALKING, "to": "outward"}]
+
+
+def test_the_camera_still_needs_the_house_to_be_still():
+    """It cannot tell who left: one person driving off, or a guest walking out,
+    must not turn the lights off on the people still at home."""
+    body = BY_ID["house_mode_away_by_camera"]
+    assert modes.still(modes.INDOOR) in body["conditions"]
+    assert modes.mode_is(modes.HOME) in body["conditions"]
+
+
+def test_leaving_is_news_for_30_minutes_and_is_used_once():
+    body = BY_ID["house_mode_away_by_camera"]
+    recent = next(c for c in body["conditions"] if c["condition"] == "template")["value_template"]
+    at = (modes.LEFT_AT, "timestamp")
+    how = {modes.LEFT_HOW: "the car left the driveway"}
+    assert _render(recent, attrs={at: (NOW - timedelta(minutes=20)).timestamp()}, states=how) == "True"
+    assert _render(recent, attrs={at: (NOW - timedelta(minutes=40)).timestamp()}, states=how) == "False"
+    assert _render(recent, attrs={at: (NOW - timedelta(minutes=5)).timestamp()},
+                   states={modes.LEFT_HOW: ""}) == "False"          # already acted on
+    assert _render(recent, attrs={}, states=how) == "False"         # never set
+    clear = body["actions"][1]
+    assert clear == {"action": "input_text.set_value", "target": {"entity_id": modes.LEFT_HOW},
+                     "data": {"value": ""}}
+
+
+def test_the_camera_is_watch_only_until_switched_on():
+    for rule in ("house_mode_away_by_camera", "house_mode_home_by_car"):
+        decide = BY_ID[rule]["actions"][-1]
+        assert decide["if"] == [{"condition": "state", "entity_id": modes.CAMERA_LIVE, "state": "on"}]
+        assert any(a.get("action") == "input_select.select_option" for a in decide["then"])
+        assert not any(a.get("action") == "input_select.select_option" for a in decide["else"])
+        assert any(a.get("target", {}).get("entity_id") == modes.WOULD_HAVE for a in decide["else"])
+    helper = dict(modes.HELPERS)[modes.CAMERA_LIVE]
+    assert helper["type"] == "input_boolean/create" and "initial" not in helper   # created off
+
+
+def test_a_car_arriving_never_ends_a_vacation():
+    """Ending a Vacation disarms the alarm, and any car can pull into the driveway."""
+    body = BY_ID["house_mode_home_by_car"]
+    assert modes.mode_is(modes.AWAY) in body["conditions"]
+    assert not any(c.get("state") == [modes.AWAY, modes.VACATION] for c in body["conditions"])
+    assert body["triggers"] == [{"trigger": "state", "entity_id": modes.GARAGE_CAR, "from": "off", "to": "on"}]
+    held = next(c for c in body["conditions"] if c["condition"] == "template"
+                and "trigger.to_state" in c["value_template"])["value_template"]
+    assert _render(held, trigger=_change(30)) == "True"
+    assert _render(held, trigger=_change(1)) == "False"     # the same car, briefly hidden
+
+
+def test_what_watch_only_would_have_done_says_when_and_why():
+    decide = BY_ID["house_mode_away_by_camera"]["actions"][-1]
+    said = next(a for a in decide["else"] if a["action"] == "input_text.set_value")["data"]["value"]
+    env = jinja2.Environment()
+    text = env.from_string(said).render(now=lambda: NOW, why="the car left the driveway")
+    assert text == "Fri 16:00 Away - the car left the driveway"

@@ -337,8 +337,12 @@ class SingleCameraTracker:
 
 def summarize_direction(detections: Sequence[Detection]) -> str:
     """One word for the frame. Inward is the word that matters most: somebody
-    arriving beats somebody leaving, and both beat standing still."""
-    directions = {d.direction for d in detections}
+    arriving beats somebody leaving, and both beat standing still.
+
+    People only. With cars watched too, a parked car would read "still" and one
+    pulling out "outward" - and "somebody walked out" is what the house modes
+    and the camera-on-motion routine read this as."""
+    directions = {d.direction for d in detections if d.label == "person"}
     for candidate in ("inward", "outward", "still"):
         if candidate in directions:
             return candidate
@@ -892,8 +896,10 @@ def discovery_messages(
                 "unique_id": f"{node}_{slug}",
                 "object_id": f"{node}_{slug}",
                 # "occupancy" rather than "motion": this reports presence in
-                # frame, not that something moved.
-                "device_class": "occupancy",
+                # frame, not that something moved. People only: the Security
+                # view, the Status view and the house learning all pick up any
+                # occupancy sensor, and a parked car is not somebody at home.
+                **({"device_class": "occupancy"} if label == "person" else {}),
                 "payload_on": "true",
                 "payload_off": "false",
                 # tojson keeps the booleans as true/false rather than Python's

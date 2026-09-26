@@ -51,6 +51,35 @@ its own; it is absent until `install-house-modes.py --apply` has run.
 Motion ends an Away only after it has lasted 10 minutes: Away picked by hand
 on the way out would otherwise be undone by the entry sensor at the door.
 
+## The garage camera as a second witness (2026-09-25, watch-only)
+
+The phone was the only way the house knew it had been left, and on 2026-09-25 it
+had not reported since 12:30 (location *When in use*), so an afternoon out never
+became Away. The garage camera now counts too, **OR** with the phones:
+
+| Signal | From | Means |
+| --- | --- | --- |
+| The car left the driveway | `binary_sensor.garage_camera_npu_car` on -> off, after 10 min parked | someone just left |
+| Someone walked out | `sensor.garage_camera_npu_person_direction` -> `outward` (towards the street) | someone just left |
+| A car parked in the empty driveway | car off (5 min at least) -> on, Away for 10 min | someone is home |
+
+- "Someone just left" lasts 30 minutes, and **Away still needs the house still for 15**:
+  the camera cannot tell who left (one of several driving off, a guest walking out).
+- A car arriving ends **Away, never Vacation** - ending a Vacation disarms the alarm,
+  and any car can pull into the driveway.
+- The detector watches `car` as well as `person` (`NPU_CLASSES=person,car` in the
+  board's `.env`), and knows the street is up the frame (`NPU_INWARD=garage_camera=y+`).
+  Only `person` is an occupancy sensor, so a parked car never reads as someone home on
+  the Security or Status views or in the house learning.
+- **Watch-only** until `input_boolean.house_camera_signals` is turned on (the owner's
+  choice, for three days from 2026-09-25): until then each would-be change is written to
+  `input_text.house_camera_would_have` and the logbook, and the mode is left alone.
+  To review: the logbook ("House mode (watch-only)"), or the house memory's history of
+  that helper against `zone.home`. To go live: turn the helper on in Home Assistant.
+- Unmeasured before this: car detection at night on the camera's infrared picture, and
+  a parked car hidden by a person or heavy rain for over a minute (the detector holds
+  a sighting 60 s). Both would show as a false "car left" in the watch-only log.
+
 ## The disarm PIN (2026-09-25)
 
 Signing in - or being the wall panel, whose address is its login - was enough
