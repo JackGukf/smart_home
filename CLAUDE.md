@@ -93,7 +93,7 @@
 > container "Up". `service-watchdog.timer` (every 2 min,
 > `src/python/service_watchdog.py`) checks that Zigbee devices are talking,
 > the broker, Home Assistant's API and its Zigbee link, the dashboard, go2rtc,
-> the house memory and the Matter controller actually work, restarts what hung
+> the house memory and the Matter controller actually work (since 2026-09-26 also the night watch, each camera's detection, that the alert rules are switched on, and the scheduled jobs' timers), restarts what hung
 > (at most 3 times in 6 h, then asks for a person), and reports on the
 > dashboard (banners, Status view) and in Home Assistant. **Pause it** before
 > re-flashing the dongle or upgrading HA: `touch deploy/watchdog/.paused`.

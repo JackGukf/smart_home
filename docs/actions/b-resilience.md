@@ -51,7 +51,14 @@ Assistant or mosquitto.
 zram survives a reboot.
 
 ## B4 Watchdog for the new services
-☐ · Claude · S
+☑ 2026-09-26 · Claude · S
+
+**Done 2026-09-26.** Four checks in `service_watchdog.py`: `night_watch` (status every
+minute, alive and on MQTT; restarted), `cameras` (all detection down: restart the detector;
+some down 10 min: a person), `alert_rules` (18 leak/smoke/door/intrusion/house-mode rules and
+4 scripts exist and are on; a person - never re-enabled by itself), `timers` (6 timers running;
+started again). A test keeps the rule list in step with the installers. Tested live: a rule
+switched off was reported; a stopped timer was started again by the watchdog.
 
 **Why.** `service_watchdog.py` does not know about the night watch, and does not
 check that the alert automations are enabled — a disabled rule is silent.
