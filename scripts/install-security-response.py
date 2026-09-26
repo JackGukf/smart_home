@@ -32,6 +32,19 @@ arming delay. The radar (mmWave) sensors are not used: they hold "occupied"
 for half an hour on nothing, and a false siren at 3 AM is the worst outcome
 this rule can have.
 
+The intrusion alert (2026-09-25, action list A2)
+------------------
+When the alarm speaker starts - whatever started it - script.intrusion_alert
+turns input_boolean.intrusion_alert on and sends a *critical* push (through the
+mute switch and every Focus) naming what set it off, with Stop and I know, and a
+Telegram message. Then every 2 minutes, for up to 30, both again until somebody
+answers - even after the speaker stops by itself: the siren giving up is not
+somebody answering. No second person (the owner's choice).
+
+  Stop    (push)   silences the speaker and ends the alert
+  I know  (push)   ends the alert and the reminders; the speaker keeps sounding
+  Stop / I know on the dashboard, or one press of the bedroom button, count too.
+
 The bedroom button
 ------------------
 event.smart_button_bedroom_action: single press stops the alarm speaker if it
@@ -57,6 +70,19 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+
+def _door_alerts():
+    """The phone and the Telegram plumbing live in the door alerts installer."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("door_alerts", PROJECT_ROOT / "scripts" / "install-door-alerts.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_doors = _door_alerts()
+PHONE = _doors.PHONE
+
 ALARM = "alarm_control_panel.duo_gong_neng_bao_jing_zhu_ji"
 ARMED = ["armed_home", "armed_away", "armed_night", "armed_vacation", "armed_custom_bypass"]
 SPEAKER = "switch.0xa4c1382b1f1bd155_alarm"            # Zigbee alarm speaker, living room
@@ -68,6 +94,15 @@ MODE = "input_select.house_mode"                        # install-house-modes.py
 NIGHT_ARM_RULE_ID = "house_mode_night_arm"
 BUTTON = "event.smart_button_bedroom_action"
 OLD_BUTTON_RULES = ["npu_bedroom_button_single_on", "npu_bedroom_button_double_off"]
+
+INTRUSION = "input_boolean.intrusion_alert"            # on while nobody has answered the siren
+INTRUSION_SCRIPT_ID = "intrusion_alert"
+INTRUSION_SCRIPT = f"script.{INTRUSION_SCRIPT_ID}"
+STOP_ACTION = "INTRUSION_STOP"
+ACK_ACTION = "INTRUSION_ACK"
+INTRUSION_TAG = "intrusion"
+REMIND_EVERY = {"minutes": 2}
+REMINDERS = 15                                          # 30 minutes
 
 UPSTAIRS = "binary_sensor.0xa4c138ae6a275f0f_presence"  # Motion sensor and TH Upstairs (the stairs)
 FIRST_FLOOR_PIR = [
@@ -138,6 +173,61 @@ def _button(gesture: str) -> list[dict]:
         [{"condition": "state", "entity_id": BUTTON, "attribute": "event_type", "state": gesture}]
 
 
+WHY = ("{% set r = states('" + REASON + "') %}"
+       "{{ r if r not in ['', 'unknown', 'unavailable'] else 'The alarm speaker was turned on' }}")
+
+
+def _critical_push(title: str, message: str) -> dict:
+    return {"action": PHONE, "continue_on_error": True, "data": {
+        "title": title, "message": message,
+        "data": {"tag": INTRUSION_TAG,
+                 "push": {"sound": {"name": "default", "critical": 1, "volume": 1.0}},
+                 "actions": [{"action": STOP_ACTION, "title": "Stop", "destructive": True},
+                             {"action": ACK_ACTION, "title": "I know"}]}}}
+
+
+def intrusion_script(telegram: list[str]) -> dict:
+    still = ("Still no answer - {{ repeat.index * " + str(REMIND_EVERY["minutes"]) + " }} min. {{ why }}. "
+             "The speaker is {{ 'sounding' if is_state('" + SPEAKER + "', 'on') else 'silent now' }}.")
+    return {
+        "alias": "Intrusion alert",
+        "description": ("The alarm speaker is sounding: input_boolean.intrusion_alert, a critical push with "
+                        "Stop and I know, and Telegram; again every 2 minutes for up to 30 until somebody "
+                        "answers. Installed by scripts/install-security-response.py."),
+        "mode": "single",
+        "max_exceeded": "silent",
+        "sequence": [
+            {"variables": {"why": WHY}},
+            {"action": "input_boolean.turn_on", "target": {"entity_id": INTRUSION}},
+            _critical_push("🚨 Intruder alarm", "{{ why }} - the alarm speaker is sounding."),
+            *_doors._telegram(telegram, "🚨 Intruder alarm: {{ why }}. Stop it from the push, the "
+                                        "dashboard or the bedroom button."),
+            {"repeat": {
+                "while": [
+                    {"condition": "state", "entity_id": INTRUSION, "state": "on"},
+                    {"condition": "template", "value_template": "{{ repeat.index <= " + str(REMINDERS) + " }}"},
+                ],
+                "sequence": [
+                    {"wait_for_trigger": [{"trigger": "state", "entity_id": INTRUSION, "to": "off"}],
+                     "timeout": REMIND_EVERY, "continue_on_timeout": True},
+                    {"if": [{"condition": "state", "entity_id": INTRUSION, "state": "on"}], "then": [
+                        _critical_push("🚨 Intruder alarm", still),
+                        *_doors._telegram(telegram, "🚨 " + still),
+                    ]},
+                ],
+            }},
+        ],
+    }
+
+
+def acknowledge(stop_speaker: bool) -> list[dict]:
+    steps = [{"action": "input_boolean.turn_off", "target": {"entity_id": INTRUSION}}]
+    if stop_speaker:
+        steps.insert(0, {"if": [{"condition": "state", "entity_id": SPEAKER, "state": "on"}],
+                         "then": [{"action": "switch.turn_off", "target": {"entity_id": SPEAKER}}]})
+    return steps
+
+
 def automations() -> list[dict]:
     single_triggers, single_conditions = _button("single")
     double_triggers, double_conditions = _button("double")
@@ -189,11 +279,43 @@ def automations() -> list[dict]:
         {
             "id": "security_bedroom_button_stops_speaker",
             "alias": "Bedroom button single - stop the alarm speaker",
-            "description": _desc("One press on the bedroom smart button stops the alarm speaker."),
+            "description": _desc("One press on the bedroom smart button stops the alarm speaker and "
+                                 "answers the intrusion alert - also after the speaker stopped by itself."),
             "mode": "single",
             "triggers": single_triggers,
-            "conditions": single_conditions + [{"condition": "state", "entity_id": SPEAKER, "state": "on"}],
-            "actions": [{"action": "switch.turn_off", "target": {"entity_id": SPEAKER}}],
+            "conditions": single_conditions + [{"condition": "or", "conditions": [
+                {"condition": "state", "entity_id": SPEAKER, "state": "on"},
+                {"condition": "state", "entity_id": INTRUSION, "state": "on"},
+            ]}],
+            "actions": acknowledge(stop_speaker=True),
+        },
+        {
+            "id": "security_intrusion_alert",
+            "alias": "Security - intrusion alert when the alarm speaker starts",
+            "description": _desc("The alarm speaker starts, whatever started it: script.intrusion_alert "
+                                 "(critical push, Telegram, reminders until answered)."),
+            "mode": "single",
+            "triggers": [{"trigger": "state", "entity_id": SPEAKER, "from": "off", "to": "on"}],
+            "actions": [{"action": "script.turn_on", "target": {"entity_id": INTRUSION_SCRIPT}}],
+        },
+        {
+            "id": "security_intrusion_push_stop",
+            "alias": "Security - Stop on the intrusion push",
+            "description": _desc("Stop on the push: the speaker off and the alert answered."),
+            "mode": "single",
+            "triggers": [{"trigger": "event", "event_type": "mobile_app_notification_action",
+                          "event_data": {"action": STOP_ACTION}}],
+            "actions": acknowledge(stop_speaker=True),
+        },
+        {
+            "id": "security_intrusion_push_ack",
+            "alias": "Security - I know on the intrusion push",
+            "description": _desc("I know on the push: the alert answered and the reminders stop; the "
+                                 "speaker keeps sounding (someone is looking)."),
+            "mode": "single",
+            "triggers": [{"trigger": "event", "event_type": "mobile_app_notification_action",
+                          "event_data": {"action": ACK_ACTION}}],
+            "actions": acknowledge(stop_speaker=False),
         },
         {
             "id": "security_bedroom_button_night_arm",
@@ -217,6 +339,7 @@ HELPERS = [
               "icon": "mdi:alarm-light"}),
     (EXPECTED_UNTIL, {"type": "input_datetime/create", "name": "Security expected until",
                       "has_date": True, "has_time": True, "icon": "mdi:account-clock"}),
+    (INTRUSION, {"type": "input_boolean/create", "name": "Intrusion alert", "icon": "mdi:alarm-light"}),
 ]
 
 
@@ -300,7 +423,10 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     bodies = automations()
-    print(json.dumps(bodies, indent=2))
+    telegram: list[str] = []
+    if args.apply and os.getenv("HOME_ASSISTANT_TOKEN"):
+        telegram = _doors.telegram_targets(args.base_url.rstrip("/"), os.environ["HOME_ASSISTANT_TOKEN"])
+    print(json.dumps({"script": intrusion_script(telegram), "automations": bodies}, indent=2, ensure_ascii=False))
     if not args.apply:
         print(f"\nNothing was written. Re-run with --apply (it also deletes {', '.join(OLD_BUTTON_RULES)}).")
         return 0
@@ -312,9 +438,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for entity_id in ensure_helpers(base_url, token):
             print(f"created helper {entity_id}")
+        _doors._request(base_url, token, f"/api/config/script/config/{INTRUSION_SCRIPT_ID}",
+                        intrusion_script(telegram), "POST")
+        print(f"installed script {INTRUSION_SCRIPT}")
         for body in bodies:
             install(base_url, token, body)
             print(f"installed automation {body['id']}")
+        print(f"Telegram: {', '.join(telegram) if telegram else 'not set up'}")
         for rule_id, body in remove_old_button_rules(base_url, token):
             print(f"deleted automation {rule_id}; it was:\n{json.dumps(body)}")
     except urllib.error.HTTPError as exc:

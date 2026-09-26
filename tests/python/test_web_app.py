@@ -2069,7 +2069,9 @@ def test_the_alarm_speaker_is_on_the_security_payload_with_why_and_can_be_stoppe
 
     client, calls = _house_mode_client(tmp_path, monkeypatch, states)
     assert client.post("/api/alarm/speaker/stop").status_code == 200
-    assert calls == [("/api/services/switch/turn_off", {"entity_id": "switch.0xa4c1382b1f1bd155_alarm"})]
+    # The speaker off, then the intrusion alert answered (A2).
+    assert calls[0] == ("/api/services/switch/turn_off", {"entity_id": "switch.0xa4c1382b1f1bd155_alarm"})
+    assert calls[1:] == [("/api/services/input_boolean/turn_off", {"entity_id": "input_boolean.intrusion_alert"})]
 
 
 def test_a_house_alert_is_home_assistants_so_every_screen_shows_and_clears_the_same(tmp_path: Path, monkeypatch) -> None:
@@ -2119,3 +2121,25 @@ def test_the_door_alert_stays_amber() -> None:
 
 def test_alert_flags_wake_the_page() -> None:
     assert "input_boolean" in web_app_module._EVENT_WAKE_DOMAINS
+
+
+def test_the_intrusion_banner_waits_until_the_speaker_stopped_unanswered() -> None:
+    """While it sounds, the siren banner with Stop says it all; afterwards an
+    unanswered alert must still show."""
+    from src.python.web_app import _house_alerts
+
+    flag = {"entity_id": "input_boolean.intrusion_alert", "state": "on", "last_changed": "2026-09-26T09:14:00+00:00"}
+    speaker = {"entity_id": "switch.0xa4c1382b1f1bd155_alarm", "state": "on"}
+    assert _house_alerts([flag, speaker]) == []
+    [alert] = _house_alerts([flag, dict(speaker, state="off")])
+    assert alert["id"] == "intrusion" and alert["critical"] and "stopped by itself" in alert["message"]
+
+
+def test_stop_on_the_dashboard_also_answers_the_intrusion_alert(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+    monkeypatch.setattr(web_app_module, "_home_assistant_auth", lambda path: ("cfg", "tok"))
+    monkeypatch.setattr(web_app_module, "_home_assistant_post",
+                        lambda config, token, path, body: calls.append((path, body)) or [])
+    web_app_module._alarm_speaker_stop(tmp_path / "x.yaml")
+    assert calls == [("/api/services/switch/turn_off", {"entity_id": "switch.0xa4c1382b1f1bd155_alarm"}),
+                     ("/api/services/input_boolean/turn_off", {"entity_id": "input_boolean.intrusion_alert"})]

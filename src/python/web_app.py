@@ -5955,6 +5955,14 @@ def _alarm_speaker_stop(path: Path) -> dict[str, Any]:
                                       {"entity_id": ALARM_SPEAKER})
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Home Assistant API error: {exc}") from exc
+    # Somebody pressed Stop: that answers the intrusion alert and ends its
+    # reminders (scripts/install-security-response.py). Best effort - before
+    # that installer ran, the helper does not exist.
+    try:
+        _home_assistant_post(config, token, "/api/services/input_boolean/turn_off",
+                             {"entity_id": HOUSE_ALERTS["intrusion"]["flag"]})
+    except Exception:  # noqa: BLE001 - the speaker is off, which is what was asked
+        pass
     return {"status": "ok", "entity_id": ALARM_SPEAKER, "result": result}
 
 
@@ -5983,6 +5991,18 @@ HOUSE_ALERTS = {
         "icon": "ti-droplet",
         "critical": True,
     },
+    # While the speaker sounds, the siren banner (with Stop) says it all; this one
+    # appears only once it has stopped by itself and nobody has answered.
+    "intrusion": {
+        "flag": "input_boolean.intrusion_alert",
+        "subjects": {"switch.0xa4c1382b1f1bd155_alarm": "the alarm speaker"},
+        "title": "Intruder alarm - nobody has answered",
+        "open": "The alarm speaker is sounding.",
+        "closed": "The alarm speaker stopped by itself. Check the cameras, then press I know.",
+        "icon": "ti-alarm-light",
+        "critical": True,
+        "only_when_closed": True,
+    },
     "smoke": {
         "flag": "input_boolean.smoke_alert",
         "subjects": safety_sensors.SMOKE,
@@ -6004,6 +6024,8 @@ def _house_alerts(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         places = [place for entity_id, place in alert["subjects"].items()
                   if (by_id.get(entity_id) or {}).get("state") == "on"]
+        if places and alert.get("only_when_closed"):
+            continue
         alerts.append({
             "id": alert_id,
             "title": alert["title"],

@@ -61,7 +61,9 @@ def test_the_bedroom_button_once_stops_the_speaker_twice_arms_for_the_night():
         assert body["triggers"][0]["entity_id"] == sec.BUTTON
         assert {"condition": "state", "entity_id": sec.BUTTON, "attribute": "event_type",
                 "state": gesture} in body["conditions"]
-    assert single["actions"] == [{"action": "switch.turn_off", "target": {"entity_id": sec.SPEAKER}}]
+    # Stops the speaker (if still sounding) and answers the intrusion alert (A2).
+    assert single["actions"] == sec.acknowledge(stop_speaker=True)
+    assert "switch.turn_off" in json.dumps(single["actions"])
     arm = double["actions"][0]
     assert arm["action"] == "automation.trigger" and arm["data"] == {"skip_condition": True}
     assert sec.NIGHT_ARM_RULE_ID in arm["target"]["entity_id"]
@@ -91,3 +93,77 @@ def test_templates_use_the_subscript_form_and_balance():
 def test_the_script_writes_nothing_without_apply(capsys):
     assert sec.main([]) == 0
     assert "Nothing was written" in capsys.readouterr().out
+
+
+# ── The intrusion alert (2026-09-25, action list A2) ─────────────────────────
+
+import jinja2  # noqa: E402
+
+TELEGRAM = ["notify.house_bot_jack"]
+SCRIPT_BODY = sec.intrusion_script(TELEGRAM)
+
+
+def _render(template: str, states: dict, **variables) -> str:
+    env = jinja2.Environment()
+    return env.from_string(template).render(
+        states=lambda e: states.get(e, "unknown"), is_state=lambda e, v: states.get(e) == v, **variables).strip()
+
+
+def test_the_speaker_starting_starts_the_alert_whatever_started_it():
+    body = BY_ID["security_intrusion_alert"]
+    assert body["triggers"] == [{"trigger": "state", "entity_id": sec.SPEAKER, "from": "off", "to": "on"}]
+    assert body["actions"] == [{"action": "script.turn_on", "target": {"entity_id": sec.INTRUSION_SCRIPT}}]
+
+
+def test_the_first_message_is_critical_names_the_cause_and_has_both_buttons():
+    push = SCRIPT_BODY["sequence"][2]
+    assert push["action"] == sec.PHONE
+    data = push["data"]["data"]
+    assert data["push"]["sound"]["critical"] == 1
+    assert [a["action"] for a in data["actions"]] == [sec.STOP_ACTION, sec.ACK_ACTION]
+    why = _render(sec.WHY, {sec.REASON: "Motion sensor and TH Living room Occupancy · 02:14"})
+    assert why == "Motion sensor and TH Living room Occupancy · 02:14"
+    assert _render(sec.WHY, {sec.REASON: "unknown"}) == "The alarm speaker was turned on"
+    telegram = SCRIPT_BODY["sequence"][3]
+    assert telegram["target"]["entity_id"] == TELEGRAM and telegram["data"]["message"].startswith("🚨")
+
+
+def test_it_repeats_every_two_minutes_until_answered_even_after_the_speaker_stops():
+    loop = SCRIPT_BODY["sequence"][4]["repeat"]
+    assert {"condition": "state", "entity_id": sec.INTRUSION, "state": "on"} in loop["while"]
+    assert "repeat.index <= 15" in loop["while"][1]["value_template"]
+    wait = loop["sequence"][0]
+    assert wait["wait_for_trigger"] == [{"trigger": "state", "entity_id": sec.INTRUSION, "to": "off"}]
+    assert wait["timeout"] == {"minutes": 2}
+    reminder = loop["sequence"][1]
+    # Only the flag gates a reminder - not the speaker, which stops by itself after 5 minutes.
+    assert reminder["if"] == [{"condition": "state", "entity_id": sec.INTRUSION, "state": "on"}]
+    text = reminder["then"][0]["data"]["message"]
+
+    class Repeat:
+        index = 3
+    assert _render(text, {sec.SPEAKER: "off"}, repeat=Repeat, why="Office camera") == \
+        "Still no answer - 6 min. Office camera. The speaker is silent now."
+
+
+def test_stop_silences_and_answers_i_know_only_answers():
+    stop = BY_ID["security_intrusion_push_stop"]
+    ack = BY_ID["security_intrusion_push_ack"]
+    assert stop["triggers"][0]["event_data"] == {"action": sec.STOP_ACTION}
+    assert ack["triggers"][0]["event_data"] == {"action": sec.ACK_ACTION}
+    flag_off = {"action": "input_boolean.turn_off", "target": {"entity_id": sec.INTRUSION}}
+    assert flag_off in stop["actions"] and flag_off in ack["actions"]
+    assert "switch.turn_off" in json.dumps(stop["actions"])
+    assert "switch.turn_off" not in json.dumps(ack["actions"])
+
+
+def test_the_bedroom_button_answers_even_after_the_speaker_stopped_by_itself():
+    body = BY_ID["security_bedroom_button_stops_speaker"]
+    either = next(c for c in body["conditions"] if c.get("condition") == "or")
+    assert {"condition": "state", "entity_id": sec.INTRUSION, "state": "on"} in either["conditions"]
+    assert {"condition": "state", "entity_id": sec.SPEAKER, "state": "on"} in either["conditions"]
+    assert {"action": "input_boolean.turn_off", "target": {"entity_id": sec.INTRUSION}} in body["actions"]
+
+
+def test_the_alert_flag_is_created():
+    assert dict(sec.HELPERS)[sec.INTRUSION]["type"] == "input_boolean/create"
