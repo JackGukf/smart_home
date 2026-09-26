@@ -89,9 +89,9 @@ documented; `waiting_for_heating` in September is not a false alarm.
 ## A6 SSH hardening
 ☑ 2026-09-25 · Owner · S
 
-**Done 2026-09-25** by the owner: `/etc/ssh/sshd_config.d/10-hardening.conf`. Only one key
-is authorised - the workstation's WSL - and Windows has none, so a second key (Windows or
-phone) is still wanted: losing that one environment means a monitor and keyboard on the board.
+**Done 2026-09-25** by the owner: `/etc/ssh/sshd_config.d/10-hardening.conf`. Two keys are
+authorised: the workstation's WSL (RSA) and Windows (`jackg@WIN-4R320EPTKIF`, ED25519), so
+losing one environment no longer locks the board out.
 
 `PermitRootLogin yes` is set and passwords are accepted. On the board:
 `/etc/ssh/sshd_config.d/10-hardening.conf` with `PermitRootLogin no` and
